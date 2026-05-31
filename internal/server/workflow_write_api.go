@@ -27,6 +27,8 @@ const (
 	PhasePurposeReviewTouchpoint = "review_touchpoint"
 	PhasePurposeReviewGate       = "review_gate"
 
+	PhaseNamePrepare = "prepare"
+
 	// MinNativePhaseJobTimeoutSeconds is the floor for a phase job's
 	// activeDeadlineSeconds. Below this the kubelet grace period
 	// (30s default) doesn't leave enough room for the runner's SIGTERM
@@ -481,6 +483,9 @@ func ValidateWorkflowRegister(req WorkflowRegister) error {
 			return ValidationError{Message: fmt.Sprintf("workflow %s phase %q purpose=%q must declare exactly one job with primitive %q", req.Name, name, PhasePurposeReviewTouchpoint, JobPrimitivePRTouchpoint)}
 		}
 		if i == 0 {
+			if name != PhaseNamePrepare {
+				return ValidationError{Message: fmt.Sprintf("workflow %s entry phase must be named %q", req.Name, PhaseNamePrepare)}
+			}
 			if len(phase.DependsOn) != 0 {
 				return ValidationError{Message: fmt.Sprintf("workflow %s entry phase %q must not declare depends_on", req.Name, name)}
 			}

@@ -253,8 +253,8 @@ func (s *fakePlayableStore) ListProjectWorkflows(context.Context, string) ([]Wor
 
 func playbookTestWorkflowPhases() []PhaseSpec {
 	return []PhaseSpec{
-		{Name: "prep", Kind: "k8s_job", Jobs: []NativeJobSpec{{ID: "prep"}}},
-		{Name: "verify", Kind: "k8s_job", Verify: true, DependsOn: []string{"prep"}, Jobs: []NativeJobSpec{{ID: "verify"}}},
+		{Name: "prepare", Kind: "k8s_job", Jobs: []NativeJobSpec{{ID: "prepare"}}},
+		{Name: "verify", Kind: "k8s_job", Verify: true, DependsOn: []string{"prepare"}, Jobs: []NativeJobSpec{{ID: "verify"}}},
 		{Name: "cleanup_early", Kind: "k8s_job", RunOn: PhaseRunOnAlways, Purpose: PhasePurposeTeardown, SkipWhenPreserveTestEnv: true, DependsOn: []string{"verify"}, Jobs: []NativeJobSpec{{ID: "cleanup-early"}}},
 		{Name: "touchpoint", Kind: "k8s_job", RunOn: PhaseRunOnSuccess, Purpose: PhasePurposeReviewTouchpoint, DependsOn: []string{"cleanup_early"}, Jobs: []NativeJobSpec{{ID: "pr-touchpoint", Primitive: JobPrimitivePRTouchpoint, Managed: true}}},
 		{Name: "touchpoint_gate", Kind: "k8s_job", Purpose: PhasePurposeReviewGate, DependsOn: []string{"touchpoint"}, Jobs: []NativeJobSpec{{ID: "pr-merge", Primitive: JobPrimitivePRMerge, Managed: true}}},

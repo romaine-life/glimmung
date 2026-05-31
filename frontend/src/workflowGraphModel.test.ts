@@ -86,8 +86,8 @@ describe("workflowToPhaseGraphModel", () => {
     const workflow: WorkflowGraphSource = {
       name: "ambience",
       phases: [
-        { name: "env-prep", kind: "k8s_job" },
-        { name: "llm-work", kind: "k8s_job", depends_on: ["env-prep"] },
+        { name: "prepare", kind: "k8s_job" },
+        { name: "llm-work", kind: "k8s_job", depends_on: ["prepare"] },
         {
           name: "evidence-gate",
           kind: "k8s_job",
@@ -95,7 +95,7 @@ describe("workflowToPhaseGraphModel", () => {
           recycle_policy: {
             max_attempts: 3,
             on: ["verify_fail"],
-            lands_at: "env-prep",
+            lands_at: "prepare",
           },
         },
         {
@@ -111,21 +111,21 @@ describe("workflowToPhaseGraphModel", () => {
         recycle_policy: {
           max_attempts: 3,
           on: ["changes_requested"],
-          lands_at: "env-prep",
+          lands_at: "prepare",
         },
       },
     };
 
     const model = workflowToPhaseGraphModel(workflow);
     expect(model.entryArrows).toEqual([{
-      target: "env-prep",
+      target: "prepare",
       active: false,
       kind: "default",
     }]);
     expect(model.recycleArrows).toEqual([
       {
         source: "evidence-gate",
-        target: "env-prep",
+        target: "prepare",
         trigger: "verify_fail",
         max_attempts: 3,
         active: false,
@@ -133,7 +133,7 @@ describe("workflowToPhaseGraphModel", () => {
       },
       {
         source: "review-surface",
-        target: "env-prep",
+        target: "prepare",
         trigger: "changes_requested",
         max_attempts: 3,
         active: false,
@@ -148,7 +148,7 @@ describe("runTopologyToPhaseGraphModel", () => {
     expect(runTopologyToPhaseGraphModel({
       phases: [
         {
-          name: "env-prep",
+          name: "prepare",
           kind: "k8s_job",
           verify: false,
           run_on: "success",
@@ -162,14 +162,14 @@ describe("runTopologyToPhaseGraphModel", () => {
           verify: false,
           run_on: "success",
           purpose: "review_touchpoint",
-          depends_on: ["env-prep"],
+          depends_on: ["prepare"],
           jobs: [{ id: "pr-touchpoint", name: "PR touchpoint" }],
         },
       ],
-      default_entry: { target: "env-prep", active: true, kind: "default" },
+      default_entry: { target: "prepare", active: true, kind: "default" },
       recycle_arrows: [{
         source: "touchpoint",
-        target: "env-prep",
+        target: "prepare",
         trigger: "changes_requested",
         max_attempts: 3,
         active: false,
@@ -178,7 +178,7 @@ describe("runTopologyToPhaseGraphModel", () => {
     })).toEqual({
       phases: [
         {
-          name: "env-prep",
+          name: "prepare",
           kind: "k8s_job",
           verify: false,
           run_on: "success",
@@ -192,18 +192,18 @@ describe("runTopologyToPhaseGraphModel", () => {
           verify: false,
           run_on: "success",
           purpose: "review_touchpoint",
-          depends_on: ["env-prep"],
+          depends_on: ["prepare"],
           jobs: [{ id: "pr-touchpoint", name: "PR touchpoint", image: undefined }],
         },
       ],
       entryArrows: [{
-        target: "env-prep",
+        target: "prepare",
         active: true,
         kind: "default",
       }],
       recycleArrows: [{
         source: "touchpoint",
-        target: "env-prep",
+        target: "prepare",
         trigger: "changes_requested",
         max_attempts: 3,
         active: false,

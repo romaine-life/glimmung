@@ -138,9 +138,9 @@ The run page should support deep links to:
 The overview should show the high-level execution shape:
 
 ```text
-env-prep -> agent-execute -> verify -> touchpoint
-Cycle 1 (run 1.1): env-prep -> agent-execute -> touchpoint
-Cycle 2 (run 1.2): env-prep -> agent-execute -> verify -> touchpoint
+prepare -> llm-work -> llm-verify -> evidence-gate -> touchpoint
+Cycle 1 (run 1.1): prepare -> llm-work -> touchpoint
+Cycle 2 (run 1.2): prepare -> llm-work -> llm-verify -> evidence-gate -> touchpoint
 ```
 
 For more complex runs, the overview should show phase ordering and
