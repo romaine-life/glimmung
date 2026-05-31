@@ -14,8 +14,9 @@ work for one-off debugging, but should not be the documented dev loop.
 ## The contract — project-side
 
 Each Glimmung project that opts into test-slot hot-swap declares a
-`test_slot_hot_swap` block in its `metadata`. The block has four
-sub-contracts; a project enables whichever ones it needs.
+`test_slot_hot_swap` block in its `metadata`. The block has five
+sub-contracts plus an optional fidelity classifier; a project enables
+whichever ones it needs.
 
 ```json
 {
@@ -63,6 +64,17 @@ sub-contracts; a project enables whichever ones it needs.
       "container": "codex-runner",
       "restart": "SIGHUP",
       "builder_image": "node:20-alpine"
+    },
+
+    "gemini_runner": {
+      "enabled": true,
+      "source": "gemini-runner/dist",
+      "target": "/var/run/gemini-runner-hot/dist",
+      "build_command": "cd gemini-runner && npm run build",
+      "pod_selector": "tank-operator/session-id",
+      "container": "gemini-runner",
+      "restart": "SIGHUP",
+      "builder_image": "node:20-alpine"
     }
   }
 }
@@ -75,9 +87,9 @@ Kubernetes Job's init container using exactly the image named here. No
 language heuristics, no hardcoded defaults — the contract owns this so
 the project's build environment is explicit and reproducible.
 
-For `agent_runner` and `codex_runner`, `builder_image` is **required at
-contract validation time**: there is no legacy CLI path for these
-kinds, so a missing image is unambiguous misconfiguration. For `backend`,
+For `agent_runner`, `codex_runner`, and `gemini_runner`, `builder_image`
+is **required at contract validation time**: there is no legacy CLI path for
+these kinds, so a missing image is unambiguous misconfiguration. For `backend`,
 `builder_image` is **optional at validation time** (existing registered
 contracts predate the field) but **required at request time** when the
 apply endpoint is invoked with `artifact_kind=backend`.
@@ -158,8 +170,8 @@ the cap; the underlying Job runs to its own deadline.
 - **`artifact_kind=static` and `artifact_kind=backend`.** Today these
   route to `ops.TestSlotHotSwap` via the `glimmung-agent` CLI in the
   verify-loop infrastructure. The developer-driven apply endpoint
-  covers `agent_runner` today; static and backend land in v2 when
-  their consumers explicitly opt in.
+  covers session runner artifacts today; static and backend land in v2
+  when their consumers explicitly opt in.
 
 ## The outcome
 

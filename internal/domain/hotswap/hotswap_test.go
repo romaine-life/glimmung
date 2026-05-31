@@ -117,6 +117,33 @@ func TestContractCodexRunnerRoundtrip(t *testing.T) {
 	}
 }
 
+func TestContractGeminiRunnerRoundtrip(t *testing.T) {
+	contract, ok, err := FromMetadata(map[string]any{
+		"test_slot_hot_swap": map[string]any{
+			"enabled": true,
+			"gemini_runner": map[string]any{
+				"enabled":       true,
+				"source":        "gemini-runner/hot",
+				"target":        "/var/run/gemini-runner-hot",
+				"build_command": "cd gemini-runner && npm run build",
+				"pod_selector":  "tank-operator/session-id,tank-operator/mode in (gemini_gui,gemini_test)",
+				"container":     "gemini-runner",
+				"restart":       "SIGHUP",
+				"builder_image": "node:20-alpine",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || !contract.Enabled || !contract.GeminiRunner.Enabled {
+		t.Fatalf("contract=%#v ok=%v", contract, ok)
+	}
+	if contract.GeminiRunner.Target != "/var/run/gemini-runner-hot" {
+		t.Fatalf("target = %q", contract.GeminiRunner.Target)
+	}
+}
+
 // TestValidateRejectsAgentRunnerMissingBuilderImage pins that the apply
 // endpoint's primary consumer (the new AgentRunner kind) requires
 // builder_image at Validate time — there is no legacy CLI path for

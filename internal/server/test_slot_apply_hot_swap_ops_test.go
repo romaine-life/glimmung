@@ -178,6 +178,61 @@ func TestApplyHotSwapCodexRunnerDispatchesJob(t *testing.T) {
 	}
 }
 
+func TestApplyHotSwapGeminiRunnerDispatchesJob(t *testing.T) {
+	k8s := &fakeK8sJobClient{
+		waitResult: "complete",
+		buildLogs:  "build ok",
+		swapLogs:   "swap ok",
+	}
+	result, err := ApplyHotSwap(context.Background(), k8s, ApplyHotSwapOptions{
+		Project:         "tank-operator",
+		ArtifactKind:    "gemini_runner",
+		GitRef:          "feat/gemini",
+		RepoURL:         "https://github.com/nelsong6/tank-operator.git",
+		TargetNamespace: "tank-operator-slot-1-sessions",
+		JobNamespace:    "glimmung",
+		Timeout:         30 * time.Second,
+		Contract: hotswap.Contract{
+			Enabled: true,
+			GeminiRunner: hotswap.AgentRunnerContract{
+				Enabled:      true,
+				Source:       "gemini-runner/hot",
+				Target:       "/var/run/gemini-runner-hot",
+				BuildCommand: "cd gemini-runner && npm run build",
+				PodSelector:  "tank-operator/session-id,tank-operator/mode in (gemini_gui,gemini_test)",
+				Container:    "gemini-runner",
+				Restart:      "SIGHUP",
+				BuilderImage: "node:20-alpine",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("err: %v (result %+v)", err, result)
+	}
+	if result.Outcome != "persisted" {
+		t.Fatalf("outcome = %q, want persisted", result.Outcome)
+	}
+	if len(k8s.appliedJobs) != 1 {
+		t.Fatalf("applied jobs = %d, want 1", len(k8s.appliedJobs))
+	}
+
+	jobJSON, _ := json.Marshal(k8s.appliedJobs[0])
+	s := string(jobJSON)
+	checks := []string{
+		`"glimmung.io/apply-hot-swap-kind":"gemini_runner"`,
+		"gemini-runner/hot",
+		`/var/run/gemini-runner-hot`,
+		"gemini-runner",
+		"gemini_gui,gemini_test",
+		"kill -HUP 1",
+	}
+	for _, c := range checks {
+		if !strings.Contains(s, c) {
+			t.Errorf("Job spec missing %q\nspec=%s", c, s)
+		}
+	}
+}
+
 func TestApplyHotSwapRejectsUnsupportedKind(t *testing.T) {
 	k8s := &fakeK8sJobClient{}
 	for _, kind := range []string{"static", "backend", "", "frontend"} {
