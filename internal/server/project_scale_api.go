@@ -68,7 +68,7 @@ type TestSlotReturnHistoryEntry struct {
 	CleanupStarted  bool      `json:"cleanup_started"`
 }
 
-func scaleProjectTestEnvironments(store ReadStore, workloadIdentities NativeWorkloadIdentityReconciler, managedOrigins ManagedOriginReconciler, preparer TestSlotPreparer, _ NativeGitHubTokenMinter) http.HandlerFunc {
+func scaleProjectTestEnvironments(store ReadStore, workloadIdentities NativeWorkloadIdentityReconciler, managedOrigins ManagedOriginReconciler, preparer TestSlotPreparer, minter NativeGitHubTokenMinter) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		scaler, ok := store.(ProjectTestEnvironmentScaler)
 		if !ok || scaler == nil {
@@ -216,7 +216,7 @@ func scaleProjectTestEnvironments(store ReadStore, workloadIdentities NativeWork
 		// by RecoverInFlightTestSlots, which re-fires for any slot still in
 		// `provisioning` or `unseeded`. No polling loop sits in between.
 		if preparer != nil && *req.Count > 0 {
-			EnsureProjectTestSlotsWarmed(r.Context(), store, preparer, updated, nil, nil)
+			EnsureProjectTestSlotsWarmed(r.Context(), store, preparer, minter, updated, nil, nil)
 		}
 		writeJSON(w, http.StatusOK, updated)
 	}

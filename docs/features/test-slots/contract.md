@@ -49,7 +49,9 @@ running, cleaning, and available explicit.
 ## Live Behavior
 
 - Queue-size changes seed or delete slot docs and fire per-slot provisioning
-  work without blocking on runtime activation.
+  work without blocking on runtime activation. For projects with
+  `metadata.test_slot_helm.enabled=true`, provisioning includes the warm Helm
+  pass only.
 - Admin repair revalidates one configured, unleased slot by rerunning
   preliminary reconciliation and the warm Helm pass only; it must reject active
   leases and runtime cleanup states.

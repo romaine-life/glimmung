@@ -30,7 +30,7 @@ var testSlotLeaseTimers sync.Map // map[string]*time.Timer keyed by LeasePublicR
 // deadline already in the past fires on the next scheduler tick.
 //
 // Call only for `claimed` test-slot leases with TTLSeconds > 0.
-func armLeaseExpiryTimer(store ReadStore, preparer TestSlotPreparer, project Project, lease Lease, logf func(string, ...any)) {
+func armLeaseExpiryTimer(store ReadStore, preparer TestSlotPreparer, minter NativeGitHubTokenMinter, project Project, lease Lease, logf func(string, ...any)) {
 	if preparer == nil {
 		return
 	}
@@ -51,7 +51,7 @@ func armLeaseExpiryTimer(store ReadStore, preparer TestSlotPreparer, project Pro
 	}
 
 	timer := time.AfterFunc(delay, func() {
-		fireLeaseExpiry(store, preparer, project, lease, logf)
+		fireLeaseExpiry(store, preparer, minter, project, lease, logf)
 	})
 
 	if prior, loaded := testSlotLeaseTimers.Swap(ref, timer); loaded {
@@ -84,7 +84,7 @@ func cancelLeaseExpiryTimer(leaseRef string) {
 // database arbitrates — exactly one pod's etag-conditional write succeeds
 // and the others get ErrPreconditionFailed back, which means "another
 // replica already won, my work is done."
-func fireLeaseExpiry(store ReadStore, preparer TestSlotPreparer, project Project, lease Lease, logf func(string, ...any)) {
+func fireLeaseExpiry(store ReadStore, preparer TestSlotPreparer, minter NativeGitHubTokenMinter, project Project, lease Lease, logf func(string, ...any)) {
 	ref := LeasePublicRefFromLease(lease)
 	testSlotLeaseTimers.Delete(ref)
 
@@ -102,7 +102,7 @@ func fireLeaseExpiry(store ReadStore, preparer TestSlotPreparer, project Project
 		// Another replica or API request extended the durable TTL after this
 		// process armed its old timer. Re-arm from the current document so
 		// the old deadline cannot clean up the lease early.
-		armLeaseExpiryTimer(store, preparer, project, current, logf)
+		armLeaseExpiryTimer(store, preparer, minter, project, current, logf)
 		return
 	} else {
 		lease = current
@@ -129,7 +129,7 @@ func fireLeaseExpiry(store ReadStore, preparer TestSlotPreparer, project Project
 	// fleet. test_slot_checkout is the only purpose that arms a TTL
 	// timer, so the label is unambiguous.
 	metrics.RecordLeaseReleased(LeasePurposeTestSlotCheckout, "expired")
-	beginTestSlotCleanup(store, preparer, project, lease, true, activationCancelTTLExpiry, logf)
+	beginTestSlotCleanup(store, preparer, minter, project, lease, true, activationCancelTTLExpiry, logf)
 }
 
 // claimTestSlotCleanup atomically transitions the slot to `cleaning` via

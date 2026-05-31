@@ -99,7 +99,7 @@ func repairProjectTestEnvironment(store ReadStore, preparer TestSlotPreparer, mi
 			return
 		}
 
-		if err := preparer.RepairTestSlotPreliminaries(r.Context(), lease, project, minter); err != nil {
+		if err := preparer.EnsureTestSlotPreliminaries(r.Context(), lease, project, minter); err != nil {
 			if _, writeErr := markSlotError(r.Context(), store, projectName, slotIndex, time.Now().UTC(), err); writeErr != nil {
 				writeInternalError(w, r, writeErr, "record test environment repair failure failed")
 				return

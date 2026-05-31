@@ -135,8 +135,7 @@ func (s NativeJobStatus) TerminalTime() time.Time {
 }
 
 type TestSlotPreparer interface {
-	EnsureTestSlotPreliminaries(ctx context.Context, lease Lease, project Project) error
-	RepairTestSlotPreliminaries(ctx context.Context, lease Lease, project Project, minter NativeGitHubTokenMinter) error
+	EnsureTestSlotPreliminaries(ctx context.Context, lease Lease, project Project, minter NativeGitHubTokenMinter) error
 	ActivateTestSlotRuntime(ctx context.Context, lease Lease, project Project, minter NativeGitHubTokenMinter) error
 	ReturnTestSlotRuntime(ctx context.Context, lease Lease, project Project) error
 	DeprovisionTestSlot(ctx context.Context, lease Lease, project Project) error
@@ -195,15 +194,7 @@ func (l *KubernetesNativeLauncher) LaunchNativePhase(ctx context.Context, req Na
 	return launched, nil
 }
 
-func (l *KubernetesNativeLauncher) EnsureTestSlotPreliminaries(ctx context.Context, lease Lease, project Project) error {
-	slotName, _ := stringFromMap(lease.Metadata, "native_slot_name")
-	if strings.TrimSpace(slotName) == "" {
-		return nil
-	}
-	return l.ensureTestSlotPreliminaryAccess(ctx, lease, project, strings.TrimSpace(slotName))
-}
-
-func (l *KubernetesNativeLauncher) RepairTestSlotPreliminaries(ctx context.Context, lease Lease, project Project, minter NativeGitHubTokenMinter) error {
+func (l *KubernetesNativeLauncher) EnsureTestSlotPreliminaries(ctx context.Context, lease Lease, project Project, minter NativeGitHubTokenMinter) error {
 	slotName, _ := stringFromMap(lease.Metadata, "native_slot_name")
 	slotName = strings.TrimSpace(slotName)
 	if slotName == "" {
@@ -214,10 +205,10 @@ func (l *KubernetesNativeLauncher) RepairTestSlotPreliminaries(ctx context.Conte
 	}
 	if config, ok := testSlotHelmConfig(project); ok {
 		if strings.TrimSpace(project.GitHubRepo) == "" {
-			return fmt.Errorf("github_repo is required for test slot warm repair")
+			return fmt.Errorf("github_repo is required for test slot preliminary warm install")
 		}
 		if minter == nil {
-			return fmt.Errorf("github token minter is required for test slot warm repair")
+			return fmt.Errorf("github token minter is required for test slot preliminary warm install")
 		}
 		if err := l.runTestSlotHelmReconcile(ctx, lease, project, minter, config, testSlotRenderModeWarm); err != nil {
 			return err

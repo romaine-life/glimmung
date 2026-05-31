@@ -44,15 +44,15 @@ type TestSlotHotSwapLeaseExtension struct {
 	MinRemainingSeconds int  `json:"min_remaining_seconds"`
 }
 
-func ensureHotSwapLeaseMinimumByProjectName(ctx context.Context, store ReadStore, preparer TestSlotPreparer, projectName string, lease Lease) (*TestSlotHotSwapLeaseExtension, error) {
+func ensureHotSwapLeaseMinimumByProjectName(ctx context.Context, store ReadStore, preparer TestSlotPreparer, minter NativeGitHubTokenMinter, projectName string, lease Lease) (*TestSlotHotSwapLeaseExtension, error) {
 	project, ok := projectByName(ctx, store, projectName)
 	if !ok {
 		project = Project{Name: projectName}
 	}
-	return ensureHotSwapLeaseMinimum(ctx, store, preparer, project, lease)
+	return ensureHotSwapLeaseMinimum(ctx, store, preparer, minter, project, lease)
 }
 
-func ensureHotSwapLeaseMinimum(ctx context.Context, store ReadStore, preparer TestSlotPreparer, project Project, lease Lease) (*TestSlotHotSwapLeaseExtension, error) {
+func ensureHotSwapLeaseMinimum(ctx context.Context, store ReadStore, preparer TestSlotPreparer, minter NativeGitHubTokenMinter, project Project, lease Lease) (*TestSlotHotSwapLeaseExtension, error) {
 	if lease.State != "claimed" || !boolFromMap(lease.Metadata, "test_slot_checkout") {
 		return nil, nil
 	}
@@ -78,7 +78,7 @@ func ensureHotSwapLeaseMinimum(ctx context.Context, store ReadStore, preparer Te
 	if err != nil {
 		return nil, err
 	}
-	rearmUpdatedLeaseTimer(ctx, store, preparer, updated)
+	rearmUpdatedLeaseTimer(ctx, store, preparer, minter, updated)
 	extension.Extended = true
 	extension.TTLSeconds = updated.TTLSeconds
 	return extension, nil
@@ -107,7 +107,7 @@ func hotSwapMinimumTTLSeconds(lease Lease, now time.Time, minRemainingSeconds in
 	return nextTTL, true
 }
 
-func appendTestSlotHotSwapHistory(store ReadStore, preparer TestSlotPreparer) http.HandlerFunc {
+func appendTestSlotHotSwapHistory(store ReadStore, preparer TestSlotPreparer, minter NativeGitHubTokenMinter) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		writer, ok := store.(TestSlotHotSwapHistoryStore)
 		stateStore, hasState := store.(StateStore)
@@ -157,7 +157,7 @@ func appendTestSlotHotSwapHistory(store ReadStore, preparer TestSlotPreparer) ht
 			writeInternalError(w, r, err, "append test-slot hot-swap history failed")
 			return
 		}
-		extension, err := ensureHotSwapLeaseMinimumByProjectName(r.Context(), store, preparer, req.Project, lease)
+		extension, err := ensureHotSwapLeaseMinimumByProjectName(r.Context(), store, preparer, minter, req.Project, lease)
 		if err != nil {
 			writeJSON(w, http.StatusOK, TestSlotHotSwapHistoryResult{
 				Lease:               LeasePublicRefFromLease(lease),

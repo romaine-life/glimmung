@@ -31,11 +31,11 @@ func TestRepairProjectTestEnvironmentRepairsProvisionedSlot(t *testing.T) {
 	var body TestEnvironmentRepairResponse
 	postRepairJSON(t, handler, "/v1/projects/tank/test-environments/tank-slot-2/repair", &body)
 
-	if !preparer.repaired {
+	if !preparer.preliminaries {
 		t.Fatal("repair endpoint did not run preliminary repair")
 	}
-	if got := strings.Join(preparer.repairedSlots, ","); got != "tank-slot-2" {
-		t.Fatalf("repaired slots=%q", got)
+	if got := strings.Join(preparer.preliminarySlots, ","); got != "tank-slot-2" {
+		t.Fatalf("preliminary slots=%q", got)
 	}
 	if preparer.activated {
 		t.Fatal("repair endpoint must not activate runtime")
@@ -70,7 +70,7 @@ func TestRepairProjectTestEnvironmentRetriesPreliminaryError(t *testing.T) {
 	var body TestEnvironmentRepairResponse
 	postRepairJSON(t, handler, "/v1/projects/tank/test-environments/tank-slot-1/repair", &body)
 
-	if !preparer.repaired {
+	if !preparer.preliminaries {
 		t.Fatal("repair endpoint did not retry preliminary error")
 	}
 	repaired, err := store.GetSlot(context.Background(), "tank", 1)
@@ -109,7 +109,7 @@ func TestRepairProjectTestEnvironmentRejectsActiveLease(t *testing.T) {
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("status=%d body=%s, want 409", rec.Code, rec.Body.String())
 	}
-	if preparer.repaired {
+	if preparer.preliminaries {
 		t.Fatal("repair should not run for an active leased slot")
 	}
 }
@@ -139,7 +139,7 @@ func TestRepairProjectTestEnvironmentClearsOrphanedReservation(t *testing.T) {
 	var body TestEnvironmentRepairResponse
 	postRepairJSON(t, handler, "/v1/projects/tank/test-environments/tank-slot-2/repair", &body)
 
-	if !preparer.repaired {
+	if !preparer.preliminaries {
 		t.Fatal("repair should run for a slot whose only lease is terminal (orphaned reservation)")
 	}
 	slot, err := store.GetSlot(context.Background(), "tank", 2)
@@ -187,7 +187,7 @@ func TestRepairProjectTestEnvironmentRejectsActiveRunLease(t *testing.T) {
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("status=%d body=%s, want 409", rec.Code, rec.Body.String())
 	}
-	if preparer.repaired {
+	if preparer.preliminaries {
 		t.Fatal("repair must not run while a live run lease holds the slot")
 	}
 }
@@ -206,7 +206,7 @@ func TestRepairProjectTestEnvironmentRejectsSlotOutsideConfiguredCount(t *testin
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status=%d body=%s, want 404", rec.Code, rec.Body.String())
 	}
-	if preparer.repaired {
+	if preparer.preliminaries {
 		t.Fatal("repair should not run for a slot outside configured count")
 	}
 }

@@ -150,7 +150,7 @@ surface.
 |---|---|---|
 | POST   | `/v1/projects`                    | Register/upsert a project (`{name, github_repo}`). |
 | GET    | `/v1/projects`                    | List projects. |
-| PATCH  | `/v1/projects/{project}/test-environments/count` | Set native test-slot capacity and reconcile configured preliminary resources, including auth redirect URIs and workload identities. |
+| PATCH  | `/v1/projects/{project}/test-environments/count` | Set native test-slot capacity and reconcile configured preliminary resources, including warm Helm resources when configured. |
 | POST   | `/v1/test-slots/checkout`          | Lease an available test slot chosen by Glimmung; runtime activation may continue asynchronously. |
 | POST   | `/v1/test-slots/return`            | Return a test-slot lease; runtime cleanup may continue asynchronously before the slot is available again. |
 | POST   | `/v1/test-slots/extend`            | Extend a claimed test-slot lease TTL without tearing down the leased runtime. |
@@ -245,7 +245,8 @@ Minimal Tank-style config:
 ```
 
 Defaults are intentionally aligned with `tank-operator`: chart path `k8s`
-and installer image `alpine/k8s:1.30.0`. Activation reconciles the chart twice:
+and installer image `alpine/k8s:1.30.0`. Provisioning and repair reconcile
+the chart with `renderMode=warm` only. Activation reconciles the chart twice:
 first with `renderMode=warm`, then with `renderMode=hot`; both passes also set
 `testEnv.slotName` to the stable slot name. Other projects can set
 `chart_path`, `installer_image`, `git_ref`, `values`, `set_string_values`,

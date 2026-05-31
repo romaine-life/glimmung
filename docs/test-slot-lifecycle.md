@@ -77,6 +77,11 @@ goroutines for slots still in `unseeded` or `provisioning`.
 This path must not create long-running runtime resources. It must not create or
 keep project app deployments, API proxy deployments, session pods, Playwright
 servers, or validation jobs as part of making a slot available.
+For projects with `metadata.test_slot_helm.enabled=true`, provisioning
+reconciles the project chart with `renderMode=warm` only. That warm pass may
+create route, DNS, namespace, RBAC, ExternalSecret, and other preliminary
+scaffolding required for a public available slot, but it must not install the
+lease-scoped `renderMode=hot` runtime.
 
 Decreasing the count is the destructive capacity path. It deletes preliminary
 resources for slots above the new count after ensuring no active lease still
@@ -95,8 +100,8 @@ non-destructive:
 2. No claimed test-slot lease may reference the slot.
 3. The handler marks the slot `provisioning` with per-row CAS, then runs
    preliminary reconciliation.
-4. If the project has `metadata.test_slot_helm.enabled=true`, repair also
-   reconciles the project chart with `renderMode=warm` only.
+4. If the project has `metadata.test_slot_helm.enabled=true`, this uses the
+   same `renderMode=warm` Helm reconciliation as normal provisioning.
 5. On success the slot returns to `provisioned`; on failure it returns to
    `error` with the failure detail.
 

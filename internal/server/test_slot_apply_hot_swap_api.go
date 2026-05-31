@@ -68,7 +68,7 @@ type TestSlotApplyHotSwapResult struct {
 // Hot-swap history is appended on EVERY outcome — durable state lives
 // in the system, not in the request body. A caller that disconnects
 // mid-request can re-query the lease history to see the result.
-func applyTestSlotHotSwap(store ReadStore, preparer TestSlotPreparer, performer applyHotSwapPerformer) http.HandlerFunc {
+func applyTestSlotHotSwap(store ReadStore, preparer TestSlotPreparer, minter NativeGitHubTokenMinter, performer applyHotSwapPerformer) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		writer, ok := store.(TestSlotHotSwapHistoryStore)
 		stateStore, hasState := store.(StateStore)
@@ -257,7 +257,7 @@ func applyTestSlotHotSwap(store ReadStore, preparer TestSlotPreparer, performer 
 			lease = leaseWithHistory
 		}
 
-		leaseExtension, extendErr := ensureHotSwapLeaseMinimum(ctx, store, preparer, project, lease)
+		leaseExtension, extendErr := ensureHotSwapLeaseMinimum(ctx, store, preparer, minter, project, lease)
 		if extendErr != nil {
 			diagnostics["lease_extension_error"] = extendErr.Error()
 		}

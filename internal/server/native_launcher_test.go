@@ -600,7 +600,7 @@ func TestEnsureTestSlotPreliminariesDoesNotCreatePlaywrightRuntime(t *testing.T)
 		},
 	}
 
-	if err := launcher.EnsureTestSlotPreliminaries(context.Background(), lease, Project{Name: "tank"}); err != nil {
+	if err := launcher.EnsureTestSlotPreliminaries(context.Background(), lease, Project{Name: "tank"}, nil); err != nil {
 		t.Fatalf("EnsureTestSlotPreliminaries: %v", err)
 	}
 	for _, path := range paths {
@@ -610,7 +610,7 @@ func TestEnsureTestSlotPreliminariesDoesNotCreatePlaywrightRuntime(t *testing.T)
 	}
 }
 
-func TestRepairTestSlotPreliminariesRunsWarmHelmOnly(t *testing.T) {
+func TestEnsureTestSlotPreliminariesRunsWarmHelmOnly(t *testing.T) {
 	tokenPath := tempTokenFile(t)
 	var paths []string
 	launcher := &KubernetesNativeLauncher{
@@ -650,22 +650,61 @@ func TestRepairTestSlotPreliminariesRunsWarmHelmOnly(t *testing.T) {
 		Metadata:   map[string]any{"test_slot_helm": map[string]any{"enabled": true}},
 	}
 
-	if err := launcher.RepairTestSlotPreliminaries(context.Background(), lease, project, fakeNativeGitHubTokenMinter{token: "ghs_test"}); err != nil {
-		t.Fatalf("RepairTestSlotPreliminaries: %v", err)
+	if err := launcher.EnsureTestSlotPreliminaries(context.Background(), lease, project, fakeNativeGitHubTokenMinter{token: "ghs_test"}); err != nil {
+		t.Fatalf("EnsureTestSlotPreliminaries: %v", err)
 	}
 	if !containsPath(paths, "POST /apis/batch/v1/namespaces/glimmung-runs/jobs") {
-		t.Fatalf("repair should create Helm installer job, paths=%#v", paths)
+		t.Fatalf("preliminary ensure should create Helm installer job, paths=%#v", paths)
 	}
 	if !containsPath(paths, "GET /apis/batch/v1/namespaces/glimmung-runs/jobs/glim-slot-apply-warm-tank-operator-slot-2-0") {
-		t.Fatalf("repair should wait for warm Helm job completion, paths=%#v", paths)
+		t.Fatalf("preliminary ensure should wait for warm Helm job completion, paths=%#v", paths)
 	}
 	for _, path := range paths {
 		if strings.Contains(path, "glim-slot-apply-hot-") {
-			t.Fatalf("repair must not run hot Helm pass, paths=%#v", paths)
+			t.Fatalf("preliminary ensure must not run hot Helm pass, paths=%#v", paths)
 		}
 		if strings.Contains(path, "/deployments/slot-playwright") || strings.Contains(path, "/services/slot-playwright") {
-			t.Fatalf("repair must not create Playwright runtime, paths=%#v", paths)
+			t.Fatalf("preliminary ensure must not create Playwright runtime, paths=%#v", paths)
 		}
+	}
+}
+
+func TestEnsureTestSlotPreliminariesRequiresMinterForWarmHelm(t *testing.T) {
+	tokenPath := tempTokenFile(t)
+	launcher := &KubernetesNativeLauncher{
+		Settings: Settings{
+			K8sAPIHost:                 "https://kube.test",
+			K8sSATokenPath:             tokenPath,
+			NativeRunnerNamespace:      "glimmung-runs",
+			NativeRunnerServiceAccount: "glimmung-native-runner",
+			NativeRunnerNamespaceRole:  "cluster-admin",
+			NativeRunnerJobTTLSeconds:  3600,
+		},
+		HTTPClient: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader(`{}`)),
+			}, nil
+		})},
+	}
+	lease := Lease{
+		Project: "tank-operator",
+		State:   "warming",
+		Metadata: map[string]any{
+			"native_slot_name":  "tank-operator-slot-2",
+			"native_slot_index": "2",
+		},
+	}
+	project := Project{
+		Name:       "tank-operator",
+		GitHubRepo: "nelsong6/tank-operator",
+		Metadata:   map[string]any{"test_slot_helm": map[string]any{"enabled": true}},
+	}
+
+	err := launcher.EnsureTestSlotPreliminaries(context.Background(), lease, project, nil)
+	if err == nil || !strings.Contains(err.Error(), "github token minter is required") {
+		t.Fatalf("EnsureTestSlotPreliminaries error=%v, want github token minter requirement", err)
 	}
 }
 
