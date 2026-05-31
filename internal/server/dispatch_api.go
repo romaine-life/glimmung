@@ -157,7 +157,7 @@ func dispatchRunHandler(settings Settings, store ReadStore, nativeLauncher Nativ
 		}
 		globalRuntime, err := validateAgentRuntimeConfigForSettings(settings)
 		if err != nil {
-			writeProblem(w, http.StatusServiceUnavailable, "global agent runtime config is invalid: "+err.Error())
+			writeUnavailable(w, r, "global agent runtime config is invalid", "invalid_agent_runtime_config")
 			return
 		}
 		result, problem := dispatchRunWithAgentRuntime(r.Context(), dispatchStore, nativeLauncher, globalRuntime, req)
