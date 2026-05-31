@@ -142,7 +142,7 @@ func cancelLeaseByRef(store ReadStore) http.HandlerFunc {
 	}
 }
 
-func updateLeaseTTLByRef(store ReadStore, preparer TestSlotPreparer) http.HandlerFunc {
+func updateLeaseTTLByRef(store ReadStore, preparer TestSlotPreparer, minter NativeGitHubTokenMinter) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		updater, ok := store.(LeaseTTLUpdater)
 		if !ok || updater == nil {
@@ -186,12 +186,12 @@ func updateLeaseTTLByRef(store ReadStore, preparer TestSlotPreparer) http.Handle
 			writeInternalError(w, r, err, "lease TTL update failed")
 			return
 		}
-		rearmUpdatedLeaseTimer(r.Context(), store, preparer, lease)
+		rearmUpdatedLeaseTimer(r.Context(), store, preparer, minter, lease)
 		writeJSON(w, http.StatusOK, UpdateLeaseTTLResult{Lease: leaseToPublic(lease)})
 	}
 }
 
-func rearmUpdatedLeaseTimer(ctx context.Context, store ReadStore, preparer TestSlotPreparer, lease Lease) {
+func rearmUpdatedLeaseTimer(ctx context.Context, store ReadStore, preparer TestSlotPreparer, minter NativeGitHubTokenMinter, lease Lease) {
 	if preparer == nil || lease.State != "claimed" || !boolFromMap(lease.Metadata, "test_slot_checkout") {
 		return
 	}
@@ -199,7 +199,7 @@ func rearmUpdatedLeaseTimer(ctx context.Context, store ReadStore, preparer TestS
 	if !ok {
 		return
 	}
-	armLeaseExpiryTimer(store, preparer, project, lease, nil)
+	armLeaseExpiryTimer(store, preparer, minter, project, lease, nil)
 }
 
 func projectByName(ctx context.Context, store ReadStore, name string) (Project, bool) {

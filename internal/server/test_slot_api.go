@@ -239,7 +239,7 @@ func checkoutTestSlot(settings Settings, store ReadStore, preparer TestSlotPrepa
 			// pathways (return / callback release / admin cancel) call
 			// cancelLeaseExpiryTimer on the way out, so the timer only
 			// fires if nobody returned the lease in time.
-			armLeaseExpiryTimer(store, preparer, project, lease, nil)
+			armLeaseExpiryTimer(store, preparer, minter, project, lease, nil)
 			beginTestSlotActivation(store, preparer, minter, project, lease, nil)
 			writeJSON(w, http.StatusAccepted, testSlotCheckoutResponse(settings, project, workflow, lease, testSlotStateActivating))
 			return
@@ -248,7 +248,7 @@ func checkoutTestSlot(settings Settings, store ReadStore, preparer TestSlotPrepa
 	}
 }
 
-func returnTestSlot(store ReadStore, preparer TestSlotPreparer, _ NativeGitHubTokenMinter) http.HandlerFunc {
+func returnTestSlot(store ReadStore, preparer TestSlotPreparer, minter NativeGitHubTokenMinter) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		leaseStore, ok := store.(LeaseStore)
 		stateStore, hasState := store.(StateStore)
@@ -315,7 +315,7 @@ func returnTestSlot(store ReadStore, preparer TestSlotPreparer, _ NativeGitHubTo
 			}
 			metrics.RecordTestSlotCleanupClaim(activationCancelReturn, metrics.CleanupClaimOutcomeGranted)
 			cleanupCtx := contextWithTankSessionScopeRetireAuth(context.Background(), r.Header.Get("Authorization"))
-			beginTestSlotCleanupWithContext(cleanupCtx, store, preparer, project, lease, true, activationCancelReturn, nil)
+			beginTestSlotCleanupWithContext(cleanupCtx, store, preparer, minter, project, lease, true, activationCancelReturn, nil)
 			writeJSON(w, http.StatusAccepted, testSlotReturnResponse(project, req.Project, lease, testSlotStateCleaning, true))
 			return
 		}
@@ -342,7 +342,7 @@ func returnTestSlot(store ReadStore, preparer TestSlotPreparer, _ NativeGitHubTo
 	}
 }
 
-func extendTestSlotLease(store ReadStore, preparer TestSlotPreparer) http.HandlerFunc {
+func extendTestSlotLease(store ReadStore, preparer TestSlotPreparer, minter NativeGitHubTokenMinter) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		updater, ok := store.(LeaseTTLUpdater)
 		stateStore, hasState := store.(StateStore)
@@ -415,7 +415,7 @@ func extendTestSlotLease(store ReadStore, preparer TestSlotPreparer) http.Handle
 			writeInternalError(w, r, err, "extend test-slot lease failed")
 			return
 		}
-		rearmUpdatedLeaseTimer(r.Context(), store, preparer, updated)
+		rearmUpdatedLeaseTimer(r.Context(), store, preparer, minter, updated)
 		writeJSON(w, http.StatusOK, testSlotExtendResponse(project, updated, *req.ExtendSeconds, hasSlotState && slotState == SlotStateRunning))
 	}
 }
@@ -881,11 +881,11 @@ func cleanupTestSlotInstaller(parent context.Context, preparer TestSlotPreparer,
 	}
 }
 
-func beginTestSlotCleanup(store ReadStore, preparer TestSlotPreparer, project Project, lease Lease, releaseLease bool, cause string, logf func(string, ...any)) bool {
-	return beginTestSlotCleanupWithContext(context.Background(), store, preparer, project, lease, releaseLease, cause, logf)
+func beginTestSlotCleanup(store ReadStore, preparer TestSlotPreparer, minter NativeGitHubTokenMinter, project Project, lease Lease, releaseLease bool, cause string, logf func(string, ...any)) bool {
+	return beginTestSlotCleanupWithContext(context.Background(), store, preparer, minter, project, lease, releaseLease, cause, logf)
 }
 
-func beginTestSlotCleanupWithContext(parent context.Context, store ReadStore, preparer TestSlotPreparer, project Project, lease Lease, releaseLease bool, cause string, logf func(string, ...any)) bool {
+func beginTestSlotCleanupWithContext(parent context.Context, store ReadStore, preparer TestSlotPreparer, minter NativeGitHubTokenMinter, project Project, lease Lease, releaseLease bool, cause string, logf func(string, ...any)) bool {
 	if preparer == nil {
 		return false
 	}
@@ -920,7 +920,7 @@ func beginTestSlotCleanupWithContext(parent context.Context, store ReadStore, pr
 		waitCtx, cancelWait := context.WithTimeout(context.Background(), activationCancelWait)
 		cancelInflightActivation(waitCtx, key, cause)
 		cancelWait()
-		cleanupTestSlotRuntime(parent, store, preparer, project, lease, releaseLease, logf)
+		cleanupTestSlotRuntime(parent, store, preparer, minter, project, lease, releaseLease, logf)
 	}()
 	return true
 }
@@ -934,7 +934,7 @@ func beginTestSlotCleanupWithContext(parent context.Context, store ReadStore, pr
 // counter (a delta means an activation didn't unwind cleanly).
 const activationCancelWait = 30 * time.Second
 
-func cleanupTestSlotRuntime(parent context.Context, store ReadStore, preparer TestSlotPreparer, project Project, lease Lease, releaseLease bool, logf func(string, ...any)) {
+func cleanupTestSlotRuntime(parent context.Context, store ReadStore, preparer TestSlotPreparer, minter NativeGitHubTokenMinter, project Project, lease Lease, releaseLease bool, logf func(string, ...any)) {
 	// Cross-replica dedup for cleanup: initiation paths (return, callback
 	// release, TTL timer) already go through the etag-conditional
 	// claimTestSlotCleanup, which does the meaningful `active → cleaning`
@@ -946,7 +946,7 @@ func cleanupTestSlotRuntime(parent context.Context, store ReadStore, preparer Te
 	ctx, cancel := context.WithTimeout(parent, 10*time.Minute)
 	err := preparer.ReturnTestSlotRuntime(ctx, lease, project)
 	if err == nil {
-		err = preparer.EnsureTestSlotPreliminaries(ctx, lease, project)
+		err = preparer.EnsureTestSlotPreliminaries(ctx, lease, project, minter)
 	}
 	cancel()
 	if err != nil {
@@ -1189,7 +1189,7 @@ func RecoverInFlightTestSlots(ctx context.Context, store ReadStore, preparer Tes
 		// Re-arm the TTL expiry timer. The lease was claimed by a previous
 		// glimmung process whose in-memory timer died with it; the durable
 		// `assigned_at + ttl_seconds` lets us reconstruct the deadline.
-		armLeaseExpiryTimer(store, preparer, project, lease, logf)
+		armLeaseExpiryTimer(store, preparer, minter, project, lease, logf)
 
 		// Resume in-flight per-slot work that the previous process started
 		// but did not finish. testSlotActivations / testSlotCleanups dedup
@@ -1223,7 +1223,7 @@ func RecoverInFlightTestSlots(ctx context.Context, store ReadStore, preparer Tes
 			if recent {
 				continue
 			}
-			beginTestSlotCleanup(store, preparer, project, lease, true, activationCancelRecovery, logf)
+			beginTestSlotCleanup(store, preparer, minter, project, lease, true, activationCancelRecovery, logf)
 		case SlotStateError:
 			// error→cleaning retry: a prior cleanup attempt left the slot
 			// in error with cleanup_error set, and the lease is still
@@ -1241,7 +1241,7 @@ func RecoverInFlightTestSlots(ctx context.Context, store ReadStore, preparer Tes
 			if recent {
 				continue
 			}
-			beginTestSlotCleanup(store, preparer, project, lease, true, activationCancelRecovery, logf)
+			beginTestSlotCleanup(store, preparer, minter, project, lease, true, activationCancelRecovery, logf)
 		case SlotStateRunning:
 			// Installer cleanup is a one-shot at end of activation; on
 			// startup, drive it once defensively for slots that reached
@@ -1308,14 +1308,14 @@ func RecoverInFlightTestSlots(ctx context.Context, store ReadStore, preparer Tes
 						slotName = testEnvironmentName(projectName, slot.SlotIndex, project, Lease{})
 					}
 					lease := testEnvironmentWarmupLease(project, slot.SlotIndex, slotName)
-					beginTestSlotCleanup(store, preparer, project, lease, false, activationCancelRecovery, logf)
+					beginTestSlotCleanup(store, preparer, minter, project, lease, false, activationCancelRecovery, logf)
 				}
 			}
 		}
 
 		// Warm missing or stale-`warming` slots. Same per-slot dedup as the
 		// PATCH-count handler uses, so racing startup-vs-PATCH is safe.
-		EnsureProjectTestSlotsWarmed(ctx, store, preparer, project, claimedSlots[projectName], logf)
+		EnsureProjectTestSlotsWarmed(ctx, store, preparer, minter, project, claimedSlots[projectName], logf)
 	}
 }
 
@@ -1326,7 +1326,7 @@ func RecoverInFlightTestSlots(ctx context.Context, store ReadStore, preparer Tes
 // and the startup recovery sweep. Both paths dedup via `testSlotWarmups`,
 // so the same trigger firing twice or the two triggers racing each other
 // are both safe.
-func EnsureProjectTestSlotsWarmed(ctx context.Context, store ReadStore, preparer TestSlotPreparer, project Project, claimed map[int]bool, logf func(string, ...any)) {
+func EnsureProjectTestSlotsWarmed(ctx context.Context, store ReadStore, preparer TestSlotPreparer, minter NativeGitHubTokenMinter, project Project, claimed map[int]bool, logf func(string, ...any)) {
 	if preparer == nil {
 		return
 	}
@@ -1368,7 +1368,7 @@ func EnsureProjectTestSlotsWarmed(ctx context.Context, store ReadStore, preparer
 		default:
 			continue
 		}
-		beginTestSlotWarmup(store, preparer, project, slotIndex, logf)
+		beginTestSlotWarmup(store, preparer, minter, project, slotIndex, logf)
 	}
 }
 
@@ -1376,7 +1376,7 @@ func EnsureProjectTestSlotsWarmed(ctx context.Context, store ReadStore, preparer
 // ticks don't double-fire EnsureTestSlotPreliminaries against the same slot.
 var testSlotWarmups sync.Map
 
-func beginTestSlotWarmup(store ReadStore, preparer TestSlotPreparer, project Project, slotIndex int, logf func(string, ...any)) bool {
+func beginTestSlotWarmup(store ReadStore, preparer TestSlotPreparer, minter NativeGitHubTokenMinter, project Project, slotIndex int, logf func(string, ...any)) bool {
 	if preparer == nil {
 		return false
 	}
@@ -1396,12 +1396,12 @@ func beginTestSlotWarmup(store ReadStore, preparer TestSlotPreparer, project Pro
 	go func() {
 		defer testSlotInflight.Done()
 		defer testSlotWarmups.Delete(key)
-		warmTestSlot(context.Background(), store, preparer, project, slotIndex, slotName, logf)
+		warmTestSlot(context.Background(), store, preparer, minter, project, slotIndex, slotName, logf)
 	}()
 	return true
 }
 
-func warmTestSlot(ctx context.Context, store ReadStore, preparer TestSlotPreparer, project Project, slotIndex int, slotName string, logf func(string, ...any)) {
+func warmTestSlot(ctx context.Context, store ReadStore, preparer TestSlotPreparer, minter NativeGitHubTokenMinter, project Project, slotIndex int, slotName string, logf func(string, ...any)) {
 	projectKey := firstNonEmpty(project.Name, project.ID)
 	if projectKey == "" {
 		return
@@ -1444,7 +1444,7 @@ func warmTestSlot(ctx context.Context, store ReadStore, preparer TestSlotPrepare
 	}
 
 	lease := testEnvironmentWarmupLease(project, slotIndex, slotName)
-	if err := preparer.EnsureTestSlotPreliminaries(ctx, lease, project); err != nil {
+	if err := preparer.EnsureTestSlotPreliminaries(ctx, lease, project, minter); err != nil {
 		if _, writeErr := markSlotError(ctx, store, projectKey, slotIndex, time.Now().UTC(), err); writeErr != nil && logf != nil {
 			logf("test-slot warmup record error failed project=%s slot=%s: %v", projectKey, slotName, writeErr)
 		}

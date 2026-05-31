@@ -85,7 +85,7 @@ func TestApplyTestSlotHotSwapHappyPathResolves(t *testing.T) {
 		}, nil
 	}
 
-	handler := http.HandlerFunc(applyTestSlotHotSwap(store, nil, performer))
+	handler := http.HandlerFunc(applyTestSlotHotSwap(store, nil, nil, performer))
 	body := `{"project":"tank-operator","slot_name":"tank-operator-slot-1","artifact_kind":"agent_runner","git_ref":"feat/durable-stop-request","validation_target":"existing_session"}`
 	req := authedApplyRequest(t, body)
 	rec := httptest.NewRecorder()
@@ -149,7 +149,7 @@ func TestApplyTestSlotHotSwapCodexRunnerResolves(t *testing.T) {
 		}, nil
 	}
 
-	handler := http.HandlerFunc(applyTestSlotHotSwap(store, nil, performer))
+	handler := http.HandlerFunc(applyTestSlotHotSwap(store, nil, nil, performer))
 	body := `{"project":"tank-operator","slot_name":"tank-operator-slot-1","artifact_kind":"codex_runner","git_ref":"feat/codex","validation_target":"new_session"}`
 	req := authedApplyRequest(t, body)
 	rec := httptest.NewRecorder()
@@ -187,7 +187,7 @@ func TestApplyTestSlotHotSwapRecordsFailureHistory(t *testing.T) {
 		}, errors.New("apply failed")
 	}
 
-	handler := http.HandlerFunc(applyTestSlotHotSwap(store, nil, performer))
+	handler := http.HandlerFunc(applyTestSlotHotSwap(store, nil, nil, performer))
 	body := `{"project":"tank-operator","slot_index":1,"artifact_kind":"agent_runner","git_ref":"feat/x","validation_target":"existing_session"}`
 	req := authedApplyRequest(t, body)
 	rec := httptest.NewRecorder()
@@ -219,7 +219,7 @@ func TestApplyTestSlotHotSwapExtendsLeaseToConfiguredMinimum(t *testing.T) {
 		}, nil
 	}
 
-	handler := http.HandlerFunc(applyTestSlotHotSwap(store, nil, performer))
+	handler := http.HandlerFunc(applyTestSlotHotSwap(store, nil, nil, performer))
 	body := `{"project":"tank-operator","slot_name":"tank-operator-slot-1","artifact_kind":"agent_runner","git_ref":"feat/x","validation_target":"existing_session"}`
 	req := authedApplyRequest(t, body)
 	rec := httptest.NewRecorder()
@@ -271,7 +271,7 @@ func TestApplyTestSlotHotSwapClampsTimeout(t *testing.T) {
 		return ApplyHotSwapResult{Outcome: "persisted", Timings: map[string]string{}}, nil
 	}
 
-	handler := http.HandlerFunc(applyTestSlotHotSwap(store, nil, performer))
+	handler := http.HandlerFunc(applyTestSlotHotSwap(store, nil, nil, performer))
 	body := `{"project":"tank-operator","slot_name":"tank-operator-slot-1","artifact_kind":"agent_runner","git_ref":"feat/x","validation_target":"existing_session","timeout_seconds":9999}`
 	req := authedApplyRequest(t, body)
 	rec := httptest.NewRecorder()
@@ -306,7 +306,7 @@ func TestApplyTestSlotHotSwapRejectsBackendWithoutBuilderImage(t *testing.T) {
 		return ApplyHotSwapResult{}, nil
 	}
 
-	handler := http.HandlerFunc(applyTestSlotHotSwap(store, nil, performer))
+	handler := http.HandlerFunc(applyTestSlotHotSwap(store, nil, nil, performer))
 	body := `{"project":"tank-operator","slot_name":"tank-operator-slot-1","artifact_kind":"backend","git_ref":"feat/x","validation_target":"existing_session"}`
 	req := authedApplyRequest(t, body)
 	rec := httptest.NewRecorder()
@@ -327,7 +327,7 @@ func TestApplyTestSlotHotSwapRequiresValidationTargetForClassifier(t *testing.T)
 		return ApplyHotSwapResult{}, nil
 	}
 
-	handler := http.HandlerFunc(applyTestSlotHotSwap(store, nil, performer))
+	handler := http.HandlerFunc(applyTestSlotHotSwap(store, nil, nil, performer))
 	body := `{"project":"tank-operator","slot_name":"tank-operator-slot-1","artifact_kind":"agent_runner","git_ref":"feat/x"}`
 	req := authedApplyRequest(t, body)
 	rec := httptest.NewRecorder()
@@ -348,7 +348,7 @@ func TestApplyTestSlotHotSwapRejectsUnsupportedValidationTarget(t *testing.T) {
 		return ApplyHotSwapResult{}, nil
 	}
 
-	handler := http.HandlerFunc(applyTestSlotHotSwap(store, nil, performer))
+	handler := http.HandlerFunc(applyTestSlotHotSwap(store, nil, nil, performer))
 	body := `{"project":"tank-operator","slot_name":"tank-operator-slot-1","artifact_kind":"agent_runner","git_ref":"feat/x","validation_target":"maybe"}`
 	req := authedApplyRequest(t, body)
 	rec := httptest.NewRecorder()
@@ -369,7 +369,7 @@ func TestApplyTestSlotHotSwapRejectsMissingFields(t *testing.T) {
 	performer := func(_ context.Context, _ ApplyHotSwapOptions) (ApplyHotSwapResult, error) {
 		return ApplyHotSwapResult{}, nil
 	}
-	handler := http.HandlerFunc(applyTestSlotHotSwap(store, nil, performer))
+	handler := http.HandlerFunc(applyTestSlotHotSwap(store, nil, nil, performer))
 
 	bodies := []string{
 		`{"slot_name":"tank-operator-slot-1","artifact_kind":"agent_runner","git_ref":"x"}`,  // missing project

@@ -70,7 +70,7 @@ func heartbeatLeaseByCallbackToken(store ReadStore) http.HandlerFunc {
 	}
 }
 
-func releaseLeaseByCallbackToken(store ReadStore, preparer TestSlotPreparer) http.HandlerFunc {
+func releaseLeaseByCallbackToken(store ReadStore, preparer TestSlotPreparer, minter NativeGitHubTokenMinter) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		callbackStore, ok := store.(LeaseCallbackReleaseStore)
 		if !ok || callbackStore == nil {
@@ -91,7 +91,7 @@ func releaseLeaseByCallbackToken(store ReadStore, preparer TestSlotPreparer) htt
 				return
 			}
 			if boolFromMap(lease.Metadata, "test_slot_checkout") {
-				releaseTestSlotLeaseByCallback(w, r, store, preparer, lease)
+				releaseTestSlotLeaseByCallback(w, r, store, preparer, minter, lease)
 				return
 			}
 		}
@@ -120,7 +120,7 @@ func releaseLeaseByCallbackToken(store ReadStore, preparer TestSlotPreparer) htt
 	}
 }
 
-func releaseTestSlotLeaseByCallback(w http.ResponseWriter, r *http.Request, store ReadStore, preparer TestSlotPreparer, lease Lease) {
+func releaseTestSlotLeaseByCallback(w http.ResponseWriter, r *http.Request, store ReadStore, preparer TestSlotPreparer, minter NativeGitHubTokenMinter, lease Lease) {
 	if lease.State == "released" || lease.State == "expired" {
 		writeJSON(w, http.StatusOK, leaseToPublic(lease))
 		return
@@ -154,6 +154,6 @@ func releaseTestSlotLeaseByCallback(w http.ResponseWriter, r *http.Request, stor
 		return
 	}
 	metrics.RecordTestSlotCleanupClaim(activationCancelCallbackRelease, metrics.CleanupClaimOutcomeGranted)
-	beginTestSlotCleanup(store, preparer, project, lease, true, activationCancelCallbackRelease, nil)
+	beginTestSlotCleanup(store, preparer, minter, project, lease, true, activationCancelCallbackRelease, nil)
 	writeJSON(w, http.StatusAccepted, testSlotReturnResponse(project, lease.Project, lease, testSlotStateCleaning, true))
 }

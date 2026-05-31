@@ -25,10 +25,9 @@ type fakeTestSlotPreparer struct {
 	project               Project
 	deprovisioned         []string
 	deprovisionedSessions []string
-	repaired              bool
-	repairedSlots         []string
+	preliminarySlots      []string
+	preliminaryMinter     NativeGitHubTokenMinter
 	preliminariesErr      error
-	repairErr             error
 	activateErr           error
 	returnErr             error
 	activateStarted       chan struct{}
@@ -53,19 +52,14 @@ func (s *fakeLeaseStore) AppendTestSlotHotSwapHistory(_ context.Context, _ strin
 	return s.lease, nil
 }
 
-func (p *fakeTestSlotPreparer) EnsureTestSlotPreliminaries(_ context.Context, _ Lease, project Project) error {
+func (p *fakeTestSlotPreparer) EnsureTestSlotPreliminaries(_ context.Context, lease Lease, project Project, minter NativeGitHubTokenMinter) error {
 	p.preliminaries = true
 	p.project = project
-	return p.preliminariesErr
-}
-
-func (p *fakeTestSlotPreparer) RepairTestSlotPreliminaries(_ context.Context, lease Lease, project Project, _ NativeGitHubTokenMinter) error {
-	p.repaired = true
-	p.project = project
+	p.preliminaryMinter = minter
 	if slotName, _ := stringFromMap(lease.Metadata, "native_slot_name"); strings.TrimSpace(slotName) != "" {
-		p.repairedSlots = append(p.repairedSlots, strings.TrimSpace(slotName))
+		p.preliminarySlots = append(p.preliminarySlots, strings.TrimSpace(slotName))
 	}
-	return p.repairErr
+	return p.preliminariesErr
 }
 
 func (p *fakeTestSlotPreparer) ActivateTestSlotRuntime(ctx context.Context, _ Lease, project Project, _ NativeGitHubTokenMinter) error {
@@ -785,7 +779,7 @@ func TestLeaseExpiryTimerFiresCleanup(t *testing.T) {
 		returnDone:    make(chan struct{}, 1),
 	}
 
-	armLeaseExpiryTimer(store, preparer, store.projects[0], store.lease, nil)
+	armLeaseExpiryTimer(store, preparer, nil, store.projects[0], store.lease, nil)
 
 	select {
 	case <-preparer.returnStarted:
@@ -846,7 +840,7 @@ func TestLeaseExpiryTimerCancelPreventsFire(t *testing.T) {
 		returnStarted: make(chan struct{}, 1),
 	}
 
-	armLeaseExpiryTimer(store, preparer, store.projects[0], store.lease, nil)
+	armLeaseExpiryTimer(store, preparer, nil, store.projects[0], store.lease, nil)
 	cancelLeaseExpiryTimer(LeasePublicRefFromLease(store.lease))
 
 	select {
@@ -892,7 +886,7 @@ func TestFireLeaseExpirySkipsExtendedDurableDeadline(t *testing.T) {
 	preparer := &fakeTestSlotPreparer{returnStarted: make(chan struct{}, 1)}
 	defer cancelLeaseExpiryTimer(LeasePublicRefFromLease(currentLease))
 
-	fireLeaseExpiry(store, preparer, store.projects[0], staleLease, nil)
+	fireLeaseExpiry(store, preparer, nil, store.projects[0], staleLease, nil)
 
 	select {
 	case <-preparer.returnStarted:
@@ -1026,10 +1020,15 @@ func TestClaimTestSlotWarmupRetriesAcrossCrossSlotWrites(t *testing.T) {
 		}}},
 	}
 	preparer := &fakeTestSlotPreparer{}
+	minter := fakeNativeGitHubTokenMinter{token: "warm-token"}
 
-	EnsureProjectTestSlotsWarmed(context.Background(), store, preparer, store.projects[0], nil, nil)
+	EnsureProjectTestSlotsWarmed(context.Background(), store, preparer, minter, store.projects[0], nil, nil)
 
 	waitForSlotStatusCount(t, store, count*2) // count slots × (warming + ready)
+	seenMinter, ok := preparer.preliminaryMinter.(fakeNativeGitHubTokenMinter)
+	if !ok || seenMinter.token != "warm-token" {
+		t.Fatalf("preliminary minter=%#v, want warm-token minter", preparer.preliminaryMinter)
+	}
 	seen := map[int]string{}
 	for _, status := range store.snapshotSlotStatuses() {
 		seen[status.SlotIndex] = status.State
@@ -1089,7 +1088,7 @@ func TestFireLeaseExpiryNoOpsWhenAnotherReplicaAlreadyClaimed(t *testing.T) {
 	}
 	// fireLeaseExpiry must see the claim is already taken and return
 	// without spawning preparer.ReturnTestSlotRuntime.
-	fireLeaseExpiry(store, preparer, store.projects[0], store.lease, nil)
+	fireLeaseExpiry(store, preparer, nil, store.projects[0], store.lease, nil)
 
 	select {
 	case <-preparer.returnStarted:
