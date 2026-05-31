@@ -56,7 +56,8 @@ type TestSlotApplyHotSwapResult struct {
 //  1. POST { project, slot_index|slot_name, artifact_kind, git_ref, validation_target, timeout_seconds }
 //  2. Endpoint resolves the active test-slot lease for project+slot.
 //  3. Endpoint reads the project's hot-swap contract from metadata.
-//  4. Endpoint validates artifact_kind is supported (v1: agent_runner or codex_runner)
+//  4. Endpoint validates artifact_kind is supported (v1 runner artifacts:
+//     agent_runner, codex_runner, or gemini_runner)
 //     and the relevant builder_image is present.
 //  5. Endpoint dispatches a build-and-swap Job via ops.ApplyHotSwap,
 //     blocks on completion.
@@ -201,9 +202,8 @@ func applyTestSlotHotSwap(store ReadStore, preparer TestSlotPreparer, minter Nat
 			repoURL = "https://github.com/" + strings.TrimSpace(project.GitHubRepo) + ".git"
 		}
 
-		// Pod selector: the contract's agent_runner.pod_selector names
-		// the DIMENSION (e.g., "tank-operator/session-id"); the caller
-		// The pod selector flows into the Job's swap script which
+		// Pod selector: the contract's <runner>.pod_selector flows into
+		// the Job's swap script, which
 		// resolves target pods at run-time via kubectl inside the
 		// alpine/k8s container — no kubectl needed in the glimmung
 		// pod. (Earlier cut resolved pods up-front in the handler and
