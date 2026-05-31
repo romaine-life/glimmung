@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"strconv"
 	"time"
+
+	"github.com/nelsong6/glimmung/internal/domain/agentruntime"
 )
 
 type RunStore interface {
@@ -68,8 +70,8 @@ type InnerJobRef struct {
 	// Terminal fields are populated once the reconciler observes the
 	// child Job's `.status.conditions[]`. Empty means still active /
 	// not yet polled / k8s status unreadable from this glimmung's SA.
-	State       string  `json:"state,omitempty"`        // active | succeeded | failed | unknown
-	Reason      string  `json:"reason,omitempty"`       // JobTerminalReason* enum
+	State       string  `json:"state,omitempty"`  // active | succeeded | failed | unknown
+	Reason      string  `json:"reason,omitempty"` // JobTerminalReason* enum
 	CompletedAt *string `json:"completed_at,omitempty"`
 	// LogArchiveURL is the durable pointer to the child's logs, set by
 	// the inner-Job watcher when emitting inner_job_terminated. Today
@@ -146,6 +148,7 @@ type RunReport struct {
 	ValidationURL        *string               `json:"validation_url"`
 	ScreenshotsMarkdown  *string               `json:"screenshots_markdown"`
 	EvidenceRequirements []EvidenceRequirement `json:"evidence_requirements"`
+	AgentRuntime         agentruntime.Snapshot `json:"agent_runtime"`
 	AbortReason          *string               `json:"abort_reason"`
 	StartedAt            time.Time             `json:"started_at"`
 	CompletedAt          *time.Time            `json:"completed_at"`

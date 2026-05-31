@@ -15,6 +15,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/nelsong6/glimmung/internal/domain/agentruntime"
 	"github.com/nelsong6/glimmung/internal/domain/budget"
 	"github.com/nelsong6/glimmung/internal/domain/decision"
 	"github.com/nelsong6/glimmung/internal/domain/publicids"
@@ -412,12 +413,13 @@ func workflowFromPayload(payload []byte) (server.Workflow, error) {
 // type the delegation methods return. ID and Name are the same project key.
 func projectFromRecord(rec pgstore.ProjectRecord) server.Project {
 	return server.Project{
-		ID:         rec.Name,
-		Name:       rec.Name,
-		GitHubRepo: rec.GitHubRepo,
-		ArgoCDApp:  rec.ArgoCDApp,
-		Metadata:   mapOrEmpty(rec.Metadata),
-		CreatedAt:  rec.CreatedAt.UTC(),
+		ID:              rec.Name,
+		Name:            rec.Name,
+		GitHubRepo:      rec.GitHubRepo,
+		ArgoCDApp:       rec.ArgoCDApp,
+		ConfigSchemaRef: rec.ConfigSchemaRef,
+		Metadata:        mapOrEmpty(rec.Metadata),
+		CreatedAt:       rec.CreatedAt.UTC(),
 	}
 }
 
@@ -1023,6 +1025,7 @@ func (s *Store) CreateIssue(ctx context.Context, req server.IssueCreate) (server
 		State:   "open",
 		Metadata: issueMetadataDoc{
 			Workflow: req.Workflow,
+			Agent:    req.Agent,
 		},
 		Comments:        []issueCommentDoc{},
 		CreatedAt:       now,
@@ -1085,6 +1088,11 @@ func (s *Store) PatchIssueByNumber(ctx context.Context, req server.IssuePatch) (
 		}
 		if req.PreserveTestEnv != nil {
 			payload["preserve_test_env"] = *req.PreserveTestEnv
+		}
+		if req.Agent != nil {
+			metadata := issueAnyMap(payload["metadata"])
+			metadata["agent"] = req.Agent
+			payload["metadata"] = metadata
 		}
 		payload["updated_at"] = now
 		return nil
@@ -1414,6 +1422,7 @@ type runDoc struct {
 	ValidationURL        *string                      `json:"validation_url"`
 	ScreenshotsMarkdown  *string                      `json:"screenshots_markdown"`
 	EvidenceRequirements []server.EvidenceRequirement `json:"evidence_requirements,omitempty"`
+	AgentRuntime         agentruntime.Snapshot        `json:"agent_runtime,omitempty"`
 	AbortReason          *string                      `json:"abort_reason"`
 	EntrypointPhase      *string                      `json:"entrypoint_phase,omitempty"`
 	TriggerSource        map[string]any               `json:"trigger_source"`
@@ -1503,7 +1512,8 @@ type issueDoc struct {
 }
 
 type issueMetadataDoc struct {
-	Workflow *string `json:"workflow"`
+	Workflow *string              `json:"workflow"`
+	Agent    *agentruntime.Policy `json:"agent,omitempty"`
 }
 
 type issueCommentDoc struct {
@@ -1633,9 +1643,16 @@ type nativeStepDoc struct {
 	Title            *string           `json:"title"`
 	Type             string            `json:"type,omitempty"`
 	Run              string            `json:"run,omitempty"`
+	Agent            *agentStepDoc     `json:"agent,omitempty"`
 	Shell            string            `json:"shell,omitempty"`
 	WorkingDirectory string            `json:"workingDirectory,omitempty"`
 	Env              map[string]string `json:"env,omitempty"`
+}
+
+type agentStepDoc struct {
+	Slot       string `json:"slot,omitempty"`
+	Prompt     string `json:"prompt,omitempty"`
+	PromptFile string `json:"promptFile,omitempty"`
 }
 
 type nativeCheckoutDoc struct {
@@ -1753,8 +1770,34 @@ func issueDetailFromDoc(doc issueDoc) server.IssueDetail {
 		Labels:          sliceOrEmpty(doc.Labels),
 		HTMLURL:         nil,
 		Comments:        comments,
+		Metadata:        issueMetadataPublic(doc.Metadata),
 		PreserveTestEnv: doc.PreserveTestEnv,
 	}
+}
+
+func issueMetadataPublic(metadata issueMetadataDoc) map[string]any {
+	out := map[string]any{}
+	if metadata.Workflow != nil && strings.TrimSpace(*metadata.Workflow) != "" {
+		out["workflow"] = *metadata.Workflow
+	}
+	if metadata.Agent != nil {
+		out["agent"] = metadata.Agent
+	}
+	return out
+}
+
+func issueAnyMap(raw any) map[string]any {
+	if mapped, ok := raw.(map[string]any); ok {
+		return mapped
+	}
+	if mapped, ok := raw.(map[string]string); ok {
+		out := make(map[string]any, len(mapped))
+		for key, value := range mapped {
+			out[key] = value
+		}
+		return out
+	}
+	return map[string]any{}
 }
 
 func issueRowFromDoc(doc issueDoc) server.IssueRow {
@@ -1948,6 +1991,7 @@ func runReportFromDoc(doc runDoc, lineageByID map[string]string) server.RunRepor
 		ValidationURL:        emptyStringNil(doc.ValidationURL),
 		ScreenshotsMarkdown:  emptyStringNil(doc.ScreenshotsMarkdown),
 		EvidenceRequirements: sliceOrEmpty(doc.EvidenceRequirements),
+		AgentRuntime:         doc.AgentRuntime,
 		AbortReason:          emptyStringNil(doc.AbortReason),
 		StartedAt:            parseTimeOrNow(doc.CreatedAt),
 		CompletedAt:          completed,
@@ -2422,6 +2466,7 @@ func nativeJobDocFromSpec(job server.NativeJobSpec) nativeJobDoc {
 			Title:            step.Title,
 			Type:             step.Type,
 			Run:              step.Run,
+			Agent:            agentStepDocFromSpec(step.Agent),
 			Shell:            step.Shell,
 			WorkingDirectory: step.WorkingDirectory,
 			Env:              stringMapOrEmpty(step.Env),
@@ -2446,6 +2491,17 @@ func nativeJobDocFromSpec(job server.NativeJobSpec) nativeJobDoc {
 		ExtraCheckouts:   extraCheckouts,
 		WorkingDirectory: job.WorkingDirectory,
 		Shell:            job.Shell,
+	}
+}
+
+func agentStepDocFromSpec(step *server.AgentStepSpec) *agentStepDoc {
+	if step == nil {
+		return nil
+	}
+	return &agentStepDoc{
+		Slot:       step.Slot,
+		Prompt:     step.Prompt,
+		PromptFile: step.PromptFile,
 	}
 }
 
@@ -2631,6 +2687,7 @@ func jobFromDoc(doc nativeJobDoc) server.NativeJobSpec {
 			Title:            step.Title,
 			Type:             step.Type,
 			Run:              step.Run,
+			Agent:            agentStepFromDoc(step.Agent),
 			Shell:            step.Shell,
 			WorkingDirectory: step.WorkingDirectory,
 			Env:              stringMapOrEmpty(step.Env),
@@ -2655,6 +2712,17 @@ func jobFromDoc(doc nativeJobDoc) server.NativeJobSpec {
 		ExtraCheckouts:   extraCheckouts,
 		WorkingDirectory: doc.WorkingDirectory,
 		Shell:            doc.Shell,
+	}
+}
+
+func agentStepFromDoc(doc *agentStepDoc) *server.AgentStepSpec {
+	if doc == nil {
+		return nil
+	}
+	return &server.AgentStepSpec{
+		Slot:       doc.Slot,
+		Prompt:     doc.Prompt,
+		PromptFile: doc.PromptFile,
 	}
 }
 
@@ -5029,6 +5097,7 @@ func runReplayDataFromDoc(doc runDoc) server.RunReplayData {
 		SlotLeaseRef:         doc.SlotLeaseRef,
 		EntrypointPhase:      doc.EntrypointPhase,
 		TriggerSource:        mapOrEmpty(doc.TriggerSource),
+		AgentRuntime:         doc.AgentRuntime,
 		PreserveTestEnv:      doc.PreserveTestEnv,
 		State:                doc.State,
 	}
@@ -7264,6 +7333,17 @@ func (s *Store) StartRunCycle(ctx context.Context, req server.StartRunCycleReque
 // ---------------------------------------------------------------------------
 
 // ReadProjectGitHubRepo returns the github_repo field for a registered project.
+func (s *Store) ReadProjectForDispatch(ctx context.Context, project string) (server.Project, error) {
+	rec, err := s.pgProjects.Read(ctx, project)
+	if errors.Is(err, pgstore.ErrProjectNotFound) {
+		return server.Project{}, server.ErrNotFound
+	}
+	if err != nil {
+		return server.Project{}, err
+	}
+	return projectFromRecord(rec), nil
+}
+
 func (s *Store) ReadProjectGitHubRepo(ctx context.Context, project string) (string, error) {
 	repo, err := s.pgProjects.ReadGitHubRepo(ctx, project)
 	if errors.Is(err, pgstore.ErrProjectNotFound) {
@@ -7290,6 +7370,7 @@ func (s *Store) ReadIssueForDispatch(ctx context.Context, project string, issueN
 		Title:           doc.Title,
 		Body:            doc.Body,
 		Labels:          labels,
+		Agent:           doc.Metadata.Agent,
 		PreserveTestEnv: doc.PreserveTestEnv,
 	}, nil
 }
@@ -7377,6 +7458,7 @@ func (s *Store) CreateRun(ctx context.Context, req server.CreateRunRequest) (ser
 		Attempts:             []attemptDoc{},
 		CumulativeCostUSD:    0.0,
 		EvidenceRequirements: sliceOrEmpty(req.EvidenceRequirements),
+		AgentRuntime:         req.AgentRuntime,
 		TriggerSource:        req.TriggerSource,
 		CallbackToken:        &callbackToken,
 		IssueLockHolderID:    &req.IssueLockHolderID,
@@ -7570,6 +7652,7 @@ func (s *Store) CreateRecycleCycle(ctx context.Context, req server.CreateRecycle
 		Attempts:             carryForwardAttemptDocs(req.CarryForwardAttempts, *wf, now),
 		CumulativeCostUSD:    parent.CumulativeCostUSD,
 		EvidenceRequirements: sliceOrEmpty(firstEvidenceRequirements(req.EvidenceRequirements, parent.EvidenceRequirements)),
+		AgentRuntime:         parent.AgentRuntime,
 		TriggerSource:        req.TriggerSource,
 		CallbackToken:        &callbackToken,
 		IssueLockHolderID:    parent.IssueLockHolderID,

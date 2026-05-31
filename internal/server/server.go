@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/nelsong6/glimmung/internal/domain/agentruntime"
 	"github.com/nelsong6/glimmung/internal/metrics"
 )
 
@@ -63,6 +64,7 @@ type Settings struct {
 	NativeRunnerPlaywrightPort         string
 	NativeRunnerProjectConcurrency     int
 	NativeRunnerDispatchTimeoutSeconds int
+	AgentRuntimeConfigJSON             string
 	NativeWorkloadIdentityIssuer       string
 	// AuthRomaineLifeBaseURL is the base URL of the auth.romaine.life
 	// admin API used by ManagedOriginService. Empty disables the
@@ -199,6 +201,10 @@ func SettingsFromEnv() Settings {
 		NativeRunnerDispatchTimeoutSeconds: envIntOrDefault(
 			"NATIVE_RUNNER_DISPATCH_TIMEOUT_SECONDS",
 			defaultRunDispatchTimeoutSeconds,
+		),
+		AgentRuntimeConfigJSON: firstNonEmpty(
+			os.Getenv("GLIMMUNG_AGENT_RUNTIME_CONFIG_JSON"),
+			os.Getenv("GLIMMUNG_AGENT_RUNTIME_CONFIG"),
 		),
 		NativeWorkloadIdentityIssuer: os.Getenv("NATIVE_WORKLOAD_IDENTITY_ISSUER"),
 		AuthRomaineLifeBaseURL: envOrDefault(
@@ -465,7 +471,7 @@ func newHandlerWithReconcilers(settings Settings, store ReadStore, authResolver 
 	}
 	mux.Handle("POST /v1/test-slots/apply-hot-swap", requireAdmin(adminAuthenticator, http.HandlerFunc(applyTestSlotHotSwap(store, testSlotPreparer, nativeTokenMinter, applyPerformer))))
 	mux.Handle("POST /v1/projects/{project}/issues/{issue_number}/runs/{run_number}/replay", requireAdmin(adminAuthenticator, http.HandlerFunc(replayRunDecisionByNumber(store))))
-	mux.Handle("POST /v1/runs/dispatch", requireAdmin(adminAuthenticator, http.HandlerFunc(dispatchRunHandler(store, nativeLauncher))))
+	mux.Handle("POST /v1/runs/dispatch", requireAdmin(adminAuthenticator, http.HandlerFunc(dispatchRunHandler(settings, store, nativeLauncher))))
 	mux.HandleFunc("POST /v1/webhook/github", githubWebhook(settings))
 	// Per-run OpenGraph image: public, unauthenticated PNG card matching
 	// the SPA's run-URL shape so unfurlers (Discord, Slack, etc.) get a
@@ -531,14 +537,27 @@ func readStoreReady(ctx context.Context, store ReadStore) (ready bool) {
 // discovery path was not.
 func publicConfig(settings Settings) http.HandlerFunc {
 	return func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]string{
+		writeJSON(w, http.StatusOK, map[string]any{
 			"auth_url":                defaultAuthURL,
 			"tank_operator_base_url":  strings.TrimRight(settings.TankOperatorBaseURL, "/"),
 			"grafana_base_url":        strings.TrimRight(settings.GrafanaBaseURL, "/"),
 			"grafana_loki_datasource": strings.TrimSpace(settings.GrafanaLokiDatasource),
 			"native_runner_namespace": strings.TrimSpace(settings.NativeRunnerNamespace),
+			"agent_runtime":           agentRuntimeConfigForSettings(settings),
 		})
 	}
+}
+
+func agentRuntimeConfigForSettings(settings Settings) agentruntime.Config {
+	cfg, err := agentruntime.ParseConfigJSON(settings.AgentRuntimeConfigJSON)
+	if err != nil {
+		return agentruntime.DefaultConfig()
+	}
+	return cfg
+}
+
+func validateAgentRuntimeConfigForSettings(settings Settings) (agentruntime.Config, error) {
+	return agentruntime.ParseConfigJSON(settings.AgentRuntimeConfigJSON)
 }
 
 func writeJSON(w http.ResponseWriter, status int, value any) {

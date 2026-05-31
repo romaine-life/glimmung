@@ -18,12 +18,13 @@ type ReadStore interface {
 }
 
 type Project struct {
-	ID         string         `json:"id"`
-	Name       string         `json:"name"`
-	GitHubRepo string         `json:"github_repo"`
-	ArgoCDApp  string         `json:"argocd_app"`
-	Metadata   map[string]any `json:"metadata"`
-	CreatedAt  time.Time      `json:"created_at"`
+	ID              string         `json:"id"`
+	Name            string         `json:"name"`
+	GitHubRepo      string         `json:"github_repo"`
+	ArgoCDApp       string         `json:"argocd_app"`
+	ConfigSchemaRef string         `json:"config_schema_ref,omitempty"`
+	Metadata        map[string]any `json:"metadata"`
+	CreatedAt       time.Time      `json:"created_at"`
 	// etag carries an optional store-provided CAS token. Empty for the
 	// Postgres runtime path.
 	etag string `json:"-"`
@@ -107,6 +108,7 @@ type NativeStepSpec struct {
 	Title            *string           `json:"title"`
 	Type             string            `json:"type,omitempty"`
 	Run              string            `json:"run,omitempty"`
+	Agent            *AgentStepSpec    `json:"agent,omitempty"`
 	Shell            string            `json:"shell,omitempty"`
 	WorkingDirectory string            `json:"working_directory,omitempty"`
 	Env              map[string]string `json:"env,omitempty"`
@@ -116,6 +118,12 @@ type NativeCheckoutSpec struct {
 	Repo string `json:"repo,omitempty"`
 	Ref  string `json:"ref,omitempty"`
 	Path string `json:"path,omitempty"`
+}
+
+type AgentStepSpec struct {
+	Slot       string `json:"slot,omitempty"`
+	Prompt     string `json:"prompt,omitempty"`
+	PromptFile string `json:"prompt_file,omitempty"`
 }
 
 // PrPrimitive declares the workflow's PR recycle policy. Every Glimmung

@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/nelsong6/glimmung/internal/domain/agentruntime"
 )
 
 type IssueStore interface {
@@ -68,21 +70,22 @@ type IssueComment struct {
 }
 
 type IssueDetail struct {
-	Ref              string         `json:"ref"`
-	Project          string         `json:"project"`
-	Repo             *string        `json:"repo"`
-	Number           *int           `json:"number"`
-	Title            string         `json:"title"`
-	Body             string         `json:"body"`
-	State            string         `json:"state"`
-	Labels           []string       `json:"labels"`
-	HTMLURL          *string        `json:"html_url"`
-	Comments         []IssueComment `json:"comments"`
-	LastRunRef       *string        `json:"last_run_ref"`
-	LastRunNumber    *int           `json:"last_run_number"`
-	LastRunState     *string        `json:"last_run_state"`
-	IssueLockHeld    bool           `json:"issue_lock_held"`
-	PreserveTestEnv  bool           `json:"preserve_test_env"`
+	Ref             string         `json:"ref"`
+	Project         string         `json:"project"`
+	Repo            *string        `json:"repo"`
+	Number          *int           `json:"number"`
+	Title           string         `json:"title"`
+	Body            string         `json:"body"`
+	State           string         `json:"state"`
+	Labels          []string       `json:"labels"`
+	HTMLURL         *string        `json:"html_url"`
+	Comments        []IssueComment `json:"comments"`
+	LastRunRef      *string        `json:"last_run_ref"`
+	LastRunNumber   *int           `json:"last_run_number"`
+	LastRunState    *string        `json:"last_run_state"`
+	IssueLockHeld   bool           `json:"issue_lock_held"`
+	Metadata        map[string]any `json:"metadata"`
+	PreserveTestEnv bool           `json:"preserve_test_env"`
 }
 
 func listIssues(store ReadStore) http.HandlerFunc {
@@ -187,6 +190,7 @@ type IssueCreate struct {
 	Body            string
 	Labels          []string
 	Workflow        *string
+	Agent           *agentruntime.Policy
 	PreserveTestEnv bool
 }
 
@@ -204,6 +208,7 @@ type IssuePatch struct {
 	Body            *string
 	Labels          *[]string
 	State           *string
+	Agent           *agentruntime.Policy
 	PreserveTestEnv *bool
 }
 
@@ -234,20 +239,22 @@ type IssueCommentDelete struct {
 // HTTP request bodies
 
 type IssueCreateRequest struct {
-	Project         string   `json:"project"`
-	Title           string   `json:"title"`
-	Body            string   `json:"body"`
-	Labels          []string `json:"labels"`
-	Workflow        *string  `json:"workflow"`
-	PreserveTestEnv bool     `json:"preserve_test_env"`
+	Project         string               `json:"project"`
+	Title           string               `json:"title"`
+	Body            string               `json:"body"`
+	Labels          []string             `json:"labels"`
+	Workflow        *string              `json:"workflow"`
+	Agent           *agentruntime.Policy `json:"agent"`
+	PreserveTestEnv bool                 `json:"preserve_test_env"`
 }
 
 type IssuePatchRequest struct {
-	Title           *string   `json:"title"`
-	Body            *string   `json:"body"`
-	Labels          *[]string `json:"labels"`
-	State           *string   `json:"state"`
-	PreserveTestEnv *bool     `json:"preserve_test_env"`
+	Title           *string              `json:"title"`
+	Body            *string              `json:"body"`
+	Labels          *[]string            `json:"labels"`
+	State           *string              `json:"state"`
+	Agent           *agentruntime.Policy `json:"agent"`
+	PreserveTestEnv *bool                `json:"preserve_test_env"`
 }
 
 type IssueCommentRequest struct {
@@ -274,12 +281,17 @@ func createIssue(store ReadStore) http.HandlerFunc {
 			writeProblem(w, http.StatusBadRequest, "title required")
 			return
 		}
+		if err := agentruntime.ValidateIssuePolicy(body.Agent); err != nil {
+			writeProblem(w, http.StatusBadRequest, err.Error())
+			return
+		}
 		detail, err := issueStore.CreateIssue(r.Context(), IssueCreate{
 			Project:         body.Project,
 			Title:           body.Title,
 			Body:            body.Body,
 			Labels:          body.Labels,
 			Workflow:        body.Workflow,
+			Agent:           body.Agent,
 			PreserveTestEnv: body.PreserveTestEnv,
 		})
 		var validationErr ValidationError
@@ -312,6 +324,10 @@ func patchIssueByNumber(store ReadStore) http.HandlerFunc {
 			writeProblem(w, http.StatusBadRequest, "invalid JSON body")
 			return
 		}
+		if err := agentruntime.ValidateIssuePolicy(body.Agent); err != nil {
+			writeProblem(w, http.StatusBadRequest, err.Error())
+			return
+		}
 		detail, err := issueStore.PatchIssueByNumber(r.Context(), IssuePatch{
 			Project:         r.PathValue("project"),
 			Number:          number,
@@ -319,6 +335,7 @@ func patchIssueByNumber(store ReadStore) http.HandlerFunc {
 			Body:            body.Body,
 			Labels:          body.Labels,
 			State:           body.State,
+			Agent:           body.Agent,
 			PreserveTestEnv: body.PreserveTestEnv,
 		})
 		var validationErr ValidationError

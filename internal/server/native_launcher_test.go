@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/nelsong6/glimmung/internal/domain/agentruntime"
 )
 
 func TestNativeJobManifestIncludesRunnerCallbackEnv(t *testing.T) {
@@ -33,6 +35,15 @@ func TestNativeJobManifestIncludesRunnerCallbackEnv(t *testing.T) {
 				}},
 				"phase_inputs": map[string]any{
 					"target": "provision",
+				},
+				"agent_runtime": agentruntime.Snapshot{
+					Default: agentruntime.ResolvedProfile{
+						ProfileID:       "codex-deep",
+						Provider:        agentruntime.ProviderCodex,
+						Model:           "gpt-5.5",
+						ReasoningEffort: "xhigh",
+						Source:          "issue",
+					},
 				},
 			},
 		},
@@ -91,6 +102,9 @@ func TestNativeJobManifestIncludesRunnerCallbackEnv(t *testing.T) {
 	}
 	if !strings.Contains(env["GLIMMUNG_EVIDENCE_REQUIREMENTS_JSON"], `"kind":"video"`) {
 		t.Fatalf("evidence requirements env=%q", env["GLIMMUNG_EVIDENCE_REQUIREMENTS_JSON"])
+	}
+	if !strings.Contains(env["GLIMMUNG_AGENT_RUNTIME_JSON"], `"profile_id":"codex-deep"`) {
+		t.Fatalf("agent runtime env=%q", env["GLIMMUNG_AGENT_RUNTIME_JSON"])
 	}
 	if env["AZURE_SUBSCRIPTION_ID"] != "sub-123" {
 		t.Fatalf("job env=%q", env["AZURE_SUBSCRIPTION_ID"])

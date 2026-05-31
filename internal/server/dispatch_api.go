@@ -7,8 +7,10 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
+	"github.com/nelsong6/glimmung/internal/domain/agentruntime"
 	"github.com/nelsong6/glimmung/internal/domain/budget"
 	"github.com/nelsong6/glimmung/internal/domain/publicids"
 	"github.com/nelsong6/glimmung/internal/metrics"
@@ -37,6 +39,7 @@ type IssueDispatchData struct {
 	Title           string
 	Body            string
 	Labels          []string
+	Agent           *agentruntime.Policy
 	PreserveTestEnv bool
 }
 
@@ -63,6 +66,7 @@ type CreateRunRequest struct {
 	SlotLeaseRef            string
 	TriggerSource           map[string]any
 	EvidenceRequirements    []EvidenceRequirement
+	AgentRuntime            agentruntime.Snapshot
 	PreserveTestEnv         bool
 }
 
@@ -97,6 +101,7 @@ type CreateRecycleCycleRequest struct {
 
 // RunDispatchStore provides all store operations needed by the dispatch handler.
 type RunDispatchStore interface {
+	ReadProjectForDispatch(ctx context.Context, project string) (Project, error)
 	ReadProjectGitHubRepo(ctx context.Context, project string) (string, error)
 	ReadIssueForDispatch(ctx context.Context, project string, issueNumber int) (IssueDispatchData, error)
 	GetWorkflowByName(ctx context.Context, project, name string) (*Workflow, error)
@@ -137,7 +142,7 @@ type PublicDispatchResult struct {
 }
 
 // dispatchRunHandler handles POST /v1/runs/dispatch (admin-only).
-func dispatchRunHandler(store ReadStore, nativeLauncher NativeLauncher) http.HandlerFunc {
+func dispatchRunHandler(settings Settings, store ReadStore, nativeLauncher NativeLauncher) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		dispatchStore, ok := store.(RunDispatchStore)
 		if !ok || dispatchStore == nil {
@@ -150,7 +155,12 @@ func dispatchRunHandler(store ReadStore, nativeLauncher NativeLauncher) http.Han
 			writeProblem(w, http.StatusBadRequest, "invalid request body")
 			return
 		}
-		result, problem := dispatchRun(r.Context(), dispatchStore, nativeLauncher, req)
+		globalRuntime, err := validateAgentRuntimeConfigForSettings(settings)
+		if err != nil {
+			writeProblem(w, http.StatusServiceUnavailable, "global agent runtime config is invalid: "+err.Error())
+			return
+		}
+		result, problem := dispatchRunWithAgentRuntime(r.Context(), dispatchStore, nativeLauncher, globalRuntime, req)
 		if problem != nil {
 			writeProblem(w, problem.status, problem.message)
 			return
@@ -165,6 +175,10 @@ type dispatchProblem struct {
 }
 
 func dispatchRun(ctx context.Context, dispatchStore RunDispatchStore, nativeLauncher NativeLauncher, req DispatchRunRequest) (PublicDispatchResult, *dispatchProblem) {
+	return dispatchRunWithAgentRuntime(ctx, dispatchStore, nativeLauncher, agentruntime.DefaultConfig(), req)
+}
+
+func dispatchRunWithAgentRuntime(ctx context.Context, dispatchStore RunDispatchStore, nativeLauncher NativeLauncher, globalRuntime agentruntime.Config, req DispatchRunRequest) (PublicDispatchResult, *dispatchProblem) {
 	if req.Project == "" {
 		return PublicDispatchResult{}, &dispatchProblem{status: http.StatusBadRequest, message: "project required"}
 	}
@@ -172,7 +186,7 @@ func dispatchRun(ctx context.Context, dispatchStore RunDispatchStore, nativeLaun
 		return PublicDispatchResult{}, &dispatchProblem{status: http.StatusBadRequest, message: "issue_number required"}
 	}
 
-	issueRepo, err := dispatchStore.ReadProjectGitHubRepo(ctx, req.Project)
+	project, err := dispatchStore.ReadProjectForDispatch(ctx, req.Project)
 	if errors.Is(err, ErrNotFound) {
 		return PublicDispatchResult{
 			State:  "no_project",
@@ -182,6 +196,7 @@ func dispatchRun(ctx context.Context, dispatchStore RunDispatchStore, nativeLaun
 	if err != nil {
 		return PublicDispatchResult{}, &dispatchProblem{status: http.StatusInternalServerError, message: "read project failed"}
 	}
+	issueRepo := project.GitHubRepo
 
 	issue, err := dispatchStore.ReadIssueForDispatch(ctx, req.Project, req.IssueNumber)
 	if errors.Is(err, ErrNotFound) {
@@ -218,6 +233,21 @@ func dispatchRun(ctx context.Context, dispatchStore RunDispatchStore, nativeLaun
 		Metadata:            wf.Metadata,
 	}); err != nil {
 		return PublicDispatchResult{}, &dispatchProblem{status: http.StatusUnprocessableEntity, message: err.Error()}
+	}
+	projectRuntime, projectHasRuntime, err := agentruntime.ConfigFromMetadata(project.Metadata)
+	if err != nil {
+		return PublicDispatchResult{}, &dispatchProblem{status: http.StatusUnprocessableEntity, message: "project agent runtime config is invalid: " + err.Error()}
+	}
+	agentRuntime, err := agentruntime.Resolve(
+		globalRuntime,
+		projectRuntime,
+		projectHasRuntime,
+		issue.Agent,
+		workflowAgentSlots(*wf),
+		project.ConfigSchemaRef,
+	)
+	if err != nil {
+		return PublicDispatchResult{}, &dispatchProblem{status: http.StatusUnprocessableEntity, message: "resolve agent runtime: " + err.Error()}
 	}
 
 	if nativeLauncher == nil {
@@ -281,6 +311,7 @@ func dispatchRun(ctx context.Context, dispatchStore RunDispatchStore, nativeLaun
 			IssueRepo:            issueRepo,
 			TriggerSource:        triggerSource,
 			EvidenceRequirements: evidenceRequirements,
+			AgentRuntime:         agentRuntime,
 		}, issue, issueRepo, initPhase.Name, 0, nil),
 		TTLSeconds: nativeLeaseTTLP(leaseTTLSeconds),
 	}, dispatchStore.AcquireLease)
@@ -326,6 +357,7 @@ func dispatchRun(ctx context.Context, dispatchStore RunDispatchStore, nativeLaun
 		SlotLeaseRef:            initialLeaseRef,
 		TriggerSource:           triggerSource,
 		EvidenceRequirements:    evidenceRequirements,
+		AgentRuntime:            agentRuntime,
 		PreserveTestEnv:         issue.PreserveTestEnv,
 	})
 	if err != nil {
@@ -352,6 +384,7 @@ func dispatchRun(ctx context.Context, dispatchStore RunDispatchStore, nativeLaun
 		SlotLeaseRef:         &initialLeaseRef,
 		TriggerSource:        triggerSource,
 		EvidenceRequirements: evidenceRequirements,
+		AgentRuntime:         agentRuntime,
 	}
 	admission, err := admitRunCycle(ctx, dispatchStore, nativeLauncher, runData, wf, issue, issueRepo, LeasePurposeDispatch)
 	if err != nil {
@@ -386,6 +419,25 @@ func dispatchEvidenceRequirements(wf *Workflow, issue IssueDispatchData) []Evide
 		wf.DefaultRequirements["evidence_requirements"],
 	))
 	return MergeEvidenceRequirements(workflowRequirements, EvidenceRequirementsFromIssueLabels(issue.Labels))
+}
+
+func workflowAgentSlots(wf Workflow) []string {
+	var slots []string
+	for _, phase := range wf.Phases {
+		for _, job := range phase.Jobs {
+			for _, step := range job.Steps {
+				if strings.TrimSpace(step.Type) != "agent" {
+					continue
+				}
+				slot := agentruntime.DefaultSlot
+				if step.Agent != nil && strings.TrimSpace(step.Agent.Slot) != "" {
+					slot = strings.TrimSpace(step.Agent.Slot)
+				}
+				slots = append(slots, slot)
+			}
+		}
+	}
+	return agentruntime.WorkflowSlots(slots)
 }
 
 func firstNonEmptyAny(values ...any) any {

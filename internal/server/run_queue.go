@@ -403,6 +403,9 @@ func runCycleLeaseMetadata(run RunReplayData, issue IssueDispatchData, issueRepo
 	if len(run.EvidenceRequirements) > 0 {
 		metadata["evidence_requirements"] = run.EvidenceRequirements
 	}
+	if run.AgentRuntime.Default.ProfileID != "" {
+		metadata["agent_runtime"] = run.AgentRuntime
+	}
 	if len(phaseInputs) > 0 {
 		metadata["phase_inputs"] = phaseInputs
 	}

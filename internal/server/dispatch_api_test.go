@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/nelsong6/glimmung/internal/auth"
+	"github.com/nelsong6/glimmung/internal/domain/agentruntime"
 	"github.com/nelsong6/glimmung/internal/domain/budget"
 )
 
@@ -19,6 +20,7 @@ type fakeDispatchStore struct {
 
 	githubRepo    string
 	githubRepoErr error
+	project       *Project
 
 	issue    *IssueDispatchData
 	issueErr error
@@ -63,6 +65,19 @@ func (l *fakeNativeLauncher) LaunchNativePhase(ctx context.Context, req NativeLa
 
 func (s *fakeDispatchStore) ReadProjectGitHubRepo(context.Context, string) (string, error) {
 	return s.githubRepo, s.githubRepoErr
+}
+
+func (s *fakeDispatchStore) ReadProjectForDispatch(_ context.Context, project string) (Project, error) {
+	if s.project != nil {
+		return *s.project, nil
+	}
+	if s.githubRepoErr != nil {
+		return Project{}, s.githubRepoErr
+	}
+	if s.githubRepo == "" {
+		return Project{}, ErrNotFound
+	}
+	return Project{Name: project, GitHubRepo: s.githubRepo, Metadata: map[string]any{}}, nil
 }
 
 func (s *fakeDispatchStore) ReadIssueForDispatch(context.Context, string, int) (IssueDispatchData, error) {
@@ -128,7 +143,7 @@ func (s *fakeDispatchStore) AbortRunByID(context.Context, string, string, string
 func newDispatchTestHandler(store ReadStore, nativeLauncher NativeLauncher) http.Handler {
 	adminAuthenticator := fakeAdminAuthenticator{user: auth.User{Sub: "admin"}}
 	mux := http.NewServeMux()
-	mux.Handle("POST /v1/runs/dispatch", requireAdmin(adminAuthenticator, http.HandlerFunc(dispatchRunHandler(store, nativeLauncher))))
+	mux.Handle("POST /v1/runs/dispatch", requireAdmin(adminAuthenticator, http.HandlerFunc(dispatchRunHandler(Settings{}, store, nativeLauncher))))
 	return mux
 }
 
@@ -301,6 +316,77 @@ func TestDispatchRunDispatchedNativeK8sJob(t *testing.T) {
 	}
 	if store.leaseReq.TTLSeconds == nil || *store.leaseReq.TTLSeconds != wantTTL {
 		t.Fatalf("lease ttl=%v, want %d", store.leaseReq.TTLSeconds, wantTTL)
+	}
+}
+
+func TestDispatchRunSnapshotsAgentRuntimePolicy(t *testing.T) {
+	store := minimalDispatchStore()
+	store.project = &Project{
+		Name:            "proj",
+		GitHubRepo:      "owner/repo",
+		ConfigSchemaRef: "project-config:abc123",
+		Metadata: map[string]any{
+			"agent_runtime": agentruntime.Config{
+				Profiles: map[string]agentruntime.Profile{
+					"project-fast": {ID: "project-fast", Provider: agentruntime.ProviderCodex, Model: "gpt-5.4-mini", ReasoningEffort: "medium"},
+					"issue-deep":   {ID: "issue-deep", Provider: agentruntime.ProviderCodex, Model: "gpt-5.5", ReasoningEffort: "xhigh"},
+				},
+				Policy: agentruntime.Policy{
+					Default: agentruntime.PolicyDecision{Mode: agentruntime.ModeOverride, Profile: "project-fast"},
+				},
+			},
+		},
+	}
+	store.issue.Agent = &agentruntime.Policy{
+		Default: agentruntime.PolicyDecision{Mode: agentruntime.ModeOverride, Profile: "issue-deep"},
+		Slots: map[string]agentruntime.PolicyDecision{
+			"implementation": {Mode: agentruntime.ModeOverride, Profile: "project-fast"},
+		},
+	}
+	store.wf.Phases[0].Jobs[0].Managed = true
+	store.wf.Phases[0].Jobs[0].Steps = []NativeStepSpec{{
+		Slug:  "implement",
+		Type:  "agent",
+		Agent: &AgentStepSpec{Slot: "implementation"},
+	}}
+
+	launcher := &fakeNativeLauncher{}
+	rec := httptest.NewRecorder()
+	newDispatchTestHandler(store, launcher).ServeHTTP(rec, dispatchRequest("proj", 1))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if store.runReq == nil {
+		t.Fatal("run request was not captured")
+	}
+	if got := store.runReq.AgentRuntime.Default.ProfileID; got != "issue-deep" {
+		t.Fatalf("default profile=%q, want issue-deep", got)
+	}
+	if got := store.runReq.AgentRuntime.Default.Source; got != "issue" {
+		t.Fatalf("default source=%q, want issue", got)
+	}
+	slot, ok := store.runReq.AgentRuntime.Slots["implementation"]
+	if !ok {
+		t.Fatalf("implementation slot missing from snapshot: %#v", store.runReq.AgentRuntime.Slots)
+	}
+	if slot.ProfileID != "project-fast" || slot.Source != "issue" {
+		t.Fatalf("implementation slot=%#v, want project-fast from issue", slot)
+	}
+	if got := store.runReq.AgentRuntime.ProjectConfigSchemaRef; got != "project-config:abc123" {
+		t.Fatalf("project schema ref=%q", got)
+	}
+	if store.leaseReq == nil {
+		t.Fatal("lease request was not captured")
+	}
+	leaseSnapshot, ok := store.leaseReq.Metadata["agent_runtime"].(agentruntime.Snapshot)
+	if !ok {
+		t.Fatalf("lease agent_runtime=%T %#v", store.leaseReq.Metadata["agent_runtime"], store.leaseReq.Metadata["agent_runtime"])
+	}
+	if leaseSnapshot.Default.ProfileID != "issue-deep" {
+		t.Fatalf("lease default profile=%q", leaseSnapshot.Default.ProfileID)
+	}
+	if launcher.req.Run.AgentRuntime.Default.ProfileID != "issue-deep" {
+		t.Fatalf("launch snapshot=%#v", launcher.req.Run.AgentRuntime)
 	}
 }
 

@@ -557,6 +557,27 @@ func TestNormalizeWorkflowRegisterForProjectDefaultsToK8sJob(t *testing.T) {
 	}
 }
 
+func TestNativeJobDocRoundTripsAgentStepConfig(t *testing.T) {
+	job := server.NativeJobSpec{
+		ID:      "implement",
+		Managed: true,
+		Steps: []server.NativeStepSpec{{
+			Slug:  "agent",
+			Type:  "agent",
+			Agent: &server.AgentStepSpec{Slot: "implementation", Prompt: "ship it", PromptFile: ".glimmung/prompts/implement.md"},
+		}},
+	}
+
+	roundTrip := jobFromDoc(nativeJobDocFromSpec(job))
+	if len(roundTrip.Steps) != 1 || roundTrip.Steps[0].Agent == nil {
+		t.Fatalf("round trip step=%#v", roundTrip.Steps)
+	}
+	got := roundTrip.Steps[0].Agent
+	if got.Slot != "implementation" || got.Prompt != "ship it" || got.PromptFile != ".glimmung/prompts/implement.md" {
+		t.Fatalf("agent step=%#v", got)
+	}
+}
+
 func TestValidateWorkflowRegisterRejectsNonNativeKind(t *testing.T) {
 	req := server.WorkflowRegister{
 		Project: "glimmung",

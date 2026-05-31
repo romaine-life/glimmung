@@ -207,6 +207,14 @@ export const mockSnapshot = {
     global_ttl_seconds: 3600,
     hot_swap_min_ttl_seconds: 1800,
   },
+  agent_runtime: {
+    profiles: {
+      "codex-deep": { id: "codex-deep", provider: "codex", model: "gpt-5.5", reasoning_effort: "xhigh" },
+      "codex-fast": { id: "codex-fast", provider: "codex", model: "gpt-5.4-mini", reasoning_effort: "medium" },
+      "claude-sonnet": { id: "claude-sonnet", provider: "claude", model: "claude-sonnet-4-6" },
+    },
+    policy: { default: { mode: "override" as const, profile: "codex-deep" } },
+  },
   projects: [
     {
       id: "project-glimmung",
@@ -972,7 +980,12 @@ function handleMockRequest(url: URL, init?: RequestInit): Response {
   const path = url.pathname;
 
   if (path === "/v1/config") {
-    return json({ entra_client_id: "mock", authority: "https://login.microsoftonline.com/mock", tank_operator_base_url: "https://tank.mock.local" });
+    return json({
+      entra_client_id: "mock",
+      authority: "https://login.microsoftonline.com/mock",
+      tank_operator_base_url: "https://tank.mock.local",
+      agent_runtime: mockSnapshot.agent_runtime,
+    });
   }
   if (path === "/v1/issues" && method === "GET") {
     const project = url.searchParams.get("project");

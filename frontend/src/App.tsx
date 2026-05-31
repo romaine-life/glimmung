@@ -9,11 +9,21 @@ import { TouchpointsView } from "./TouchpointsView";
 import { StyleguideView } from "./StyleguideView";
 import { PhaseGraph, type PhaseGraphPhase } from "./PhaseGraph";
 import { RecyclePolicyPanel } from "./RecyclePolicyPanel";
+import { AgentRuntimePolicyFields } from "./AgentRuntimePolicyFields";
 import { workflowToPhaseGraphModel } from "./workflowGraphModel";
 import { resolveProjectWorkflow } from "./workflowLookup";
 import { authedFetch, currentAccount, initAuth, signIn, signOut, type Account } from "./auth";
 import { isMockMode, mockRuns, mockSnapshot } from "./mockApi";
 import { ISSUE_DETAIL_CHILD_ROUTES, buildBreadcrumbs } from "./routes";
+import {
+  agentRuntimeConfigFromMetadata,
+  agentRuntimeProfiles,
+  agentRuntimeSnapshotLabel,
+  agentSlotsFromWorkflow,
+  buildAgentPolicy,
+  type AgentRuntimeConfig,
+  type AgentRuntimeSnapshot,
+} from "./agentRuntime";
 
 export { buildBreadcrumbs } from "./routes";
 
@@ -99,6 +109,7 @@ type Project = {
   name: string;
   github_repo: string;
   argocd_app?: string;
+  config_schema_ref?: string | null;
   metadata: Record<string, unknown>;
   created_at: string;
 };
@@ -138,6 +149,19 @@ type NativeJobSpec = {
   name?: string | null;
   image?: string;
   primitive?: string;
+  managed?: boolean;
+  steps?: NativeStepSpec[];
+};
+
+type NativeStepSpec = {
+  slug: string;
+  type?: string;
+  run?: string;
+  agent?: {
+    slot?: string;
+    prompt?: string;
+    prompt_file?: string;
+  } | null;
 };
 
 type PrPrimitiveSpec = {
@@ -164,6 +188,7 @@ type ProjectRun = {
   cycles: number;
   current_phase: string;
   cost_usd: number;
+  agent_runtime?: AgentRuntimeSnapshot;
   started_at: string;
   updated_at: string;
 };
@@ -211,6 +236,7 @@ type RunReport = {
   validation_url: string | null;
   screenshots_markdown: string | null;
   abort_reason: string | null;
+  agent_runtime?: AgentRuntimeSnapshot;
   started_at: string;
   completed_at: string | null;
   updated_at: string;
@@ -222,6 +248,7 @@ type Snapshot = {
   test_environments?: TestEnvironment[];
   waiting_test_slot_requests?: TestSlotRequest[];
   test_lease_defaults?: TestLeaseDefaults;
+  agent_runtime?: AgentRuntimeConfig;
   projects: Project[];
   workflows: Workflow[];
   inflight_locks?: InflightLocks;
@@ -1399,13 +1426,28 @@ function IssueOnboardingView({
     ? (project.metadata?.app_type ?? (project.name === "spirelens" ? "non_web" : "native_web_app")) === "native_web_app"
     : true;
   const defaultUiValidation = isWeb && project?.metadata?.ui_validation_default !== false;
+  const projectAgentRuntime = useMemo(
+    () => agentRuntimeConfigFromMetadata(project?.metadata),
+    [project?.metadata],
+  );
+  const agentProfiles = useMemo(
+    () => agentRuntimeProfiles(snap?.agent_runtime, projectAgentRuntime),
+    [projectAgentRuntime, snap?.agent_runtime],
+  );
   const [workflow, setWorkflow] = useState("");
+  const selectedWorkflow = workflows.find((w) => w.name === workflow) ?? null;
+  const agentSlots = useMemo(
+    () => agentSlotsFromWorkflow(selectedWorkflow),
+    [selectedWorkflow],
+  );
   const [title, setTitle] = useState("");
   const [objective, setObjective] = useState("");
   const [context, setContext] = useState("");
   const [acceptance, setAcceptance] = useState("");
   const [constraints, setConstraints] = useState("");
   const [labels, setLabels] = useState("");
+  const [agentProfile, setAgentProfile] = useState("");
+  const [agentSlotProfiles, setAgentSlotProfiles] = useState<Record<string, string>>({});
   const [uiValidation, setUiValidation] = useState(defaultUiValidation);
   const [startRun, setStartRun] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -1417,6 +1459,14 @@ function IssueOnboardingView({
     setUiValidation(defaultUiValidation);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [defaultUiValidation, project?.name]);
+
+  useEffect(() => {
+    setAgentSlotProfiles((current) => {
+      const next: Record<string, string> = {};
+      for (const slot of agentSlots) next[slot] = current[slot] ?? "";
+      return next;
+    });
+  }, [agentSlots]);
 
   if (snap === null) return <div className="empty">Connecting…</div>;
   if (!project) return <div className="empty">Project {projectName || "(missing)"} was not found.</div>;
@@ -1445,6 +1495,7 @@ function IssueOnboardingView({
           title,
           body,
           labels: labelList,
+          agent: buildAgentPolicy(agentProfile, agentSlotProfiles),
           ui_validation_requested: isWeb && uiValidation,
         }),
       });
@@ -1493,6 +1544,14 @@ function IssueOnboardingView({
           <label><span>Acceptance criteria</span><textarea value={acceptance} onChange={(e) => setAcceptance(e.target.value)} rows={4} /></label>
           <label><span>Constraints / links</span><textarea value={constraints} onChange={(e) => setConstraints(e.target.value)} rows={3} /></label>
           <label><span>Labels</span><input value={labels} onChange={(e) => setLabels(e.target.value)} placeholder="design, ui" /></label>
+          <AgentRuntimePolicyFields
+            profiles={agentProfiles}
+            defaultProfile={agentProfile}
+            onDefaultProfileChange={setAgentProfile}
+            slots={agentSlots}
+            slotProfiles={agentSlotProfiles}
+            onSlotProfileChange={(slot, profile) => setAgentSlotProfiles((current) => ({ ...current, [slot]: profile }))}
+          />
           <label className="checkbox-row">
             <input type="checkbox" checked={isWeb && uiValidation} disabled={!isWeb} onChange={(e) => setUiValidation(e.target.checked)} />
             <span>UI validation</span>
@@ -1774,6 +1833,7 @@ function projectRunGraph(run: ProjectRun, workflow: Workflow | undefined, projec
       run_display_number: run.run_display_number,
       cycle_number: run.cycle_number,
       run_cycle_number: run.run_cycle_number,
+      agent_runtime: run.agent_runtime,
       cycles_count: run.cycles,
       cumulative_cost_usd: run.cost_usd,
       entrypoint_phase: phaseNames[0] ?? run.current_phase,
@@ -1834,6 +1894,7 @@ function projectRunFromReport(report: RunReport): ProjectRun {
     cycles: report.attempts_count,
     current_phase: report.current_phase ?? "pending",
     cost_usd: report.cumulative_cost_usd,
+    agent_runtime: report.agent_runtime,
     started_at: report.started_at,
     updated_at: report.updated_at,
   };
@@ -1880,6 +1941,7 @@ function projectRunReportGraph(report: RunReport, workflow: Workflow | undefined
       queue_state: report.queue_state,
       admission_error: report.admission_error,
       slot_lease_ref: report.slot_lease_ref,
+      agent_runtime: report.agent_runtime,
       workflow: report.workflow,
       cost_usd: report.cumulative_cost_usd,
       issue_ref: report.issue_ref,
@@ -2021,6 +2083,7 @@ function ProjectRunView({
 
   const runIndex = runs.findIndex((candidate) => candidate.id === run.id);
   const runLabel = projectRunLabel(run, runs, runIndex >= 0 ? runIndex : 0);
+  const agentRuntimeLabel = agentRuntimeSnapshotLabel(liveReport?.agent_runtime ?? run.agent_runtime);
 
   return (
     <div className="project-workspace">
@@ -2078,6 +2141,10 @@ function ProjectRunView({
         <div>
           <span className="key">updated</span>
           <span className="mono">{relTime(run.updated_at)}</span>
+        </div>
+        <div>
+          <span className="key">agent</span>
+          <span className="mono">{agentRuntimeLabel}</span>
         </div>
       </section>
 

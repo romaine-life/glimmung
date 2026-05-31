@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/nelsong6/glimmung/internal/domain/agentruntime"
 	"github.com/nelsong6/glimmung/internal/domain/hotswap"
 )
 
@@ -53,6 +54,10 @@ func registerProject(store ReadStore, managedOrigins ManagedOriginReconciler) ht
 			return
 		}
 		if err := validateTestSlotHelmMetadata(req.Metadata); err != nil {
+			writeProblem(w, http.StatusUnprocessableEntity, err.Error())
+			return
+		}
+		if _, _, err := agentruntime.ConfigFromMetadata(req.Metadata); err != nil {
 			writeProblem(w, http.StatusUnprocessableEntity, err.Error())
 			return
 		}

@@ -1046,6 +1046,9 @@ func leaseForRunPhase(ctx context.Context, store RunCompletionStore, run RunRepl
 	if run.IssueLockHolderID != nil && *run.IssueLockHolderID != "" {
 		metadata["issue_lock_holder_id"] = *run.IssueLockHolderID
 	}
+	if run.AgentRuntime.Default.ProfileID != "" {
+		metadata["agent_runtime"] = run.AgentRuntime
+	}
 	lease.Metadata = metadata
 	return lease, nil
 }

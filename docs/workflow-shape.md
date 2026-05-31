@@ -99,6 +99,42 @@ verifier needs implementation's output, verifier goes in a
 This rules out gitlab-style `needs:` graphs at the job level, by
 design — pipeline shape is determined by phases, not by job DAGs.
 
+## Managed agent steps
+
+Managed native jobs can declare `type: agent` steps. The workflow owns where an
+agent is needed and which logical slot it occupies; Glimmung owns selection of
+the concrete provider/model at dispatch time.
+
+```yaml
+jobs:
+  - id: implement
+    managed: true
+    checkout:
+      ref: main
+    working_directory: /workspace/ambience
+    steps:
+      - slug: implement
+        type: agent
+        agent:
+          slot: implementation
+          prompt_file: .glimmung/prompts/implement.md
+```
+
+Agent runtime policy resolves in this order:
+
+1. Global config chooses the fleet default and profile catalog.
+2. Project config in `.glimmung/project.yaml` may inherit or override the
+   default and named slots.
+3. Issue metadata may inherit or override the default and named slots.
+
+Each decision is explicit: `mode: inherit` keeps the current value from the
+previous layer, while `mode: override` names a profile. Dispatch snapshots the
+resolved runtime onto the Run before any native work starts. The runner consumes
+only that snapshot through `GLIMMUNG_AGENT_RUNTIME_JSON`; changing global,
+project, or issue defaults later does not mutate an in-flight or historical
+run. This keeps agent selection containerized: a workflow inserts an agent step
+without forking the workflow per model/provider.
+
 ## The verify/gate boundary
 
 Two valid shapes for emitting a verdict at the testing boundary:

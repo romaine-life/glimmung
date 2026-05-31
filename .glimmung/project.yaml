@@ -60,3 +60,16 @@ metadata:
     fidelity_classifier:
       enabled: false
       command: ""
+
+  # Project-level agent runtime policy. Leaving these as explicit inherits
+  # keeps glimmung on the global default while preserving the durable override
+  # shape for project and issue authors.
+  agent_runtime:
+    policy:
+      default:
+        mode: inherit
+      slots:
+        implementation:
+          mode: inherit
+        verification:
+          mode: inherit
