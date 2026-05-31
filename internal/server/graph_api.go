@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/nelsong6/glimmung/internal/domain/agentruntime"
 	"github.com/nelsong6/glimmung/internal/domain/publicids"
 )
 
@@ -111,6 +112,7 @@ type RunProjectionRun struct {
 	StartedAt         string                  `json:"started_at"`
 	UpdatedAt         string                  `json:"updated_at"`
 	CompletedAt       *string                 `json:"completed_at,omitempty"`
+	AgentRuntime      agentruntime.Snapshot   `json:"agent_runtime"`
 	Topology          RunProjectionTopology   `json:"topology"`
 	Phases            []RunProjectionPhase    `json:"phases"`
 	Evidence          []RunProjectionEvidence `json:"evidence"`
@@ -914,7 +916,7 @@ func runGraphMetadata(run RunReport) map[string]any {
 			}},
 		})
 	}
-	return map[string]any{
+	metadata := map[string]any{
 		"run_ref":    run.RunRef,
 		"run_number": run.RunNumber,
 		"lineage": map[string]any{
@@ -923,6 +925,10 @@ func runGraphMetadata(run RunReport) map[string]any {
 		},
 		"cycles": cycles,
 	}
+	if run.AgentRuntime.Default.ProfileID != "" {
+		metadata["agent_runtime"] = run.AgentRuntime
+	}
+	return metadata
 }
 
 func buildRunGraphProjection(issueRef string, runs []RunReport, workflowsByKey map[string]Workflow, touchpoints []TouchpointRow, signals []GraphSignal) RunGraphProjection {
@@ -1042,6 +1048,7 @@ func runProjectionFromReport(run RunReport, workflow Workflow, touchpoints []Tou
 		StartedAt:         run.StartedAt.Format(time.RFC3339Nano),
 		UpdatedAt:         run.UpdatedAt.Format(time.RFC3339Nano),
 		CompletedAt:       timeStringPtr(run.CompletedAt),
+		AgentRuntime:      run.AgentRuntime,
 		Topology:          workflowTopologyForRun(workflow, run),
 		Phases:            runProjectionPhases(run, workflow),
 		Evidence:          runProjectionEvidence(run, touchpoints),

@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/nelsong6/glimmung/internal/domain/agentcost"
+	"github.com/nelsong6/glimmung/internal/domain/agentruntime"
 	"github.com/nelsong6/glimmung/internal/domain/decision"
 	"github.com/nelsong6/glimmung/internal/domain/innerjob"
 )
@@ -56,9 +57,16 @@ type stepSpec struct {
 	Slug             string            `json:"slug"`
 	Type             string            `json:"type"`
 	Run              string            `json:"run"`
+	Agent            *agentStepSpec    `json:"agent"`
 	Shell            string            `json:"shell"`
 	WorkingDirectory string            `json:"working_directory"`
 	Env              map[string]string `json:"env"`
+}
+
+type agentStepSpec struct {
+	Slot       string `json:"slot"`
+	Prompt     string `json:"prompt"`
+	PromptFile string `json:"prompt_file"`
 }
 
 type checkoutSpec struct {
@@ -76,6 +84,7 @@ type runnerConfig struct {
 	GitHubTokenURL string
 	AttemptToken   string
 	Workspace      string
+	AgentRuntime   agentruntime.Snapshot
 }
 
 type nativeRunner struct {
@@ -185,6 +194,12 @@ func runnerConfigFromEnv() (runnerConfig, error) {
 		}
 		attemptIndex = &parsed
 	}
+	var runtime agentruntime.Snapshot
+	if raw := strings.TrimSpace(os.Getenv("GLIMMUNG_AGENT_RUNTIME_JSON")); raw != "" {
+		if err := json.Unmarshal([]byte(raw), &runtime); err != nil {
+			return runnerConfig{}, fmt.Errorf("decode GLIMMUNG_AGENT_RUNTIME_JSON: %w", err)
+		}
+	}
 	token := strings.TrimSpace(os.Getenv("GLIMMUNG_ATTEMPT_TOKEN"))
 	if token == "" {
 		fromFile, err := os.ReadFile(defaultAttemptTokenPath)
@@ -201,6 +216,7 @@ func runnerConfigFromEnv() (runnerConfig, error) {
 		GitHubTokenURL: strings.TrimSpace(os.Getenv("GLIMMUNG_GITHUB_TOKEN_URL")),
 		AttemptToken:   token,
 		Workspace:      firstNonEmpty(os.Getenv("GLIMMUNG_WORKSPACE"), defaultWorkspace),
+		AgentRuntime:   runtime,
 	}, nil
 }
 
@@ -221,7 +237,7 @@ func (r *nativeRunner) run(ctx context.Context) error {
 		if strings.TrimSpace(step.Type) == "" {
 			step.Type = "run"
 		}
-		if step.Type != "run" {
+		if step.Type != "run" && step.Type != "agent" {
 			err := fmt.Errorf("step %q uses unsupported type %q", step.Slug, step.Type)
 			_ = r.complete(ctx, "failure", err.Error())
 			return err
@@ -318,7 +334,16 @@ func (r *nativeRunner) runStep(ctx context.Context, step stepSpec) error {
 	completionFile := filepath.Join(os.TempDir(), "glimmung-completion-"+slug+".json")
 	_ = os.Remove(outputFile)
 	_ = os.Remove(completionFile)
-	exitCode, execErr := r.executeStep(ctx, step, outputFile, completionFile)
+	var exitCode int
+	var execErr error
+	switch strings.TrimSpace(step.Type) {
+	case "", "run":
+		exitCode, execErr = r.executeStep(ctx, step, outputFile, completionFile)
+	case "agent":
+		exitCode, execErr = r.executeAgentStep(ctx, step, outputFile, completionFile)
+	default:
+		exitCode, execErr = 1, fmt.Errorf("unsupported step type %q", step.Type)
+	}
 	outputs, outputErr := parseOutputFile(outputFile)
 	if outputErr == nil {
 		outputErr = r.publishOutputs(ctx, slug, outputs)
@@ -382,6 +407,208 @@ func (r *nativeRunner) executeStep(ctx context.Context, step stepSpec, outputFil
 		return exitErr.ExitCode(), waitErr
 	}
 	return 1, waitErr
+}
+
+func (r *nativeRunner) executeAgentStep(ctx context.Context, step stepSpec, outputFile, completionFile string) (int, error) {
+	workdir := firstNonEmpty(step.WorkingDirectory, r.cfg.Job.WorkingDirectory, r.cfg.Workspace)
+	if err := os.MkdirAll(workdir, 0o755); err != nil {
+		return 1, err
+	}
+	spec := step.Agent
+	if spec == nil {
+		spec = &agentStepSpec{}
+	}
+	slot := strings.TrimSpace(spec.Slot)
+	if slot == "" {
+		slot = agentruntime.DefaultSlot
+	}
+	profile, ok := r.cfg.AgentRuntime.ProfileForSlot(slot)
+	if !ok {
+		return 1, fmt.Errorf("agent step %q slot %q has no resolved runtime profile", step.Slug, slot)
+	}
+	if err := r.postEvent(ctx, "agent_runtime_selected", &step.Slug, "", nil, map[string]any{
+		"slot":             slot,
+		"profile_id":       profile.ProfileID,
+		"provider":         profile.Provider,
+		"model":            profile.Model,
+		"reasoning_effort": profile.ReasoningEffort,
+		"source":           profile.Source,
+	}); err != nil {
+		return 1, err
+	}
+	prompt, err := r.agentPrompt(workdir, step, *spec, slot, profile)
+	if err != nil {
+		return 1, err
+	}
+	promptHandle, err := os.CreateTemp("", "glimmung-agent-prompt-*.md")
+	if err != nil {
+		return 1, err
+	}
+	promptFile := promptHandle.Name()
+	if _, err := promptHandle.WriteString(prompt); err != nil {
+		_ = promptHandle.Close()
+		return 1, err
+	}
+	if err := promptHandle.Close(); err != nil {
+		return 1, err
+	}
+	defer os.Remove(promptFile)
+	runStep := step
+	runStep.Type = "run"
+	runStep.Run, err = agentRunScript(profile, workdir, promptFile, completionFile)
+	if err != nil {
+		return 1, err
+	}
+	runStep.Shell = "bash"
+	return r.executeStep(ctx, runStep, outputFile, completionFile)
+}
+
+func (r *nativeRunner) agentPrompt(workdir string, step stepSpec, spec agentStepSpec, slot string, profile agentruntime.ResolvedProfile) (string, error) {
+	var b strings.Builder
+	fmt.Fprintf(&b, "# Glimmung agent task\n\n")
+	fmt.Fprintf(&b, "- run: %s\n", strings.TrimSpace(os.Getenv("GLIMMUNG_RUN_REF")))
+	fmt.Fprintf(&b, "- project: %s\n", strings.TrimSpace(os.Getenv("GLIMMUNG_PROJECT")))
+	fmt.Fprintf(&b, "- workflow: %s\n", strings.TrimSpace(os.Getenv("GLIMMUNG_WORKFLOW")))
+	fmt.Fprintf(&b, "- phase: %s\n", strings.TrimSpace(os.Getenv("GLIMMUNG_PHASE")))
+	fmt.Fprintf(&b, "- job: %s\n", strings.TrimSpace(os.Getenv("GLIMMUNG_JOB_ID")))
+	fmt.Fprintf(&b, "- step: %s\n", strings.TrimSpace(step.Slug))
+	fmt.Fprintf(&b, "- agent slot: %s\n", slot)
+	fmt.Fprintf(&b, "- agent profile: %s (%s %s)\n\n", profile.ProfileID, profile.Provider, profile.Model)
+	if issueTitle := strings.TrimSpace(os.Getenv("GLIMMUNG_ISSUE_TITLE")); issueTitle != "" {
+		fmt.Fprintf(&b, "## Issue\n\n%s\n\n", issueTitle)
+	}
+	if issueBody := strings.TrimSpace(os.Getenv("GLIMMUNG_ISSUE_BODY")); issueBody != "" {
+		fmt.Fprintf(&b, "## Issue body\n\n%s\n\n", issueBody)
+	}
+	if feedback := strings.TrimSpace(os.Getenv("GLIMMUNG_FEEDBACK")); feedback != "" {
+		fmt.Fprintf(&b, "## Human feedback\n\n%s\n\n", feedback)
+	}
+	if reqs := strings.TrimSpace(os.Getenv("GLIMMUNG_EVIDENCE_REQUIREMENTS_JSON")); reqs != "" {
+		fmt.Fprintf(&b, "## Evidence requirements\n\n```json\n%s\n```\n\n", reqs)
+	}
+	if file := strings.TrimSpace(spec.PromptFile); file != "" {
+		path := file
+		if !filepath.IsAbs(path) {
+			path = filepath.Join(workdir, path)
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return "", fmt.Errorf("read agent prompt_file %q: %w", file, err)
+		}
+		fmt.Fprintf(&b, "## Project agent instructions\n\n%s\n\n", strings.TrimSpace(string(data)))
+	}
+	if inline := strings.TrimSpace(spec.Prompt); inline != "" {
+		fmt.Fprintf(&b, "## Step instructions\n\n%s\n\n", inline)
+	}
+	return b.String(), nil
+}
+
+func agentRunScript(profile agentruntime.ResolvedProfile, workdir, promptFile, completionFile string) (string, error) {
+	switch strings.TrimSpace(profile.Provider) {
+	case agentruntime.ProviderCodex:
+		args := []string{
+			"exec",
+			"--cd", workdir,
+			"--model", profile.Model,
+			"--dangerously-bypass-approvals-and-sandbox",
+			"--json",
+			"--output-last-message", filepath.Join(os.TempDir(), "glimmung-codex-last-message.md"),
+			"-",
+		}
+		if strings.TrimSpace(profile.ReasoningEffort) != "" {
+			args = append([]string{"exec", "-c", "model_reasoning_effort=" + shellQuoteForTOML(profile.ReasoningEffort)}, args[1:]...)
+		}
+		return agentShellPreamble() + "\n" +
+			"last_message=" + shellQuoteArg(filepath.Join(os.TempDir(), "glimmung-codex-last-message.md")) + "\n" +
+			"cat " + shellQuoteArg(promptFile) + " | codex " + shellJoin(args) + "\n" +
+			"if [ -s \"$last_message\" ] && command -v jq >/dev/null 2>&1; then jq -Rs '{summary_markdown:.}' \"$last_message\" > " + shellQuoteArg(completionFile) + "; fi\n", nil
+	case agentruntime.ProviderClaude:
+		args := []string{
+			"--print",
+			"--model", profile.Model,
+			"--output-format", "stream-json",
+			"--verbose",
+			"--dangerously-skip-permissions",
+		}
+		return claudeShellPreamble(workdir) + "\n" +
+			"cat " + shellQuoteArg(promptFile) + " | claude " + shellJoin(args) + "\n", nil
+	default:
+		return "", fmt.Errorf("unsupported agent provider %q", profile.Provider)
+	}
+}
+
+func agentShellPreamble() string {
+	return `set -Eeuo pipefail
+if [ -f /etc/codex-creds/auth.json ]; then
+  mkdir -p "$HOME/.codex"
+  cp /etc/codex-creds/auth.json "$HOME/.codex/auth.json"
+  chmod 600 "$HOME/.codex/auth.json"
+fi
+git config --global user.name "glimmung-agent[bot]" || true
+git config --global user.email "glimmung-agent@romaine.life" || true`
+}
+
+func claudeShellPreamble(workdir string) string {
+	return agentShellPreamble() + `
+mkdir -p "$HOME/.claude"
+cat > "$HOME/.claude/.credentials.json" <<'EOF'
+{
+  "claudeAiOauth": {
+    "accessToken": "managed-by-glimmung",
+    "refreshToken": "managed-by-glimmung",
+    "expiresAt": 9999999999000,
+    "scopes": ["user:inference", "user:profile"],
+    "subscriptionType": "max",
+    "rateLimitTier": "max"
+  }
+}
+EOF
+chmod 600 "$HOME/.claude/.credentials.json"
+cat > "$HOME/.claude/settings.json" <<'EOF'
+{"theme":"dark","permissions":{"defaultMode":"bypassPermissions"},"skipDangerousModePermissionPrompt":true}
+EOF
+cat > "$HOME/.claude.json" <<EOF
+{
+  "hasCompletedOnboarding": true,
+  "officialMarketplaceAutoInstallAttempted": true,
+  "officialMarketplaceAutoInstalled": true,
+  "projects": {
+    ` + jsonString(workdir) + `: {
+      "allowedTools": [],
+      "hasTrustDialogAccepted": true,
+      "projectOnboardingSeenCount": 1
+    }
+  }
+}
+EOF`
+}
+
+func shellJoin(args []string) string {
+	quoted := make([]string, 0, len(args))
+	for _, arg := range args {
+		quoted = append(quoted, shellQuoteArg(arg))
+	}
+	return strings.Join(quoted, " ")
+}
+
+func shellQuoteArg(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
+}
+
+func shellQuoteForTOML(value string) string {
+	b, err := json.Marshal(value)
+	if err != nil {
+		return `""`
+	}
+	return string(b)
+}
+
+func jsonString(value string) string {
+	b, err := json.Marshal(value)
+	if err != nil {
+		return `""`
+	}
+	return string(b)
 }
 
 func shellCommand(shell, script string) (string, []string) {

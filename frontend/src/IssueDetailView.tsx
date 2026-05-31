@@ -22,6 +22,20 @@ import ReactMarkdown from "react-markdown";
 import { Link, useLocation, useNavigate, useOutletContext, useParams } from "react-router-dom";
 import remarkGfm from "remark-gfm";
 import { authedFetch, currentConfig } from "./auth";
+import {
+  agentPolicyFromMetadata,
+  agentRuntimeConfigFromMetadata,
+  agentRuntimeFromMetadata,
+  agentRuntimeProfiles,
+  agentRuntimeSnapshotLabel,
+  agentSlotsFromWorkflow,
+  buildAgentPolicy,
+  defaultAgentProfile,
+  slotAgentProfiles,
+  type AgentRuntimeConfig,
+  type AgentRuntimeSnapshot,
+} from "./agentRuntime";
+import { AgentRuntimePolicyFields } from "./AgentRuntimePolicyFields";
 import { lokiExploreUrl } from "./grafanaLinks";
 import { PhaseGraph, type PhaseGraphPhase } from "./PhaseGraph";
 import { RecyclePolicyPanel } from "./RecyclePolicyPanel";
@@ -116,6 +130,7 @@ type RunProjectionRun = {
   cycle_number?: number | null;
   run_cycle_number?: number | null;
   workflow_schema_ref?: string | null;
+  agent_runtime?: AgentRuntimeSnapshot;
   queue_state?: string | null;
   admission_error?: string | null;
   slot_lease_ref?: string | null;
@@ -313,6 +328,19 @@ type WorkflowJob = {
   name?: string | null;
   image?: string;
   primitive?: string;
+  managed?: boolean;
+  steps?: WorkflowStep[];
+};
+
+type WorkflowStep = {
+  slug: string;
+  type?: string;
+  run?: string;
+  agent?: {
+    slot?: string;
+    prompt?: string;
+    prompt_file?: string;
+  } | null;
 };
 
 type WorkflowRecyclePolicy = {
@@ -354,9 +382,11 @@ type AuthContext = {
   signedIn: boolean;
   isAdmin: boolean;
   snap?: {
+    agent_runtime?: AgentRuntimeConfig;
     projects: Array<{
       name: string;
       github_repo: string;
+      metadata?: Record<string, unknown>;
     }>;
     workflows: Workflow[];
   } | null;
@@ -489,6 +519,27 @@ export function IssueDetailView() {
   const currentWorkflowDefinition = useMemo(
     () => detail ? singleProjectWorkflow(issueWorkflowCandidates, detail.project) : null,
     [detail, issueWorkflowCandidates],
+  );
+  const currentProject = detail
+    ? snap?.projects.find((project) => project.name === detail.project) ?? null
+    : null;
+  const projectAgentRuntime = useMemo(
+    () => agentRuntimeConfigFromMetadata(currentProject?.metadata),
+    [currentProject?.metadata],
+  );
+  const agentProfiles = useMemo(
+    () => agentRuntimeProfiles(snap?.agent_runtime, projectAgentRuntime),
+    [projectAgentRuntime, snap?.agent_runtime],
+  );
+  const editableWorkflowDefinition = useMemo(
+    () => detail
+      ? resolveProjectWorkflow(issueWorkflowCandidates, detail.project, [stringOrNull(detail.metadata?.workflow)]) ?? currentWorkflowDefinition
+      : null,
+    [currentWorkflowDefinition, detail, issueWorkflowCandidates],
+  );
+  const editableAgentSlots = useMemo(
+    () => agentSlotsFromWorkflow(editableWorkflowDefinition),
+    [editableWorkflowDefinition],
   );
   const selectedWorkflowRun = useMemo(
     () => graph && selectedWorkflowRunId
@@ -711,6 +762,8 @@ export function IssueDetailView() {
                 detail={detail}
                 signedIn={signedIn}
                 editing={editing}
+                agentProfiles={agentProfiles}
+                agentSlots={editableAgentSlots}
                 onEdit={() => setEditing(true)}
                 onCancelEdit={() => setEditing(false)}
                 onSaved={() => {
@@ -784,17 +837,20 @@ export function IssueDetailView() {
 }
 
 function IssueHeader({ detail, heading }: { detail: IssueDetail; heading: string }) {
+  const agentPolicy = agentPolicyFromMetadata(detail.metadata);
+  const defaultAgent = agentPolicy?.default?.mode === "override" ? agentPolicy.default.profile ?? null : null;
   return (
     <section className="project-hero issue-hero">
       <div className="project-hero-main">
         <div className="project-kicker mono">issue</div>
         <div className="issue-title-row">
           <h2>{detail.title}</h2>
-          {(detail.labels.length > 0 || detail.issue_lock_held || detail.preserve_test_env) && (
+          {(detail.labels.length > 0 || detail.issue_lock_held || detail.preserve_test_env || defaultAgent) && (
             <div className="issue-title-pills" aria-label="issue labels">
               {detail.labels.map((label) => (
                 <span className="pill info" key={label}>{label}</span>
               ))}
+              {defaultAgent && <span className="pill info">agent {defaultAgent}</span>}
               {detail.issue_lock_held && <span className="pill busy">in flight</span>}
               {detail.preserve_test_env && <span className="pill info" title="test env stays alive through touchpoint review">preserve env</span>}
             </div>
@@ -844,6 +900,8 @@ function DescriptionTab({
   detail,
   signedIn,
   editing,
+  agentProfiles,
+  agentSlots,
   onEdit,
   onCancelEdit,
   onSaved,
@@ -852,13 +910,23 @@ function DescriptionTab({
   detail: IssueDetail;
   signedIn: boolean;
   editing: boolean;
+  agentProfiles: ReturnType<typeof agentRuntimeProfiles>;
+  agentSlots: string[];
   onEdit: () => void;
   onCancelEdit: () => void;
   onSaved: () => void;
   onCommentChanged: () => void;
 }) {
   if (editing && signedIn) {
-    return <IssueEditForm detail={detail} onCancel={onCancelEdit} onSaved={onSaved} />;
+    return (
+      <IssueEditForm
+        detail={detail}
+        agentProfiles={agentProfiles}
+        agentSlots={agentSlots}
+        onCancel={onCancelEdit}
+        onSaved={onSaved}
+      />
+    );
   }
   return (
     <>
@@ -1735,6 +1803,7 @@ function RunMetaSummary({
   const prNumber = numberOrNull(meta.pr_number);
   const parentRunRef = stringOrNull(meta.parent_run_ref);
   const entrypointPhase = stringOrNull(meta.entrypoint_phase);
+  const agentRuntime = agentRuntimeFromMetadata(meta);
   return (
     <div className="run-panel-meta" style={{ marginTop: "0.5rem" }}>
       <div>
@@ -1745,6 +1814,11 @@ function RunMetaSummary({
       {workflow && (
         <div>
           <span className="key">workflow</span> <span className="mono">{workflow}</span>
+        </div>
+      )}
+      {agentRuntime && (
+        <div>
+          <span className="key">agent</span> <span className="mono">{agentRuntimeSnapshotLabel(agentRuntime)}</span>
         </div>
       )}
       {parentRunRef && (
@@ -4627,20 +4701,37 @@ function formatDuration(ms: number): string {
 
 function IssueEditForm({
   detail,
+  agentProfiles,
+  agentSlots,
   onCancel,
   onSaved,
 }: {
   detail: IssueDetail;
+  agentProfiles: ReturnType<typeof agentRuntimeProfiles>;
+  agentSlots: string[];
   onCancel: () => void;
   onSaved: () => void;
 }) {
+  const existingAgentPolicy = agentPolicyFromMetadata(detail.metadata);
   const [title, setTitle] = useState(detail.title);
   const [body, setBody] = useState(detail.body);
   const [labels, setLabels] = useState(detail.labels.join(", "));
   const [state, setState] = useState(detail.state);
   const [preserveTestEnv, setPreserveTestEnv] = useState(detail.preserve_test_env);
+  const [agentProfile, setAgentProfile] = useState(defaultAgentProfile(existingAgentPolicy));
+  const [agentSlotProfiles, setAgentSlotProfiles] = useState<Record<string, string>>(
+    slotAgentProfiles(existingAgentPolicy, agentSlots),
+  );
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    setAgentSlotProfiles((current) => {
+      const next: Record<string, string> = {};
+      for (const slot of agentSlots) next[slot] = current[slot] ?? "";
+      return next;
+    });
+  }, [agentSlots]);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -4665,6 +4756,7 @@ function IssueEditForm({
           labels: labelList,
           state,
           preserve_test_env: preserveTestEnv,
+          agent: buildAgentPolicy(agentProfile, agentSlotProfiles),
         }),
       });
       if (!r.ok) {
@@ -4705,6 +4797,14 @@ function IssueEditForm({
           <option value="closed">closed</option>
         </select>
       </label>
+      <AgentRuntimePolicyFields
+        profiles={agentProfiles}
+        defaultProfile={agentProfile}
+        onDefaultProfileChange={setAgentProfile}
+        slots={agentSlots}
+        slotProfiles={agentSlotProfiles}
+        onSlotProfileChange={(slot, profile) => setAgentSlotProfiles((current) => ({ ...current, [slot]: profile }))}
+      />
       <label style={{ flexDirection: "row", alignItems: "center", gap: "0.5rem" }}>
         <input
           type="checkbox"

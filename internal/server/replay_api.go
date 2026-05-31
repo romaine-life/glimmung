@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/nelsong6/glimmung/internal/domain/agentruntime"
 	"github.com/nelsong6/glimmung/internal/domain/budget"
 	"github.com/nelsong6/glimmung/internal/domain/decision"
 )
@@ -51,6 +52,7 @@ type RunReplayData struct {
 	SlotLeaseRef         *string
 	EntrypointPhase      *string
 	TriggerSource        map[string]any
+	AgentRuntime         agentruntime.Snapshot
 	PreserveTestEnv      bool
 	State                string
 }

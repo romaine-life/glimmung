@@ -12,7 +12,8 @@
 // signOut, publicConfig, authedFetch) so App.tsx + the per-view fetchers
 // continue to work — but getIdToken is gone since there is no token.
 
-import { isMockMode, mockAccount } from "./mockApi";
+import { isMockMode, mockAccount, mockSnapshot } from "./mockApi";
+import type { AgentRuntimeConfig } from "./agentRuntime";
 
 export type GlimmungConfig = {
   auth_url: string;
@@ -30,6 +31,7 @@ export type GlimmungConfig = {
   // here lets the UI build {namespace="...",pod="..."} LogQL without
   // duplicating the constant.
   native_runner_namespace?: string;
+  agent_runtime?: AgentRuntimeConfig;
 };
 
 // Lightweight account shape preserves `username` and `name` for the
@@ -51,6 +53,7 @@ export function initAuth(): Promise<void> {
       grafana_base_url: "https://grafana.mock.local",
       grafana_loki_datasource: "loki",
       native_runner_namespace: "glimmung-runs",
+      agent_runtime: mockSnapshot.agent_runtime,
     };
     const ms = mockAccount();
     _account = { username: ms.username, name: ms.name ?? ms.username };
@@ -138,6 +141,7 @@ export async function publicConfig(): Promise<GlimmungConfig> {
     return {
       auth_url: "https://auth.mock.local",
       tank_operator_base_url: "https://tank.mock.local",
+      agent_runtime: mockSnapshot.agent_runtime,
     };
   }
   if (!_config) {

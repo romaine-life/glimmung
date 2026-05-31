@@ -190,7 +190,7 @@ func TestStaticAssetRejectsMissingAndTraversal(t *testing.T) {
 	}
 }
 
-func requestConfig(t *testing.T, settings Settings) map[string]string {
+func requestConfig(t *testing.T, settings Settings) map[string]any {
 	t.Helper()
 
 	handler := New(settings)
@@ -202,7 +202,7 @@ func requestConfig(t *testing.T, settings Settings) map[string]string {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d, want %d", rec.Code, http.StatusOK)
 	}
-	var body map[string]string
+	var body map[string]any
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode body: %v", err)
 	}

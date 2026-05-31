@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/nelsong6/glimmung/internal/domain/agentruntime"
 	"github.com/nelsong6/glimmung/internal/domain/budget"
 	"github.com/nelsong6/glimmung/internal/domain/phaserefs"
 )
@@ -565,18 +566,36 @@ func validateNativeJobSpec(workflowName, phaseName string, jobIndex int, job Nat
 			return ValidationError{Message: fmt.Sprintf("workflow %s phase %q job %q step %q duplicates step[%d]", workflowName, phaseName, job.ID, slug, prev)}
 		}
 		seenSteps[slug] = i
-		if !job.Managed {
-			continue
-		}
 		stepType := strings.TrimSpace(step.Type)
 		if stepType == "" {
 			stepType = "run"
 		}
-		if stepType != "run" {
-			return ValidationError{Message: fmt.Sprintf("workflow %s phase %q job %q step %q uses unsupported type %q", workflowName, phaseName, job.ID, slug, stepType)}
+		if !job.Managed {
+			if stepType == "agent" {
+				return ValidationError{Message: fmt.Sprintf("workflow %s phase %q job %q step %q uses type=agent but the job is not managed", workflowName, phaseName, job.ID, slug)}
+			}
+			continue
 		}
-		if strings.TrimSpace(step.Run) == "" {
-			return ValidationError{Message: fmt.Sprintf("workflow %s phase %q job %q step %q is missing run", workflowName, phaseName, job.ID, slug)}
+		switch stepType {
+		case "run":
+			if strings.TrimSpace(step.Run) == "" {
+				return ValidationError{Message: fmt.Sprintf("workflow %s phase %q job %q step %q is missing run", workflowName, phaseName, job.ID, slug)}
+			}
+			if step.Agent != nil {
+				return ValidationError{Message: fmt.Sprintf("workflow %s phase %q job %q step %q cannot declare agent config on type=run", workflowName, phaseName, job.ID, slug)}
+			}
+		case "agent":
+			if strings.TrimSpace(step.Run) != "" {
+				return ValidationError{Message: fmt.Sprintf("workflow %s phase %q job %q step %q uses type=agent and cannot declare run", workflowName, phaseName, job.ID, slug)}
+			}
+			if step.Agent == nil {
+				return ValidationError{Message: fmt.Sprintf("workflow %s phase %q job %q step %q uses type=agent and must declare agent config", workflowName, phaseName, job.ID, slug)}
+			}
+			if err := agentruntime.ValidateSlot(step.Agent.Slot); err != nil {
+				return ValidationError{Message: fmt.Sprintf("workflow %s phase %q job %q step %q %s", workflowName, phaseName, job.ID, slug, err.Error())}
+			}
+		default:
+			return ValidationError{Message: fmt.Sprintf("workflow %s phase %q job %q step %q uses unsupported type %q", workflowName, phaseName, job.ID, slug, stepType)}
 		}
 	}
 	return nil

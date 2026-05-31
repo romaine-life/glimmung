@@ -183,6 +183,10 @@ func (s *fakeSignalDrainStore) ReadProjectGitHubRepo(context.Context, string) (s
 	return "owner/repo", nil
 }
 
+func (s *fakeSignalDrainStore) ReadProjectForDispatch(_ context.Context, project string) (Project, error) {
+	return Project{Name: project, GitHubRepo: "owner/repo", Metadata: map[string]any{}}, nil
+}
+
 func (s *fakeSignalDrainStore) ReadIssueForDispatch(context.Context, string, int) (IssueDispatchData, error) {
 	return IssueDispatchData{ID: "issue-7", Title: "Fix thing", Body: "body"}, nil
 }

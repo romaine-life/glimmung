@@ -168,6 +168,34 @@ func TestValidateWorkflowRegisterAcceptsManagedRunSteps(t *testing.T) {
 	}
 }
 
+func TestValidateWorkflowRegisterAcceptsManagedAgentSteps(t *testing.T) {
+	req := WorkflowRegister{
+		Name: "agent-run",
+		Phases: []PhaseSpec{
+			{Name: "prep", Kind: "k8s_job", Jobs: []NativeJobSpec{{
+				ID:      "prep",
+				Image:   "runner:latest",
+				Managed: true,
+				Steps: []NativeStepSpec{{
+					Slug:  "implement",
+					Type:  "agent",
+					Agent: &AgentStepSpec{Slot: "implementation", Prompt: "ship it"},
+				}},
+			}}},
+			{Name: "verify", Verify: true, DependsOn: []string{"prep"}},
+			{Name: "cleanup_early", RunOn: PhaseRunOnAlways, Purpose: PhasePurposeTeardown, SkipWhenPreserveTestEnv: true, DependsOn: []string{"verify"}, Jobs: []NativeJobSpec{{ID: "cleanup-early"}}},
+			{Name: "touchpoint", RunOn: PhaseRunOnSuccess, Purpose: PhasePurposeReviewTouchpoint, DependsOn: []string{"cleanup_early"}, Jobs: []NativeJobSpec{{ID: "pr-touchpoint", Primitive: JobPrimitivePRTouchpoint}}},
+			{Name: "touchpoint_gate", Kind: "k8s_job", Purpose: PhasePurposeReviewGate, DependsOn: []string{"touchpoint"}, Jobs: []NativeJobSpec{{ID: "pr-merge", Primitive: JobPrimitivePRMerge}}},
+			{Name: "cleanup_final", RunOn: PhaseRunOnAlways, Purpose: PhasePurposeTeardown, DependsOn: []string{"touchpoint_gate"}, Jobs: []NativeJobSpec{{ID: "cleanup-final"}}},
+		},
+	}
+	normalizeWorkflowRegister(&req)
+
+	if err := ValidateWorkflowRegister(req); err != nil {
+		t.Fatalf("ValidateWorkflowRegister: %v", err)
+	}
+}
+
 func TestNormalizeWorkflowRegisterCanonicalizesEvidenceGate(t *testing.T) {
 	req := WorkflowRegister{
 		Project: "ambience",
@@ -478,7 +506,7 @@ func TestValidateWorkflowRegisterRejectsInvalidManagedSteps(t *testing.T) {
 		},
 		{
 			name: "unsupported type",
-			job:  NativeJobSpec{ID: "prep", Image: "runner:latest", Managed: true, Steps: []NativeStepSpec{{Slug: "s", Type: "agent", Run: "codex"}}},
+			job:  NativeJobSpec{ID: "prep", Image: "runner:latest", Managed: true, Steps: []NativeStepSpec{{Slug: "s", Type: "other", Run: "codex"}}},
 			want: "unsupported type",
 		},
 	}

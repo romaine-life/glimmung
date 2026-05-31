@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/nelsong6/glimmung/internal/domain/agentruntime"
 	"github.com/nelsong6/glimmung/internal/domain/hotswap"
 	"gopkg.in/yaml.v3"
 )
@@ -214,6 +215,9 @@ func parseProjectYAML(data []byte, project string) (ProjectRegister, error) {
 		return ProjectRegister{}, err
 	}
 	if err := validateTestSlotHelmMetadata(reg.Metadata); err != nil {
+		return ProjectRegister{}, err
+	}
+	if _, _, err := agentruntime.ConfigFromMetadata(reg.Metadata); err != nil {
 		return ProjectRegister{}, err
 	}
 	return reg, nil

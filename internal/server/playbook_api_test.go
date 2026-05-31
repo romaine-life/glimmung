@@ -235,6 +235,10 @@ func (s *fakePlayableStore) ReadProjectGitHubRepo(context.Context, string) (stri
 	return "owner/repo", nil
 }
 
+func (s *fakePlayableStore) ReadProjectForDispatch(_ context.Context, project string) (Project, error) {
+	return Project{Name: project, GitHubRepo: "owner/repo", Metadata: map[string]any{}}, nil
+}
+
 func (s *fakePlayableStore) ReadIssueForDispatch(context.Context, string, int) (IssueDispatchData, error) {
 	return IssueDispatchData{ID: "issue-1", Title: "entry work", Body: "do the work"}, nil
 }

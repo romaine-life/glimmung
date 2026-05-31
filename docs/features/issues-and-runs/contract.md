@@ -16,7 +16,11 @@ browser memory.
 
 - Postgres `issues` owns the canonical issue row and project-scoped issue number.
 - Postgres `runs` owns run state, cycle numbering, phase/job/step ledgers,
-  callback metadata, cost, validation URL, abort reason, and terminal state.
+  callback metadata, cost, validation URL, abort reason, terminal state, and
+  the resolved agent runtime snapshot.
+- Durable global settings, project metadata, and issue metadata own agent
+  runtime defaults before dispatch. Each layer must say `inherit` or
+  `override`; executor images and CLI defaults are not sources of truth.
 - Postgres `locks` owns issue and PR mutual exclusion.
 - Native job callbacks to `/v1/run-callbacks/{callback_token}/native/completed`
   own job completion input.
@@ -39,6 +43,9 @@ browser memory.
 
 - Dispatch resolves project, workflow, and issue from durable records before
   creating run state.
+- Dispatch resolves agent runtime from global defaults, project config, and
+  issue policy before creating run state, then snapshots the resolved default
+  and slot profiles onto the Run and initial lease.
 - Dispatch serializes active work per issue with the issue lock.
 - No native work starts without a claimed lease or the configured admission
   state for queued runs.
@@ -75,4 +82,6 @@ browser memory.
 - Verify-loop changes prove retry, terminal, and cleanup behavior.
 - Any issue/run UI change reloads from durable state and does not depend on
   browser-local ordering.
+- Agent runtime changes prove inheritance, override, and run snapshot behavior;
+  historical runs must keep showing the profile selected at dispatch time.
 - Retired GitHub Issue or GitHub Actions run-loop paths are deleted end to end.
