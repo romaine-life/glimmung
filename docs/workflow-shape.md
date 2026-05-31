@@ -9,12 +9,12 @@ identifying entities.
 Every workflow is a left-to-right pipeline of phases:
 
 ```
-prepare  →  work        →  testing  →  cleanup
-            ┌─────┐
-            │ plan│
-            ├─────┤
-            │ impl│
-            └─────┘
+prepare       →  work        →  testing  →  cleanup
+┌──────────┐     ┌─────┐
+│ env      │     │ plan│
+├──────────┤     ├─────┤
+│ contract │     │ impl│
+└──────────┘     └─────┘
 ```
 
 - **Phases** flow horizontally. Each phase is a stage of the
@@ -41,10 +41,13 @@ jobs top-to-bottom in each column.
 
 Glimmung-managed workflows must declare:
 
-1. **prepare** — exactly one phase with `depends_on=[]` (the entry
-   phase). Project owns what goes here; common shape is "build a
-   container image and deploy it to a per-run validation
-   namespace."
+1. **prepare** — exactly one phase named `prepare` with `depends_on=[]`
+   (the entry phase). Project owns what goes here; common shape is
+   "build a container image and deploy it to a per-run validation
+   namespace." When a workflow runs independent planning and
+   implementation jobs later, `prepare` is also the place to produce any
+   shared issue contract that both branches may consume without seeing
+   each other's output.
 2. **testing** — at least one phase with `verify=True`. The phase
    emits `verification.json` and exits non-zero on bad verdict
    (self-enforcing). Even `npm build` or `go test` is enough; what
@@ -57,11 +60,12 @@ Any number of `work` phases between prepare and testing — that's
 where the actual implementation happens.
 
 The mandatory-phase and linear-topology enforcement is active in the Go workflow
-writer, sync path, and Postgres upsert path. Registrations that miss the entry
-phase, a `verify: true` testing phase, or a teardown cleanup phase are
-rejected before they can become the project runtime contract. Registrations with
-multiple entry phases, fan-in/fan-out phase dependencies, invalid cross-phase
-input refs, duplicate phase names, or duplicate job IDs are rejected too.
+writer, sync path, and Postgres upsert path. Registrations whose entry phase is
+not named `prepare`, that miss a `verify: true` testing phase, or that miss a
+teardown cleanup phase are rejected before they can become the project runtime
+contract. Registrations with multiple entry phases, fan-in/fan-out phase
+dependencies, invalid cross-phase input refs, duplicate phase names, or
+duplicate job IDs are rejected too.
 
 Evidence requirements are snapshotted onto the Run at dispatch time. Workflow
 `default_requirements.required_evidence` and operator labels such as
@@ -341,13 +345,12 @@ a stuck gate.
 
 The reference names for the four mandatory phases are:
 
-- **prepare** — entry phase, environment setup
+- **prepare** — entry phase, environment setup and shared pre-work contracts
 - **work** — implementation labor (1+ phases between prepare and
   testing)
 - **testing** — the verdict-rendering phase
 - **cleanup** — teardown
 
-Projects may use other names; these are the canonical defaults.
 The MCP `scaffold_workflow` tool (TODO) emits a starter template
 with these names pre-filled.
 

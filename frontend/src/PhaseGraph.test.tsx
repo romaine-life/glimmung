@@ -11,22 +11,22 @@ describe("PhaseGraph", () => {
       <PhaseGraph
         ariaLabel="workflow graph"
         phases={[
-          { name: "env-prep", kind: "k8s_job", jobs: [{ id: "env-prep" }] },
-          { name: "llm-work", kind: "k8s_job", depends_on: ["env-prep"], jobs: [{ id: "llm-work" }] },
+          { name: "prepare", kind: "k8s_job", jobs: [{ id: "env-prep" }, { id: "issue-contract" }] },
+          { name: "llm-work", kind: "k8s_job", depends_on: ["prepare"], jobs: [{ id: "test-plan" }, { id: "implement" }] },
           { name: "llm-verify", kind: "k8s_job", depends_on: ["llm-work"], jobs: [{ id: "llm-verify" }] },
           { name: "evidence-gate", kind: "k8s_job", depends_on: ["llm-verify"], jobs: [{ id: "evidence-gate" }] },
           { name: "env-destroy", kind: "k8s_job", run_on: "always", purpose: "teardown", depends_on: ["evidence-gate"], jobs: [{ id: "env-destroy" }] },
           { name: "touchpoint", kind: "k8s_job", run_on: "success", purpose: "review_touchpoint", depends_on: ["env-destroy"], jobs: [{ id: "pr-touchpoint", primitive: "pr_touchpoint" }] },
         ]}
         entryArrows={[{
-          target: "env-prep",
+          target: "prepare",
           active: false,
           kind: "default",
         }]}
         recycleArrows={[
           {
             source: "evidence-gate",
-            target: "env-prep",
+            target: "prepare",
             trigger: "verify_fail",
             max_attempts: 3,
             active: true,
@@ -34,7 +34,7 @@ describe("PhaseGraph", () => {
           },
           {
             source: "touchpoint",
-            target: "env-prep",
+            target: "prepare",
             trigger: "changes_requested",
             max_attempts: 3,
             active: false,
@@ -48,9 +48,9 @@ describe("PhaseGraph", () => {
     expect(container.querySelector('[data-id="entry-source:0"]')).toBeInTheDocument();
     expect(container.querySelector('[data-id="touchpoint"]')).not.toBeInTheDocument();
     expect(container.querySelector('[data-id="phase:5"]')).toBeInTheDocument();
-    const entryPath = await edgePathD(container, "rf__edge-entry:env-prep:0");
-    const evidenceRecyclePath = await edgePathD(container, "rf__edge-recycle:evidence-gate:env-prep:0");
-    const touchpointRecyclePath = await edgePathD(container, "rf__edge-recycle:touchpoint:env-prep:1");
+    const entryPath = await edgePathD(container, "rf__edge-entry:prepare:0");
+    const evidenceRecyclePath = await edgePathD(container, "rf__edge-recycle:evidence-gate:prepare:0");
+    const touchpointRecyclePath = await edgePathD(container, "rf__edge-recycle:touchpoint:prepare:1");
     expect(entryPath).not.toContain(" C ");
     expect(entryPath).toContain(" Q ");
     expect(pathStart(entryPath).y).toBeGreaterThan(pathEnd(entryPath).y);
@@ -60,7 +60,7 @@ describe("PhaseGraph", () => {
     expect(pathEnd(touchpointRecyclePath).y).toBeLessThan(pathEnd(evidenceRecyclePath).y);
     expect(container.querySelector(".dag-rf-surface")).toHaveStyle({
       width: "1768px",
-      height: "216px",
+      height: "286px",
     });
   });
 

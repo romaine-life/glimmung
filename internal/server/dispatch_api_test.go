@@ -148,14 +148,14 @@ func newDispatchTestHandler(store ReadStore, nativeLauncher NativeLauncher) http
 }
 
 // gatedTestPhases builds the minimum phase chain that passes the post-
-// migration validation (prep → verify → cleanup_early → touchpoint →
+// migration validation (prepare → verify → cleanup_early → touchpoint →
 // touchpoint_gate → cleanup_final, with the pr_touchpoint primitive in
 // the touchpoint phase and pr_merge in the gate). Tests that exercise
 // dispatch flow against an in-memory workflow use this.
 func gatedTestPhases() []PhaseSpec {
 	return []PhaseSpec{
-		{Name: "prep", Kind: "k8s_job", WorkflowFilename: "k8s_job:prep", Jobs: []NativeJobSpec{{ID: "prep", Image: "runner:latest"}}},
-		{Name: "verify", Kind: "k8s_job", WorkflowFilename: "k8s_job:verify", DependsOn: []string{"prep"}, Verify: true, Jobs: []NativeJobSpec{{ID: "verify", Image: "runner:latest"}}},
+		{Name: "prepare", Kind: "k8s_job", WorkflowFilename: "k8s_job:prepare", Jobs: []NativeJobSpec{{ID: "prepare", Image: "runner:latest"}}},
+		{Name: "verify", Kind: "k8s_job", WorkflowFilename: "k8s_job:verify", DependsOn: []string{"prepare"}, Verify: true, Jobs: []NativeJobSpec{{ID: "verify", Image: "runner:latest"}}},
 		{Name: "cleanup_early", Kind: "k8s_job", WorkflowFilename: "k8s_job:cleanup_early", DependsOn: []string{"verify"}, RunOn: PhaseRunOnAlways, Purpose: PhasePurposeTeardown, SkipWhenPreserveTestEnv: true, Jobs: []NativeJobSpec{{ID: "cleanup", Image: "runner:latest"}}},
 		{Name: "touchpoint", Kind: "k8s_job", WorkflowFilename: "k8s_job:touchpoint", DependsOn: []string{"cleanup_early"}, RunOn: PhaseRunOnSuccess, Purpose: PhasePurposeReviewTouchpoint, Jobs: []NativeJobSpec{{ID: PRTouchpointJobID, Primitive: JobPrimitivePRTouchpoint, Managed: true}}},
 		{Name: "touchpoint_gate", Kind: "k8s_job", WorkflowFilename: "k8s_job:touchpoint_gate", Purpose: PhasePurposeReviewGate, DependsOn: []string{"touchpoint"}, Jobs: []NativeJobSpec{{ID: PRMergeJobID, Primitive: JobPrimitivePRMerge, Managed: true}}},
@@ -295,7 +295,7 @@ func TestDispatchRunDispatchedNativeK8sJob(t *testing.T) {
 	if !launcher.called {
 		t.Fatal("native launcher was not called")
 	}
-	if launcher.req.Phase.Name != "prep" || launcher.req.Run.ID != "run-1" {
+	if launcher.req.Phase.Name != "prepare" || launcher.req.Run.ID != "run-1" {
 		t.Fatalf("launch request=%#v", launcher.req)
 	}
 	if store.runReq == nil || store.runReq.InitialPhaseKind != "k8s_job" {

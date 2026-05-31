@@ -67,17 +67,17 @@ func (s *fakeWorkflowSyncStore) UpsertWorkflowFromRegister(_ context.Context, re
 
 var exampleWorkflowYAML = []byte(`
 phases:
-  - name: entry
+  - name: prepare
     kind: k8s_job
     workflow_filename: run.yaml
     depends_on: []
     jobs:
-      - id: entry
+      - id: prepare
   - name: test
     kind: k8s_job
     workflow_filename: verify.yaml
     verify: true
-    depends_on: [entry]
+    depends_on: [prepare]
     jobs:
       - id: test
   - name: cleanup_early
@@ -117,15 +117,15 @@ phases:
 
 var nativeWorkflowYAMLOmittedKind = []byte(`
 phases:
-  - name: entry
+  - name: prepare
     workflow_filename: run.yaml
     depends_on: []
     jobs:
-      - id: entry
+      - id: prepare
   - name: test
     workflow_filename: verify.yaml
     verify: true
-    depends_on: [entry]
+    depends_on: [prepare]
     jobs:
       - id: test
   - name: cleanup_early
@@ -252,12 +252,12 @@ func TestSyncWorkflowRejectsNonNativeKind(t *testing.T) {
 	}
 	client := &fakeWorkflowSyncClient{content: []byte(`
 phases:
-  - name: entry
+  - name: prepare
     kind: container
   - name: test
     kind: k8s_job
     verify: true
-    depends_on: [entry]
+    depends_on: [prepare]
   - name: cleanup
     kind: k8s_job
     run_on: always

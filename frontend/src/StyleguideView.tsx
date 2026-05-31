@@ -176,32 +176,32 @@ const DESIGN_SYSTEM_ITEMS: PortfolioItem[] = [
     ),
   },
   {
-    id: "phase-graph-env-prep-recycle",
-    title: "Phase Graph Env Prep Recycle",
+    id: "phase-graph-prepare-recycle",
+    title: "Phase Graph Prepare Recycle",
     caption: "Entry recycle lanes from verification and the registered touchpoint phase",
     initialOpen: true,
     render: () => (
-      <Specimen title="phase graph env prep recycle">
+      <Specimen title="phase graph prepare recycle">
         <div className="dag-wrap">
           <PhaseGraph
-            ariaLabel="env prep recycle graph"
+            ariaLabel="prepare recycle graph"
             phases={[
-              { name: "env-prep", kind: "k8s_job", jobs: [{ id: "env-prep", name: "Environment prep" }] },
-              { name: "llm-work", kind: "k8s_job", depends_on: ["env-prep"], jobs: [{ id: "llm-work", name: "LLM work" }] },
+              { name: "prepare", kind: "k8s_job", jobs: [{ id: "env-prep", name: "Environment prep" }, { id: "issue-contract", name: "Issue contract" }] },
+              { name: "llm-work", kind: "k8s_job", depends_on: ["prepare"], jobs: [{ id: "test-plan", name: "Test plan" }, { id: "implement", name: "Implement" }] },
               { name: "llm-verify", kind: "k8s_job", verify: true, depends_on: ["llm-work"], jobs: [{ id: "llm-verify", name: "LLM verify" }] },
               { name: "evidence-gate", kind: "k8s_job", evidence_verification_gate: true, depends_on: ["llm-verify"], jobs: [{ id: "evidence-gate", name: "Evidence gate" }] },
               { name: "env-destroy", kind: "k8s_job", run_on: "always", purpose: "teardown", depends_on: ["evidence-gate"], jobs: [{ id: "env-destroy", name: "Environment destroy" }] },
               { name: "touchpoint", kind: "k8s_job", run_on: "success", purpose: "review_touchpoint", depends_on: ["env-destroy"], jobs: [{ id: "pr-touchpoint", name: "PR touchpoint", primitive: "pr_touchpoint" }] },
             ]}
             entryArrows={[{
-              target: "env-prep",
+              target: "prepare",
               active: true,
               kind: "default",
             }]}
             recycleArrows={[
               {
                 source: "evidence-gate",
-                target: "env-prep",
+                target: "prepare",
                 trigger: "verify_fail",
                 max_attempts: 3,
                 active: true,
@@ -209,7 +209,7 @@ const DESIGN_SYSTEM_ITEMS: PortfolioItem[] = [
               },
               {
                 source: "touchpoint",
-                target: "env-prep",
+                target: "prepare",
                 trigger: "changes_requested",
                 max_attempts: 3,
                 active: false,
@@ -579,26 +579,30 @@ const DESIGN_FILE_ITEMS: PortfolioItem[] = [
             <div className="run-graph" aria-label="run graph">
               <div className="stage-column" style={{ gridColumn: "1" }}>
                 <div className="stage-heading">
-                  <strong>env-prep</strong>
+                  <strong>prepare</strong>
                   <span>passed</span>
                 </div>
                 <button type="button" className="run-graph-node done">
                   <strong>prepare env</strong>
                   <span>3m 12s</span>
                 </button>
+                <button type="button" className="run-graph-node done">
+                  <strong>issue contract</strong>
+                  <span>42s</span>
+                </button>
               </div>
               <div className="run-graph-edge horizontal" style={{ gridColumn: "2", gridRow: "2" }} />
               <div className="stage-column active" style={{ gridColumn: "3" }}>
                 <div className="stage-heading">
-                  <strong>agent-execute</strong>
+                  <strong>llm-work</strong>
                   <span>running</span>
                 </div>
                 <button type="button" className="run-graph-node selected">
-                  <strong>portfolio-build</strong>
+                  <strong>implement</strong>
                   <span>5 steps</span>
                 </button>
                 <button type="button" className="run-graph-node pending">
-                  <strong>video evidence</strong>
+                  <strong>test plan</strong>
                   <span>queued</span>
                 </button>
               </div>
@@ -622,10 +626,10 @@ const DESIGN_FILE_ITEMS: PortfolioItem[] = [
             <div className="graph-inspector" aria-label="selected node details">
               <div className="graph-inspector-head">
                 <span className="pill busy">running</span>
-                <strong>portfolio-build</strong>
+                <strong>implement</strong>
               </div>
               <div className="project-info">
-                <div className="row"><span className="key">stage</span><span className="val mono">agent-execute</span></div>
+                <div className="row"><span className="key">stage</span><span className="val mono">llm-work</span></div>
                 <div className="row"><span className="key">kind</span><span className="val mono">native k8s job</span></div>
                 <div className="row"><span className="key">steps</span><span className="val mono">5</span></div>
                 <div className="row"><span className="key">elapsed</span><span className="val mono">1m 18s</span></div>
