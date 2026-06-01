@@ -539,11 +539,23 @@ func agentRunScript(profile agentruntime.ResolvedProfile, workdir, promptFile, c
 
 func agentShellPreamble() string {
 	return `set -Eeuo pipefail
-if [ -f /etc/codex-creds/auth.json ]; then
-  mkdir -p "$HOME/.codex"
-  cp /etc/codex-creds/auth.json "$HOME/.codex/auth.json"
-  chmod 600 "$HOME/.codex/auth.json"
-fi
+mkdir -p "$HOME/.codex"
+cat > "$HOME/.codex/auth.json" <<'EOF'
+{
+  "auth_mode": "chatgptAuthTokens",
+  "tokens": {
+    "id_token": "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.eyJlbWFpbCI6ImdsaW1tdW5nQGxvY2FsIiwiZXhwIjo0MTAyNDQ0ODAwLCJodHRwczovL2FwaS5vcGVuYWkuY29tL2F1dGgiOnsiY2hhdGdwdF9wbGFuX3R5cGUiOiJwcm8iLCJjaGF0Z3B0X3VzZXJfaWQiOiJtYW5hZ2VkLWJ5LWdsaW1tdW5nIiwiY2hhdGdwdF9hY2NvdW50X2lkIjoibWFuYWdlZC1ieS1nbGltbXVuZyJ9fQ.signature",
+    "access_token": "managed-by-glimmung",
+    "refresh_token": "",
+    "account_id": "managed-by-glimmung"
+  },
+  "last_refresh": "2099-01-01T00:00:00Z"
+}
+EOF
+chmod 600 "$HOME/.codex/auth.json"
+cat > "$HOME/.codex/config.toml" <<'EOF'
+cli_auth_credentials_store = "file"
+EOF
 git config --global user.name "glimmung-agent[bot]" || true
 git config --global user.email "glimmung-agent@romaine.life" || true`
 }

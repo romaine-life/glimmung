@@ -3,7 +3,7 @@ image:
   # SHA-pinned. The build workflow rewrites this line on every push to main
   # via a `[skip ci]` follow-up commit. Quote the value so all-digit short
   # SHAs aren't reformatted as scientific notation by YAML.
-  tag: "app-9084290407a2ea4efdeb404571e3a9ea237ace0213b85d05f0684824f63c8578"
+  tag: "app-2d26aa680e190e47aca750d454a1948082960448131ffc8cb2901c6f963f3479"
   pullPolicy: IfNotPresent
 
 namespace: glimmung
@@ -16,7 +16,7 @@ replicas: 1
 nativeRunner:
   namespace: glimmung-runs
   serviceAccount: glimmung-native-runner
-  image: romainecr.azurecr.io/glimmung-native-runner:native-runner-95c78ac6221238cfda72ae988c2df664ff8a3cb25bb74da24e150c259586ce59
+  image: romainecr.azurecr.io/glimmung-native-runner:native-runner-8730841faef300472e5df1c3ce0b5b656b04f0cb215622b552b6eea698a5ac0a
   entrypoint: /app/glimmung-native-runner
   callbackBaseUrl: http://glimmung.glimmung.svc.cluster.local
   projectConcurrency: 5
@@ -28,15 +28,6 @@ nativeRunner:
     gatewayName: main
     target: ""
     defaultTtl: 300
-  codexCredentials:
-    enabled: true
-    secretName: codex-credentials
-    mountPath: /etc/codex-creds
-    storeName: ng6-glimmung
-    storeKind: ClusterSecretStore
-    refreshInterval: 1h
-    kvKey: codex-credentials
-    secretKey: auth.json
   playwright:
     enabled: true
     # Built from slot-playwright/Dockerfile. The slot-playwright build workflow
@@ -54,6 +45,44 @@ nativeRunner:
   # Dedicated native runner identity from tofu/identity.tf's
   # `glimmung_native_runner_identity_client_id` output.
   serviceAccountClientId: "a865aa27-e76e-4363-ab53-375712bd6db8"
+
+providerApiProxy:
+  enabled: true
+  namespace: glimmung-runs
+  serviceAccount: glimmung-provider-api-proxy
+  # Optional direct annotation. In prod the proxy reads AZURE_CLIENT_ID and
+  # AZURE_TENANT_ID from configSecret below so chart rollout does not require
+  # hand-pinning a freshly created UAMI client id into values.
+  serviceAccountClientId: ""
+  configSecret:
+    name: glimmung-provider-api-proxy-identity
+    clientIdKvKey: glimmung-provider-api-proxy-mi-client-id
+    tenantIdKvKey: glimmung-tenant-id
+  image:
+    repository: romainecr.azurecr.io/glimmung-api-proxy
+    tag: api-proxy-1d30348b72ecc11649c9949f78effb069d8a2a056e7d9d4563fd23d3309c2ff8
+    pullPolicy: IfNotPresent
+  envoyImage: envoyproxy/envoy:v1.34.0
+  placeholderBearer: "Bearer managed-by-glimmung"
+  keyVaultUrl: https://ng6-glimmung.vault.azure.net/
+  caSecretName: glimmung-provider-api-proxy-ca
+  caBundlePath: /etc/glimmung-provider-api-proxy-bundle/ca-certificates.crt
+  credentials:
+    storeName: ng6-glimmung
+    storeKind: ClusterSecretStore
+    refreshInterval: 1h
+  claude:
+    serviceName: claude-api-proxy
+    secretName: claude-code-credentials
+    kvKey: claude-code-credentials
+    secretKey: credentials.json
+    credentialMountPath: /etc/claude-credentials
+  codex:
+    serviceName: codex-api-proxy
+    secretName: codex-credentials
+    kvKey: codex-credentials
+    secretKey: auth.json
+    credentialMountPath: /etc/codex-credentials
 
 artifacts:
   storageAccount: romaineglimmungartifacts

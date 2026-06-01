@@ -5,8 +5,7 @@ prod). Stage 2 (declarative import/sync surface) shipped (merged, live on prod).
 Stage 3 (glimmung's own `.glimmung/project.yaml` + CI reconcile) in progress.
 
 Owner surface: `internal/store/pg/projects.go`, `internal/store/store/postgres.go`,
-`internal/server/project_write_api.go`, and a new project sync surface mirroring
-`internal/server/workflow_sync_api.go`.
+`internal/server/project_write_api.go`, and `internal/server/project_sync_api.go`.
 
 ## Problem
 
@@ -49,8 +48,8 @@ is explicit") and leaves a class of silent-corruption bugs live.
 
 Glimmung solved the identical problem for **workflows** and codified the stance
 in `docs/workflow-inspiration.md`: Postgres registrations remain the runtime
-contract; any workflow import artifact is an admin input, not what dispatch
-reads.
+contract. Workflow definitions are registered through the Glimmung control
+plane, not imported from project repositories.
 
 Workflows have, and projects lack:
 
@@ -60,16 +59,16 @@ Workflows have, and projects lack:
 | Immutable version history | `workflow_schemas (project, schema_ref)`, content-hash `schema_ref` | none |
 | Transactional versioned write | `WorkflowsStore.Upsert` mints schema + moves pointer | `Upsert` blind replace |
 | Config vs status separation | status lives in `runs`, never in the workflow payload | status tangled into `metadata` |
-| Import artifact | Optional workflow sync input | none |
-| Drift detection | `GET …/workflows/{name}/upstream` → `workflowsInSync` | none |
-| Apply route | `POST …/workflows/{name}/sync` | none |
+| Import artifact | none; durable registration is the source | none |
+| Drift detection | schema/version comparison inside durable state | none |
+| Apply route | `POST /v1/workflows` registration | none |
 
 The fix is to bring projects up to the workflow object's durability bar. The
 end state: **authored project config is a complete declarative document
 (`.glimmung/project.yaml`), versioned immutably, reconciled into Postgres;
 server-reconciled status is a separate, reconciler-owned column.** A full
 config write then replaces authored config cleanly — exactly like a workflow
-sync — without ever touching status.
+registration — without ever touching status.
 
 ## Target data model
 
@@ -162,9 +161,8 @@ complete authored source, which is Stage 2.
    glimmung repo). The complete authored-config document; the README "dogfood
    metadata" becomes real and checked-in.
 2. `GET /v1/projects/{project}/upstream` (drift) and
-   `POST /v1/projects/{project}/sync` (apply), mirroring the workflow routes and
-   `workflowsInSync` / `fetchUpstreamResult`. Sync replaces authored config from
-   the file (safe — status is a separate column) and mints a version.
+   `POST /v1/projects/{project}/sync` (apply). Sync replaces authored config
+   from the file (safe — status is a separate column) and mints a version.
 3. The repo file becomes the reviewable source of truth; Postgres stays the
    runtime contract. A partial register can no longer be the source of authored
    config drift because the file is complete by construction.
@@ -173,10 +171,8 @@ Delivered by the glimmung-side surface (this PR):
 
 - `GET /v1/projects/{project}/upstream` (drift) and
   `POST /v1/projects/{project}/sync` (admin-gated apply), in
-  `internal/server/project_sync_api.go`, mirroring the workflow routes.
-- `ProjectSyncClient.FetchProjectFile` reads `.glimmung/project.yaml`; the
-  same GitHub adapter already satisfies `WorkflowSyncClient`, so the router
-  passes one `ghClient`.
+  `internal/server/project_sync_api.go`.
+- `ProjectSyncClient.FetchProjectFile` reads `.glimmung/project.yaml`.
 - `parseProjectYAML` runs the same authored-config validators as
   `register_project` (`hotswap.FromMetadata`, `validateTestSlotHelmMetadata`)
   and strips any server-managed status key that leaked into the file.
@@ -215,11 +211,10 @@ glimmung carrying `test_slot_hot_swap` (Stage 3), and the matching
 
 ## Cross-repo note
 
-The agent-facing MCP tools (`register_workflow`, `sync_workflow`,
-`check_workflow_updates`, …) live in the tank-operator repo and wrap the
-glimmung HTTP routes. Full parity for projects means adding matching
-`*_project` sync/upstream MCP tools there in Stage 2/3. The glimmung-side HTTP
-routes are usable without the MCP wrappers.
+The agent-facing MCP tools for workflow registration live in `mcp-glimmung`.
+Workflow file sync tools are retired: workflow shape changes go through durable
+Glimmung registration. Project config sync remains separate and applies only to
+`.glimmung/project.yaml`.
 
 ## Migration safety
 

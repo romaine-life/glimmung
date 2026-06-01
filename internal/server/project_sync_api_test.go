@@ -13,17 +13,11 @@ import (
 	"github.com/nelsong6/glimmung/internal/auth"
 )
 
-// fakeProjectSyncClient satisfies both WorkflowSyncClient (so it can be
-// passed through NewWithSyncClient) and ProjectSyncClient (the surface under
-// test). Only FetchProjectFile is exercised here.
+// fakeProjectSyncClient exercises the project-config sync surface.
 type fakeProjectSyncClient struct {
 	content    []byte
 	statusCode int
 	err        error
-}
-
-func (f *fakeProjectSyncClient) FetchWorkflowFile(_ context.Context, _, _, _ string) ([]byte, int, error) {
-	return nil, 404, ErrNotFound
 }
 
 func (f *fakeProjectSyncClient) FetchProjectFile(_ context.Context, _, _ string) ([]byte, int, error) {
@@ -66,12 +60,12 @@ metadata:
         dest: /var/run/glimmung-static-override
 `)
 
-func newHandlerWithProjectSync(store *fakeProjectSyncStore, client WorkflowSyncClient) http.Handler {
-	return NewWithSyncClient(Settings{}, store, nil, client)
+func newHandlerWithProjectSync(store *fakeProjectSyncStore, client ProjectSyncClient) http.Handler {
+	return NewWithGitHubClient(Settings{}, store, nil, client)
 }
 
-func newHandlerWithProjectSyncAdmin(store *fakeProjectSyncStore, client WorkflowSyncClient) http.Handler {
-	return NewWithSyncClient(Settings{}, store, fakeAdminAuthenticator{user: auth.User{Sub: "admin"}}, client)
+func newHandlerWithProjectSyncAdmin(store *fakeProjectSyncStore, client ProjectSyncClient) http.Handler {
+	return NewWithGitHubClient(Settings{}, store, fakeAdminAuthenticator{user: auth.User{Sub: "admin"}}, client)
 }
 
 func TestGetProjectUpstream(t *testing.T) {

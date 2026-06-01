@@ -64,8 +64,6 @@ func TestNativeJobManifestIncludesRunnerCallbackEnv(t *testing.T) {
 		NativeRunnerNamespace:         "glimmung-runs",
 		NativeRunnerServiceAccount:    "glimmung-native-runner",
 		NativeRunnerCallbackBaseURL:   "http://glimmung.glimmung.svc.cluster.local",
-		NativeRunnerCodexSecret:       "codex-credentials",
-		NativeRunnerCodexMountPath:    "/etc/codex-creds",
 		NativeRunnerPlaywrightEnabled: true,
 		NativeRunnerPlaywrightPort:    "3000",
 	}, req, NativeJobSpec{
@@ -144,8 +142,6 @@ func TestNativeJobManifestIncludesStringMapPhaseInputs(t *testing.T) {
 		NativeRunnerNamespace:       "glimmung-runs",
 		NativeRunnerServiceAccount:  "glimmung-native-runner",
 		NativeRunnerCallbackBaseURL: "http://glimmung.glimmung.svc.cluster.local",
-		NativeRunnerCodexSecret:     "codex-credentials",
-		NativeRunnerCodexMountPath:  "/etc/codex-creds",
 	}, req, NativeJobSpec{ID: "llm-test-plan", Image: "runner:latest"}, "job", "secret", "attempt")
 
 	env := nativeManifestEnv(manifest)
@@ -186,8 +182,6 @@ func TestNativeJobManifestManagedJobUsesSharedRunnerEntrypoint(t *testing.T) {
 		NativeRunnerCallbackBaseURL: "http://glimmung.glimmung.svc.cluster.local",
 		NativeRunnerImage:           "romainecr.azurecr.io/glimmung-native-runner:test",
 		NativeRunnerEntrypoint:      "/runner/glimmung-native-runner",
-		NativeRunnerCodexSecret:     "codex-credentials",
-		NativeRunnerCodexMountPath:  "/etc/codex-creds",
 	}, req, job, "job", "secret", "attempt")
 
 	container := nativeManifestContainer(manifest)
@@ -211,6 +205,189 @@ func TestNativeJobManifestManagedJobUsesSharedRunnerEntrypoint(t *testing.T) {
 	}
 	if len(got.Steps) != 1 || got.Steps[0].Run != "go test ./..." {
 		t.Fatalf("runner steps=%#v", got.Steps)
+	}
+}
+
+func TestNativeJobManifestDoesNotMountProviderCredentialSecret(t *testing.T) {
+	req := NativeLaunchRequest{
+		Lease:    Lease{Project: "ambience"},
+		Workflow: Workflow{Name: "agent-run"},
+		Phase:    PhaseSpec{Name: "llm-work"},
+		Run: RunReplayData{
+			ID:            "run-123",
+			Project:       "ambience",
+			CallbackToken: stringPtr("callback-token"),
+			Attempts:      []RunAttemptData{{AttemptIndex: 1, Phase: "llm-work"}},
+		},
+	}
+	job := NativeJobSpec{
+		ID:      "implement",
+		Managed: true,
+		Steps: []NativeStepSpec{{
+			Slug:  "run-agent",
+			Agent: &AgentStepSpec{Slot: "implementation"},
+		}},
+	}
+	manifest := nativeJobManifest(Settings{
+		NativeRunnerNamespace:       "glimmung-runs",
+		NativeRunnerServiceAccount:  "glimmung-native-runner",
+		NativeRunnerCallbackBaseURL: "http://glimmung.glimmung.svc.cluster.local",
+		NativeRunnerImage:           "romainecr.azurecr.io/glimmung-native-runner:test",
+	}, req, job, "job", "secret", "attempt")
+
+	podSpec := nativeManifestPodSpec(manifest)
+	for _, volume := range podSpec["volumes"].([]any) {
+		if volume.(map[string]any)["name"] == "codex-credentials" {
+			t.Fatalf("native jobs must not mount real provider credentials: %#v", podSpec["volumes"])
+		}
+	}
+	container := nativeManifestContainer(manifest)
+	for _, mount := range container["volumeMounts"].([]any) {
+		if mount.(map[string]any)["name"] == "codex-credentials" {
+			t.Fatalf("native jobs must not mount real provider credentials: %#v", container["volumeMounts"])
+		}
+	}
+}
+
+func TestNativeJobManifestWiresProviderAPIProxyForAgentJob(t *testing.T) {
+	req := NativeLaunchRequest{
+		Lease:    Lease{Project: "ambience"},
+		Workflow: Workflow{Name: "agent-run"},
+		Phase:    PhaseSpec{Name: "llm-work"},
+		Run: RunReplayData{
+			ID:            "run-123",
+			Project:       "ambience",
+			CallbackToken: stringPtr("callback-token"),
+			Attempts:      []RunAttemptData{{AttemptIndex: 1, Phase: "llm-work"}},
+		},
+	}
+	job := NativeJobSpec{
+		ID:      "implement",
+		Managed: true,
+		Steps: []NativeStepSpec{{
+			Slug:  "run-agent",
+			Agent: &AgentStepSpec{Slot: "implementation"},
+		}},
+	}
+	proxyRuntime := providerAPIProxyRuntime{
+		ClaudeClusterIP: "172.16.1.10",
+		CodexClusterIP:  "172.16.1.11",
+		CASecretName:    "glimmung-provider-api-proxy-ca",
+		CABundlePath:    "/etc/glimmung-provider-api-proxy-bundle/ca-certificates.crt",
+	}
+	manifest := nativeJobManifest(Settings{
+		NativeRunnerNamespace:       "glimmung-runs",
+		NativeRunnerServiceAccount:  "glimmung-native-runner",
+		NativeRunnerCallbackBaseURL: "http://glimmung.glimmung.svc.cluster.local",
+		NativeRunnerImage:           "romainecr.azurecr.io/glimmung-native-runner:test",
+	}, req, job, "job", "secret", "attempt", proxyRuntime)
+
+	podSpec := nativeManifestPodSpec(manifest)
+	hostAliases := podSpec["hostAliases"].([]any)
+	if len(hostAliases) != 2 {
+		t.Fatalf("hostAliases=%#v", hostAliases)
+	}
+	if hostAliases[0].(map[string]any)["ip"] != "172.16.1.10" || hostAliases[1].(map[string]any)["ip"] != "172.16.1.11" {
+		t.Fatalf("hostAliases=%#v", hostAliases)
+	}
+	if _, ok := podSpec["initContainers"]; !ok {
+		t.Fatalf("expected CA bundle init container: %#v", podSpec)
+	}
+	env := nativeManifestEnv(manifest)
+	if env["NODE_EXTRA_CA_CERTS"] != "/etc/glimmung-provider-api-proxy-ca/ca.crt" {
+		t.Fatalf("NODE_EXTRA_CA_CERTS=%q", env["NODE_EXTRA_CA_CERTS"])
+	}
+	if env["SSL_CERT_FILE"] != proxyRuntime.CABundlePath {
+		t.Fatalf("SSL_CERT_FILE=%q", env["SSL_CERT_FILE"])
+	}
+}
+
+func TestLaunchNativePhaseResolvesProviderAPIProxyForAgentJobs(t *testing.T) {
+	tokenPath := tempTokenFile(t)
+	var paths []string
+	var postedJob string
+	launcher := &KubernetesNativeLauncher{
+		Settings: Settings{
+			K8sAPIHost:                    "https://kube.test",
+			K8sSATokenPath:                tokenPath,
+			NativeRunnerNamespace:         "glimmung-runs",
+			NativeRunnerServiceAccount:    "glimmung-native-runner",
+			NativeRunnerCallbackBaseURL:   "http://glimmung.glimmung.svc.cluster.local",
+			NativeRunnerImage:             "romainecr.azurecr.io/glimmung-native-runner:test",
+			ProviderAPIProxyNamespace:     "glimmung-runs",
+			ProviderAPIProxyCASecret:      "glimmung-provider-api-proxy-ca",
+			ProviderAPIProxyCABundlePath:  "/etc/glimmung-provider-api-proxy-bundle/ca-certificates.crt",
+			ProviderAPIProxyClaudeService: "claude-api-proxy",
+			ProviderAPIProxyCodexService:  "codex-api-proxy",
+		},
+		HTTPClient: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			paths = append(paths, req.Method+" "+req.URL.Path)
+			body := `{}`
+			switch req.Method + " " + req.URL.Path {
+			case "GET /api/v1/namespaces/glimmung-runs/services/claude-api-proxy":
+				body = `{"spec":{"clusterIP":"172.16.1.10"}}`
+			case "GET /api/v1/namespaces/glimmung-runs/services/codex-api-proxy":
+				body = `{"spec":{"clusterIP":"172.16.1.11"}}`
+			case "POST /apis/batch/v1/namespaces/glimmung-runs/jobs":
+				raw, _ := io.ReadAll(req.Body)
+				postedJob = string(raw)
+			}
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader(body)),
+			}, nil
+		})},
+	}
+	req := NativeLaunchRequest{
+		Lease:    Lease{Project: "ambience"},
+		Workflow: Workflow{Name: "agent-run"},
+		Phase: PhaseSpec{
+			Name: "llm-work",
+			Jobs: []NativeJobSpec{{
+				ID:      "implement",
+				Managed: true,
+				Steps: []NativeStepSpec{{
+					Slug:  "run-agent",
+					Agent: &AgentStepSpec{Slot: "implementation"},
+				}},
+			}},
+		},
+		Run: RunReplayData{
+			ID:            "run-123",
+			Project:       "ambience",
+			CallbackToken: stringPtr("callback-token"),
+			Attempts:      []RunAttemptData{{AttemptIndex: 1, Phase: "llm-work"}},
+		},
+	}
+
+	if _, err := launcher.LaunchNativePhase(context.Background(), req); err != nil {
+		t.Fatalf("LaunchNativePhase: %v", err)
+	}
+	for _, want := range []string{
+		"GET /api/v1/namespaces/glimmung-runs/services/claude-api-proxy",
+		"GET /api/v1/namespaces/glimmung-runs/services/codex-api-proxy",
+		"POST /api/v1/namespaces/glimmung-runs/secrets",
+		"POST /apis/batch/v1/namespaces/glimmung-runs/jobs",
+	} {
+		if !containsPath(paths, want) {
+			t.Fatalf("missing %s, paths=%#v", want, paths)
+		}
+	}
+	for _, want := range []string{
+		`"ip":"172.16.1.10"`,
+		`"api.anthropic.com"`,
+		`"ip":"172.16.1.11"`,
+		`"chatgpt.com"`,
+		`"secretName":"glimmung-provider-api-proxy-ca"`,
+		`"name":"SSL_CERT_FILE"`,
+	} {
+		if !strings.Contains(postedJob, want) {
+			t.Fatalf("posted job missing %q: %s", want, postedJob)
+		}
+	}
+	if strings.Contains(postedJob, "codex-credentials") || strings.Contains(postedJob, "/etc/codex-creds") {
+		t.Fatalf("posted job kept retired provider credential mount: %s", postedJob)
 	}
 }
 
@@ -243,8 +420,6 @@ func TestNativeJobManifestEvidenceGateUsesManagedRunner(t *testing.T) {
 		NativeRunnerCallbackBaseURL: "http://glimmung.glimmung.svc.cluster.local",
 		NativeRunnerImage:           "romainecr.azurecr.io/glimmung-native-runner:test",
 		NativeRunnerEntrypoint:      "/app/glimmung-native-runner",
-		NativeRunnerCodexSecret:     "codex-credentials",
-		NativeRunnerCodexMountPath:  "/etc/codex-creds",
 	}, req, req.Phase.Jobs[0], "job", "secret", "attempt")
 
 	container := nativeManifestContainer(manifest)
@@ -593,8 +768,6 @@ func TestEnsureTestSlotPreliminariesDoesNotCreatePlaywrightRuntime(t *testing.T)
 			NativeRunnerPlaywrightPort:     "3000",
 			NativeRunnerServiceAccount:     "glimmung-native-runner",
 			NativeRunnerCallbackBaseURL:    "http://glimmung.glimmung.svc.cluster.local",
-			NativeRunnerCodexSecret:        "codex-credentials",
-			NativeRunnerCodexMountPath:     "/etc/codex-creds",
 			NativeRunnerJobTTLSeconds:      3600,
 			NativeRunnerNamespaceRole:      "cluster-admin",
 			NativeRunnerProjectConcurrency: 1,
@@ -858,8 +1031,6 @@ func TestLaunchNativePhaseCreatesSlotPlaywrightRuntimeWithoutReadinessWait(t *te
 			NativeRunnerNamespace:         "glimmung-runs",
 			NativeRunnerServiceAccount:    "glimmung-native-runner",
 			NativeRunnerCallbackBaseURL:   "http://glimmung.glimmung.svc.cluster.local",
-			NativeRunnerCodexSecret:       "codex-credentials",
-			NativeRunnerCodexMountPath:    "/etc/codex-creds",
 			NativeRunnerPlaywrightEnabled: true,
 			NativeRunnerPlaywrightImage:   "playwright:latest",
 			NativeRunnerPlaywrightPort:    "3000",
@@ -1150,9 +1321,13 @@ func nativeManifestEnv(manifest map[string]any) map[string]string {
 }
 
 func nativeManifestContainer(manifest map[string]any) map[string]any {
-	spec := manifest["spec"].(map[string]any)
-	template := spec["template"].(map[string]any)
-	podSpec := template["spec"].(map[string]any)
+	podSpec := nativeManifestPodSpec(manifest)
 	containers := podSpec["containers"].([]any)
 	return containers[0].(map[string]any)
+}
+
+func nativeManifestPodSpec(manifest map[string]any) map[string]any {
+	spec := manifest["spec"].(map[string]any)
+	template := spec["template"].(map[string]any)
+	return template["spec"].(map[string]any)
 }

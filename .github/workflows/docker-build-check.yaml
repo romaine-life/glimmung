@@ -48,6 +48,12 @@ jobs:
             cache-ref: romainecr.azurecr.io/glimmung-native-runner-build-cache:native-runner
             image-repo: glimmung-native-runner
             fingerprint-paths: native-runner/Dockerfile go.mod go.sum cmd internal
+          - name: api-proxy
+            file: api-proxy/Dockerfile
+            context: api-proxy
+            cache-ref: romainecr.azurecr.io/glimmung-api-proxy-build-cache:api-proxy
+            image-repo: glimmung-api-proxy
+            fingerprint-paths: api-proxy
     steps:
       - name: Checkout
         uses: actions/checkout@v4

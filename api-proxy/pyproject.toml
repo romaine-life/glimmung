@@ -1,0 +1,30 @@
+[project]
+name = "glimmung-api-proxy"
+version = "0.1.0"
+description = "Envoy ext_proc auth injector for provider APIs. Replaces per-pod credential lifecycles with in-cluster proxies that own refresh."
+requires-python = ">=3.12"
+dependencies = [
+    "grpcio>=1.66",
+    "protobuf>=5.28",
+    "httpx>=0.27",
+    "azure-identity>=1.19",
+    "azure-keyvault-secrets>=4.9",
+    # azure-identity-aio + azure-keyvault-secrets-aio default to aiohttp as
+    # the underlying transport. Bringing it in explicitly so the proxy can
+    # actually persist rotations back to KV (otherwise we'd leak rotations
+    # on every restart — see _persist_to_kv comment).
+    "aiohttp>=3.10",
+    # Prometheus client for /metrics. The aiohttp listener that serves
+    # /metrics is wired in glimmung_api_proxy.metrics.start_metrics_server.
+    "prometheus-client>=0.20",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/glimmung_api_proxy"]
+
+[project.scripts]
+glimmung-api-proxy = "glimmung_api_proxy.__main__:main"

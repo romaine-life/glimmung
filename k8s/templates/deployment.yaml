@@ -70,10 +70,16 @@ spec:
               value: {{ .Values.nativeRunner.standbyDns.target | quote }}
             - name: NATIVE_STANDBY_DNS_DEFAULT_TTL
               value: {{ .Values.nativeRunner.standbyDns.defaultTtl | quote }}
-            - name: NATIVE_RUNNER_CODEX_CREDENTIALS_SECRET
-              value: {{ .Values.nativeRunner.codexCredentials.secretName | quote }}
-            - name: NATIVE_RUNNER_CODEX_CREDENTIALS_MOUNT_PATH
-              value: {{ .Values.nativeRunner.codexCredentials.mountPath | quote }}
+            - name: PROVIDER_API_PROXY_NAMESPACE
+              value: {{ .Values.providerApiProxy.namespace | quote }}
+            - name: PROVIDER_API_PROXY_CA_SECRET
+              value: {{ .Values.providerApiProxy.caSecretName | quote }}
+            - name: PROVIDER_API_PROXY_CA_BUNDLE_PATH
+              value: {{ .Values.providerApiProxy.caBundlePath | quote }}
+            - name: PROVIDER_API_PROXY_CLAUDE_SERVICE
+              value: {{ .Values.providerApiProxy.claude.serviceName | quote }}
+            - name: PROVIDER_API_PROXY_CODEX_SERVICE
+              value: {{ .Values.providerApiProxy.codex.serviceName | quote }}
             - name: NATIVE_RUNNER_PLAYWRIGHT_ENABLED
               value: {{ .Values.nativeRunner.playwright.enabled | quote }}
             - name: NATIVE_RUNNER_PLAYWRIGHT_IMAGE

@@ -39,11 +39,11 @@ func (s *fakeRunReplayStore) GetWorkflowBySchemaRef(_ context.Context, _, _ stri
 }
 
 func newReplayHandlerAdmin(store *fakeRunReplayStore) http.Handler {
-	return NewWithSyncClient(Settings{}, store, fakeAdminAuthenticator{user: auth.User{Sub: "admin"}}, nil)
+	return NewWithGitHubClient(Settings{}, store, fakeAdminAuthenticator{user: auth.User{Sub: "admin"}}, nil)
 }
 
 func newReplayHandlerNoAuth(store *fakeRunReplayStore) http.Handler {
-	return NewWithSyncClient(Settings{}, store, nil, nil)
+	return NewWithGitHubClient(Settings{}, store, nil, nil)
 }
 
 // --- helpers ---
