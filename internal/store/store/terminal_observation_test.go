@@ -58,6 +58,48 @@ func TestTerminalObservationNamesProducerJobAndStep(t *testing.T) {
 	}
 }
 
+func TestTerminalObservationDoesNotNameZeroExitStep(t *testing.T) {
+	exitCode := 0
+	abortDecision := string(decision.AbortMalformed)
+	doc := runDoc{
+		Attempts: []attemptDoc{{
+			AttemptIndex: 1,
+			Phase:        "llm-work",
+			Conclusion:   stringPtrValue("failure"),
+			Decision:     &abortDecision,
+			JobCompletions: map[string]nativeJobCompletionDoc{
+				"llm-implement": {JobID: "llm-implement", Conclusion: "failure", TerminalReason: "job_failed"},
+			},
+		}},
+		PhaseExecutions: []phaseExecutionDoc{{
+			Name: "llm-work",
+			Jobs: []jobExecutionDoc{{
+				ID:     "llm-implement",
+				State:  "failed",
+				Reason: stringPtrValue("job_failed"),
+				Steps: []stepExecutionDoc{{
+					Slug:     "clone",
+					State:    "failed",
+					Reason:   stringPtrValue("job_failed"),
+					ExitCode: &exitCode,
+				}},
+			}},
+		}},
+	}
+	wf := &server.Workflow{Phases: []server.PhaseSpec{{Name: "llm-work"}}}
+
+	got := terminalObservationForRun(doc, wf, "aborted", nil, server.TerminalObservationSourceCompletionCallback)
+	if got == nil {
+		t.Fatal("terminal observation missing")
+	}
+	if got.StepSlug != "" || got.ExitCode != nil {
+		t.Fatalf("observation=%#v", got)
+	}
+	if !strings.Contains(got.Message, "producer phase llm-work failed at job llm-implement") || strings.Contains(got.Message, "clone") || strings.Contains(got.Message, "exit code 0") {
+		t.Fatalf("message=%q", got.Message)
+	}
+}
+
 func TestTerminalObservationKeepsOriginalAbortThroughCleanup(t *testing.T) {
 	exitCode := 1
 	abortDecision := string(decision.AbortMalformed)

@@ -5554,7 +5554,7 @@ func terminalObservationForRun(doc runDoc, wf *server.Workflow, state string, ab
 			Phase:      attempt.Phase,
 			JobID:      completion.JobID,
 			Conclusion: completion.Conclusion,
-			Reason:     firstNonEmpty(completion.TerminalReason, reasonString(job.Reason), reasonString(step.Reason), "job_failed"),
+			Reason:     firstNonEmpty(completion.TerminalReason, executionReason(job, step), "job_failed"),
 			Source:     firstNonEmpty(source, server.TerminalObservationSourceCompletionCallback),
 		}
 		if step != nil {
@@ -5641,7 +5641,13 @@ func failedExecutionForJob(phases []phaseExecutionDoc, phaseName, jobID string) 
 			}
 			for stepIndex := range job.Steps {
 				step := &job.Steps[stepIndex]
-				if step.State == "failed" || step.ExitCode != nil {
+				if stepHasDirectFailureEvidence(step) {
+					return job, step
+				}
+			}
+			for stepIndex := range job.Steps {
+				step := &job.Steps[stepIndex]
+				if step.ExitCode != nil && *step.ExitCode != 0 {
 					return job, step
 				}
 			}
@@ -5649,6 +5655,41 @@ func failedExecutionForJob(phases []phaseExecutionDoc, phaseName, jobID string) 
 		}
 	}
 	return nil, nil
+}
+
+func stepHasDirectFailureEvidence(step *stepExecutionDoc) bool {
+	if step == nil {
+		return false
+	}
+	if step.State != "failed" && step.State != "aborted" {
+		return false
+	}
+	if step.ExitCode != nil {
+		return *step.ExitCode != 0
+	}
+	switch reasonString(step.Reason) {
+	case "exit_nonzero", server.JobTerminalReasonAborted:
+		return true
+	default:
+		return false
+	}
+}
+
+func executionReason(job *jobExecutionDoc, step *stepExecutionDoc) string {
+	if stepReason := stepReasonString(step); stepReason != "" {
+		return stepReason
+	}
+	if job == nil {
+		return ""
+	}
+	return reasonString(job.Reason)
+}
+
+func stepReasonString(step *stepExecutionDoc) string {
+	if step == nil {
+		return ""
+	}
+	return reasonString(step.Reason)
 }
 
 func workflowPhaseByName(wf *server.Workflow, name string) *server.PhaseSpec {
