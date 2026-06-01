@@ -1,0 +1,313 @@
+phases:
+  - name: prepare
+    kind: k8s_job
+    run_on: success
+    purpose: work
+    workflow_filename: ""
+    workflow_ref: main
+    inputs: {}
+    outputs:
+      - branch_name
+    requirements: {}
+    verify: false
+    recycle_policy: null
+    evidence_verification_gate: false
+    depends_on: []
+    jobs:
+      - id: issue-agent
+        name: Managed issue agent
+        image: ""
+        command: []
+        args: []
+        env: {}
+        steps:
+          - slug: prepare-repo
+            title: Prepare repository
+            type: run
+            run: |
+              set -Eeuo pipefail
+              token_json="$(curl -fsS -X POST -H "x-glimmung-attempt-token: ${GLIMMUNG_ATTEMPT_TOKEN}" "${GLIMMUNG_GITHUB_TOKEN_URL}")"
+              repo="$(printf '%s' "$token_json" | jq -r '.repo')"
+              gh_token="$(printf '%s' "$token_json" | jq -r '.token')"
+              [ -n "$repo" ] && [ "$repo" != "null" ] || { echo "github token response did not include repo" >&2; exit 1; }
+              [ -n "$gh_token" ] && [ "$gh_token" != "null" ] || { echo "github token response did not include token" >&2; exit 1; }
+              printf '%s' "$repo" >/workspace/.repo-slug
+              printf '%s' "$gh_token" >/workspace/.gh-token
+              chmod 600 /workspace/.gh-token
+              git remote set-url origin "https://x-access-token:${gh_token}@github.com/${repo}.git"
+              git config user.name 'glimmung-native-agent'
+              git config user.email 'glimmung-native-agent@romaine.life'
+              branch="glimmung/${GLIMMUNG_RUN_ID}"
+              printf '%s' "$branch" >/workspace/.branch-name
+              git checkout -B "$branch"
+              {
+                printf '# Glimmung Native Run\n\n'
+                printf 'Project: %s\n' "${GLIMMUNG_PROJECT}"
+                printf 'Workflow: %s\n' "${GLIMMUNG_WORKFLOW}"
+                printf 'Run: %s\n' "${GLIMMUNG_RUN_ID}"
+                printf 'Issue: %s\n' "${GLIMMUNG_ISSUE_ID:-}"
+                printf 'Issue number: %s\n\n' "${GLIMMUNG_ISSUE_NUMBER:-}"
+                printf '## Title\n%s\n\n' "${GLIMMUNG_ISSUE_TITLE:-}"
+                printf '## Body\n%s\n' "${GLIMMUNG_ISSUE_BODY:-}"
+              } >/workspace/GLIMMUNG_CONTEXT.md
+          - slug: run-agent
+            title: Run managed agent
+            type: agent
+            agent:
+              slot: implementation
+              prompt: "You are running inside a Glimmung managed agent step. Read /workspace/GLIMMUNG_CONTEXT.md, implement the requested issue in /workspace/repo, and run the checks that fit the change. Leave the working tree changed; do not commit, push, open a PR, or use GitHub Actions as the agent execution mechanism. The workflow will commit, push, and ensure the PR after this step."
+          - slug: push-pr
+            title: Push branch and PR
+            type: run
+            run: |
+              set -Eeuo pipefail
+              repo="$(cat /workspace/.repo-slug)"
+              branch="$(cat /workspace/.branch-name)"
+              export GH_TOKEN="$(cat /workspace/.gh-token)" GITHUB_TOKEN="$(cat /workspace/.gh-token)"
+              if ! git diff --quiet || ! git diff --cached --quiet; then
+                git add -A
+                git commit -m "Address Glimmung issue ${GLIMMUNG_ISSUE_NUMBER:-${GLIMMUNG_ISSUE_ID}}" || true
+              fi
+              git push -u origin "HEAD:${branch}"
+              if ! gh pr view --repo "$repo" "$branch" >/dev/null 2>&1; then
+                gh pr create --repo "$repo" --base main --head "$branch" --title "${GLIMMUNG_ISSUE_TITLE:-Glimmung issue ${GLIMMUNG_ISSUE_NUMBER:-}}" --body "Native Glimmung run ${GLIMMUNG_RUN_ID}." >/dev/null || true
+              fi
+              printf 'branch_name=%s\n' "$branch" >>"${GLIMMUNG_OUTPUT_FILE}"
+        timeout_seconds: 14400
+        managed: true
+        checkout:
+          repo: nelsong6/glimmung
+          ref: main
+          path: /workspace/repo
+        working_directory: /workspace/repo
+  - name: verify
+    kind: k8s_job
+    run_on: success
+    purpose: verification
+    workflow_filename: ""
+    workflow_ref: main
+    inputs: {}
+    outputs:
+      - verification
+    requirements: {}
+    verify: true
+    recycle_policy: null
+    evidence_verification_gate: false
+    depends_on:
+      - prepare
+    jobs:
+      - id: verify
+        name: Record native run verification
+        image: ""
+        command: []
+        args: []
+        env: {}
+        steps:
+          - slug: record-verdict
+            title: Record managed-agent verdict
+            type: run
+            run: "set -Eeuo pipefail\nverification=\"$(jq -nc --arg reason \"Glimmung managed agent job completed; detailed review is in the PR.\" '{status:\"pass\", reasons:[$reason], evidence_results:[]}')\"\njq -nc --argjson verification \"$verification\" '{verification:($verification|tojson)}' >>\"$GLIMMUNG_OUTPUT_FILE\"\njq -nc --argjson verification \"$verification\" '{verification:$verification}' >\"$GLIMMUNG_COMPLETION_FILE\"\n"
+        timeout_seconds: 60
+        managed: true
+  - name: cleanup_early
+    kind: k8s_job
+    run_on: always
+    purpose: teardown
+    workflow_filename: ""
+    workflow_ref: main
+    inputs: {}
+    outputs: []
+    requirements: {}
+    verify: false
+    recycle_policy: null
+    evidence_verification_gate: false
+    depends_on:
+      - verify
+    jobs:
+      - id: cleanup
+        name: Finalize native run
+        image: ""
+        command: []
+        args: []
+        env: {}
+        steps:
+          - slug: finalize
+            title: Finalize run
+            type: run
+            run: "true"
+        timeout_seconds: 60
+        managed: true
+    skip_when_preserve_test_env: true
+  - name: touchpoint
+    kind: k8s_job
+    run_on: success
+    purpose: review_touchpoint
+    workflow_filename: ""
+    workflow_ref: main
+    inputs: {}
+    outputs: []
+    requirements: {}
+    verify: false
+    recycle_policy: null
+    evidence_verification_gate: false
+    depends_on:
+      - cleanup_early
+    jobs:
+      - id: pr-touchpoint
+        name: PR touchpoint
+        primitive: pr_touchpoint
+        image: ""
+        command: []
+        args: []
+        env: {}
+        steps:
+          - slug: ensure-pr-touchpoint
+            title: Ensure PR touchpoint
+            type: run
+            run: |
+              set -Eeuo pipefail
+              if [ -z "${GLIMMUNG_PR_TOUCHPOINT_URL:-}" ]; then
+                echo "GLIMMUNG_PR_TOUCHPOINT_URL is not configured" >&2
+                exit 2
+              fi
+              echo "Ensuring PR touchpoint for ${GLIMMUNG_RUN_REF:-unknown run}"
+              response="$(mktemp)"
+              status="$(curl -sS -o "${response}" -w '%{http_code}' -X POST "${GLIMMUNG_PR_TOUCHPOINT_URL}")" || {
+                code="$?"
+                echo "PR touchpoint request failed with curl exit ${code}" >&2
+                exit "${code}"
+              }
+              cat "${response}" | jq .
+              if [ "${status}" -lt 200 ] || [ "${status}" -ge 300 ]; then
+                echo "PR touchpoint request returned HTTP ${status}" >&2
+                exit 1
+              fi
+              result_status="$(jq -r '.status // empty' "${response}")"
+              if [ "${result_status}" = "skipped" ]; then
+                echo "PR touchpoint skipped: $(jq -r '.reason // "no reason"' "${response}")"
+                exit 0
+              fi
+              if [ "${result_status}" != "ensured" ]; then
+                echo "PR touchpoint returned unexpected status '${result_status}'" >&2
+                exit 2
+              fi
+              pr_number="$(jq -r '.pr_number // empty' "${response}")"
+              touchpoint_ref="$(jq -r '.touchpoint_ref // empty' "${response}")"
+              html_url="$(jq -r '.html_url // empty' "${response}")"
+              {
+                if [ -n "${pr_number}" ]; then printf 'pr_number=%s\n' "${pr_number}"; fi
+                if [ -n "${touchpoint_ref}" ]; then printf 'touchpoint_ref=%s\n' "${touchpoint_ref}"; fi
+                if [ -n "${html_url}" ]; then printf 'pr_url=%s\n' "${html_url}"; fi
+              } >>"${GLIMMUNG_OUTPUT_FILE}"
+              echo "PR touchpoint ensured: ${touchpoint_ref:-unknown}"
+              if [ -n "${html_url}" ]; then
+                echo "PR URL: ${html_url}"
+              fi
+            shell: bash
+        timeout_seconds: 120
+        managed: true
+  - name: touchpoint_gate
+    kind: k8s_job
+    run_on: success
+    purpose: review_gate
+    workflow_filename: k8s_job:touchpoint_gate
+    workflow_ref: main
+    inputs: {}
+    outputs: []
+    requirements: {}
+    verify: false
+    recycle_policy: null
+    evidence_verification_gate: false
+    depends_on:
+      - touchpoint
+    jobs:
+      - id: pr-merge
+        name: PR merge
+        primitive: pr_merge
+        image: ""
+        command: []
+        args: []
+        env: {}
+        steps:
+          - slug: merge-pull-request
+            title: Idempotently merge the touchpoint PR
+            type: run
+            run: |
+              set -Eeuo pipefail
+              if [ -z "${GLIMMUNG_PR_MERGE_URL:-}" ]; then
+                echo "GLIMMUNG_PR_MERGE_URL is not configured" >&2
+                exit 2
+              fi
+              echo "Merging PR for ${GLIMMUNG_RUN_REF:-unknown run}"
+              response="$(mktemp)"
+              status="$(curl -sS -o "${response}" -w '%{http_code}' -X POST "${GLIMMUNG_PR_MERGE_URL}")" || {
+                code="$?"
+                echo "PR merge request failed with curl exit ${code}" >&2
+                exit "${code}"
+              }
+              cat "${response}" | jq .
+              if [ "${status}" -lt 200 ] || [ "${status}" -ge 300 ]; then
+                echo "PR merge request returned HTTP ${status}" >&2
+                exit 1
+              fi
+              result_status="$(jq -r '.status // empty' "${response}")"
+              case "${result_status}" in
+                merged)
+                  echo "PR merged: $(jq -r '.merge_commit_sha // ""' "${response}")"
+                  ;;
+                already_merged)
+                  echo "PR was already merged (idempotent success)"
+                  ;;
+                *)
+                  echo "PR merge returned unexpected status '${result_status}'" >&2
+                  exit 2
+                  ;;
+              esac
+              pr_number="$(jq -r '.pr_number // empty' "${response}")"
+              merge_commit="$(jq -r '.merge_commit_sha // empty' "${response}")"
+              {
+                if [ -n "${pr_number}" ]; then printf 'pr_number=%s\n' "${pr_number}"; fi
+                if [ -n "${merge_commit}" ]; then printf 'merge_commit_sha=%s\n' "${merge_commit}"; fi
+                printf 'merge_status=%s\n' "${result_status}"
+              } >>"${GLIMMUNG_OUTPUT_FILE}"
+            shell: bash
+        timeout_seconds: 120
+        managed: true
+  - name: cleanup_final
+    kind: k8s_job
+    run_on: always
+    purpose: teardown
+    workflow_filename: ""
+    workflow_ref: main
+    inputs: {}
+    outputs: []
+    requirements: {}
+    verify: false
+    recycle_policy: null
+    evidence_verification_gate: false
+    depends_on:
+      - touchpoint_gate
+    jobs:
+      - id: cleanup-final
+        name: Final cleanup
+        image: ""
+        command: []
+        args: []
+        env: {}
+        steps:
+          - slug: finalize
+            title: Finalize run
+            type: run
+            run: "true"
+        timeout_seconds: 60
+        managed: true
+pr:
+  recycle_policy:
+    max_attempts: 3
+    "on":
+      - pr_review_changes_requested
+    lands_at: prepare
+budget:
+  total: 25
+default_requirements: {}
+metadata: {}
