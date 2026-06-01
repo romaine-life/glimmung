@@ -21,8 +21,8 @@ after registration changes.
   concurrency, evidence gate semantics, and path-typed identity.
 - Native Kubernetes Jobs own execution process state while running.
 - Native job event rows own hot execution telemetry.
-- `.glimmung/workflows/<name>.yaml` is an import/sync convenience only, not the
-  runtime source of truth.
+- Workflow import/sync inputs are admin conveniences only. They are not
+  required in consumer repositories and are never the runtime source of truth.
 
 ## Migration Rules
 

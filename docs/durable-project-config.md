@@ -48,8 +48,9 @@ is explicit") and leaves a class of silent-corruption bugs live.
 ## The model already exists for workflows
 
 Glimmung solved the identical problem for **workflows** and codified the stance
-in `docs/workflow-inspiration.md`: *"Postgres registrations remain the runtime
-contract. Repository files are import/sync inputs, not what dispatch reads."*
+in `docs/workflow-inspiration.md`: Postgres registrations remain the runtime
+contract; any workflow import artifact is an admin input, not what dispatch
+reads.
 
 Workflows have, and projects lack:
 
@@ -59,7 +60,7 @@ Workflows have, and projects lack:
 | Immutable version history | `workflow_schemas (project, schema_ref)`, content-hash `schema_ref` | none |
 | Transactional versioned write | `WorkflowsStore.Upsert` mints schema + moves pointer | `Upsert` blind replace |
 | Config vs status separation | status lives in `runs`, never in the workflow payload | status tangled into `metadata` |
-| Declarative source | `.glimmung/workflows/<name>.yaml` in the project repo | none |
+| Import artifact | Optional workflow sync input | none |
 | Drift detection | `GET …/workflows/{name}/upstream` → `workflowsInSync` | none |
 | Apply route | `POST …/workflows/{name}/sync` | none |
 

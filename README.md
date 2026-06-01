@@ -45,9 +45,9 @@ Project -> Workflow -> Issue -> Run -> Phase/Job -> RunReport
   callback-token APIs, and complete through the native run completion callback.
 
 Workflow registration is an admin/control-plane operation. Runtime dispatch
-reads the Workflow row in Postgres, not GitHub directly. Consumer repos may
-author `.glimmung/workflows/<name>.yaml` as desired state, but changes only
-take effect after an operator syncs that file into Glimmung.
+reads the Workflow row in Postgres, not GitHub directly. Consumer repos do not
+need to carry Glimmung workflow files; workflow changes take effect after the
+control plane writes the durable workflow row.
 
 The "agent" — Claude Code, Codex, whatever runs inside the workflow — is opaque to glimmung. We dispatch a venue to a workflow; the workflow runs an agent on it.
 
