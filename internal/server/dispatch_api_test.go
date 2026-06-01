@@ -47,6 +47,33 @@ type fakeDispatchStore struct {
 	abortReason string
 }
 
+type patchingDispatchStore struct {
+	*fakeDispatchStore
+	patchedLeasePayload map[string]any
+	patchErr            error
+}
+
+func (s *patchingDispatchStore) PatchLeasePayload(_ context.Context, project, id string, mutate func(payload map[string]any) error) error {
+	if s.patchErr != nil {
+		return s.patchErr
+	}
+	if project != s.leaseResult.Project || id != s.leaseResult.ID {
+		return errors.New("unexpected lease patch target")
+	}
+	payload := map[string]any{
+		"metadata": mapOrEmpty(s.leaseResult.Metadata),
+		"state":    s.leaseResult.State,
+	}
+	if err := mutate(payload); err != nil {
+		return err
+	}
+	s.patchedLeasePayload = payload
+	if metadata := anyMap(payload["metadata"]); len(metadata) > 0 {
+		s.leaseResult.Metadata = metadata
+	}
+	return nil
+}
+
 type fakeNativeLauncher struct {
 	called        bool
 	req           NativeLaunchRequest
@@ -184,6 +211,7 @@ func minimalDispatchStore() *fakeDispatchStore {
 		wf:        wf,
 		workflows: []Workflow{*wf},
 		leaseResult: Lease{
+			ID:          "lease-1",
 			Project:     "proj",
 			LeaseNumber: &leaseNum,
 			Host:        stringPtr("native-k8s"),
@@ -333,6 +361,64 @@ func TestDispatchRunDispatchedNativeK8sJob(t *testing.T) {
 	}
 	if store.leaseReq.TTLSeconds == nil || *store.leaseReq.TTLSeconds != wantTTL {
 		t.Fatalf("lease ttl=%v, want %d", store.leaseReq.TTLSeconds, wantTTL)
+	}
+}
+
+func TestDispatchRunPersistsPostRunWorkContextOnPreclaimedLease(t *testing.T) {
+	base := minimalDispatchStore()
+	base.leaseResult.Metadata["work_context_branch"] = "issue-168-run-unknown"
+	store := &patchingDispatchStore{fakeDispatchStore: base}
+	launcher := &fakeNativeLauncher{}
+	rec := httptest.NewRecorder()
+	newDispatchTestHandler(store, launcher).ServeHTTP(rec, dispatchRequest("proj", 168))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if !launcher.called {
+		t.Fatal("native launcher was not called")
+	}
+	if got := base.leaseReq.Metadata["work_context_branch"]; got != nil {
+		t.Fatalf("pre-run lease request should not stamp a provisional branch, got %#v", got)
+	}
+	if store.patchedLeasePayload == nil {
+		t.Fatal("lease metadata was not persisted after run creation")
+	}
+	patched := anyMap(store.patchedLeasePayload["metadata"])
+	if got, want := patched["work_context_id"], "run-1"; got != want {
+		t.Fatalf("patched work_context_id=%#v, want %q", got, want)
+	}
+	if got, want := patched["work_context_branch"], "glimmung/run-1"; got != want {
+		t.Fatalf("patched work_context_branch=%#v, want %q", got, want)
+	}
+	if got, want := launcher.req.Lease.Metadata["work_context_branch"], "glimmung/run-1"; got != want {
+		t.Fatalf("launch work_context_branch=%#v, want %q", got, want)
+	}
+}
+
+func TestRunCycleLeaseMetadataUsesPlaybookWorkContextBranch(t *testing.T) {
+	run := RunReplayData{
+		ID:          "run-1",
+		Project:     "proj",
+		IssueNumber: 168,
+		TriggerSource: map[string]any{
+			"kind": "playbook",
+			"work_context": map[string]any{
+				"id":       "playbook:pb-1:entry-1",
+				"branch":   "glimmung/playbooks/pb-1/entry-1",
+				"base_ref": "main",
+				"state":    "in_use",
+			},
+		},
+	}
+	metadata := runCycleLeaseMetadata(run, IssueDispatchData{Title: "issue"}, "owner/repo", "prepare", 0, nil)
+	if got, want := metadata["work_context_branch"], "glimmung/playbooks/pb-1/entry-1"; got != want {
+		t.Fatalf("work_context_branch=%#v, want %q", got, want)
+	}
+	if got, want := metadata["work_context_base_ref"], "main"; got != want {
+		t.Fatalf("work_context_base_ref=%#v, want %q", got, want)
+	}
+	if got := metadata["work_context_id"]; got != nil {
+		t.Fatalf("explicit playbook branch should not be replaced by default run id, got work_context_id=%#v", got)
 	}
 }
 

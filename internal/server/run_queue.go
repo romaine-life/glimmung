@@ -267,6 +267,9 @@ func admitRunCycle(
 			merged[key] = value
 		}
 		lease.Metadata = merged
+		if err := persistLeaseMetadata(ctx, store, lease, merged); err != nil {
+			return RunCycleAdmissionResult{}, fmt.Errorf("persist lease metadata: %w", err)
+		}
 	} else {
 		requirements := initPhase.Requirements
 		if len(requirements) == 0 {
@@ -389,7 +392,6 @@ func runCycleLeaseMetadata(run RunReplayData, issue IssueDispatchData, issueRepo
 		"issue_number":       strconv.Itoa(run.IssueNumber),
 		"native_k8s":         true,
 	}
-	metadata["work_context_branch"] = workContextBranch(run, metadata)
 	if run.CallbackToken != nil && *run.CallbackToken != "" {
 		metadata["run_callback_token"] = *run.CallbackToken
 	}
@@ -411,7 +413,58 @@ func runCycleLeaseMetadata(run RunReplayData, issue IssueDispatchData, issueRepo
 			metadata["feedback"] = feedback
 		}
 	}
+	applyWorkContextMetadata(run, metadata)
+	if branch := workContextBranch(run, metadata); branch != "" {
+		metadata["work_context_branch"] = branch
+	}
 	return metadata
+}
+
+type leaseMetadataPatcher interface {
+	PatchLeasePayload(ctx context.Context, project, id string, mutate func(payload map[string]any) error) error
+}
+
+func persistLeaseMetadata(ctx context.Context, store any, lease Lease, metadata map[string]any) error {
+	patcher, ok := store.(leaseMetadataPatcher)
+	if !ok {
+		return nil
+	}
+	if strings.TrimSpace(lease.ID) == "" {
+		return errors.New("lease id required")
+	}
+	return patcher.PatchLeasePayload(ctx, lease.Project, lease.ID, func(payload map[string]any) error {
+		merged := anyMap(payload["metadata"])
+		for key, value := range metadata {
+			merged[key] = value
+		}
+		payload["metadata"] = merged
+		return nil
+	})
+}
+
+func applyWorkContextMetadata(run RunReplayData, metadata map[string]any) {
+	if contextRaw := anyMap(run.TriggerSource["work_context"]); len(contextRaw) > 0 {
+		metadata["work_context"] = contextRaw
+		if branch := strings.TrimSpace(stringValue(contextRaw["branch"])); branch != "" {
+			metadata["work_context_branch"] = branch
+		}
+		if baseRef := strings.TrimSpace(stringValue(contextRaw["base_ref"])); baseRef != "" {
+			metadata["work_context_base_ref"] = baseRef
+		}
+		if state := strings.TrimSpace(stringValue(contextRaw["state"])); state != "" {
+			metadata["work_context_state"] = state
+		}
+		return
+	}
+	if strings.TrimSpace(stringValue(metadata["work_context_id"])) != "" {
+		return
+	}
+	if branch := strings.TrimSpace(stringValue(metadata["work_context_branch"])); branch != "" {
+		return
+	}
+	if id := strings.TrimSpace(run.ID); id != "" {
+		metadata["work_context_id"] = id
+	}
 }
 
 func positiveIntString(value *int) string {

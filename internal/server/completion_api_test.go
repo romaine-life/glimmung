@@ -76,6 +76,33 @@ type fakeCompletionStore struct {
 	touchpointErr  error
 }
 
+type patchingCompletionStore struct {
+	*fakeCompletionStore
+	patchedLeasePayload map[string]any
+	patchErr            error
+}
+
+func (s *patchingCompletionStore) PatchLeasePayload(_ context.Context, project, id string, mutate func(payload map[string]any) error) error {
+	if s.patchErr != nil {
+		return s.patchErr
+	}
+	if project != s.leaseResult.Project || id != s.leaseResult.ID {
+		return errors.New("unexpected lease patch target")
+	}
+	payload := map[string]any{
+		"metadata": mapOrEmpty(s.leaseResult.Metadata),
+		"state":    s.leaseResult.State,
+	}
+	if err := mutate(payload); err != nil {
+		return err
+	}
+	s.patchedLeasePayload = payload
+	if metadata := anyMap(payload["metadata"]); len(metadata) > 0 {
+		s.leaseResult.Metadata = metadata
+	}
+	return nil
+}
+
 func (s *fakeCompletionStore) ReadRunIDForCallbackToken(context.Context, string) (string, string, string, error) {
 	if s.tokenErr != nil {
 		return "", "", "", s.tokenErr
@@ -1515,6 +1542,55 @@ func TestLeaseForRunPhaseUsesContextIDBranchWhenPresent(t *testing.T) {
 	}
 	if got := lease.Metadata["work_context_id"]; got != "a5551acd-008d-4088-b8d5-59e936fa1c8a" {
 		t.Fatalf("work_context_id=%#v", got)
+	}
+}
+
+func TestLeaseForRunPhasePersistsUpdatedMetadata(t *testing.T) {
+	leaseRef := "proj/leases/proj-1/12"
+	display := "3.1"
+	base := &fakeCompletionStore{
+		leaseResult: Lease{
+			ID:      "lease-1",
+			Project: "proj",
+			State:   "claimed",
+			Metadata: map[string]any{
+				"native_k8s":       true,
+				"work_context_id":  "ctx-123",
+				"native_slot_name": "proj-1",
+			},
+		},
+	}
+	store := &patchingCompletionStore{fakeCompletionStore: base}
+	run := RunReplayData{
+		ID:               "run-3-cycle-1",
+		Project:          "proj",
+		IssueNumber:      168,
+		RunDisplayNumber: &display,
+		SlotLeaseRef:     &leaseRef,
+	}
+
+	lease, err := leaseForRunPhase(context.Background(), store, run, "llm-work", 2, map[string]string{"branch_name": "glimmung/ctx-123"})
+	if err != nil {
+		t.Fatalf("leaseForRunPhase: %v", err)
+	}
+	if store.patchedLeasePayload == nil {
+		t.Fatal("lease metadata was not persisted")
+	}
+	patched := anyMap(store.patchedLeasePayload["metadata"])
+	if got, want := patched["work_context_branch"], "glimmung/ctx-123"; got != want {
+		t.Fatalf("patched work_context_branch=%#v, want %q", got, want)
+	}
+	if got, want := patched["phase_name"], "llm-work"; got != want {
+		t.Fatalf("patched phase_name=%#v, want %q", got, want)
+	}
+	if got, want := patched["attempt_index"], "2"; got != want {
+		t.Fatalf("patched attempt_index=%#v, want %q", got, want)
+	}
+	if got := patched["phase_inputs"]; got == nil {
+		t.Fatalf("patched phase_inputs missing: %#v", patched)
+	}
+	if got, want := lease.Metadata["work_context_branch"], "glimmung/ctx-123"; got != want {
+		t.Fatalf("launch work_context_branch=%#v, want %q", got, want)
 	}
 }
 
