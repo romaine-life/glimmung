@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
@@ -157,6 +158,20 @@ type KubernetesNativeLauncher struct {
 	HTTPClient *http.Client
 }
 
+type providerAPIProxyRuntime struct {
+	ClaudeClusterIP string
+	CodexClusterIP  string
+	CASecretName    string
+	CABundlePath    string
+}
+
+func (r providerAPIProxyRuntime) enabled() bool {
+	return strings.TrimSpace(r.ClaudeClusterIP) != "" &&
+		strings.TrimSpace(r.CodexClusterIP) != "" &&
+		strings.TrimSpace(r.CASecretName) != "" &&
+		strings.TrimSpace(r.CABundlePath) != ""
+}
+
 func NewKubernetesNativeLauncher(settings Settings) *KubernetesNativeLauncher {
 	return &KubernetesNativeLauncher{Settings: settings}
 }
@@ -174,6 +189,14 @@ func (l *KubernetesNativeLauncher) LaunchNativePhase(ctx context.Context, req Na
 	if err := l.ensurePlaywrightForNativePhase(ctx, req); err != nil {
 		return nil, err
 	}
+	var proxyRuntime providerAPIProxyRuntime
+	if nativePhaseRequiresProviderAPIProxy(req.Phase) {
+		runtime, err := l.resolveProviderAPIProxyRuntime(ctx)
+		if err != nil {
+			return nil, err
+		}
+		proxyRuntime = runtime
+	}
 	attemptIndex := nativeAttemptIndex(req)
 	attemptBase := compactResourceName("glim", runRefFromData(req.Run), attemptIndex)
 	launched := make([]string, 0, len(req.Phase.Jobs))
@@ -186,12 +209,74 @@ func (l *KubernetesNativeLauncher) LaunchNativePhase(ctx context.Context, req Na
 		if _, err := l.ensureAttemptSecret(ctx, secretName, attemptBase, job.ID); err != nil {
 			return nil, err
 		}
-		if err := l.createJob(ctx, nativeJobManifest(l.Settings, req, job, jobName, secretName, attemptBase)); err != nil {
+		jobProxyRuntime := providerAPIProxyRuntime{}
+		if nativeJobRequiresProviderAPIProxy(job) {
+			jobProxyRuntime = proxyRuntime
+		}
+		if err := l.createJob(ctx, nativeJobManifest(l.Settings, req, job, jobName, secretName, attemptBase, jobProxyRuntime)); err != nil {
 			return nil, err
 		}
 		launched = append(launched, jobName)
 	}
 	return launched, nil
+}
+
+func nativePhaseRequiresProviderAPIProxy(phase PhaseSpec) bool {
+	for _, job := range phase.Jobs {
+		if nativeJobRequiresProviderAPIProxy(job) {
+			return true
+		}
+	}
+	return false
+}
+
+func nativeJobRequiresProviderAPIProxy(job NativeJobSpec) bool {
+	if !job.Managed {
+		return false
+	}
+	for _, step := range job.Steps {
+		if step.Agent != nil {
+			return true
+		}
+	}
+	return false
+}
+
+func (l *KubernetesNativeLauncher) resolveProviderAPIProxyRuntime(ctx context.Context) (providerAPIProxyRuntime, error) {
+	namespace := firstNonEmpty(strings.TrimSpace(l.Settings.ProviderAPIProxyNamespace), strings.TrimSpace(l.Settings.NativeRunnerNamespace))
+	claudeService := firstNonEmpty(strings.TrimSpace(l.Settings.ProviderAPIProxyClaudeService), "claude-api-proxy")
+	codexService := firstNonEmpty(strings.TrimSpace(l.Settings.ProviderAPIProxyCodexService), "codex-api-proxy")
+	claudeIP, err := l.serviceClusterIP(ctx, namespace, claudeService)
+	if err != nil {
+		return providerAPIProxyRuntime{}, fmt.Errorf("resolve claude provider api proxy service: %w", err)
+	}
+	codexIP, err := l.serviceClusterIP(ctx, namespace, codexService)
+	if err != nil {
+		return providerAPIProxyRuntime{}, fmt.Errorf("resolve codex provider api proxy service: %w", err)
+	}
+	return providerAPIProxyRuntime{
+		ClaudeClusterIP: claudeIP,
+		CodexClusterIP:  codexIP,
+		CASecretName:    firstNonEmpty(strings.TrimSpace(l.Settings.ProviderAPIProxyCASecret), "glimmung-provider-api-proxy-ca"),
+		CABundlePath:    firstNonEmpty(strings.TrimSpace(l.Settings.ProviderAPIProxyCABundlePath), "/etc/glimmung-provider-api-proxy-bundle/ca-certificates.crt"),
+	}, nil
+}
+
+func (l *KubernetesNativeLauncher) serviceClusterIP(ctx context.Context, namespace, service string) (string, error) {
+	status, body, err := l.request(ctx, http.MethodGet, "/api/v1/namespaces/"+namespace+"/services/"+service, nil)
+	if err != nil {
+		return "", err
+	}
+	if status != http.StatusOK {
+		return "", fmt.Errorf("GET service %s/%s returned %d", namespace, service, status)
+	}
+	spec, _ := body["spec"].(map[string]any)
+	ip, _ := spec["clusterIP"].(string)
+	ip = strings.TrimSpace(ip)
+	if ip == "" || strings.EqualFold(ip, "none") {
+		return "", fmt.Errorf("service %s/%s has no ClusterIP", namespace, service)
+	}
+	return ip, nil
 }
 
 func (l *KubernetesNativeLauncher) EnsureTestSlotPreliminaries(ctx context.Context, lease Lease, project Project, minter NativeGitHubTokenMinter) error {
@@ -1354,7 +1439,11 @@ func (l *KubernetesNativeLauncher) transport() http.RoundTripper {
 	return &http.Transport{TLSClientConfig: &tls.Config{RootCAs: pool}}
 }
 
-func nativeJobManifest(settings Settings, req NativeLaunchRequest, job NativeJobSpec, jobName, secretName, attemptBase string) map[string]any {
+func nativeJobManifest(settings Settings, req NativeLaunchRequest, job NativeJobSpec, jobName, secretName, attemptBase string, proxyRuntimes ...providerAPIProxyRuntime) map[string]any {
+	proxyRuntime := providerAPIProxyRuntime{}
+	if len(proxyRuntimes) > 0 {
+		proxyRuntime = proxyRuntimes[0]
+	}
 	req.Phase = CanonicalNativePhase(req.Phase)
 	for _, canonical := range req.Phase.Jobs {
 		if canonical.ID == job.ID {
@@ -1377,14 +1466,55 @@ func nativeJobManifest(settings Settings, req NativeLaunchRequest, job NativeJob
 		podLabels[k] = v
 	}
 	podLabels["azure.workload.identity/use"] = "true"
+	env := nativeJobEnv(settings, req, job, secretName)
+	volumeMounts := []any{
+		map[string]any{"name": "glimmung-attempt-token", "mountPath": "/var/run/glimmung", "readOnly": true},
+	}
+	volumes := []any{
+		map[string]any{"name": "glimmung-attempt-token", "secret": map[string]any{"secretName": secretName}},
+	}
+	podSpec := map[string]any{
+		"serviceAccountName": settings.NativeRunnerServiceAccount,
+		"restartPolicy":      "Never",
+	}
+	if proxyRuntime.enabled() {
+		caMountPath := "/etc/glimmung-provider-api-proxy-ca"
+		bundleMountPath := filepath.Dir(proxyRuntime.CABundlePath)
+		env = append(env,
+			map[string]any{"name": "NODE_EXTRA_CA_CERTS", "value": caMountPath + "/ca.crt"},
+			map[string]any{"name": "SSL_CERT_FILE", "value": proxyRuntime.CABundlePath},
+			map[string]any{"name": "REQUESTS_CA_BUNDLE", "value": proxyRuntime.CABundlePath},
+			map[string]any{"name": "GIT_SSL_CAINFO", "value": proxyRuntime.CABundlePath},
+		)
+		volumeMounts = append(volumeMounts,
+			map[string]any{"name": "provider-api-proxy-ca", "mountPath": caMountPath, "readOnly": true},
+			map[string]any{"name": "provider-api-proxy-ca-bundle", "mountPath": bundleMountPath, "readOnly": true},
+		)
+		volumes = append(volumes,
+			map[string]any{"name": "provider-api-proxy-ca", "secret": map[string]any{"secretName": proxyRuntime.CASecretName}},
+			map[string]any{"name": "provider-api-proxy-ca-bundle", "emptyDir": map[string]any{}},
+		)
+		podSpec["hostAliases"] = []any{
+			map[string]any{"ip": proxyRuntime.ClaudeClusterIP, "hostnames": []any{"api.anthropic.com"}},
+			map[string]any{"ip": proxyRuntime.CodexClusterIP, "hostnames": []any{"chatgpt.com"}},
+		}
+		podSpec["initContainers"] = []any{
+			map[string]any{
+				"name":    "provider-api-proxy-ca-bundle",
+				"image":   nativeJobImage(settings, job),
+				"command": []any{"/bin/sh", "-ec", "if [ -f /etc/ssl/certs/ca-certificates.crt ]; then cat /etc/ssl/certs/ca-certificates.crt /proxy-ca/ca.crt > " + proxyRuntime.CABundlePath + "; else cp /proxy-ca/ca.crt " + proxyRuntime.CABundlePath + "; fi && chmod 0444 " + proxyRuntime.CABundlePath},
+				"volumeMounts": []any{
+					map[string]any{"name": "provider-api-proxy-ca", "mountPath": "/proxy-ca", "readOnly": true},
+					map[string]any{"name": "provider-api-proxy-ca-bundle", "mountPath": bundleMountPath},
+				},
+			},
+		}
+	}
 	container := map[string]any{
-		"name":  dnsLabel(job.ID),
-		"image": nativeJobImage(settings, job),
-		"env":   nativeJobEnv(settings, req, job, secretName),
-		"volumeMounts": []any{
-			map[string]any{"name": "glimmung-attempt-token", "mountPath": "/var/run/glimmung", "readOnly": true},
-			map[string]any{"name": "codex-credentials", "mountPath": settings.NativeRunnerCodexMountPath, "readOnly": true},
-		},
+		"name":         dnsLabel(job.ID),
+		"image":        nativeJobImage(settings, job),
+		"env":          env,
+		"volumeMounts": volumeMounts,
 	}
 	if job.Managed {
 		container["command"] = []string{nativeRunnerEntrypoint(settings)}
@@ -1394,15 +1524,8 @@ func nativeJobManifest(settings Settings, req NativeLaunchRequest, job NativeJob
 	if !job.Managed && len(job.Args) > 0 {
 		container["args"] = job.Args
 	}
-	podSpec := map[string]any{
-		"serviceAccountName": settings.NativeRunnerServiceAccount,
-		"restartPolicy":      "Never",
-		"volumes": []any{
-			map[string]any{"name": "glimmung-attempt-token", "secret": map[string]any{"secretName": secretName}},
-			map[string]any{"name": "codex-credentials", "secret": map[string]any{"secretName": settings.NativeRunnerCodexSecret, "optional": false}},
-		},
-		"containers": []any{container},
-	}
+	podSpec["volumes"] = volumes
+	podSpec["containers"] = []any{container}
 	if job.TimeoutSeconds != nil && *job.TimeoutSeconds > 0 {
 		podSpec["activeDeadlineSeconds"] = *job.TimeoutSeconds
 	}

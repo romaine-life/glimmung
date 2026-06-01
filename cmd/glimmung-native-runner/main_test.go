@@ -526,6 +526,29 @@ func TestNativeRunnerDoesNotWaitForeverForBlockedLogEvent(t *testing.T) {
 	close(releaseRequest)
 }
 
+func TestAgentShellPreambleUsesProxyPlaceholderCredentials(t *testing.T) {
+	script := agentShellPreamble()
+	for _, want := range []string{
+		`"auth_mode": "chatgptAuthTokens"`,
+		`"access_token": "managed-by-glimmung"`,
+		`"refresh_token": ""`,
+		`cli_auth_credentials_store = "file"`,
+	} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("agentShellPreamble missing %q:\n%s", want, script)
+		}
+	}
+	for _, forbidden := range []string{
+		"/etc/codex-creds",
+		"cp /etc/codex-creds/auth.json",
+		"refreshToken\": \"managed-by-tank-operator",
+	} {
+		if strings.Contains(script, forbidden) {
+			t.Fatalf("agentShellPreamble kept retired credential path %q:\n%s", forbidden, script)
+		}
+	}
+}
+
 // shellQuote produces a POSIX-shell-safe single-quoted form of s.
 func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
