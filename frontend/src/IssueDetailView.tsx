@@ -40,6 +40,7 @@ import { lokiExploreUrl } from "./grafanaLinks";
 import { PhaseGraph, type PhaseGraphPhase } from "./PhaseGraph";
 import { RecyclePolicyPanel } from "./RecyclePolicyPanel";
 import { issueRunSelectionPath } from "./routes";
+import { RunCancelAction, RUN_CANCEL_IDLE_STATE, runStateCanCancel, type AbortState } from "./RunCancelAction";
 import { useHorizontalDragScroll } from "./useHorizontalDragScroll";
 import {
   runTopologyToPhaseGraphModel,
@@ -379,12 +380,6 @@ type DispatchRunResponse = {
   cycle_number?: number | string | null;
 };
 
-export type AbortState =
-  | { kind: "idle" }
-  | { kind: "armed" }       // first click on `abort` — show `abort?` / `keep`
-  | { kind: "aborting" }
-  | { kind: "error"; message: string };
-
 type AuthContext = {
   signedIn: boolean;
   isAdmin: boolean;
@@ -417,7 +412,7 @@ const SLUG_TO_TAB: Record<string, Tab> = {
 
 const POLL_INTERVAL_MS = 3000;
 const RUN_VIEWER_IDLE_DISPATCH: DispatchState = { kind: "idle" };
-const RUN_VIEWER_IDLE_ABORT: AbortState = { kind: "idle" };
+const RUN_VIEWER_IDLE_ABORT: AbortState = RUN_CANCEL_IDLE_STATE;
 
 // Pull a human-readable cause out of the raw error string built in
 // dispatchRun: `/v1/runs/dispatch -> <status>: <body>`. API errors
@@ -1248,8 +1243,6 @@ export function RunViewer({
   // historical run is selected for viewing in the run tab.
   const activeRun = findActiveRun(graph);
   const abortableRunNumber = activeRun ? runRouteSlugFromNode(activeRun) : null;
-  const aborting = abortState.kind === "aborting";
-  const armed = abortState.kind === "armed";
   const dispatchLabel = dispatching
     ? "dispatching…"
     : inFlight
@@ -1284,47 +1277,17 @@ export function RunViewer({
           <span className="dispatch-error-message">{formatDispatchError(dispatchState.message)}</span>
         </span>
       )}
-      {signedIn && abortableRunNumber !== null && (
-        <span style={{ marginLeft: "1rem" }}>
-          {armed || aborting ? (
-            <span className="confirm">
-              <button
-                type="button"
-                className="link danger-text"
-                onClick={() => onConfirmAbort(abortableRunNumber)}
-                disabled={aborting}
-              >
-                {aborting ? "aborting…" : "abort?"}
-              </button>
-              <span className="sep">/</span>
-              <button
-                type="button"
-                className="link"
-                onClick={onCancelAbort}
-                disabled={aborting}
-              >
-                keep
-              </button>
-            </span>
-          ) : (
-            <button
-              type="button"
-              className="link danger-text"
-              onClick={onArmAbort}
-            >
-              abort
-            </button>
-          )}
-        </span>
-      )}
-      {abortState.kind === "error" && (
-        <span
-          className="pill drain"
-          style={{ marginLeft: "0.5rem" }}
-          title={abortState.message}
-        >
-          abort error
-        </span>
+      {abortableRunNumber !== null && (
+        <RunCancelAction
+          signedIn={signedIn}
+          isAdmin={isAdmin}
+          runState={activeRun?.state}
+          state={abortState}
+          onArm={onArmAbort}
+          onKeep={onCancelAbort}
+          onConfirm={() => onConfirmAbort(abortableRunNumber)}
+          className="run-cancel-inline"
+        />
       )}
       {selectedRunId && focused && (
         <span className="dim mono">
@@ -1953,14 +1916,31 @@ function RunsPane({
     : !isAdmin && !dispatching && !detail.issue_lock_held
     ? "Dispatching runs is restricted to admins. Ask an admin to promote your account at auth.romaine.life/admin."
     : undefined;
-  const activeRunNumber = projectionActiveRun(graph?.projection)?.run_display_number
-    ?? (() => {
-      const node = graph ? findActiveRun(graph) : null;
-      return node ? runRouteSlugFromNode(node) : null;
-    })();
-  const aborting = abortState.kind === "aborting";
-  const armed = abortState.kind === "armed";
-  const cancelVisible = signedIn && isAdmin && activeRunNumber !== null;
+  const activeProjectionRun = projectionActiveRun(graph?.projection);
+  const activeGraphRun = graph ? findActiveRun(graph) : null;
+  const latestProjection = latestProjectionRun(graph?.projection);
+  const latestGraphRun = graph ? findLastCompletedRun(graph) : null;
+  const cancelTarget = activeProjectionRun
+    ? {
+        runNumber: activeProjectionRun.run_display_number ?? projectionRunNumberSegment(activeProjectionRun),
+        state: activeProjectionRun.state,
+      }
+    : activeGraphRun
+    ? (() => {
+        const runNumber = runRouteSlugFromNode(activeGraphRun);
+        return runNumber ? { runNumber, state: activeGraphRun.state } : null;
+      })()
+    : latestProjection
+    ? {
+        runNumber: latestProjection.run_display_number ?? projectionRunNumberSegment(latestProjection),
+        state: latestProjection.state,
+      }
+    : latestGraphRun
+    ? (() => {
+        const runNumber = runRouteSlugFromNode(latestGraphRun);
+        return runNumber ? { runNumber, state: latestGraphRun.state } : null;
+      })()
+    : null;
   const newRunButton = (
     <div
       className="run-actions"
@@ -1986,44 +1966,16 @@ function RunsPane({
           <span className="dispatch-error-message">{formatDispatchError(dispatchState.message)}</span>
         </span>
       )}
-      {cancelVisible && (
-        armed || aborting ? (
-          <span className="confirm">
-            <button
-              type="button"
-              className="link danger-text"
-              onClick={() => onConfirmAbort(activeRunNumber)}
-              disabled={aborting}
-            >
-              {aborting ? "cancelling…" : "cancel?"}
-            </button>
-            <span className="sep">/</span>
-            <button
-              type="button"
-              className="link"
-              onClick={onCancelAbort}
-              disabled={aborting}
-            >
-              keep
-            </button>
-          </span>
-        ) : (
-          <button
-            type="button"
-            className="link danger-text"
-            onClick={onArmAbort}
-          >
-            cancel run
-          </button>
-        )
-      )}
-      {abortState.kind === "error" && (
-        <span
-          className="pill drain"
-          title={abortState.message}
-        >
-          cancel error
-        </span>
+      {cancelTarget?.runNumber && (
+        <RunCancelAction
+          signedIn={signedIn}
+          isAdmin={isAdmin}
+          runState={cancelTarget.state}
+          state={abortState}
+          onArm={onArmAbort}
+          onKeep={onCancelAbort}
+          onConfirm={() => onConfirmAbort(cancelTarget.runNumber)}
+        />
       )}
     </div>
   );
@@ -2077,7 +2029,13 @@ function RunsPane({
         selectedPhaseId={selectedPhaseId}
         selectedJobId={selectedJobId}
         selectedStepId={selectedStepId}
+        signedIn={signedIn}
+        isAdmin={isAdmin}
+        abortState={abortState}
         onBackToRuns={() => onSelectRun(null)}
+        onArmAbort={onArmAbort}
+        onCancelAbort={onCancelAbort}
+        onConfirmAbort={onConfirmAbort}
         onSelectNode={(selection) => onSelectProjectionNode(selectedRunProjection, selection)}
       />
     );
@@ -2240,7 +2198,13 @@ function RunExecutionView({
   selectedPhaseId,
   selectedJobId,
   selectedStepId,
+  signedIn,
+  isAdmin,
+  abortState,
   onBackToRuns,
+  onArmAbort,
+  onCancelAbort,
+  onConfirmAbort,
   onSelectNode,
 }: {
   run: RunProjectionRun;
@@ -2250,7 +2214,13 @@ function RunExecutionView({
   selectedPhaseId: string | null;
   selectedJobId: string | null;
   selectedStepId: string | null;
+  signedIn: boolean;
+  isAdmin: boolean;
+  abortState: AbortState;
   onBackToRuns: () => void;
+  onArmAbort: () => void;
+  onCancelAbort: () => void;
+  onConfirmAbort: (runNumber: string) => void;
   onSelectNode: (selection: ProjectionSelection) => void;
 }) {
   const inspectorRef = useRef<HTMLDivElement | null>(null);
@@ -2281,6 +2251,15 @@ function RunExecutionView({
         </button>
         <h2>{projectionRunLabel(run)} execution</h2>
         <span className={`pill ${runStatePill(run.state)}`}>{run.state}</span>
+        <RunCancelAction
+          signedIn={signedIn}
+          isAdmin={isAdmin}
+          runState={run.state}
+          state={abortState}
+          onArm={onArmAbort}
+          onKeep={onCancelAbort}
+          onConfirm={() => onConfirmAbort(run.run_display_number ?? projectionRunNumberSegment(run))}
+        />
       </div>
       <ProjectionPipelineDag
         run={run}
@@ -4976,7 +4955,7 @@ function runStatePill(state: string): string {
 }
 
 function runStateIsActive(state: string): boolean {
-  return state === "in_progress" || state === "queued" || state === "pending";
+  return runStateCanCancel(state);
 }
 
 function formatTimestamp(value: string): string {

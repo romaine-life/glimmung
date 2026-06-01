@@ -645,6 +645,123 @@ describe("IssueDetailView run execution graph", () => {
     });
   });
 
+  it("keeps cancel run visible but disabled for a terminal issue run", async () => {
+    const terminalIssue = {
+      ...issueDetail,
+      last_run_state: "aborted",
+      issue_lock_held: false,
+    };
+    const terminalRun = {
+      ...runProjection.runs[0],
+      state: "aborted",
+      completed_at: "2026-05-20T17:30:09.336Z",
+    };
+    const terminalProjection = {
+      ...runProjection,
+      runs: [terminalRun],
+    };
+    const terminalGraph = {
+      ...issueGraph,
+      nodes: issueGraph.nodes.map((node) => node.kind === "run" ? { ...node, state: "aborted" } : node),
+      projection: terminalProjection,
+    };
+
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url =
+        typeof input === "string"
+          ? new URL(input, "https://glimmung.test")
+          : input instanceof URL
+            ? input
+            : new URL(input.url);
+      if (url.pathname === "/v1/issues/by-number/ambience/172") return json(terminalIssue);
+      if (url.pathname === "/v1/issues/by-number/ambience/172/graph") return json(terminalGraph);
+      if (url.pathname === "/v1/workflows") return json([]);
+      throw new Error(`unhandled fetch ${url.pathname}`);
+    }));
+
+    renderIssueDetail("/projects/ambience/issues/172/runs");
+
+    const cancel = await screen.findByRole("button", { name: "cancel run" });
+    expect(cancel).toBeDisabled();
+    expect(cancel).toHaveAttribute("title", "run already aborted");
+  });
+
+  it("keeps cancel run visible but disabled on a deep-linked terminal execution view", async () => {
+    const terminalIssue = {
+      ...issueDetail,
+      last_run_state: "aborted",
+      issue_lock_held: false,
+    };
+    const terminalRun = {
+      ...runProjection.runs[0],
+      state: "aborted",
+      completed_at: "2026-05-20T17:30:09.336Z",
+    };
+    const terminalProjection = {
+      ...runProjection,
+      runs: [terminalRun],
+    };
+    const terminalGraph = {
+      ...issueGraph,
+      nodes: issueGraph.nodes.map((node) => node.kind === "run" ? { ...node, state: "aborted" } : node),
+      projection: terminalProjection,
+    };
+
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url =
+        typeof input === "string"
+          ? new URL(input, "https://glimmung.test")
+          : input instanceof URL
+            ? input
+            : new URL(input.url);
+      if (url.pathname === "/v1/issues/by-number/ambience/172") return json(terminalIssue);
+      if (url.pathname === "/v1/issues/by-number/ambience/172/graph") return json(terminalGraph);
+      if (url.pathname === "/v1/projects/ambience/issues/172/runs/7/cycles/1/graph") return json(terminalProjection);
+      if (url.pathname === "/v1/workflows") return json([]);
+      throw new Error(`unhandled fetch ${url.pathname}`);
+    }));
+
+    renderIssueDetail("/projects/ambience/issues/172/runs/7/cycles/1");
+
+    const cancel = await screen.findByRole("button", { name: "cancel run" });
+    expect(cancel).toBeDisabled();
+    expect(cancel).toHaveAttribute("title", "run already aborted");
+  });
+
+  it("cancels an active run from a deep-linked execution view", async () => {
+    const requests: Array<{ path: string; method: string }> = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url =
+        typeof input === "string"
+          ? new URL(input, "https://glimmung.test")
+          : input instanceof URL
+            ? input
+            : new URL(input.url);
+      const method = (init?.method ?? "GET").toUpperCase();
+      requests.push({ path: url.pathname, method });
+      if (url.pathname === "/v1/issues/by-number/ambience/172") return json(issueDetail);
+      if (url.pathname === "/v1/issues/by-number/ambience/172/graph") return json(issueGraph);
+      if (url.pathname === "/v1/projects/ambience/issues/172/runs/7/cycles/1/graph") return json(runProjection);
+      if (url.pathname === "/v1/projects/ambience/issues/172/runs/7.1/abort" && method === "POST") return json({ state: "aborted" });
+      if (url.pathname === "/v1/workflows") return json([]);
+      throw new Error(`unhandled fetch ${method} ${url.pathname}`);
+    }));
+
+    renderIssueDetail("/projects/ambience/issues/172/runs/7/cycles/1");
+
+    const cancel = await screen.findByRole("button", { name: "cancel run" });
+    expect(cancel).toBeEnabled();
+    await userEvent.click(cancel);
+    await userEvent.click(screen.getByRole("button", { name: "cancel?" }));
+
+    await waitFor(() => {
+      expect(requests).toContainEqual({
+        path: "/v1/projects/ambience/issues/172/runs/7.1/abort",
+        method: "POST",
+      });
+    });
+  });
+
   it("routes a dispatching job click to its job path and keeps step clicks specific", async () => {
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
       const url =

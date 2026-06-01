@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
 import { Link, Navigate, NavLink, Outlet, Route, Routes, useLocation, useNavigate, useOutletContext, useParams } from "react-router-dom";
 import { AdminPanel } from "./AdminPanel";
-import { IssueDetailView, type AbortState } from "./IssueDetailView";
+import { IssueDetailView } from "./IssueDetailView";
 import { IssuesView } from "./IssuesView";
 import { PlaybooksView } from "./PlaybooksView";
 import { PortfolioView } from "./PortfolioView";
+import { RunCancelAction, RUN_CANCEL_IDLE_STATE, runStateCanCancel, type AbortState } from "./RunCancelAction";
 import { TouchpointsView } from "./TouchpointsView";
 import { StyleguideView } from "./StyleguideView";
 import { PhaseGraph, type PhaseGraphPhase } from "./PhaseGraph";
@@ -1794,10 +1795,10 @@ function ProjectRunsTable({
               <td className="mono dim">${run.cost_usd.toFixed(2)}</td>
               <td className="mono dim">{relTime(run.updated_at)}</td>
               <td>
-                <ProjectRunCancelAction
-                  run={run}
+                <RunCancelAction
                   signedIn={signedIn}
                   isAdmin={isAdmin}
+                  runState={run.state}
                   state={cancelState[run.id] ?? RUN_VIEWER_IDLE_ABORT}
                   onArm={() => onArmCancel(run)}
                   onKeep={() => onCancelCancel(run)}
@@ -1839,64 +1840,7 @@ function projectRunCancelTarget(run: ProjectRun, runSlug: string): { project: st
   };
 }
 
-function ProjectRunCancelAction({
-  run,
-  signedIn,
-  isAdmin,
-  state,
-  onArm,
-  onKeep,
-  onConfirm,
-}: {
-  run: ProjectRun;
-  signedIn: boolean;
-  isAdmin: boolean;
-  state: AbortState;
-  onArm: () => void;
-  onKeep: () => void;
-  onConfirm: () => void;
-}) {
-  if (!signedIn || !isAdmin || !runStateIsActive(run.state)) {
-    return null;
-  }
-  if (state.kind === "armed" || state.kind === "aborting") {
-    return (
-      <span className="confirm">
-        <button
-          type="button"
-          className="link danger-text"
-          onClick={onConfirm}
-          disabled={state.kind === "aborting"}
-        >
-          {state.kind === "aborting" ? "cancelling..." : "cancel?"}
-        </button>
-        <span className="sep">/</span>
-        <button
-          type="button"
-          className="link"
-          onClick={onKeep}
-          disabled={state.kind === "aborting"}
-        >
-          keep
-        </button>
-      </span>
-    );
-  }
-  return (
-    <>
-      <button type="button" className="link danger-text" onClick={onArm}>
-        cancel run
-      </button>
-      {state.kind === "error" && (
-        <div className="dispatch-error-message" role="alert" title={state.message}>
-          cancel error
-        </div>
-      )}
-    </>
-  );
-}
-
-const RUN_VIEWER_IDLE_ABORT: AbortState = { kind: "idle" };
+const RUN_VIEWER_IDLE_ABORT: AbortState = RUN_CANCEL_IDLE_STATE;
 
 function projectRunFromReport(report: RunReport): ProjectRun {
   return {
@@ -1927,7 +1871,7 @@ function runStatePill(state: string): string {
 }
 
 function runStateIsActive(state: string): boolean {
-  return state === "in_progress" || state === "queued" || state === "pending";
+  return runStateCanCancel(state);
 }
 
 function CurrentWorkTable({ leases, emptyText }: { leases: Lease[]; emptyText: string }) {

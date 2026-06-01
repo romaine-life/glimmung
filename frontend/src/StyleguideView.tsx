@@ -4,6 +4,7 @@
  */
 import { useState } from "react";
 import { PhaseGraph } from "./PhaseGraph";
+import { RunCancelAction, RUN_CANCEL_IDLE_STATE } from "./RunCancelAction";
 import "./index.css";
 
 type ReviewState = "unset" | "reviewed" | "needs-review";
@@ -122,7 +123,7 @@ const DESIGN_SYSTEM_ITEMS: PortfolioItem[] = [
   {
     id: "run-actions",
     title: "Run Actions",
-    caption: "Issue detail controls for starting a fresh run from the runs tab",
+    caption: "Issue detail controls for dispatching and cancelling concrete runs",
     render: () => (
       <Specimen title="run actions">
         <div className="run-actions" style={{ display: "flex", alignItems: "center", gap: "0.75rem", flexWrap: "wrap" }}>
@@ -130,6 +131,24 @@ const DESIGN_SYSTEM_ITEMS: PortfolioItem[] = [
           <span className="pill free">dispatched</span>
           <button type="button" className="link" disabled>in flight</button>
           <button type="button" className="link" disabled>sign in</button>
+          <RunCancelAction
+            signedIn
+            isAdmin
+            runState="in_progress"
+            state={RUN_CANCEL_IDLE_STATE}
+            onArm={() => undefined}
+            onKeep={() => undefined}
+            onConfirm={() => undefined}
+          />
+          <RunCancelAction
+            signedIn
+            isAdmin
+            runState="aborted"
+            state={RUN_CANCEL_IDLE_STATE}
+            onArm={() => undefined}
+            onKeep={() => undefined}
+            onConfirm={() => undefined}
+          />
           <span className="pill drain">error</span>
         </div>
       </Specimen>
