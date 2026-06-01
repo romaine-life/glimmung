@@ -183,6 +183,63 @@ const issueGraph = {
   projection: runProjection,
 };
 
+const agentWorkflow = {
+  id: "workflow:ambience/default",
+  project: "ambience",
+  name: "default",
+  workflow_filename: null,
+  workflow_ref: null,
+  default_requirements: {},
+  pr: { recycle_policy: null },
+  phases: [{
+    name: "implementation",
+    kind: "k8s_job",
+    workflow_filename: "",
+    workflow_ref: "",
+    verify: false,
+    recycle_policy: null,
+    jobs: [{
+      id: "agent",
+      steps: [{ slug: "run-agent", type: "agent", agent: { slot: "implementation" } }],
+    }],
+  }, {
+    name: "verification",
+    kind: "k8s_job",
+    workflow_filename: "",
+    workflow_ref: "",
+    verify: true,
+    recycle_policy: null,
+    jobs: [{
+      id: "verify",
+      steps: [{ slug: "verify-agent", type: "agent", agent: { slot: "verification" } }],
+    }],
+  }],
+};
+
+const runtimeContext = {
+  signedIn: true,
+  isAdmin: true,
+  snap: {
+    agent_runtime: {
+      profiles: {
+        "codex-deep": { id: "codex-deep", provider: "codex", model: "gpt-5.5", reasoning_effort: "high" },
+        "claude-sonnet": { id: "claude-sonnet", provider: "claude", model: "claude-sonnet-4-5" },
+      },
+      policy: { default: { mode: "override", profile: "codex-deep" } },
+    },
+    projects: [{
+      name: "ambience",
+      github_repo: "nelsong6/ambience",
+      metadata: {
+        agent_runtime: {
+          policy: { default: { mode: "inherit" } },
+        },
+      },
+    }],
+    workflows: [agentWorkflow],
+  },
+};
+
 const nativeEvents = {
   project: "ambience",
   run_ref: "ambience#172/runs/7.1",
@@ -386,6 +443,53 @@ describe("IssueDetailView run execution graph", () => {
     const taskItem = screen.getByText("Define config").closest("li");
     expect(taskItem?.querySelector('input[type="checkbox"]')).toBeTruthy();
     expect(screen.getByText("rendered").tagName).toBe("STRONG");
+  });
+
+  it("edits issue agent runtime from the workflow tab, not the summary editor", async () => {
+    let patchBody: Record<string, unknown> | null = null;
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url =
+        typeof input === "string"
+          ? new URL(input, "https://glimmung.test")
+          : input instanceof URL
+            ? input
+            : new URL(input.url);
+      if (url.pathname === "/v1/issues/by-number/ambience/172" && init?.method === "PATCH") {
+        patchBody = JSON.parse(String(init.body)) as Record<string, unknown>;
+        return json({ ...issueDetail, metadata: { agent: patchBody.agent } });
+      }
+      if (url.pathname === "/v1/config") return json({ auth_url: "https://auth.test", tank_operator_base_url: "https://tank.test" });
+      if (url.pathname === "/v1/auth/me") return json({ signed_in: true, email: "admin@example.com" });
+      if (url.pathname === "/v1/issues/by-number/ambience/172") return json(issueDetail);
+      if (url.pathname === "/v1/issues/by-number/ambience/172/graph") return json(issueGraph);
+      if (url.pathname === "/v1/workflows") return json([agentWorkflow]);
+      throw new Error(`unhandled fetch ${url.pathname}`);
+    }));
+
+    renderIssueDetail("/projects/ambience/issues/172/summary", runtimeContext);
+
+    await userEvent.click(await screen.findByRole("button", { name: "edit" }));
+    expect(screen.queryByText("Agent runtime")).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "workflow" }));
+    expect(await screen.findByRole("heading", { name: "Issue agent runtime" })).toBeInTheDocument();
+    expect(screen.getByText("new runs only")).toBeInTheDocument();
+
+    await userEvent.selectOptions(screen.getByLabelText("Agent runtime"), "claude-sonnet");
+    await userEvent.selectOptions(screen.getByLabelText("verification agent"), "codex-deep");
+    await userEvent.click(screen.getByRole("button", { name: "Save agent runtime" }));
+
+    await waitFor(() => {
+      expect(patchBody).toEqual({
+        agent: {
+          default: { mode: "override", profile: "claude-sonnet" },
+          slots: {
+            implementation: { mode: "inherit" },
+            verification: { mode: "override", profile: "codex-deep" },
+          },
+        },
+      });
+    });
   });
 
   it("shows run history as flat run counts, base cycle values, and run-cycle ordinals", async () => {
@@ -927,7 +1031,20 @@ describe("IssueDetailView run execution graph", () => {
   });
 });
 
-function renderIssueDetail(initialPath: string) {
+function renderIssueDetail(
+  initialPath: string,
+  outletContext: unknown = { signedIn: true, isAdmin: true, snap: { projects: [], workflows: [] } },
+) {
+  function TestLayout() {
+    const location = useLocation();
+    return (
+      <>
+        <div data-testid="path">{location.pathname}</div>
+        <Outlet context={outletContext} />
+      </>
+    );
+  }
+
   return render(
     <MemoryRouter initialEntries={[initialPath]}>
       <Routes>
@@ -947,16 +1064,6 @@ function renderIssueDetail(initialPath: string) {
         </Route>
       </Routes>
     </MemoryRouter>,
-  );
-}
-
-function TestLayout() {
-  const location = useLocation();
-  return (
-    <>
-      <div data-testid="path">{location.pathname}</div>
-      <Outlet context={{ signedIn: true, isAdmin: true, snap: { projects: [], workflows: [] } }} />
-    </>
   );
 }
 
