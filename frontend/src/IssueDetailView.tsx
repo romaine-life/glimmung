@@ -4107,6 +4107,18 @@ function appendAgentPayloadEntries(
   payloadIndex: number,
   toolNamesById: Map<string, string>,
 ) {
+  if (typeof payload === "string") {
+    entries.push({
+      id: `assistant-${event.seq}-${payloadIndex}`,
+      kind: "assistant",
+      seq: event.seq,
+      createdAt: event.created_at,
+      title: "assistant",
+      text: payload.trim(),
+    });
+    return;
+  }
+
   const obj = recordValue(payload);
   if (!obj) {
     entries.push({
@@ -4271,13 +4283,14 @@ function parseAgentLogPayloads(message: string): unknown[] {
     return [JSON.parse(trimmed) as unknown];
   } catch {
     const chunks = balancedJsonChunks(trimmed);
-    return chunks.flatMap((chunk) => {
+    const payloads = chunks.flatMap((chunk) => {
       try {
         return [JSON.parse(chunk) as unknown];
       } catch {
         return [];
       }
     });
+    return payloads.length > 0 ? payloads : [trimmed];
   }
 }
 
@@ -4474,12 +4487,12 @@ function nativeJobLooksLlm(job: NativeAttemptJob | null): boolean {
     job?.job_id ?? "",
     job?.name ?? "",
   ].join(" ").toLowerCase();
-  return marker.includes("llm") || marker.includes("run-agent") || marker.includes("claude");
+  return marker.includes("llm") || marker.includes("run-agent") || marker.includes("claude") || marker.includes("codex");
 }
 
 function nativeStepLooksLlm(step: NativeAttemptStep): boolean {
   const marker = `${step.slug} ${step.title ?? ""}`.toLowerCase();
-  return marker.includes("llm") || marker.includes("run-agent") || marker.includes("claude");
+  return marker.includes("llm") || marker.includes("run-agent") || marker.includes("claude") || marker.includes("codex");
 }
 
 function findActiveRun(graph: IssueGraph): GraphNode | null {
