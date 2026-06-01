@@ -372,6 +372,13 @@ export type DispatchState =
   | { kind: "result"; state: string }
   | { kind: "error"; message: string };
 
+type DispatchRunResponse = {
+  state?: string;
+  run_number?: number | string | null;
+  run_cycle_number?: number | string | null;
+  cycle_number?: number | string | null;
+};
+
 export type AbortState =
   | { kind: "idle" }
   | { kind: "armed" }       // first click on `abort` — show `abort?` / `keep`
@@ -593,10 +600,17 @@ export function IssueDetailView() {
         const text = await r.text();
         throw new Error(`/v1/runs/dispatch -> ${r.status}: ${text}`);
       }
-      const result = await r.json() as { state?: string };
+      const result = await r.json() as DispatchRunResponse;
       setDispatchState({ kind: "result", state: result.state ?? "dispatched" });
       setRefreshTick((t) => t + 1);
       setTab("runs");
+      const runId = runRouteSegment(result.run_number);
+      const cycleId = runRouteSegment(result.run_cycle_number) ?? runRouteSegment(result.cycle_number);
+      if (runId && cycleId) {
+        navigate(issueRunSelectionPath(baseUrl, { runId, cycleId }));
+      } else {
+        navigate(`${baseUrl}/runs`);
+      }
     } catch (e) {
       setDispatchState({ kind: "error", message: String(e) });
     }
@@ -4684,6 +4698,11 @@ function formatUsd4(value: number): string {
 
 function stringOrNull(x: unknown): string | null {
   return typeof x === "string" && x.length > 0 ? x : null;
+}
+
+function runRouteSegment(x: unknown): string | null {
+  if (typeof x === "number" && Number.isFinite(x)) return String(x);
+  return stringOrNull(x);
 }
 
 function artifactPathFromUrl(url: string): string {

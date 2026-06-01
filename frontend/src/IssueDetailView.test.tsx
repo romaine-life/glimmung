@@ -492,6 +492,48 @@ describe("IssueDetailView run execution graph", () => {
     });
   });
 
+  it("opens the newly dispatched run after clicking new run", async () => {
+    const unlockedIssue = {
+      ...issueDetail,
+      issue_lock_held: false,
+      last_run_state: "passed",
+    };
+
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url =
+        typeof input === "string"
+          ? new URL(input, "https://glimmung.test")
+          : input instanceof URL
+            ? input
+            : new URL(input.url);
+      if (url.pathname === "/v1/issues/by-number/ambience/172") return json(unlockedIssue);
+      if (url.pathname === "/v1/issues/by-number/ambience/172/graph") return json(issueGraph);
+      if (url.pathname === "/v1/workflows") return json([]);
+      if (url.pathname === "/v1/runs/dispatch" && init?.method === "POST") {
+        return json({
+          state: "dispatched",
+          issue_ref: "ambience#172",
+          issue_number: 172,
+          run_number: 8,
+          cycle_number: 8,
+          run_cycle_number: 1,
+          run_ref: "ambience#172/runs/8.1",
+        });
+      }
+      throw new Error(`unhandled fetch ${url.pathname}`);
+    }));
+
+    renderIssueDetail("/projects/ambience/issues/172/runs");
+
+    await userEvent.click(await screen.findByRole("button", { name: "new run" }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("path")).toHaveTextContent(
+        "/projects/ambience/issues/172/runs/8/cycles/1",
+      );
+    });
+  });
+
   it("shows run history as flat run counts, base cycle values, and run-cycle ordinals", async () => {
     const baseRun = runProjection.runs[0];
     const historyRuns = [
