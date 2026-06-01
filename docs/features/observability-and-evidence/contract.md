@@ -72,6 +72,9 @@ half-updated dashboard.
 - Failure classes should distinguish auth, validation, no capacity, callback,
   Kubernetes, Postgres, GitHub, and renderer failures when the feature crosses
   those boundaries.
+- Terminal run observations should distinguish producer phase failure,
+  verifier contract absence, verifier failure, evidence-gate failure, and
+  phase-requested abort with stable phase/job/step identifiers when observed.
 - Operator dashboards or API responses should expose stale lock, stale run,
   and missing evidence conditions when those states affect user trust.
 

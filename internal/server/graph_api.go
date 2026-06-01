@@ -94,28 +94,29 @@ type RunProjectionAction struct {
 }
 
 type RunProjectionRun struct {
-	RunRef            string                  `json:"run_ref"`
-	RunNumber         *int                    `json:"run_number,omitempty"`
-	RunDisplayNumber  *string                 `json:"run_display_number,omitempty"`
-	Workflow          string                  `json:"workflow"`
-	WorkflowSchemaRef string                  `json:"workflow_schema_ref,omitempty"`
-	State             string                  `json:"state"`
-	CurrentPhase      *string                 `json:"current_phase,omitempty"`
-	OriginKind        *string                 `json:"origin_kind,omitempty"`
-	IsCycle           bool                    `json:"is_cycle"`
-	CycleNumber       *int                    `json:"cycle_number,omitempty"`
-	RunCycleNumber    *int                    `json:"run_cycle_number,omitempty"`
-	ValidationURL     *string                 `json:"validation_url,omitempty"`
-	AbortReason       *string                 `json:"abort_reason,omitempty"`
-	CostUSD           float64                 `json:"cost_usd"`
-	AttemptsCount     int                     `json:"attempts_count"`
-	StartedAt         string                  `json:"started_at"`
-	UpdatedAt         string                  `json:"updated_at"`
-	CompletedAt       *string                 `json:"completed_at,omitempty"`
-	AgentRuntime      agentruntime.Snapshot   `json:"agent_runtime"`
-	Topology          RunProjectionTopology   `json:"topology"`
-	Phases            []RunProjectionPhase    `json:"phases"`
-	Evidence          []RunProjectionEvidence `json:"evidence"`
+	RunRef              string                  `json:"run_ref"`
+	RunNumber           *int                    `json:"run_number,omitempty"`
+	RunDisplayNumber    *string                 `json:"run_display_number,omitempty"`
+	Workflow            string                  `json:"workflow"`
+	WorkflowSchemaRef   string                  `json:"workflow_schema_ref,omitempty"`
+	State               string                  `json:"state"`
+	CurrentPhase        *string                 `json:"current_phase,omitempty"`
+	OriginKind          *string                 `json:"origin_kind,omitempty"`
+	IsCycle             bool                    `json:"is_cycle"`
+	CycleNumber         *int                    `json:"cycle_number,omitempty"`
+	RunCycleNumber      *int                    `json:"run_cycle_number,omitempty"`
+	ValidationURL       *string                 `json:"validation_url,omitempty"`
+	AbortReason         *string                 `json:"abort_reason,omitempty"`
+	TerminalObservation *RunTerminalObservation `json:"terminal_observation,omitempty"`
+	CostUSD             float64                 `json:"cost_usd"`
+	AttemptsCount       int                     `json:"attempts_count"`
+	StartedAt           string                  `json:"started_at"`
+	UpdatedAt           string                  `json:"updated_at"`
+	CompletedAt         *string                 `json:"completed_at,omitempty"`
+	AgentRuntime        agentruntime.Snapshot   `json:"agent_runtime"`
+	Topology            RunProjectionTopology   `json:"topology"`
+	Phases              []RunProjectionPhase    `json:"phases"`
+	Evidence            []RunProjectionEvidence `json:"evidence"`
 }
 
 type RunProjectionTopology struct {
@@ -928,6 +929,9 @@ func runGraphMetadata(run RunReport) map[string]any {
 	if run.AgentRuntime.Default.ProfileID != "" {
 		metadata["agent_runtime"] = run.AgentRuntime
 	}
+	if run.TerminalObservation != nil {
+		metadata["terminal_observation"] = run.TerminalObservation
+	}
 	return metadata
 }
 
@@ -1030,28 +1034,29 @@ func runProjectionFromReport(run RunReport, workflow Workflow, touchpoints []Tou
 		attemptsCount = len(run.Attempts)
 	}
 	return RunProjectionRun{
-		RunRef:            run.RunRef,
-		RunNumber:         run.RunNumber,
-		RunDisplayNumber:  run.RunDisplayNumber,
-		Workflow:          run.Workflow,
-		WorkflowSchemaRef: run.WorkflowSchemaRef,
-		State:             firstNonEmpty(run.State, "unknown"),
-		CurrentPhase:      run.CurrentPhase,
-		OriginKind:        run.OriginKind,
-		IsCycle:           run.IsCycle,
-		CycleNumber:       run.CycleNumber,
-		RunCycleNumber:    run.RunCycleNumber,
-		ValidationURL:     run.ValidationURL,
-		AbortReason:       run.AbortReason,
-		CostUSD:           run.CumulativeCostUSD,
-		AttemptsCount:     attemptsCount,
-		StartedAt:         run.StartedAt.Format(time.RFC3339Nano),
-		UpdatedAt:         run.UpdatedAt.Format(time.RFC3339Nano),
-		CompletedAt:       timeStringPtr(run.CompletedAt),
-		AgentRuntime:      run.AgentRuntime,
-		Topology:          workflowTopologyForRun(workflow, run),
-		Phases:            runProjectionPhases(run, workflow),
-		Evidence:          runProjectionEvidence(run, touchpoints),
+		RunRef:              run.RunRef,
+		RunNumber:           run.RunNumber,
+		RunDisplayNumber:    run.RunDisplayNumber,
+		Workflow:            run.Workflow,
+		WorkflowSchemaRef:   run.WorkflowSchemaRef,
+		State:               firstNonEmpty(run.State, "unknown"),
+		CurrentPhase:        run.CurrentPhase,
+		OriginKind:          run.OriginKind,
+		IsCycle:             run.IsCycle,
+		CycleNumber:         run.CycleNumber,
+		RunCycleNumber:      run.RunCycleNumber,
+		ValidationURL:       run.ValidationURL,
+		AbortReason:         run.AbortReason,
+		TerminalObservation: run.TerminalObservation,
+		CostUSD:             run.CumulativeCostUSD,
+		AttemptsCount:       attemptsCount,
+		StartedAt:           run.StartedAt.Format(time.RFC3339Nano),
+		UpdatedAt:           run.UpdatedAt.Format(time.RFC3339Nano),
+		CompletedAt:         timeStringPtr(run.CompletedAt),
+		AgentRuntime:        run.AgentRuntime,
+		Topology:            workflowTopologyForRun(workflow, run),
+		Phases:              runProjectionPhases(run, workflow),
+		Evidence:            runProjectionEvidence(run, touchpoints),
 	}
 }
 

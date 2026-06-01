@@ -295,6 +295,23 @@ func TestAbortExplanationMalformedSelfExplanatory(t *testing.T) {
 	}
 }
 
+func TestAbortExplanationMalformedNonVerifyPhaseNamesProducerFailure(t *testing.T) {
+	text, err := AbortExplanation(
+		run([]Attempt{attempt("llm-work", nil, "failure")}, 0, 25.0),
+		Workflow{Phases: []PhaseSpec{{Name: "llm-work", Verify: false}}},
+		AbortMalformed,
+	)
+	if err != nil {
+		t.Fatalf("AbortExplanation returned error: %v", err)
+	}
+	if !strings.Contains(text, `phase "llm-work" ended with conclusion "failure"`) {
+		t.Fatalf("unexpected explanation: %s", text)
+	}
+	if strings.Contains(text, "verification.json") {
+		t.Fatalf("producer failure should not be explained as missing verification: %s", text)
+	}
+}
+
 func TestAbortExplanationSkipsTeardownAttempts(t *testing.T) {
 	wf := Workflow{Phases: []PhaseSpec{
 		{
