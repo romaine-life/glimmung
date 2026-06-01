@@ -28,8 +28,6 @@ import (
 // handlers. Methods delegate to the per-cluster pg.*Store fields below while
 // preserving the server-facing domain method set.
 type Store struct {
-	nativeProjectConcurrency int
-
 	// pgLocks owns durable lock state.
 	pgLocks *pgstore.LocksStore
 
@@ -444,9 +442,7 @@ const workflowSchemaKind = "workflow_schema"
 // NewFromSettings constructs the store wrapper; callers wire in pg.*Store
 // fields via SetPG* setters after constructing the Postgres pool.
 func NewFromSettings(settings server.Settings) (*Store, error) {
-	return &Store{
-		nativeProjectConcurrency: settings.NativeRunnerProjectConcurrency,
-	}, nil
+	return &Store{}, nil
 }
 
 func (s *Store) ListProjects(ctx context.Context) ([]server.Project, error) {
@@ -4414,11 +4410,12 @@ func (s *Store) reserveNativeSlotForLease(ctx context.Context, lease server.Leas
 }
 
 func (s *Store) availableNativeSlot(ctx context.Context, project string) (*int, error) {
-	// Native slot checkout is project-local: a project's configured slot
-	// count and per-project concurrency cap decide whether that project can
-	// lease another slot. pg.LeasesStore.ListClaimedNative returns the
-	// claimed native-k8s leases for this project; selectAvailableNativeSlot
-	// then computes the first ready slot not currently held.
+	// Native slot checkout is project-local and database-owned: the
+	// project's configured slot count plus each slot row's durable lifecycle
+	// state decide whether this project can lease another slot.
+	// pg.LeasesStore.ListClaimedNative returns claimed native-k8s leases for
+	// this project; selectAvailableNativeSlot uses those only as a defensive
+	// invariant guard against stale slot rows.
 	pgRows, err := s.pgLeases.ListClaimedNative(ctx, project)
 	if err != nil {
 		return nil, err
@@ -4432,7 +4429,7 @@ func (s *Store) availableNativeSlot(ctx context.Context, project string) (*int, 
 		docs = append(docs, doc)
 	}
 	readySlots := s.nativeReadySlots(ctx, project)
-	return selectAvailableNativeSlot(project, readySlots, docs, s.nativeProjectCap()), nil
+	return selectAvailableNativeSlot(project, readySlots, docs), nil
 }
 
 // nativeReadySlots returns the slot indices that are currently in the
@@ -4479,20 +4476,15 @@ func selectReadySlotIndices(slots []server.Slot, count int) []int {
 	return out
 }
 
-func selectAvailableNativeSlot(project string, readySlots []int, claimed []leaseDoc, projectCap int) *int {
+func selectAvailableNativeSlot(project string, readySlots []int, claimed []leaseDoc) *int {
 	used := map[int]bool{}
-	projectActive := 0
 	for _, doc := range claimed {
 		if doc.Project != project {
 			continue
 		}
-		projectActive++
 		if slot := nativeSlotIndex(doc.Metadata); slot != nil {
 			used[*slot] = true
 		}
-	}
-	if projectActive >= projectCap || projectActive >= len(readySlots) {
-		return nil
 	}
 	for _, slot := range readySlots {
 		if !used[slot] {
@@ -4501,13 +4493,6 @@ func selectAvailableNativeSlot(project string, readySlots []int, claimed []lease
 		}
 	}
 	return nil
-}
-
-func (s *Store) nativeProjectCap() int {
-	if s.nativeProjectConcurrency > 0 {
-		return s.nativeProjectConcurrency
-	}
-	return 5
 }
 
 func (s *Store) nativeSlotPrefix(ctx context.Context, project string) string {

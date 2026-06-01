@@ -1532,7 +1532,7 @@ func TestCheckoutTestSlotMapsUnavailable(t *testing.T) {
 	// saturation would already have moved the counter. The metric is
 	// scraped via the /metrics handler to keep the test free of
 	// metrics-package internals.
-	const labelLine = `glimmung_unavailable_total{reason="test_slot_saturation",route="POST /v1/test-slots/checkout"}`
+	const labelLine = `glimmung_unavailable_total{reason="no_prepared_test_slot",route="POST /v1/test-slots/checkout"}`
 	before := scrapeMetricSample(t, labelLine)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/test-slots/checkout", strings.NewReader(`{"project":"tank-operator"}`))
@@ -1543,7 +1543,7 @@ func TestCheckoutTestSlotMapsUnavailable(t *testing.T) {
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "no ready") {
+	if !strings.Contains(rec.Body.String(), "no prepared") {
 		t.Fatalf("body=%s", rec.Body.String())
 	}
 	after := scrapeMetricSample(t, labelLine)

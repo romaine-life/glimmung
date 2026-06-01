@@ -274,7 +274,7 @@ func writeInternalError(w http.ResponseWriter, r *http.Request, err error, summa
 // Use this for runtime, retryable 503s: saturation (no free slots),
 // transient dependency unavailability with a backoff signal, etc.
 // reason is a closed-enum string the callsite picks at compile time
-// (e.g. "test_slot_saturation") so the metric label stays bounded.
+// (e.g. "no_prepared_test_slot") so the metric label stays bounded.
 //
 // For 5xx caused by an unexpected error, use writeInternalError
 // instead. For configuration-absence 503s ("X store not configured"),

@@ -763,17 +763,16 @@ func TestEnsureTestSlotPreliminariesDoesNotCreatePlaywrightRuntime(t *testing.T)
 	var paths []string
 	launcher := &KubernetesNativeLauncher{
 		Settings: Settings{
-			K8sAPIHost:                     "https://kube.test",
-			K8sSATokenPath:                 tokenPath,
-			NativeRunnerNamespace:          "glimmung-runs",
-			NativeRunnerPlaywrightEnabled:  true,
-			NativeRunnerPlaywrightImage:    "playwright:latest",
-			NativeRunnerPlaywrightPort:     "3000",
-			NativeRunnerServiceAccount:     "glimmung-native-runner",
-			NativeRunnerCallbackBaseURL:    "http://glimmung.glimmung.svc.cluster.local",
-			NativeRunnerJobTTLSeconds:      3600,
-			NativeRunnerNamespaceRole:      "cluster-admin",
-			NativeRunnerProjectConcurrency: 1,
+			K8sAPIHost:                    "https://kube.test",
+			K8sSATokenPath:                tokenPath,
+			NativeRunnerNamespace:         "glimmung-runs",
+			NativeRunnerPlaywrightEnabled: true,
+			NativeRunnerPlaywrightImage:   "playwright:latest",
+			NativeRunnerPlaywrightPort:    "3000",
+			NativeRunnerServiceAccount:    "glimmung-native-runner",
+			NativeRunnerCallbackBaseURL:   "http://glimmung.glimmung.svc.cluster.local",
+			NativeRunnerJobTTLSeconds:     3600,
+			NativeRunnerNamespaceRole:     "cluster-admin",
 		},
 		HTTPClient: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 			paths = append(paths, req.Method+" "+req.URL.Path)

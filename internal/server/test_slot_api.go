@@ -218,12 +218,12 @@ func checkoutTestSlot(settings Settings, store ReadStore, preparer TestSlotPrepa
 				return
 			}
 			if errors.Is(err, ErrUnavailable) {
-				// Operational saturation, not a bug: every native slot
-				// for this project is already claimed. writeUnavailable
-				// emits slog.Warn + glimmung_unavailable_total{reason=
-				// test_slot_saturation} so the event lands on a
-				// dashboard rather than being a silent 503.
-				writeUnavailable(w, r, "no ready test environment slots available", "test_slot_saturation")
+				// Operational unavailability, not a server fault: the
+				// durable slot rows for this project do not currently
+				// contain an unleased provisioned slot. writeUnavailable
+				// emits slog.Warn + glimmung_unavailable_total with a
+				// bounded reason so the condition is visible on dashboards.
+				writeUnavailable(w, r, "no prepared test environment slot available", "no_prepared_test_slot")
 				return
 			}
 			writeInternalError(w, r, err, "test-slot checkout failed")

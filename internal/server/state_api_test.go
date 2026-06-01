@@ -220,7 +220,7 @@ func TestStateSnapshotIncludesTestEnvironmentsAndWaitingRequests(t *testing.T) {
 			},
 		},
 	}
-	handler := NewWithStore(Settings{NativeRunnerProjectConcurrency: 5}, store)
+	handler := NewWithStore(Settings{}, store)
 
 	var snapshot StateSnapshot
 	getJSON(t, handler, "/v1/state", &snapshot)
@@ -236,6 +236,19 @@ func TestStateSnapshotIncludesTestEnvironmentsAndWaitingRequests(t *testing.T) {
 	}
 	if snapshot.WaitingTestSlotRequests[0].Ref != "glimmung/test-requests/request-2" {
 		t.Fatalf("waiting refs=%#v", snapshot.WaitingTestSlotRequests)
+	}
+	if len(snapshot.TestSlotAdmissions) != 1 {
+		t.Fatalf("test_slot_admissions=%#v", snapshot.TestSlotAdmissions)
+	}
+	admission := snapshot.TestSlotAdmissions[0]
+	if admission.Project != "glimmung" ||
+		admission.ConfiguredTestSlots != 2 ||
+		admission.PreparedAvailableTestSlots != 1 ||
+		admission.CheckoutAvailableTestSlots != 1 ||
+		admission.ClaimedTestSlots != 1 ||
+		admission.WaitingCheckoutRequests != 1 ||
+		admission.SaturationReason != nil {
+		t.Fatalf("admission=%#v", admission)
 	}
 }
 
@@ -339,7 +352,7 @@ func TestStateSnapshotDoesNotInferNativeSlotsFromAppType(t *testing.T) {
 			CreatedAt: now,
 		}}},
 	}
-	handler := NewWithStore(Settings{NativeRunnerProjectConcurrency: 3}, store)
+	handler := NewWithStore(Settings{}, store)
 
 	var snapshot StateSnapshot
 	getJSON(t, handler, "/v1/state", &snapshot)
@@ -372,7 +385,7 @@ func TestStateSnapshotIgnoresOutOfRangeNativeSlots(t *testing.T) {
 			RequestedAt: now,
 		}},
 	}
-	handler := NewWithStore(Settings{NativeRunnerProjectConcurrency: 10}, store)
+	handler := NewWithStore(Settings{}, store)
 
 	var snapshot StateSnapshot
 	getJSON(t, handler, "/v1/state", &snapshot)

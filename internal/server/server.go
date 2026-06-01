@@ -65,7 +65,6 @@ type Settings struct {
 	NativeRunnerPlaywrightEnabled      bool
 	NativeRunnerPlaywrightImage        string
 	NativeRunnerPlaywrightPort         string
-	NativeRunnerProjectConcurrency     int
 	NativeRunnerDispatchTimeoutSeconds int
 	AgentRuntimeConfigJSON             string
 	NativeWorkloadIdentityIssuer       string
@@ -208,10 +207,6 @@ func SettingsFromEnv() Settings {
 		NativeRunnerPlaywrightPort: envOrDefault(
 			"NATIVE_RUNNER_PLAYWRIGHT_PORT",
 			"3000",
-		),
-		NativeRunnerProjectConcurrency: envIntOrDefault(
-			"NATIVE_RUNNER_PROJECT_CONCURRENCY",
-			5,
 		),
 		NativeRunnerDispatchTimeoutSeconds: envIntOrDefault(
 			"NATIVE_RUNNER_DISPATCH_TIMEOUT_SECONDS",
