@@ -1032,7 +1032,7 @@ func leaseForRunPhase(ctx context.Context, store RunCompletionStore, run RunRepl
 	metadata["phase_name"] = phaseName
 	metadata["attempt_index"] = strconv.Itoa(attemptIndex)
 	metadata["phase_inputs"] = phaseInputs
-	metadata["issue_ref"] = publicids.IssueRef(run.Project, positiveIssueNumber(run.IssueNumber))
+	metadata["issue_ref"] = publicids.IssueRef(run.Project, &run.IssueNumber)
 	metadata["issue_number"] = strconv.Itoa(run.IssueNumber)
 	display := "unknown"
 	if run.RunDisplayNumber != nil && *run.RunDisplayNumber != "" {
@@ -1255,14 +1255,7 @@ func runRefFromData(run RunReplayData) string {
 	if display == "" && run.RunNumber != nil {
 		display = strconv.Itoa(*run.RunNumber)
 	}
-	return publicids.RunRef(run.Project, positiveIssueNumber(run.IssueNumber), display)
-}
-
-func positiveIssueNumber(n int) *int {
-	if n <= 0 {
-		return nil
-	}
-	return &n
+	return publicids.RunRef(run.Project, run.IssueNumber, display)
 }
 
 func strPtr(s string) *string {

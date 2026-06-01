@@ -48,7 +48,6 @@ const APP_ROUTES = {
   projectNeedsAttention: "/projects/:project/needs-attention",
   projectPortfolio: "/projects/:project/portfolio",
   projectRuns: "/projects/:project/runs",
-  projectRun: "/projects/:project/runs/:runId",
   touchpoints: "/touchpoints",
   portfolio: "/portfolio",
   playbooks: "/playbooks",
@@ -230,9 +229,6 @@ const breadcrumbRoutes: BreadcrumbRouteObject[] = [
               {
                 path: "runs",
                 handle: { crumb: (match) => ({ label: "Runs", to: routePath(APP_ROUTES.projectRuns, match.params) }) },
-                children: [
-                  { path: ":runId", handle: { crumb: (match) => ({ label: runSlugDisplay(match.params.runId ?? "") }) } },
-                ],
               },
             ],
           },

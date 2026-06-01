@@ -987,6 +987,15 @@ function handleMockRequest(url: URL, init?: RequestInit): Response {
       agent_runtime: mockSnapshot.agent_runtime,
     });
   }
+  if (path === "/v1/auth/me") {
+    const account = mockAccount();
+    return json({
+      signed_in: true,
+      email: account.username,
+      name: account.name,
+      is_admin: true,
+    });
+  }
   if (path === "/v1/issues" && method === "GET") {
     const project = url.searchParams.get("project");
     const workflow = url.searchParams.get("workflow");

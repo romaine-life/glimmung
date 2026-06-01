@@ -94,9 +94,26 @@ var schemaMigrations = []string{
 		updated_at        timestamptz NOT NULL DEFAULT now(),
 		PRIMARY KEY (project, id)
 	)`,
+	`DO $$
+	BEGIN
+		IF EXISTS (
+			SELECT 1 FROM runs
+			WHERE issue_number IS NULL
+			   OR issue_number <= 0
+			   OR NOT (payload ? 'issue_number')
+			   OR CASE
+					WHEN (payload->>'issue_number') ~ '^[0-9]+$'
+					THEN (payload->>'issue_number')::int <> issue_number
+					ELSE true
+				END
+		) THEN
+			RAISE EXCEPTION 'runs.issue_number is required and must match payload.issue_number before applying issue-scoped run invariant';
+		END IF;
+	END $$`,
+	`ALTER TABLE runs ALTER COLUMN issue_number SET NOT NULL`,
+	`DROP INDEX IF EXISTS runs_by_project_issue`,
 	`CREATE INDEX IF NOT EXISTS runs_by_project_issue
-		ON runs (project, issue_number)
-		WHERE issue_number IS NOT NULL`,
+		ON runs (project, issue_number)`,
 	`CREATE INDEX IF NOT EXISTS runs_by_project_updated
 		ON runs (project, updated_at DESC)`,
 

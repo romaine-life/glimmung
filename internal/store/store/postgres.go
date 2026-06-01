@@ -291,6 +291,12 @@ func runDocFromPGRow(row pgstore.RunRow) (runDoc, error) {
 	if err := json.Unmarshal(row.Payload, &doc); err != nil {
 		return runDoc{}, fmt.Errorf("run unmarshal: %w", err)
 	}
+	if row.IssueNumber <= 0 {
+		return runDoc{}, fmt.Errorf("run %s/%s has invalid issue_number %d", row.Project, row.ID, row.IssueNumber)
+	}
+	if doc.IssueNumber != row.IssueNumber {
+		return runDoc{}, fmt.Errorf("run %s/%s payload issue_number %d does not match row issue_number %d", row.Project, row.ID, doc.IssueNumber, row.IssueNumber)
+	}
 	return doc, nil
 }
 
@@ -882,7 +888,7 @@ func (s *Store) ListIssues(ctx context.Context, filter server.IssueListFilter) (
 			}
 			display := runDisplayNumber(*run, numbers[run.ID])
 			row.LastRunNumber = runNumber
-			row.LastRunRef = optionalNonEmptyStringPtr(publicids.RunRef(issue.Project, &issue.Number, display))
+			row.LastRunRef = optionalNonEmptyStringPtr(publicids.RunRef(issue.Project, issue.Number, display))
 			row.LastRunState = optionalNonEmptyStringPtr(run.State)
 			row.LastRunAbortReason = emptyStringNil(run.AbortReason)
 			if row.Workflow == nil {
@@ -942,7 +948,7 @@ func (s *Store) GetIssueDetailByNumber(ctx context.Context, project string, numb
 		}
 		display := runDisplayNumber(*latestRun, numbers[latestRun.ID])
 		detail.LastRunNumber = runNumber
-		detail.LastRunRef = optionalNonEmptyStringPtr(publicids.RunRef(issue.Project, &issue.Number, display))
+		detail.LastRunRef = optionalNonEmptyStringPtr(publicids.RunRef(issue.Project, issue.Number, display))
 		detail.LastRunState = optionalNonEmptyStringPtr(latestRun.State)
 	}
 	held, err := s.pgLocks.IssueLockHeld(ctx, issue.Project, issue.Number)
@@ -1725,9 +1731,6 @@ func isLeaseBookkeepingDoc(doc leaseDoc) bool {
 func runReportsFromDocs(docs []runDoc) []server.RunReport {
 	docsByIssue := map[string][]runDoc{}
 	for _, doc := range docs {
-		if doc.Project == "" || doc.IssueNumber == 0 {
-			continue
-		}
 		key := fmt.Sprintf("%s#%d", doc.Project, doc.IssueNumber)
 		docsByIssue[key] = append(docsByIssue[key], doc)
 	}
@@ -1883,7 +1886,7 @@ func runRefMapFromDocs(docs []runDoc) map[string]string {
 			continue
 		}
 		display := runDisplayNumber(doc, numbers[doc.ID])
-		refs[doc.ID] = publicids.RunRef(doc.Project, positiveIssueNumberPtr(doc.IssueNumber), display)
+		refs[doc.ID] = publicids.RunRef(doc.Project, doc.IssueNumber, display)
 	}
 	return refs
 }
@@ -1928,7 +1931,7 @@ func runReportFromDoc(doc runDoc, lineageByID map[string]string) server.RunRepor
 	display := runDisplayNumber(doc, numbers[doc.ID])
 	runRef := lineageByID[doc.ID]
 	if runRef == "" {
-		runRef = publicids.RunRef(doc.Project, positiveIssueNumberPtr(doc.IssueNumber), display)
+		runRef = publicids.RunRef(doc.Project, doc.IssueNumber, display)
 	}
 	attempts := make([]server.RunReportAttempt, 0, len(doc.Attempts))
 	var completed *time.Time
@@ -1980,9 +1983,9 @@ func runReportFromDoc(doc runDoc, lineageByID map[string]string) server.RunRepor
 		AdmissionError:       emptyStringNil(doc.AdmissionError),
 		SlotLeaseRef:         emptyStringNil(doc.SlotLeaseRef),
 		Workflow:             doc.Workflow,
-		IssueRef:             optionalNonEmptyStringPtr(publicids.IssueRef(doc.Project, positiveIssueNumberPtr(doc.IssueNumber))),
+		IssueRef:             publicids.IssueRef(doc.Project, &doc.IssueNumber),
 		IssueRepo:            optionalNonEmptyStringPtr(doc.IssueRepo),
-		IssueNumber:          positiveIssueNumberPtr(doc.IssueNumber),
+		IssueNumber:          doc.IssueNumber,
 		State:                firstNonEmpty(doc.State, "in_progress"),
 		CurrentPhase:         currentPhase,
 		AttemptsCount:        len(doc.Attempts),
@@ -2332,13 +2335,6 @@ func runDisplayNumber(doc runDoc, fallback int) string {
 		return fmt.Sprintf("%d", fallback)
 	}
 	return ""
-}
-
-func positiveIssueNumberPtr(value int) *int {
-	if value <= 0 {
-		return nil
-	}
-	return &value
 }
 
 func optionalNonEmptyStringPtr(value string) *string {
@@ -3681,7 +3677,7 @@ func (s *Store) resolveLastTouchedRunRef(ctx context.Context, project string, ru
 	docs, _ := s.issueRunDocs(ctx, project, doc.IssueNumber)
 	numbers := runNumberMap(docs)
 	display := runDisplayNumber(doc, numbers[doc.ID])
-	ref := publicids.RunRef(doc.Project, &doc.IssueNumber, display)
+	ref := publicids.RunRef(doc.Project, doc.IssueNumber, display)
 	return &ref
 }
 
@@ -4141,7 +4137,7 @@ func (s *Store) runRefByID(ctx context.Context, project, runID string) (string, 
 	}
 	siblings, _ := s.issueRunDocs(ctx, project, doc.IssueNumber)
 	numbers := runNumberMap(siblings)
-	return publicids.RunRef(doc.Project, positiveIssueNumberPtr(doc.IssueNumber), runDisplayNumber(doc, numbers[doc.ID])), nil
+	return publicids.RunRef(doc.Project, doc.IssueNumber, runDisplayNumber(doc, numbers[doc.ID])), nil
 }
 
 func playbookReferencesRun(doc playbookDoc, runID, runRef string) bool {
@@ -5370,7 +5366,7 @@ func (s *Store) ReadRunIDForNumber(ctx context.Context, project string, issueNum
 		}
 		if (display != "" && display == strings.TrimSpace(runNumber)) ||
 			fmt.Sprintf("%d", numbers[doc.ID]) == strings.TrimSpace(runNumber) {
-			ref := publicids.RunRef(doc.Project, positiveIssueNumberPtr(doc.IssueNumber), runDisplayNumber(doc, numbers[doc.ID]))
+			ref := publicids.RunRef(doc.Project, doc.IssueNumber, runDisplayNumber(doc, numbers[doc.ID]))
 			return doc.ID, ref, nil
 		}
 	}
@@ -5404,7 +5400,7 @@ func (s *Store) ReadRunIDForCallbackToken(ctx context.Context, token string) (st
 	}
 	sibling, _ := s.issueRunDocs(ctx, found.Project, found.IssueNumber)
 	numbers := runNumberMap(sibling)
-	ref := publicids.RunRef(found.Project, positiveIssueNumberPtr(found.IssueNumber), runDisplayNumber(*found, numbers[found.ID]))
+	ref := publicids.RunRef(found.Project, found.IssueNumber, runDisplayNumber(*found, numbers[found.ID]))
 	return found.ID, found.Project, ref, nil
 }
 
@@ -5421,7 +5417,7 @@ func (s *Store) AbortRunByID(ctx context.Context, project, runID, reason string)
 	// Compute run_ref for the result.
 	siblings, _ := s.issueRunDocs(ctx, project, doc.IssueNumber)
 	numbers := runNumberMap(siblings)
-	runRef := publicids.RunRef(doc.Project, positiveIssueNumberPtr(doc.IssueNumber), runDisplayNumber(doc, numbers[doc.ID]))
+	runRef := publicids.RunRef(doc.Project, doc.IssueNumber, runDisplayNumber(doc, numbers[doc.ID]))
 
 	if terminal {
 		slotLeaseReleased := s.releaseRunSlotLease(ctx, doc)
@@ -5522,7 +5518,7 @@ func (s *Store) GetNativeRunStatusByID(ctx context.Context, project, runID strin
 
 	siblings, _ := s.issueRunDocs(ctx, project, doc.IssueNumber)
 	numbers := runNumberMap(siblings)
-	runRef := publicids.RunRef(doc.Project, positiveIssueNumberPtr(doc.IssueNumber), runDisplayNumber(doc, numbers[doc.ID]))
+	runRef := publicids.RunRef(doc.Project, doc.IssueNumber, runDisplayNumber(doc, numbers[doc.ID]))
 
 	return server.NativeRunStatusResponse{
 		Project:           project,
@@ -5624,7 +5620,7 @@ func (s *Store) RecordNativeEventByID(ctx context.Context, project, runID string
 	// Compute run_ref for the response.
 	siblings, _ := s.issueRunDocs(ctx, project, doc.IssueNumber)
 	numbers := runNumberMap(siblings)
-	runRef := publicids.RunRef(doc.Project, positiveIssueNumberPtr(doc.IssueNumber), runDisplayNumber(doc, numbers[doc.ID]))
+	runRef := publicids.RunRef(doc.Project, doc.IssueNumber, runDisplayNumber(doc, numbers[doc.ID]))
 
 	return server.NativeRunEventResult{
 		RunRef:   runRef,
@@ -5758,7 +5754,7 @@ func (s *Store) ListNativeEventsByID(ctx context.Context, project, runID string,
 
 	siblings, _ := s.issueRunDocs(ctx, project, doc.IssueNumber)
 	numbers := runNumberMap(siblings)
-	runRef := publicids.RunRef(doc.Project, positiveIssueNumberPtr(doc.IssueNumber), runDisplayNumber(doc, numbers[doc.ID]))
+	runRef := publicids.RunRef(doc.Project, doc.IssueNumber, runDisplayNumber(doc, numbers[doc.ID]))
 
 	events := make([]server.NativeRunLogEvent, 0, len(rows))
 	for _, e := range rows {
@@ -7151,7 +7147,7 @@ func (s *Store) SetRunTerminalState(ctx context.Context, project, runID, state s
 
 	siblings, _ := s.issueRunDocs(ctx, project, doc.IssueNumber)
 	numbers := runNumberMap(siblings)
-	runRef := publicids.RunRef(doc.Project, positiveIssueNumberPtr(doc.IssueNumber), runDisplayNumber(doc, numbers[doc.ID]))
+	runRef := publicids.RunRef(doc.Project, doc.IssueNumber, runDisplayNumber(doc, numbers[doc.ID]))
 
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	if _, err := s.pgRuns.PatchPayload(ctx, project, runID, func(raw map[string]any) error {
@@ -7471,11 +7467,10 @@ func (s *Store) CreateRun(ctx context.Context, req server.CreateRunRequest) (ser
 	if err != nil {
 		return server.CreatedRun{}, err
 	}
-	issueNum := req.IssueNumber
 	if _, err := s.pgRuns.Create(ctx, pgstore.RunRow{
 		ID:          runID,
 		Project:     req.Project,
-		IssueNumber: &issueNum,
+		IssueNumber: req.IssueNumber,
 		Payload:     payload,
 	}); err != nil {
 		return server.CreatedRun{}, fmt.Errorf("create run doc: %w", err)
@@ -7665,11 +7660,10 @@ func (s *Store) CreateRecycleCycle(ctx context.Context, req server.CreateRecycle
 	if err != nil {
 		return server.CreatedRun{}, err
 	}
-	issueNum := parent.IssueNumber
 	if _, err := s.pgRuns.Create(ctx, pgstore.RunRow{
 		ID:          runID,
 		Project:     parent.Project,
-		IssueNumber: &issueNum,
+		IssueNumber: parent.IssueNumber,
 		Payload:     payload,
 	}); err != nil {
 		return server.CreatedRun{}, fmt.Errorf("create recycle cycle doc: %w", err)

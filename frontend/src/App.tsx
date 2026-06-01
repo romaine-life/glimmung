@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
 import { Link, Navigate, NavLink, Outlet, Route, Routes, useLocation, useNavigate, useOutletContext, useParams } from "react-router-dom";
 import { AdminPanel } from "./AdminPanel";
-import { IssueDetailView, RunViewer, type AbortState, type DispatchState, type IssueGraph } from "./IssueDetailView";
+import { IssueDetailView, type AbortState } from "./IssueDetailView";
 import { IssuesView } from "./IssuesView";
 import { PlaybooksView } from "./PlaybooksView";
 import { PortfolioView } from "./PortfolioView";
@@ -11,14 +11,12 @@ import { PhaseGraph, type PhaseGraphPhase } from "./PhaseGraph";
 import { RecyclePolicyPanel } from "./RecyclePolicyPanel";
 import { AgentRuntimePolicyFields } from "./AgentRuntimePolicyFields";
 import { workflowToPhaseGraphModel } from "./workflowGraphModel";
-import { resolveProjectWorkflow } from "./workflowLookup";
 import { authedFetch, currentAccount, initAuth, signIn, signOut, type Account } from "./auth";
 import { isMockMode, mockRuns, mockSnapshot } from "./mockApi";
 import { ISSUE_DETAIL_CHILD_ROUTES, buildBreadcrumbs } from "./routes";
 import {
   agentRuntimeConfigFromMetadata,
   agentRuntimeProfiles,
-  agentRuntimeSnapshotLabel,
   agentSlotsFromWorkflow,
   buildAgentPolicy,
   type AgentRuntimeConfig,
@@ -182,7 +180,7 @@ type ProjectRun = {
   run_display_number?: string | null;
   cycle_number?: number | null;
   run_cycle_number?: number | null;
-  issue_number: number | null;
+  issue_number: number;
   title: string;
   state: string;
   cycles: number;
@@ -226,9 +224,9 @@ type RunReport = {
   admission_error: string | null;
   slot_lease_ref: string | null;
   workflow: string;
-  issue_ref: string | null;
+  issue_ref: string;
   issue_repo: string | null;
-  issue_number: number | null;
+  issue_number: number;
   state: string;
   current_phase: string | null;
   attempts_count: number;
@@ -352,7 +350,6 @@ export function App() {
         </Route>
         <Route path="projects/:project/needs-attention" element={<ProjectNeedsAttentionRoute />} />
         <Route path="projects/:project/runs" element={<ProjectRunsRoute />} />
-        <Route path="projects/:project/runs/:runId" element={<ProjectRunRedirectRoute />} />
         <Route path="issues" element={<Navigate to="/needs-attention" replace />} />
         <Route path="touchpoints" element={<TouchpointsRoute />} />
         <Route path="portfolio" element={<PortfolioRoute />} />
@@ -768,36 +765,6 @@ function ProjectRunsRoute() {
   const params = useParams<{ project?: string }>();
   const ctx = useOutletContext<LayoutContext>();
   return <ProjectRunsView {...ctx} projectName={decodeURIComponent(params.project ?? "")} />;
-}
-
-function ProjectRunRedirectRoute() {
-  const params = useParams<{ project?: string; runId?: string }>();
-  const ctx = useOutletContext<LayoutContext>();
-  const projectName = decodeURIComponent(params.project ?? "");
-  const runId = decodeURIComponent(params.runId ?? "");
-  if (ctx.snap === null) return <div className="empty">Connecting…</div>;
-  const runs = isMockMode()
-    ? mockRuns.filter((candidate) => candidate.project === projectName)
-    : [];
-  const run = isMockMode() ? resolveProjectRun(runs, runId) : null;
-  const index = run ? runs.findIndex((candidate) => candidate.id === run.id) : -1;
-  if (run?.issue_number !== null && run?.issue_number !== undefined) {
-    const slug = projectRunSlug(run, runs, index >= 0 ? index : 0);
-    return (
-      <Navigate
-        to={`/projects/${encodeURIComponent(projectName)}/issues/${run.issue_number}/runs/${encodeURIComponent(slug)}`}
-        replace
-      />
-    );
-  }
-  return (
-    <ProjectRunView
-      {...ctx}
-      projectName={projectName}
-      issueNumber={null}
-      runId={runId}
-    />
-  );
 }
 
 function TouchpointsRoute() {
@@ -1602,12 +1569,16 @@ function ProjectNeedsAttentionView({
 
 function ProjectRunsView({
   snap,
+  signedIn,
+  isAdmin,
   projectName,
 }: LayoutContext & { projectName: string }) {
   const project = snap?.projects.find((p) => p.name === projectName);
   const [liveRuns, setLiveRuns] = useState<ProjectRun[]>([]);
   const [runsLoading, setRunsLoading] = useState(!isMockMode());
   const [runsError, setRunsError] = useState<string | null>(null);
+  const [refreshTick, setRefreshTick] = useState(0);
+  const [cancelState, setCancelState] = useState<Record<string, AbortState>>({});
 
   useEffect(() => {
     if (isMockMode() || !project) return;
@@ -1631,7 +1602,33 @@ function ProjectRunsView({
     return () => {
       cancelled = true;
     };
+  }, [project?.name, refreshTick]);
+
+  useEffect(() => {
+    setCancelState({});
   }, [project?.name]);
+
+  const confirmCancelRun = async (run: ProjectRun, runSlug: string) => {
+    const target = projectRunCancelTarget(run, runSlug);
+    setCancelState((state) => ({ ...state, [run.id]: { kind: "aborting" } }));
+    try {
+      const r = await authedFetch(
+        `/v1/projects/${encodeURIComponent(target.project)}` +
+          `/issues/${target.issueNumber}` +
+          `/runs/${encodeURIComponent(target.runSlug)}` +
+          `/abort?reason=cancelled_via_project_runs_ui`,
+        { method: "POST" },
+      );
+      if (!r.ok) {
+        const text = await r.text();
+        throw new Error(`cancel ${target.project}#${target.issueNumber}/runs/${target.runSlug} -> ${r.status}: ${text}`);
+      }
+      setCancelState((state) => ({ ...state, [run.id]: { kind: "idle" } }));
+      setRefreshTick((tick) => tick + 1);
+    } catch (e) {
+      setCancelState((state) => ({ ...state, [run.id]: { kind: "error", message: String(e) } }));
+    }
+  };
 
   if (snap === null) return <div className="empty">Connecting…</div>;
   if (!project) {
@@ -1671,7 +1668,17 @@ function ProjectRunsView({
       {runsLoading && <div className="empty">Loading run history…</div>}
       {runsError && <div className="empty">Run history could not be loaded: {runsError}</div>}
       {!runsLoading && !runsError && completedRuns.length > 0 && (
-        <ProjectRunsTable title="Completed runs" runs={completedRuns} project={project} />
+        <ProjectRunsTable
+          title="Completed runs"
+          runs={completedRuns}
+          project={project}
+          signedIn={signedIn}
+          isAdmin={isAdmin}
+          cancelState={cancelState}
+          onArmCancel={(run) => setCancelState((state) => ({ ...state, [run.id]: { kind: "armed" } }))}
+          onCancelCancel={(run) => setCancelState((state) => ({ ...state, [run.id]: { kind: "idle" } }))}
+          onConfirmCancel={(run, runSlug) => void confirmCancelRun(run, runSlug)}
+        />
       )}
 
       {currentWork.length > 0 && (
@@ -1683,7 +1690,17 @@ function ProjectRunsView({
 
       {!runsLoading && !runsError && (
         runs.length > 0 ? (
-          <ProjectRunsTable title="All runs" runs={runs} project={project} />
+          <ProjectRunsTable
+            title="All runs"
+            runs={runs}
+            project={project}
+            signedIn={signedIn}
+            isAdmin={isAdmin}
+            cancelState={cancelState}
+            onArmCancel={(run) => setCancelState((state) => ({ ...state, [run.id]: { kind: "armed" } }))}
+            onCancelCancel={(run) => setCancelState((state) => ({ ...state, [run.id]: { kind: "idle" } }))}
+            onConfirmCancel={(run, runSlug) => void confirmCancelRun(run, runSlug)}
+          />
         ) : currentWork.length === 0 ? (
           <CurrentWorkTable
             leases={currentWork}
@@ -1695,7 +1712,27 @@ function ProjectRunsView({
   );
 }
 
-function ProjectRunsTable({ title, runs, project }: { title: string; runs: ProjectRun[]; project: Project }) {
+function ProjectRunsTable({
+  title,
+  runs,
+  project,
+  signedIn,
+  isAdmin,
+  cancelState,
+  onArmCancel,
+  onCancelCancel,
+  onConfirmCancel,
+}: {
+  title: string;
+  runs: ProjectRun[];
+  project: Project;
+  signedIn: boolean;
+  isAdmin: boolean;
+  cancelState: Record<string, AbortState>;
+  onArmCancel: (run: ProjectRun) => void;
+  onCancelCancel: (run: ProjectRun) => void;
+  onConfirmCancel: (run: ProjectRun, runSlug: string) => void;
+}) {
   const runsPath = `/projects/${encodeURIComponent(project.name)}/runs`;
   return (
     <>
@@ -1712,12 +1749,13 @@ function ProjectRunsTable({ title, runs, project }: { title: string; runs: Proje
             <th>Phase</th>
             <th>Cost</th>
             <th>Updated</th>
+            <th></th>
           </tr>
         </thead>
         <tbody>
-          {runs.map((run, index) => {
-            const runLabel = projectRunLabel(run, runs, index);
-            const runSlug = projectRunSlug(run, runs, index);
+          {runs.map((run) => {
+            const runLabel = projectRunLabel(run, runs);
+            const runSlug = projectRunSlug(run, runs);
             return (
               <tr key={run.id}>
                 <td>
@@ -1743,22 +1781,29 @@ function ProjectRunsTable({ title, runs, project }: { title: string; runs: Proje
                 </Link>
               </td>
               <td className="mono dim">
-                {run.issue_number ? (
-                  <Link
-                    className="link mono"
-                    to={`/projects/${encodeURIComponent(project.name)}/issues/${run.issue_number}/summary`}
-                    state={{ returnTo: runsPath, returnLabel: "runs" }}
-                  >
-                    #{run.issue_number}
-                  </Link>
-                ) : (
-                  "-"
-                )}
+                <Link
+                  className="link mono"
+                  to={`/projects/${encodeURIComponent(project.name)}/issues/${run.issue_number}/summary`}
+                  state={{ returnTo: runsPath, returnLabel: "runs" }}
+                >
+                  #{run.issue_number}
+                </Link>
               </td>
               <td><span className={`pill ${runStatePill(run.state)}`}>{run.state}</span></td>
               <td className="mono dim">{run.current_phase}</td>
               <td className="mono dim">${run.cost_usd.toFixed(2)}</td>
               <td className="mono dim">{relTime(run.updated_at)}</td>
+              <td>
+                <ProjectRunCancelAction
+                  run={run}
+                  signedIn={signedIn}
+                  isAdmin={isAdmin}
+                  state={cancelState[run.id] ?? RUN_VIEWER_IDLE_ABORT}
+                  onArm={() => onArmCancel(run)}
+                  onKeep={() => onCancelCancel(run)}
+                  onConfirm={() => onConfirmCancel(run, runSlug)}
+                />
+              </td>
             </tr>
             );
           })}
@@ -1768,116 +1813,90 @@ function ProjectRunsTable({ title, runs, project }: { title: string; runs: Proje
   );
 }
 
-function projectRunLabel(run: ProjectRun, runs: ProjectRun[], index: number): string {
+function projectRunLabel(run: ProjectRun, runs: ProjectRun[]): string {
   if (run.cycle_number !== null && run.cycle_number !== undefined) return `cycle ${run.cycle_number}`;
   if (run.run_display_number) return `cycle ${run.run_display_number}`;
-  if (run.issue_number === null) return `run-${index + 1}`;
   const sameIssue = runs.filter((candidate) => candidate.issue_number === run.issue_number);
   const ordinal = sameIssue.findIndex((candidate) => candidate.id === run.id) + 1;
   return `cycle ${Math.max(ordinal, 1)}`;
 }
 
-function projectRunSlug(run: ProjectRun, runs: ProjectRun[], index: number): string {
+function projectRunSlug(run: ProjectRun, runs: ProjectRun[]): string {
   if (run.run_display_number) return run.run_display_number;
   if (run.cycle_number !== null && run.cycle_number !== undefined) return String(run.cycle_number);
-  return projectRunLabel(run, runs, index).replace(/^cycle\s+/, "").replace(/^#/, "");
+  return projectRunLabel(run, runs).replace(/^cycle\s+/, "").replace(/^#/, "");
 }
 
 function projectRunHref(run: ProjectRun, runSlug: string): string {
-  if (run.issue_number !== null) {
-    return `/projects/${encodeURIComponent(run.project)}/issues/${run.issue_number}/runs/${encodeURIComponent(runSlug)}`;
-  }
-  return `/projects/${encodeURIComponent(run.project)}/runs/${encodeURIComponent(run.id)}`;
+  return `/projects/${encodeURIComponent(run.project)}/issues/${run.issue_number}/runs/${encodeURIComponent(runSlug)}`;
 }
 
-function runSlugDisplay(slug: string): string {
-  return /^\d+(\.\d+)?$/.test(slug) ? `cycle ${slug}` : slug;
-}
-
-function resolveProjectRun(runs: ProjectRun[], runIdOrSlug: string): ProjectRun | null {
-  return runs.find((candidate, index) => (
-    candidate.id === runIdOrSlug || projectRunSlug(candidate, runs, index) === runIdOrSlug
-  )) ?? null;
-}
-
-const RUN_VIEWER_IDLE_DISPATCH: DispatchState = { kind: "idle" };
-const RUN_VIEWER_IDLE_ABORT: AbortState = { kind: "idle" };
-
-function projectRunGraph(run: ProjectRun, workflow: Workflow | undefined, project: Project): IssueGraph {
-  const issueNode = run.issue_number
-    ? {
-        id: `issue:${project.name}#${run.issue_number}`,
-        kind: "issue" as const,
-        label: `#${run.issue_number}`,
-        state: "open",
-        timestamp: run.started_at,
-        metadata: {
-          project: project.name,
-          repo: project.github_repo,
-          number: run.issue_number,
-          issue_ref: `${project.name}#${run.issue_number}`,
-        },
-      }
-    : null;
-  const graphModel = workflow ? workflowToPhaseGraphModel(workflow) : null;
-  const phaseNames = graphModel?.phases.map((phase) => phase.name) ?? [run.current_phase];
-  const runNode = {
-    id: `run:${run.id}`,
-    kind: "run" as const,
-    label: run.id,
-    state: run.state,
-    timestamp: run.started_at,
-    metadata: {
-      workflow: run.workflow,
-      run_number: run.run_number,
-      run_display_number: run.run_display_number,
-      cycle_number: run.cycle_number,
-      run_cycle_number: run.run_cycle_number,
-      agent_runtime: run.agent_runtime,
-      cycles_count: run.cycles,
-      cumulative_cost_usd: run.cost_usd,
-      entrypoint_phase: phaseNames[0] ?? run.current_phase,
-    },
-  };
-  const attempts = phaseNames
-    .slice(0, Math.max(run.cycles, run.state === "pending" ? 0 : 1))
-    .map((phase, index) => ({
-      id: `attempt:${run.id}:${index}`,
-      kind: "attempt" as const,
-      label: phase,
-      state: index === phaseNames.indexOf(run.current_phase) ? run.state : "completed",
-      timestamp: run.started_at,
-      metadata: {
-        attempt_index: index,
-        phase,
-        phase_kind: workflow?.phases.find((candidate) => candidate.name === phase)?.kind ?? "agent",
-        completed_at: runStateIsActive(run.state) ? null : run.updated_at,
-        verification_status: run.state === "passed" ? "pass" : null,
-        steps: [
-          {
-            slug: `${phase}-start`,
-            title: `${phase} started`,
-            state: run.state === "pending" ? "pending" : "completed",
-            message: `Mock ${phase} execution for ${run.title}.`,
-            exit_code: run.state === "aborted" ? 1 : 0,
-          },
-        ],
-      },
-    }));
-  const nodes = [
-    ...(issueNode ? [issueNode] : []),
-    runNode,
-    ...attempts,
-  ];
+function projectRunCancelTarget(run: ProjectRun, runSlug: string): { project: string; issueNumber: number; runSlug: string } {
   return {
-    issue_ref: String(issueNode?.metadata.issue_ref ?? run.id),
-    nodes,
-    edges: [
-      ...(issueNode ? [{ source: issueNode.id, target: runNode.id, kind: "spawned" as const }] : []),
-      ...attempts.map((attempt) => ({ source: runNode.id, target: attempt.id, kind: "attempted" as const })),
-    ],
+    project: run.project,
+    issueNumber: run.issue_number,
+    runSlug,
   };
 }
+
+function ProjectRunCancelAction({
+  run,
+  signedIn,
+  isAdmin,
+  state,
+  onArm,
+  onKeep,
+  onConfirm,
+}: {
+  run: ProjectRun;
+  signedIn: boolean;
+  isAdmin: boolean;
+  state: AbortState;
+  onArm: () => void;
+  onKeep: () => void;
+  onConfirm: () => void;
+}) {
+  if (!signedIn || !isAdmin || !runStateIsActive(run.state)) {
+    return null;
+  }
+  if (state.kind === "armed" || state.kind === "aborting") {
+    return (
+      <span className="confirm">
+        <button
+          type="button"
+          className="link danger-text"
+          onClick={onConfirm}
+          disabled={state.kind === "aborting"}
+        >
+          {state.kind === "aborting" ? "cancelling..." : "cancel?"}
+        </button>
+        <span className="sep">/</span>
+        <button
+          type="button"
+          className="link"
+          onClick={onKeep}
+          disabled={state.kind === "aborting"}
+        >
+          keep
+        </button>
+      </span>
+    );
+  }
+  return (
+    <>
+      <button type="button" className="link danger-text" onClick={onArm}>
+        cancel run
+      </button>
+      {state.kind === "error" && (
+        <div className="dispatch-error-message" role="alert" title={state.message}>
+          cancel error
+        </div>
+      )}
+    </>
+  );
+}
+
+const RUN_VIEWER_IDLE_ABORT: AbortState = { kind: "idle" };
 
 function projectRunFromReport(report: RunReport): ProjectRun {
   return {
@@ -1889,7 +1908,7 @@ function projectRunFromReport(report: RunReport): ProjectRun {
     cycle_number: report.cycle_number,
     run_cycle_number: report.run_cycle_number,
     issue_number: report.issue_number,
-    title: report.issue_number ? `Issue #${report.issue_number}` : report.run_ref,
+    title: `Issue #${report.issue_number}`,
     state: report.state,
     cycles: report.attempts_count,
     current_phase: report.current_phase ?? "pending",
@@ -1898,276 +1917,6 @@ function projectRunFromReport(report: RunReport): ProjectRun {
     started_at: report.started_at,
     updated_at: report.updated_at,
   };
-}
-
-function projectRunReportGraph(report: RunReport, workflow: Workflow | undefined, project: Project): IssueGraph {
-  const run = projectRunFromReport(report);
-  const graphModel = workflow ? workflowToPhaseGraphModel(workflow) : null;
-  const phaseNames = graphModel?.phases.map((phase) => phase.name)
-    ?? report.attempts.map((attempt) => attempt.phase)
-    ?? [run.current_phase];
-  const uniquePhases = Array.from(new Set(phaseNames.length > 0 ? phaseNames : [run.current_phase]));
-  const reportIssueRef = report.issue_number !== null ? `${project.name}#${report.issue_number}` : null;
-  const issueNode = reportIssueRef ? {
-    id: `issue:${reportIssueRef}`,
-    kind: "issue" as const,
-    label: report.issue_number ? `#${report.issue_number}` : "issue",
-    state: null,
-    timestamp: report.started_at,
-    metadata: {
-      project: project.name,
-      repo: report.issue_repo ?? project.github_repo,
-      issue_ref: reportIssueRef,
-      issue_number: report.issue_number,
-    },
-  } : null;
-  const runNode = {
-    id: `run:${report.run_ref}`,
-    kind: "run" as const,
-    label: report.cycle_number !== null ? `cycle ${report.cycle_number}` : report.run_display_number ?? report.run_ref,
-    state: report.state,
-    timestamp: report.started_at,
-    metadata: {
-      run_ref: report.run_ref,
-      run_number: report.run_number,
-      run_display_number: report.run_display_number,
-      parent_run_ref: report.parent_run_ref,
-      root_run_ref: report.root_run_ref,
-      origin_kind: report.origin_kind,
-      is_cycle: report.is_cycle,
-      cycle_number: report.cycle_number,
-      run_cycle_number: report.run_cycle_number,
-      workflow_schema_ref: report.workflow_schema_ref,
-      queue_state: report.queue_state,
-      admission_error: report.admission_error,
-      slot_lease_ref: report.slot_lease_ref,
-      agent_runtime: report.agent_runtime,
-      workflow: report.workflow,
-      cost_usd: report.cumulative_cost_usd,
-      issue_ref: report.issue_ref,
-      issue_number: report.issue_number,
-      validation_url: report.validation_url,
-      screenshots_markdown: report.screenshots_markdown,
-      abort_reason: report.abort_reason,
-      pr_primitive_state: report.abort_reason?.startsWith("PR primitive:") ? "failed" : "pending",
-      pr_primitive_error: report.abort_reason?.startsWith("PR primitive:") ? report.abort_reason : null,
-      entrypoint_phase: uniquePhases[0] ?? report.current_phase,
-    },
-  };
-  const attempts = report.attempts.map((attempt) => ({
-    id: `attempt:${report.run_ref}:${attempt.attempt_index}`,
-    kind: "attempt" as const,
-    label: `${attempt.phase} attempt ${attempt.attempt_index}`,
-    state: attempt.completed_at ? "completed" : report.state,
-    timestamp: attempt.dispatched_at,
-    metadata: {
-      run_ref: report.run_ref,
-      attempt_index: attempt.attempt_index,
-      phase: attempt.phase,
-      phase_kind: attempt.phase_kind,
-      workflow_filename: attempt.workflow_filename,
-      completed_at: attempt.completed_at,
-      conclusion: attempt.conclusion,
-      verification_status: attempt.verification_status,
-      evidence_refs: attempt.evidence_refs,
-      summary_markdown: attempt.summary_markdown,
-      decision: attempt.decision,
-      cost_usd: attempt.cost_usd,
-      log_archive_url: attempt.log_archive_url,
-    },
-  }));
-  return {
-    issue_ref: reportIssueRef ?? `${report.project}/runs/${report.run_number ?? "unknown"}`,
-    nodes: [
-      ...(issueNode ? [issueNode] : []),
-      runNode,
-      ...attempts,
-    ],
-    edges: [
-      ...(issueNode ? [{ source: issueNode.id, target: runNode.id, kind: "spawned" as const }] : []),
-      ...attempts.map((attempt) => ({ source: runNode.id, target: attempt.id, kind: "attempted" as const })),
-    ],
-  };
-}
-
-function ProjectRunView({
-  snap,
-  signedIn,
-  projectName,
-  issueNumber,
-  runId,
-}: LayoutContext & { projectName: string; issueNumber: number | null; runId: string }) {
-  const location = useLocation();
-  const [liveReport, setLiveReport] = useState<RunReport | null>(null);
-  const [liveError, setLiveError] = useState<string | null>(null);
-  const [liveLoading, setLiveLoading] = useState(false);
-
-  useEffect(() => {
-    if (isMockMode() || !projectName || !runId) return;
-    let cancelled = false;
-    setLiveReport(null);
-    setLiveError(null);
-    setLiveLoading(true);
-    if (issueNumber === null) {
-      setLiveLoading(false);
-      setLiveError("Issue-scoped cycle required");
-      return;
-    }
-    const reportUrl = `/v1/projects/${encodeURIComponent(projectName)}/issues/${issueNumber}/runs/${encodeURIComponent(runId)}/report`;
-    fetch(reportUrl)
-      .then(async (res) => {
-        if (!res.ok) throw new Error(`run report ${res.status}`);
-        const body = await res.json() as RunReport;
-        if (!cancelled) setLiveReport(body);
-      })
-      .catch((err: unknown) => {
-        if (!cancelled) setLiveError(err instanceof Error ? err.message : String(err));
-      })
-      .finally(() => {
-        if (!cancelled) setLiveLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [projectName, issueNumber, runId]);
-
-  if (snap === null) return <div className="empty">Connecting…</div>;
-  const project = snap.projects.find((p) => p.name === projectName);
-  if (!project) {
-    return <div className="empty">Project {projectName || "(missing)"} was not found.</div>;
-  }
-
-  const runs = isMockMode()
-    ? mockRuns.filter((candidate) => candidate.project === project.name)
-    : [];
-  const run = isMockMode() ? resolveProjectRun(runs, runId) : liveReport ? projectRunFromReport(liveReport) : null;
-  const workflow = resolveProjectWorkflow(
-    snap.workflows,
-    run?.project ?? project.name,
-    [run?.workflow],
-  );
-  const graph = liveReport ? projectRunReportGraph(liveReport, workflow ?? undefined, project) : run ? projectRunGraph(run, workflow ?? undefined, project) : null;
-
-  if (!run) {
-    return (
-      <div className="project-workspace">
-        <section className="project-hero">
-          <div className="project-hero-main">
-            <div className="project-kicker mono">run</div>
-            <h2>{runId || "(missing)"}</h2>
-            <div className="project-repo mono">{project.github_repo}</div>
-          </div>
-        </section>
-        {liveLoading && <div className="empty">Loading run detail…</div>}
-        {liveError && <div className="empty">Run detail could not be loaded: {liveError}</div>}
-        {!liveLoading && !liveError && <div className="empty">Run {runSlugDisplay(runId)} was not found.</div>}
-      </div>
-    );
-  }
-  if (issueNumber !== null && run.issue_number !== issueNumber) {
-    return (
-      <div className="project-workspace">
-        <section className="project-hero">
-          <div className="project-hero-main">
-            <div className="project-kicker mono">run</div>
-            <h2>{runSlugDisplay(runId)}</h2>
-            <div className="project-repo mono">{project.github_repo}</div>
-          </div>
-        </section>
-        <div className="empty">
-          Run {runSlugDisplay(runId)} does not belong to issue #{issueNumber}.
-        </div>
-      </div>
-    );
-  }
-
-  const runIndex = runs.findIndex((candidate) => candidate.id === run.id);
-  const runLabel = projectRunLabel(run, runs, runIndex >= 0 ? runIndex : 0);
-  const agentRuntimeLabel = agentRuntimeSnapshotLabel(liveReport?.agent_runtime ?? run.agent_runtime);
-
-  return (
-    <div className="project-workspace">
-      <section className="project-hero">
-        <div className="project-hero-main">
-          <div className="project-kicker mono">run</div>
-          <h2 title={run.id}>{runLabel}</h2>
-          <div className="project-repo mono">{run.title}</div>
-        </div>
-        <div className="project-facts">
-          <div className="project-fact">
-            <span>state</span>
-            <strong>{run.state}</strong>
-          </div>
-          <div className="project-fact">
-            <span>cycles</span>
-            <strong>{run.cycles}</strong>
-          </div>
-          <div className="project-fact">
-            <span>phase</span>
-            <strong>{run.current_phase}</strong>
-          </div>
-          <div className="project-fact">
-            <span>cost</span>
-            <strong>${run.cost_usd.toFixed(2)}</strong>
-          </div>
-        </div>
-      </section>
-
-      <section className="project-focus">
-        <div>
-          <span className="key">workflow</span>
-          <strong>
-            <Link
-              className="link"
-              to={`/projects/${encodeURIComponent(project.name)}/workflows/${encodeURIComponent(workflow?.name ?? run.workflow)}`}
-              state={{ returnTo: location.pathname, returnLabel: "run" }}
-            >
-              {workflow?.name ?? run.workflow}
-            </Link>
-          </strong>
-        </div>
-        <div>
-          <span className="key">issue</span>
-          <span className="mono">
-            {run.issue_number ? (
-              <Link className="link mono" to={`/projects/${encodeURIComponent(project.name)}/issues/${run.issue_number}/summary`}>
-                #{run.issue_number}
-              </Link>
-            ) : (
-              "none"
-            )}
-          </span>
-        </div>
-        <div>
-          <span className="key">updated</span>
-          <span className="mono">{relTime(run.updated_at)}</span>
-        </div>
-        <div>
-          <span className="key">agent</span>
-          <span className="mono">{agentRuntimeLabel}</span>
-        </div>
-      </section>
-
-      <RunViewer
-        graph={graph}
-        graphAvailable={true}
-        signedIn={signedIn}
-        project={project.name}
-        repo={project.github_repo}
-        workflow={workflow}
-        inFlight={runStateIsActive(run.state)}
-        dispatchState={RUN_VIEWER_IDLE_DISPATCH}
-        onRedispatch={() => undefined}
-        abortState={RUN_VIEWER_IDLE_ABORT}
-        onArmAbort={() => undefined}
-        onCancelAbort={() => undefined}
-        onConfirmAbort={() => undefined}
-        selectedRunId={run.id}
-        onBackToRuns={() => undefined}
-        actionsVisible={false}
-      />
-    </div>
-  );
 }
 
 function runStatePill(state: string): string {

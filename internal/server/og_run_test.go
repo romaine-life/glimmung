@@ -46,11 +46,6 @@ func TestMatchRunURL(t *testing.T) {
 			wantSlug:  "1",
 		},
 		{
-			name:   "project-scoped (no issue) is not enriched",
-			path:   "/projects/glimmung/runs/abc-123",
-			wantOK: false,
-		},
-		{
 			name:   "unrelated path",
 			path:   "/projects/glimmung/issues/141",
 			wantOK: false,
@@ -114,7 +109,7 @@ func TestRetiredOGSVGRouteStaysDeleted(t *testing.T) {
 	store := &fakeRunStore{rows: []RunReport{{
 		Project:     "glimmung",
 		Workflow:    "default",
-		IssueNumber: intPtr(141),
+		IssueNumber: 141,
 		State:       "passed",
 		StartedAt:   now,
 		UpdatedAt:   now,
@@ -137,7 +132,7 @@ func TestRunOGImagePNGRendersPNG(t *testing.T) {
 	store := &fakeRunStore{rows: []RunReport{{
 		Project:           "glimmung",
 		Workflow:          "default",
-		IssueNumber:       intPtr(141),
+		IssueNumber:       141,
 		State:             "in_progress",
 		CurrentPhase:      stringPtr("implement"),
 		AttemptsCount:     2,
@@ -191,7 +186,7 @@ func TestServeSPAWithOGInjectsRunTags(t *testing.T) {
 	store := &fakeRunStore{rows: []RunReport{{
 		Project:       "glimmung",
 		Workflow:      "default",
-		IssueNumber:   intPtr(141),
+		IssueNumber:   141,
 		State:         "passed",
 		AttemptsCount: 1,
 		StartedAt:     now,
