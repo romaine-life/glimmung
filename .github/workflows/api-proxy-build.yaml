@@ -125,9 +125,10 @@ jobs:
           git add k8s/values.yaml
           git commit -m "chart: bump api proxy image to fingerprint ${ALIAS_TAG} [skip ci]"
           for i in 1 2 3; do
-            if git push; then
+            if git push origin HEAD:main; then
               exit 0
             fi
-            git pull --rebase
+            git fetch origin main
+            git rebase origin/main
           done
           exit 1
