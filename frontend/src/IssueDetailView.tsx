@@ -762,8 +762,6 @@ export function IssueDetailView() {
                 detail={detail}
                 signedIn={signedIn}
                 editing={editing}
-                agentProfiles={agentProfiles}
-                agentSlots={editableAgentSlots}
                 onEdit={() => setEditing(true)}
                 onCancelEdit={() => setEditing(false)}
                 onSaved={() => {
@@ -816,6 +814,12 @@ export function IssueDetailView() {
                 onBackToDefinition={() => selectWorkflowRun(null)}
                 signedIn={signedIn}
                 isAdmin={isAdmin}
+                issue={detail}
+                agentProfiles={agentProfiles}
+                agentSlots={editableAgentSlots}
+                globalAgentRuntime={snap?.agent_runtime ?? null}
+                projectAgentRuntime={projectAgentRuntime}
+                onIssueAgentSaved={() => setRefreshTick((t) => t + 1)}
                 onWorkflowChanged={() => setWorkflowRefreshTick((t) => t + 1)}
               />
             )}
@@ -900,8 +904,6 @@ function DescriptionTab({
   detail,
   signedIn,
   editing,
-  agentProfiles,
-  agentSlots,
   onEdit,
   onCancelEdit,
   onSaved,
@@ -910,8 +912,6 @@ function DescriptionTab({
   detail: IssueDetail;
   signedIn: boolean;
   editing: boolean;
-  agentProfiles: ReturnType<typeof agentRuntimeProfiles>;
-  agentSlots: string[];
   onEdit: () => void;
   onCancelEdit: () => void;
   onSaved: () => void;
@@ -921,8 +921,6 @@ function DescriptionTab({
     return (
       <IssueEditForm
         detail={detail}
-        agentProfiles={agentProfiles}
-        agentSlots={agentSlots}
         onCancel={onCancelEdit}
         onSaved={onSaved}
       />
@@ -2702,6 +2700,12 @@ function WorkflowPane({
   onBackToDefinition,
   signedIn,
   isAdmin,
+  issue,
+  agentProfiles,
+  agentSlots,
+  globalAgentRuntime,
+  projectAgentRuntime,
+  onIssueAgentSaved,
   onWorkflowChanged,
 }: {
   graph: IssueGraph | null;
@@ -2715,6 +2719,12 @@ function WorkflowPane({
   onBackToDefinition: () => void;
   signedIn: boolean;
   isAdmin: boolean;
+  issue: IssueDetail;
+  agentProfiles: ReturnType<typeof agentRuntimeProfiles>;
+  agentSlots: string[];
+  globalAgentRuntime: AgentRuntimeConfig | null;
+  projectAgentRuntime: AgentRuntimeConfig | null;
+  onIssueAgentSaved: () => void;
   onWorkflowChanged: () => void;
 }) {
   if (!graphAvailable) {
@@ -2773,6 +2783,16 @@ function WorkflowPane({
         <h2>Workflow definition</h2>
       </div>
       <DefinitionDag workflow={currentWorkflow} project={project} />
+      <IssueAgentRuntimePanel
+        detail={issue}
+        profiles={agentProfiles}
+        slots={agentSlots}
+        signedIn={signedIn}
+        isAdmin={isAdmin}
+        globalAgentRuntime={globalAgentRuntime}
+        projectAgentRuntime={projectAgentRuntime}
+        onSaved={onIssueAgentSaved}
+      />
       {currentWorkflow && (
         <RecyclePolicyPanel
           workflow={currentWorkflow}
@@ -4701,37 +4721,20 @@ function formatDuration(ms: number): string {
 
 function IssueEditForm({
   detail,
-  agentProfiles,
-  agentSlots,
   onCancel,
   onSaved,
 }: {
   detail: IssueDetail;
-  agentProfiles: ReturnType<typeof agentRuntimeProfiles>;
-  agentSlots: string[];
   onCancel: () => void;
   onSaved: () => void;
 }) {
-  const existingAgentPolicy = agentPolicyFromMetadata(detail.metadata);
   const [title, setTitle] = useState(detail.title);
   const [body, setBody] = useState(detail.body);
   const [labels, setLabels] = useState(detail.labels.join(", "));
   const [state, setState] = useState(detail.state);
   const [preserveTestEnv, setPreserveTestEnv] = useState(detail.preserve_test_env);
-  const [agentProfile, setAgentProfile] = useState(defaultAgentProfile(existingAgentPolicy));
-  const [agentSlotProfiles, setAgentSlotProfiles] = useState<Record<string, string>>(
-    slotAgentProfiles(existingAgentPolicy, agentSlots),
-  );
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-
-  useEffect(() => {
-    setAgentSlotProfiles((current) => {
-      const next: Record<string, string> = {};
-      for (const slot of agentSlots) next[slot] = current[slot] ?? "";
-      return next;
-    });
-  }, [agentSlots]);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -4756,7 +4759,6 @@ function IssueEditForm({
           labels: labelList,
           state,
           preserve_test_env: preserveTestEnv,
-          agent: buildAgentPolicy(agentProfile, agentSlotProfiles),
         }),
       });
       if (!r.ok) {
@@ -4797,14 +4799,6 @@ function IssueEditForm({
           <option value="closed">closed</option>
         </select>
       </label>
-      <AgentRuntimePolicyFields
-        profiles={agentProfiles}
-        defaultProfile={agentProfile}
-        onDefaultProfileChange={setAgentProfile}
-        slots={agentSlots}
-        slotProfiles={agentSlotProfiles}
-        onSlotProfileChange={(slot, profile) => setAgentSlotProfiles((current) => ({ ...current, [slot]: profile }))}
-      />
       <label style={{ flexDirection: "row", alignItems: "center", gap: "0.5rem" }}>
         <input
           type="checkbox"
@@ -4824,6 +4818,120 @@ function IssueEditForm({
       </div>
     </form>
   );
+}
+
+function IssueAgentRuntimePanel({
+  detail,
+  profiles,
+  slots,
+  signedIn,
+  isAdmin,
+  globalAgentRuntime,
+  projectAgentRuntime,
+  onSaved,
+}: {
+  detail: IssueDetail;
+  profiles: ReturnType<typeof agentRuntimeProfiles>;
+  slots: string[];
+  signedIn: boolean;
+  isAdmin: boolean;
+  globalAgentRuntime: AgentRuntimeConfig | null;
+  projectAgentRuntime: AgentRuntimeConfig | null;
+  onSaved: () => void;
+}) {
+  const existingAgentPolicy = agentPolicyFromMetadata(detail.metadata);
+  const [agentProfile, setAgentProfile] = useState(defaultAgentProfile(existingAgentPolicy));
+  const [agentSlotProfiles, setAgentSlotProfiles] = useState<Record<string, string>>(
+    slotAgentProfiles(existingAgentPolicy, slots),
+  );
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const inheritedLabel = runtimePolicyLabel(projectAgentRuntime?.policy, "global default");
+  const globalLabel = runtimePolicyLabel(globalAgentRuntime?.policy, "built-in default");
+  const issueLabel = runtimePolicyLabel(existingAgentPolicy, inheritedLabel);
+
+  useEffect(() => {
+    setAgentProfile(defaultAgentProfile(existingAgentPolicy));
+    setAgentSlotProfiles(slotAgentProfiles(existingAgentPolicy, slots));
+  }, [detail.ref, existingAgentPolicy, slots]);
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    setBusy(true);
+    try {
+      if (detail.number === null) {
+        setError("Issue number required for edits");
+        return;
+      }
+      const url = `/v1/issues/by-number/${encodeURIComponent(detail.project)}/${detail.number}`;
+      const r = await authedFetch(url, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          agent: buildAgentPolicy(agentProfile, agentSlotProfiles),
+        }),
+      });
+      if (!r.ok) {
+        setError(`${r.status}: ${await r.text()}`);
+        return;
+      }
+      onSaved();
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const disabled = busy || !signedIn || !isAdmin;
+  const saveLabel = busy
+    ? "Saving..."
+    : !signedIn
+    ? "sign in"
+    : !isAdmin
+    ? "admin only"
+    : "Save agent runtime";
+
+  return (
+    <section className="run-panel issue-agent-runtime-panel">
+      <div className="run-section-header">
+        <h2>Issue agent runtime</h2>
+        <span className="pill info">new runs only</span>
+      </div>
+      <div className="run-panel-meta">
+        <div>
+          <span className="key">global</span> <span className="mono">{globalLabel}</span>
+        </div>
+        <div>
+          <span className="key">project</span> <span className="mono">{inheritedLabel}</span>
+        </div>
+        <div>
+          <span className="key">issue</span> <span className="mono">{issueLabel}</span>
+        </div>
+      </div>
+      <form onSubmit={submit} className="admin-form" style={{ marginTop: "0.75rem" }}>
+        <AgentRuntimePolicyFields
+          profiles={profiles}
+          defaultProfile={agentProfile}
+          onDefaultProfileChange={setAgentProfile}
+          slots={slots}
+          slotProfiles={agentSlotProfiles}
+          onSlotProfileChange={(slot, profile) => setAgentSlotProfiles((current) => ({ ...current, [slot]: profile }))}
+          inheritedLabel={inheritedLabel}
+        />
+        {error && <div className="error">{error}</div>}
+        <button type="submit" disabled={disabled} title={!signedIn || !isAdmin ? "Issue runtime changes are restricted to admins." : undefined}>
+          {saveLabel}
+        </button>
+      </form>
+    </section>
+  );
+}
+
+function runtimePolicyLabel(policy: ReturnType<typeof agentPolicyFromMetadata> | undefined | null, inheritedLabel: string): string {
+  const profile = defaultAgentProfile(policy);
+  return profile ? profile : `inherit (${inheritedLabel})`;
 }
 
 function runStatePill(state: string): string {
