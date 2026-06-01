@@ -2508,11 +2508,6 @@ function ProjectionInspector({
         {selectedJob && phase.inner_jobs && phase.inner_jobs.length > 0 && (
           <InnerJobsRow innerJobs={phase.inner_jobs.filter((ij) => ij.parent_job_id === selectedJob.id)} run={run} />
         )}
-        {latestAttempt && (
-          <div>
-            <span className="key">attempt</span> <span className="mono">{latestAttempt.attempt_index}</span>
-          </div>
-        )}
         {repo && (
           <div>
             <span className="key">repo</span> <span className="mono">{repo}</span>
