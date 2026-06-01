@@ -4846,9 +4846,10 @@ function IssueAgentRuntimePanel({
   );
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const inheritedLabel = runtimePolicyLabel(projectAgentRuntime?.policy, "global default");
   const globalLabel = runtimePolicyLabel(globalAgentRuntime?.policy, "built-in default");
-  const issueLabel = runtimePolicyLabel(existingAgentPolicy, inheritedLabel);
+  const projectLabel = runtimePolicyLabel(projectAgentRuntime?.policy, globalLabel);
+  const issueLabel = runtimePolicyLabel(existingAgentPolicy, projectLabel);
+  const defaultInheritLabel = `project default: ${projectLabel}`;
 
   useEffect(() => {
     setAgentProfile(defaultAgentProfile(existingAgentPolicy));
@@ -4904,7 +4905,7 @@ function IssueAgentRuntimePanel({
           <span className="key">global</span> <span className="mono">{globalLabel}</span>
         </div>
         <div>
-          <span className="key">project</span> <span className="mono">{inheritedLabel}</span>
+          <span className="key">project</span> <span className="mono">{projectLabel}</span>
         </div>
         <div>
           <span className="key">issue</span> <span className="mono">{issueLabel}</span>
@@ -4918,7 +4919,7 @@ function IssueAgentRuntimePanel({
           slots={slots}
           slotProfiles={agentSlotProfiles}
           onSlotProfileChange={(slot, profile) => setAgentSlotProfiles((current) => ({ ...current, [slot]: profile }))}
-          inheritedLabel={inheritedLabel}
+          inheritedLabel={defaultInheritLabel}
         />
         {error && <div className="error">{error}</div>}
         <button type="submit" disabled={disabled} title={!signedIn || !isAdmin ? "Issue runtime changes are restricted to admins." : undefined}>
@@ -4931,7 +4932,7 @@ function IssueAgentRuntimePanel({
 
 function runtimePolicyLabel(policy: ReturnType<typeof agentPolicyFromMetadata> | undefined | null, inheritedLabel: string): string {
   const profile = defaultAgentProfile(policy);
-  return profile ? profile : `inherit (${inheritedLabel})`;
+  return profile || inheritedLabel;
 }
 
 function runStatePill(state: string): string {
