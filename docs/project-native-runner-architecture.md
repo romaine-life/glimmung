@@ -28,7 +28,7 @@ but the v1 runtime contract should already be owned by Glimmung end to end.
 ## Non-Goals
 
 - Do not make repo YAML the workflow source of truth.
-- Do not require projects to add `.glimmung/workflows` files.
+- Do not require projects to add repo-owned workflow files.
 - Do not restore GitHub Actions, GitLab CI, or Azure DevOps as the executor.
 - Do not make each repo maintain its own native callback shell library.
 - Do not use git as the runtime workflow database.
