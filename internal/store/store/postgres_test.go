@@ -537,7 +537,7 @@ func TestNormalizeWorkflowRegisterForProjectDefaultsToK8sJob(t *testing.T) {
 		Project: "glimmung",
 		Name:    "agent-run",
 		Phases: []server.PhaseSpec{
-			{Name: "prepare"},
+			{Name: "prepare", Outputs: []string{server.IssueContractOutputKey}, Jobs: []server.NativeJobSpec{{ID: server.IssueContractJobID}}},
 			{Name: "test", Verify: true, DependsOn: []string{"prepare"}},
 			{Name: "cleanup_early", RunOn: server.PhaseRunOnAlways, Purpose: server.PhasePurposeTeardown, SkipWhenPreserveTestEnv: true, DependsOn: []string{"test"}, Jobs: []server.NativeJobSpec{{ID: "cleanup-early"}}},
 			{Name: "touchpoint", RunOn: server.PhaseRunOnSuccess, Purpose: server.PhasePurposeReviewTouchpoint, DependsOn: []string{"cleanup_early"}, Jobs: []server.NativeJobSpec{{ID: "pr-touchpoint", Primitive: "pr_touchpoint"}}},
