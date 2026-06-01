@@ -243,10 +243,31 @@ func AbortExplanation(run Run, workflow Workflow, decision RunDecision) (string,
 			detail,
 		), nil
 	case AbortMalformed:
-		return "Aborting verify-loop: the latest workflow run did not produce a well-formed `verification.json` artifact, or the failure mode is not in this phase's recycle policy. The decision engine cannot retry against a missing or invalid producer contract.", nil
+		return malformedAbortExplanation(last, workflow), nil
 	default:
 		return "", fmt.Errorf("abort explanation called with non-abort decision %q", decision)
 	}
+}
+
+func malformedAbortExplanation(last *Attempt, workflow Workflow) string {
+	if last != nil {
+		phaseSpec, ok := phaseByName(workflow, last.Phase)
+		conclusion := strings.TrimSpace(last.Conclusion)
+		if ok && !phaseSpec.Verify && !phaseSpec.EvidenceVerificationGate && conclusion != "" && !IsAdvanceConclusion(conclusion) {
+			return fmt.Sprintf(
+				"Aborting run: phase %q ended with conclusion %q before verification could run; no retry path is configured for this producer failure.",
+				last.Phase,
+				conclusion,
+			)
+		}
+		if ok && phaseSpec.Verify && last.Verification == nil {
+			return fmt.Sprintf(
+				"Aborting verify-loop on phase %q: the phase did not produce a well-formed `verification.json` artifact, or the failure mode is not in this phase's recycle policy. The decision engine cannot retry against a missing or invalid producer contract.",
+				last.Phase,
+			)
+		}
+	}
+	return "Aborting verify-loop: the latest workflow run did not produce a well-formed `verification.json` artifact, or the failure mode is not in this phase's recycle policy. The decision engine cannot retry against a missing or invalid producer contract."
 }
 
 func primaryAttemptForExplanation(run Run, workflow Workflow) *Attempt {

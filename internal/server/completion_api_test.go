@@ -1710,7 +1710,7 @@ func TestNativeRunCompletedByCallbackTokenCleanupAfterAbortKeepsRunAborted(t *te
 	if store.terminalState != "aborted" {
 		t.Fatalf("terminal state=%q, want aborted", store.terminalState)
 	}
-	if store.terminalReason == nil || !strings.Contains(*store.terminalReason, "verification.json") {
+	if store.terminalReason == nil || !strings.Contains(*store.terminalReason, `phase "env-prep" ended with conclusion "failure"`) {
 		t.Fatalf("terminal reason=%v", store.terminalReason)
 	}
 }
