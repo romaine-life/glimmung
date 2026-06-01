@@ -253,7 +253,7 @@ func (s *fakePlayableStore) ListProjectWorkflows(context.Context, string) ([]Wor
 
 func playbookTestWorkflowPhases() []PhaseSpec {
 	return []PhaseSpec{
-		{Name: "prepare", Kind: "k8s_job", Jobs: []NativeJobSpec{{ID: "prepare"}}},
+		{Name: "prepare", Kind: "k8s_job", Outputs: []string{IssueContractOutputKey}, Jobs: []NativeJobSpec{{ID: IssueContractJobID}}},
 		{Name: "verify", Kind: "k8s_job", Verify: true, DependsOn: []string{"prepare"}, Jobs: []NativeJobSpec{{ID: "verify"}}},
 		{Name: "cleanup_early", Kind: "k8s_job", RunOn: PhaseRunOnAlways, Purpose: PhasePurposeTeardown, SkipWhenPreserveTestEnv: true, DependsOn: []string{"verify"}, Jobs: []NativeJobSpec{{ID: "cleanup-early"}}},
 		{Name: "touchpoint", Kind: "k8s_job", RunOn: PhaseRunOnSuccess, Purpose: PhasePurposeReviewTouchpoint, DependsOn: []string{"cleanup_early"}, Jobs: []NativeJobSpec{{ID: "pr-touchpoint", Primitive: JobPrimitivePRTouchpoint, Managed: true}}},

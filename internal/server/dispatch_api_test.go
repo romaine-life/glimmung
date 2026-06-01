@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -154,7 +155,7 @@ func newDispatchTestHandler(store ReadStore, nativeLauncher NativeLauncher) http
 // dispatch flow against an in-memory workflow use this.
 func gatedTestPhases() []PhaseSpec {
 	return []PhaseSpec{
-		{Name: "prepare", Kind: "k8s_job", WorkflowFilename: "k8s_job:prepare", Jobs: []NativeJobSpec{{ID: "prepare", Image: "runner:latest"}}},
+		{Name: "prepare", Kind: "k8s_job", WorkflowFilename: "k8s_job:prepare", Outputs: []string{IssueContractOutputKey}, Jobs: []NativeJobSpec{{ID: IssueContractJobID, Image: "runner:latest"}}},
 		{Name: "verify", Kind: "k8s_job", WorkflowFilename: "k8s_job:verify", DependsOn: []string{"prepare"}, Verify: true, Jobs: []NativeJobSpec{{ID: "verify", Image: "runner:latest"}}},
 		{Name: "cleanup_early", Kind: "k8s_job", WorkflowFilename: "k8s_job:cleanup_early", DependsOn: []string{"verify"}, RunOn: PhaseRunOnAlways, Purpose: PhasePurposeTeardown, SkipWhenPreserveTestEnv: true, Jobs: []NativeJobSpec{{ID: "cleanup", Image: "runner:latest"}}},
 		{Name: "touchpoint", Kind: "k8s_job", WorkflowFilename: "k8s_job:touchpoint", DependsOn: []string{"cleanup_early"}, RunOn: PhaseRunOnSuccess, Purpose: PhasePurposeReviewTouchpoint, Jobs: []NativeJobSpec{{ID: PRTouchpointJobID, Primitive: JobPrimitivePRTouchpoint, Managed: true}}},
@@ -245,6 +246,22 @@ func TestDispatchRunNoWorkflowRegistered(t *testing.T) {
 	}
 	if got := readDispatchResult(t, rec).State; got != "no_workflow" {
 		t.Fatalf("state=%q", got)
+	}
+}
+
+func TestDispatchRunRejectsWorkflowWithoutIssueContract(t *testing.T) {
+	store := minimalDispatchStore()
+	store.wf.Phases[0].Outputs = nil
+	rec := httptest.NewRecorder()
+	newDispatchTestHandler(store, &fakeNativeLauncher{}).ServeHTTP(rec, dispatchRequest("proj", 1))
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), IssueContractOutputKey) {
+		t.Fatalf("body=%s", rec.Body.String())
+	}
+	if store.runReq != nil || store.leaseReq != nil {
+		t.Fatalf("invalid workflow should fail before creating run or lease: run=%#v lease=%#v", store.runReq, store.leaseReq)
 	}
 }
 
