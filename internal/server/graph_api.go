@@ -1496,7 +1496,7 @@ func applyUndispatchedPhaseReason(jobs []RunProjectionJob, phaseReason *string, 
 
 func projectionExecutionState(state string) string {
 	switch state {
-	case "not_started", "skipped", "dispatching", "active", "succeeded", "failed":
+	case "not_started", "skipped", "dispatching", "active", "succeeded", "failed", "aborted":
 		return state
 	default:
 		return "not_started"
@@ -1778,7 +1778,7 @@ func projectionJobState(phaseState string) string {
 
 func projectionStepState(jobState string) string {
 	switch jobState {
-	case "succeeded", "failed", "skipped":
+	case "succeeded", "failed", "skipped", "aborted":
 		return jobState
 	default:
 		return "not_started"

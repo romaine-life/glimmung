@@ -801,6 +801,40 @@ describe("IssueDetailView run execution graph", () => {
     });
   });
 
+  it("renders an aborted step as the causal terminal node", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url =
+        typeof input === "string"
+          ? new URL(input, "https://glimmung.test")
+          : input instanceof URL
+            ? input
+            : new URL(input.url);
+      if (url.pathname === "/v1/issues/by-number/ambience/172") return json(issueDetail);
+      if (url.pathname === "/v1/issues/by-number/ambience/172/graph") return json(issueGraph);
+      if (url.pathname === "/v1/projects/ambience/issues/172/runs/7/cycles/1/graph") return json(abortedProjection());
+      if (url.pathname === "/v1/workflows") return json([]);
+      if (url.pathname === "/v1/projects/ambience/issues/172/runs/7.1/native/events") {
+        return json({
+          ...nativeEvents,
+          events: [{
+            ...nativeEvents.events[0],
+            seq: 4,
+            event: "step_aborted",
+            step_slug: "probe-mod-set",
+            message: "step \"probe-mod-set\" requested run abort: baselib_missing_or_unversioned",
+            metadata: { abort_reason: "baselib_missing_or_unversioned" },
+          }],
+        });
+      }
+      throw new Error(`unhandled fetch ${url.pathname}`);
+    }));
+
+    renderIssueDetail("/projects/ambience/issues/172/runs/7/cycles/1/phases/env-prep/jobs/env-prep");
+
+    expect(await screen.findByRole("button", { name: /Verify allowed mods/ })).toHaveTextContent("aborted");
+    expect(await screen.findByText(/reason baselib_missing_or_unversioned/)).toBeInTheDocument();
+  });
+
   it("routes a phase header click to its phase breadcrumb path", async () => {
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
       const url =
@@ -1269,6 +1303,41 @@ function activeAgentProjection() {
           };
         }
         return phase;
+      }),
+    }],
+  };
+}
+
+function abortedProjection() {
+  return {
+    ...runProjection,
+    runs: [{
+      ...runProjection.runs[0],
+      state: "aborted",
+      current_phase: "env-prep",
+      abort_reason: "baselib_missing_or_unversioned",
+      phases: runProjection.runs[0].phases.map((phase) => {
+        if (phase.name !== "env-prep") return phase;
+        return {
+          ...phase,
+          state: "failed",
+          reason: "job_failed",
+          jobs: phase.jobs.map((job) => ({
+            ...job,
+            state: "failed",
+            reason: "aborted",
+            steps: [
+              { slug: "mint-credentials", title: "Mint credentials", state: "succeeded", exit_code: 0 },
+              {
+                slug: "probe-mod-set",
+                title: "Verify allowed mods",
+                state: "aborted",
+                reason: "baselib_missing_or_unversioned",
+              },
+              { slug: "emit-env-outputs", title: "Emit env outputs", state: "not_started" },
+            ],
+          })),
+        };
       }),
     }],
   };

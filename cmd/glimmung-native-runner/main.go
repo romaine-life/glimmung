@@ -264,9 +264,6 @@ func (r *nativeRunner) run(ctx context.Context) error {
 		if reason := r.requestedAbortReason(); reason != "" {
 			slug := strings.TrimSpace(step.Slug)
 			msg := fmt.Sprintf("step %q requested run abort: %s", slug, reason)
-			_ = r.postEvent(ctx, "phase_aborted", &slug, msg, nil, map[string]any{
-				"abort_reason": reason,
-			})
 			return r.complete(ctx, decision.ConclusionAborted, msg)
 		}
 	}
@@ -361,6 +358,16 @@ func (r *nativeRunner) runStep(ctx context.Context, step stepSpec) error {
 		msg := "step " + slug + " output error: " + outputErr.Error()
 		_ = r.postEvent(ctx, "step_failed", &slug, msg, &exit, nil)
 		return errors.New(msg)
+	}
+	if reason := r.requestedAbortReason(); reason != "" {
+		msg := fmt.Sprintf("step %q requested run abort: %s", slug, reason)
+		if err := r.postEvent(ctx, "step_aborted", &slug, msg, nil, map[string]any{
+			"abort_reason": reason,
+			"abort_scope":  "run_after_cleanup",
+		}); err != nil {
+			return err
+		}
+		return nil
 	}
 	if err := r.postEvent(ctx, "step_completed", &slug, "", &exitCode, nil); err != nil {
 		return err

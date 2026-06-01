@@ -180,10 +180,13 @@ func TestNativeRunnerHaltsRemainingStepsOnAbortReason(t *testing.T) {
 	}
 	mu.Lock()
 	defer mu.Unlock()
-	if !sawEvent(events, "phase_aborted") {
-		t.Fatalf("expected a phase_aborted event, got %#v", events)
+	if !sawEvent(events, "step_aborted") {
+		t.Fatalf("expected a step_aborted event, got %#v", events)
 	}
 	for _, e := range events {
+		if e.Event == "step_completed" && e.StepSlug != nil && *e.StepSlug == "probe-ssh" {
+			t.Fatalf("aborting step was marked completed: %#v", events)
+		}
 		if e.Event == "step_started" && e.StepSlug != nil && *e.StepSlug == "probe-mod-set" {
 			t.Fatalf("probe-mod-set step was started despite abort")
 		}

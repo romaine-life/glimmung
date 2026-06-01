@@ -6411,6 +6411,16 @@ func applyNativeEventToExecutionsRaw(raw map[string]any, attempt attemptDoc, eve
 					phase["state"] = "failed"
 					phase["reason"] = "job_failed"
 					phase["completed_at"] = now
+				case "step_aborted":
+					step["state"] = "aborted"
+					step["reason"] = nativeAbortReason(event)
+					step["completed_at"] = now
+					job["state"] = "failed"
+					job["reason"] = server.JobTerminalReasonAborted
+					job["completed_at"] = now
+					phase["state"] = "failed"
+					phase["reason"] = "job_failed"
+					phase["completed_at"] = now
 				}
 				steps[k] = step
 				break
@@ -6424,6 +6434,15 @@ func applyNativeEventToExecutionsRaw(raw map[string]any, attempt attemptDoc, eve
 		break
 	}
 	raw["phase_executions"] = phases
+}
+
+func nativeAbortReason(event nativeEventDoc) string {
+	if event.Metadata != nil {
+		if reason := strings.TrimSpace(stringValue(event.Metadata["abort_reason"])); reason != "" {
+			return reason
+		}
+	}
+	return server.JobTerminalReasonAborted
 }
 
 // appendInnerJobRegistration is the inner_job_registered event handler.

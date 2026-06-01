@@ -53,6 +53,10 @@ after registration changes.
   IDs, invalid inputs, and unsupported executor kinds before they become a
   runtime contract.
 - Jobs inside one phase launch in parallel and complete independently.
+- A step-scoped fail-closed abort is represented by a typed `step_aborted`
+  native event and a durable aborted step state. A failed or aborted job whose
+  cause is step-scoped must not project with every step succeeded or
+  not-started.
 - `touchpoint_gate` is a gated native phase name, not an executor kind:
   reaching the `purpose: review_gate` phase creates a durable parked `k8s_job`
   attempt at the human decision boundary, and approve later releases that same

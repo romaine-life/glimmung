@@ -363,6 +363,7 @@ type NativeAttemptStep = {
   slug: string;
   title?: string | null;
   state?: string | null;
+  reason?: string | null;
   message?: string | null;
   exit_code?: number | null;
 };
@@ -2676,6 +2677,7 @@ function projectionJobToNativeJob(job: RunProjectionPhase["jobs"][number]): Nati
       slug: step.slug,
       title: step.title,
       state: step.state,
+      reason: step.reason ?? null,
       exit_code: step.exit_code ?? null,
     })),
   };
@@ -3342,7 +3344,7 @@ function dispatchResultPill(state: string): string {
 function graphStatePill(state: string): string {
   if (state === "succeeded") return "free";
   if (state === "active") return "busy";
-  if (state === "failed") return "drain";
+  if (state === "failed" || state === "aborted") return "drain";
   if (state === "dispatching") return "pending";
   return "";
 }
@@ -3991,6 +3993,7 @@ function preferredNativeStepKey(
 ): string | null {
   return (
     refs.find((ref) => ref.step.state === "active")?.key
+    ?? refs.find((ref) => ref.step.state === "aborted")?.key
     ?? refs.find((ref) => ref.step.state === "failed")?.key
     ?? refs.find((ref) => ref.step.state === "not_started")?.key
     ?? refs[0]?.key
@@ -4002,6 +4005,7 @@ function nativeStepRowClass(state: string): string {
   if (state === "succeeded") return "done";
   if (state === "skipped") return "skipped";
   if (state === "active") return "active";
+  if (state === "aborted") return "failed";
   if (state === "failed") return "failed";
   return "pending";
 }
@@ -4009,6 +4013,7 @@ function nativeStepRowClass(state: string): string {
 function nativeStepGlyph(state: string): string {
   if (state === "succeeded") return "✓";
   if (state === "active") return "▶";
+  if (state === "aborted") return "!";
   if (state === "failed") return "!";
   if (state === "skipped") return "↷";
   return "·";
@@ -4025,7 +4030,10 @@ function nativeTerminalText(
   if (job && step && nativeSelectionUsesTranscript(job, step)) {
     heading.push("# llm step");
   }
-  const stepMessage = step?.message ? [`# ${step.message}`] : [];
+  const stepMessage = [
+    ...(step?.message ? [`# ${step.message}`] : []),
+    ...(step?.reason ? [`# reason ${step.reason}`] : []),
+  ];
   const lines = events.length > 0
     ? events.map(nativeEventLine)
     : ["No hot native events recorded for this selection."];
@@ -4657,6 +4665,7 @@ function nativeAttemptJobs(x: unknown): NativeAttemptJob[] {
             slug,
             title: stringOrNull(s.title),
             state: stringOrNull(s.state),
+            reason: stringOrNull(s.reason),
             message: stringOrNull(s.message),
             exit_code: numberOrNull(s.exit_code),
           }];
@@ -4675,7 +4684,7 @@ function nativeAttemptJobs(x: unknown): NativeAttemptJob[] {
 function nativeStatePill(state: string): string {
   if (state === "succeeded") return "free";
   if (state === "active") return "busy";
-  if (state === "failed") return "drain";
+  if (state === "failed" || state === "aborted") return "drain";
   if (state === "dispatching") return "pending";
   return "";
 }

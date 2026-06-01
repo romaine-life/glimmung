@@ -383,6 +383,58 @@ func TestJobCompletionFailurePreservesUnstartedSteps(t *testing.T) {
 	}
 }
 
+func TestNativeStepAbortedMarksCausalStepAndJob(t *testing.T) {
+	now := "2026-06-01T04:25:16Z"
+	raw := map[string]any{
+		"phase_executions": []any{
+			map[string]any{
+				"name":  "prepare",
+				"kind":  "k8s_job",
+				"state": "active",
+				"jobs": []any{map[string]any{
+					"id":    "env-prep",
+					"state": "active",
+					"steps": []any{
+						map[string]any{"slug": "probe-mod-set", "state": "active"},
+						map[string]any{"slug": "emit-env-outputs", "state": "not_started"},
+					},
+				}},
+			},
+		},
+	}
+
+	applyNativeEventToExecutionsRaw(raw, attemptDoc{Phase: "prepare"}, nativeEventDoc{
+		JobID:     "env-prep",
+		Event:     "step_aborted",
+		StepSlug:  "probe-mod-set",
+		CreatedAt: now,
+		Metadata:  map[string]any{"abort_reason": "baselib_missing_or_unversioned"},
+	})
+
+	phase := rawPhase(t, raw, "prepare")
+	if got := stringValue(phase["state"]); got != "failed" {
+		t.Fatalf("phase state=%q", got)
+	}
+	job := rawJob(t, phase, "env-prep")
+	if got := stringValue(job["state"]); got != "failed" {
+		t.Fatalf("job state=%q", got)
+	}
+	if got := stringValue(job["reason"]); got != "aborted" {
+		t.Fatalf("job reason=%q", got)
+	}
+	step := rawStep(t, job, "probe-mod-set")
+	if got := stringValue(step["state"]); got != "aborted" {
+		t.Fatalf("probe-mod-set state=%q", got)
+	}
+	if got := stringValue(step["reason"]); got != "baselib_missing_or_unversioned" {
+		t.Fatalf("probe-mod-set reason=%q", got)
+	}
+	emit := rawStep(t, job, "emit-env-outputs")
+	if got := stringValue(emit["state"]); got != "not_started" {
+		t.Fatalf("emit-env-outputs state=%q", got)
+	}
+}
+
 func TestFinalizeExecutionFailureClassifiesForwardDispatchFailure(t *testing.T) {
 	now := "2026-05-25T07:32:14Z"
 	raw := map[string]any{
