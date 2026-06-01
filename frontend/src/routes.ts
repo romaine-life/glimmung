@@ -13,8 +13,7 @@ export const ISSUE_DETAIL_CHILD_ROUTES = {
   runPhase: "runs/:runId/cycles/:cycleId/phases/:phaseId",
   runJob: "runs/:runId/cycles/:cycleId/phases/:phaseId/jobs/:jobId",
   runStep: "runs/:runId/cycles/:cycleId/phases/:phaseId/jobs/:jobId/steps/:stepId",
-  workflow: "workflow",
-  workflowRun: "workflow/:workflowRunId",
+  settings: "settings",
   touchpoint: "touchpoint",
 } as const;
 
@@ -40,8 +39,7 @@ const APP_ROUTES = {
   issueRunPhase: `/projects/:project/issues/:issueNumber/${ISSUE_DETAIL_CHILD_ROUTES.runPhase}`,
   issueRunJob: `/projects/:project/issues/:issueNumber/${ISSUE_DETAIL_CHILD_ROUTES.runJob}`,
   issueRunStep: `/projects/:project/issues/:issueNumber/${ISSUE_DETAIL_CHILD_ROUTES.runStep}`,
-  issueWorkflow: `/projects/:project/issues/:issueNumber/${ISSUE_DETAIL_CHILD_ROUTES.workflow}`,
-  issueWorkflowRun: `/projects/:project/issues/:issueNumber/${ISSUE_DETAIL_CHILD_ROUTES.workflowRun}`,
+  issueSettings: `/projects/:project/issues/:issueNumber/${ISSUE_DETAIL_CHILD_ROUTES.settings}`,
   issueTouchpoint: `/projects/:project/issues/:issueNumber/${ISSUE_DETAIL_CHILD_ROUTES.touchpoint}`,
   projectPlaybooks: "/projects/:project/playbooks",
   projectPlaybook: "/projects/:project/playbooks/:playbookRef",
@@ -200,14 +198,8 @@ const breadcrumbRoutes: BreadcrumbRouteObject[] = [
                         ],
                       },
                       {
-                        path: "workflow",
-                        handle: { crumb: (match) => ({ label: "Workflow", to: routePath(APP_ROUTES.issueWorkflow, match.params) }) },
-                        children: [
-                          {
-                            path: ":workflowRunId",
-                            handle: { crumb: (match) => ({ label: runSlugDisplay(match.params.workflowRunId ?? "") }) },
-                          },
-                        ],
+                        path: ISSUE_DETAIL_CHILD_ROUTES.settings,
+                        handle: { crumb: (match) => ({ label: "Settings", to: routePath(APP_ROUTES.issueSettings, match.params) }) },
                       },
                       {
                         path: ISSUE_DETAIL_CHILD_ROUTES.touchpoint,
@@ -266,10 +258,6 @@ function runCrumbLabel(runId: string | undefined): string {
 
 function cycleCrumbLabel(cycleId: string | undefined): string {
   return cycleId ? `cycle ${cycleId}` : "cycle";
-}
-
-function runSlugDisplay(slug: string): string {
-  return /^\d+(\.\d+)?$/.test(slug) ? `cycle ${slug}` : slug;
 }
 
 function titleCase(value: string): string {

@@ -32,6 +32,20 @@ export type PhaseGraphJob = {
   name?: string | null;
   image?: string;
   primitive?: string;
+  managed?: boolean;
+  steps?: PhaseGraphStep[];
+};
+
+export type PhaseGraphStep = {
+  slug: string;
+  title?: string | null;
+  type?: string;
+  run?: string;
+  agent?: {
+    slot?: string;
+    prompt?: string;
+    prompt_file?: string;
+  } | null;
 };
 
 export type RecycleArrow = {

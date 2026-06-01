@@ -2317,6 +2317,17 @@ h2 .inline-action,
 .dag-node-definition:hover {
   background: var(--surface);
 }
+.dag-node-definition-button {
+  cursor: pointer;
+  opacity: 0.85;
+}
+.dag-node-definition-button:hover,
+.dag-node-definition-button.selected {
+  background: var(--surface-hover);
+}
+.workflow-definition-inspector {
+  margin-top: 1rem;
+}
 .dag-node-label {
   font-family: var(--font-mono);
   font-size: 0.78rem;

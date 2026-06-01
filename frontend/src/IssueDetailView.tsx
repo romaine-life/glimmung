@@ -1,7 +1,7 @@
 /**
  * Issue detail view (#42, #81) — issue meta + tabbed content.
  *
- * Tabs: summary / runs / touchpoint.
+ * Tabs: summary / runs / settings / touchpoint.
  *   - summary: title link, body, edit form.
  *   - run: workflow's DAG painted with active run state. Phases
  *     as nodes, PR primitive as the trailing node. Cool-toned
@@ -10,6 +10,7 @@
  *     attempt that exercised it.
  *   - runs: list/timeline of every run on this issue. Click a row
  *     to load that run in the run tab.
+ *   - settings: issue-scoped runtime overrides and links to project-owned configuration.
  *   - touchpoint: issue-level decision surface and evidence summary.
  *
  * Conceptual move per #81: "list of steps that ran" -> "graph that
@@ -38,9 +39,8 @@ import {
 import { AgentRuntimePolicyFields } from "./AgentRuntimePolicyFields";
 import { lokiExploreUrl } from "./grafanaLinks";
 import { PhaseGraph, type PhaseGraphPhase } from "./PhaseGraph";
-import { RecyclePolicyPanel } from "./RecyclePolicyPanel";
 import { issueRunSelectionPath } from "./routes";
-import { RunCancelAction, RUN_CANCEL_IDLE_STATE, runStateCanCancel, type AbortState } from "./RunCancelAction";
+import { RunCancelAction, runStateCanCancel, type AbortState } from "./RunCancelAction";
 import { useHorizontalDragScroll } from "./useHorizontalDragScroll";
 import {
   runTopologyToPhaseGraphModel,
@@ -348,6 +348,7 @@ type WorkflowJob = {
 
 type WorkflowStep = {
   slug: string;
+  title?: string | null;
   type?: string;
   run?: string;
   agent?: {
@@ -408,25 +409,23 @@ type AuthContext = {
   } | null;
 };
 
-type Tab = "summary" | "runs" | "workflow" | "touchpoint";
+type Tab = "summary" | "runs" | "settings" | "touchpoint";
 
 const TAB_SLUGS: Record<Tab, string> = {
   summary: "summary",
   runs: "runs",
-  workflow: "workflow",
+  settings: "settings",
   touchpoint: "touchpoint",
 };
 
 const SLUG_TO_TAB: Record<string, Tab> = {
   summary: "summary",
   runs: "runs",
-  workflow: "workflow",
+  settings: "settings",
   touchpoint: "touchpoint",
 };
 
 const POLL_INTERVAL_MS = 3000;
-const RUN_VIEWER_IDLE_DISPATCH: DispatchState = { kind: "idle" };
-const RUN_VIEWER_IDLE_ABORT: AbortState = RUN_CANCEL_IDLE_STATE;
 
 // Pull a human-readable cause out of the raw error string built in
 // dispatchRun: `/v1/runs/dispatch -> <status>: <body>`. API errors
@@ -456,7 +455,6 @@ type IssueDetailRouteParams = {
   phaseId?: string;
   jobId?: string;
   stepId?: string;
-  workflowRunId?: string;
 };
 
 export function IssueDetailView() {
@@ -481,16 +479,15 @@ export function IssueDetailView() {
   // Tab is URL-driven so each tab is deep-linkable. Bare issue URLs are
   // normalized to `/summary` so the breadcrumb leaf and address bar stay aligned.
   const lastSeg = location.pathname.split("/").filter(Boolean).pop() ?? "";
-  // params.runId / workflowRunId hold user-facing run numbers (e.g. "3"),
-  // not internal IDs. They force their owning tab independent of graph load.
-  const tab: Tab = params.workflowRunId ? "workflow" : params.runId ? "runs" : (SLUG_TO_TAB[lastSeg] ?? "summary");
+  // params.runId holds a user-facing run number (e.g. "3"), not an internal ID.
+  // It forces the runs tab independent of graph load.
+  const tab: Tab = params.runId ? "runs" : (SLUG_TO_TAB[lastSeg] ?? "summary");
   const setTab = (t: Tab) => navigate(`${baseUrl}/${TAB_SLUGS[t]}`);
 
   const [detail, setDetail] = useState<IssueDetail | null>(null);
   const [graph, setGraph] = useState<IssueGraph | null>(null);
   const [runProjection, setRunProjection] = useState<RunGraphProjection | null>(null);
   const [projectWorkflows, setProjectWorkflows] = useState<Workflow[]>([]);
-  const [workflowRefreshTick, setWorkflowRefreshTick] = useState(0);
 
   // Resolve the URL run-number slug to the internal graph node ID so RunViewer
   // can look it up. Null while graph is loading; tab is still "runs" via params.runId.
@@ -501,14 +498,6 @@ export function IssueDetailView() {
       .find((n) => issueRunSlug(graph, n) === params.runId);
     return node ? runIdFromNode(node) : null;
   })();
-  const selectedWorkflowRunId = (() => {
-    if (!params.workflowRunId || !graph) return null;
-    const node = graph.nodes
-      .filter((n) => n.kind === "run")
-      .find((n) => issueRunSlug(graph, n) === params.workflowRunId);
-    return node ? runIdFromNode(node) : null;
-  })();
-
   // Navigate to a run using its user-facing issue-scoped number (issueRunSlug),
   // never the internal backing ID.
   const selectRun = (runId: string | null) => {
@@ -516,12 +505,6 @@ export function IssueDetailView() {
     const node = graph?.nodes.find((n) => n.kind === "run" && runIdFromNode(n) === runId);
     const slug = node && graph ? issueRunSlug(graph, node) : runId;
     navigate(`${baseUrl}/runs/${slug}`);
-  };
-  const selectWorkflowRun = (runId: string | null) => {
-    if (!runId) { navigate(`${baseUrl}/workflow`); return; }
-    const node = graph?.nodes.find((n) => n.kind === "run" && runIdFromNode(n) === runId);
-    const slug = node && graph ? issueRunSlug(graph, node) : runId;
-    navigate(`${baseUrl}/workflow/${slug}`);
   };
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
@@ -556,18 +539,6 @@ export function IssueDetailView() {
   const editableAgentSlots = useMemo(
     () => agentSlotsFromWorkflow(editableWorkflowDefinition),
     [editableWorkflowDefinition],
-  );
-  const selectedWorkflowRun = useMemo(
-    () => graph && selectedWorkflowRunId
-      ? graph.nodes.find((n) => n.kind === "run" && runIdFromNode(n) === selectedWorkflowRunId) ?? null
-      : null,
-    [graph, selectedWorkflowRunId],
-  );
-  const selectedWorkflowRunWorkflow = useMemo(
-    () => detail && selectedWorkflowRun
-      ? resolveRunWorkflow(issueWorkflowCandidates, detail.project, selectedWorkflowRun)
-      : null,
-    [detail, issueWorkflowCandidates, selectedWorkflowRun],
   );
   const detailUrl =
     target
@@ -650,32 +621,25 @@ export function IssueDetailView() {
   }, [detail?.ref]);
 
   useEffect(() => {
-    // On a runs/:runNumber or workflow/:runNumber URL the last segment is the run number, not a tab slug —
-    // skip slug normalization so we don't strip it from the URL.
-    if (params.runId || params.workflowRunId) return;
+    // On a runs/:runNumber URL the last segment is the run number, not a tab
+    // slug — skip slug normalization so we don't strip it from the URL.
+    if (params.runId) return;
     const canonicalSlug = TAB_SLUGS[tab];
     if (lastSeg !== canonicalSlug) {
       navigate(`${baseUrl}/${canonicalSlug}`, { replace: true });
       return;
     }
-  }, [baseUrl, lastSeg, navigate, params.runId, params.workflowRunId, tab]);
+  }, [baseUrl, lastSeg, navigate, params.runId, tab]);
 
   useEffect(() => {
     if (!graph?.projection) return;
-    if (params.workflowRunId) {
-      const run = projectionRunByLegacySlug(graph.projection, params.workflowRunId);
-      if (run) {
-        navigate(projectionRunCyclePath(baseUrl, run), { replace: true });
-      }
-      return;
-    }
     if (params.runId && !params.cycleId) {
       const run = latestProjectionCycleForRun(graph.projection, params.runId);
       if (run) {
         navigate(projectionRunCyclePath(baseUrl, run), { replace: true });
       }
     }
-  }, [baseUrl, graph, navigate, params.cycleId, params.runId, params.workflowRunId]);
+  }, [baseUrl, graph, navigate, params.cycleId, params.runId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -736,7 +700,7 @@ export function IssueDetailView() {
     return () => {
       cancelled = true;
     };
-  }, [detail?.project, workflowRefreshTick]);
+  }, [detail?.project]);
 
   // While the run tab is open and a run is actually in flight, poll
   // detail+graph so DAG nodes fill in as conclusions / verification /
@@ -771,8 +735,8 @@ export function IssueDetailView() {
               runs
               {isInFlight && <span className="tab-dot" aria-label="active" />}
             </TabButton>
-            <TabButton current={tab} value="workflow" onSelect={selectTab}>
-              workflow
+            <TabButton current={tab} value="settings" onSelect={selectTab}>
+              settings
             </TabButton>
             <TabButton current={tab} value="touchpoint" onSelect={selectTab}>
               touchpoint
@@ -801,7 +765,7 @@ export function IssueDetailView() {
                 project={detail.project}
                 repo={detail.repo}
                 detail={detail}
-                currentWorkflow={currentWorkflowDefinition}
+                currentWorkflow={editableWorkflowDefinition}
                 signedIn={signedIn}
                 isAdmin={isAdmin}
                 dispatchState={dispatchState}
@@ -819,31 +783,21 @@ export function IssueDetailView() {
                 executionLoading={Boolean(runGraphUrl) && runProjection === null && !error}
                 onSelectProjectionRun={(run) => navigate(projectionRunCyclePath(baseUrl, run))}
                 onSelectProjectionNode={(run, selection) => navigate(projectionSelectionPath(baseUrl, run, selection), { preventScrollReset: true })}
-                onViewRunWorkflow={selectWorkflowRun}
                 onDispatch={() => void dispatchRun()}
                 onOpenTouchpoint={() => setTab("touchpoint")}
               />
             )}
-            {tab === "workflow" && (
-              <WorkflowPane
-                graph={graph}
-                graphAvailable={!!graphUrl}
-                project={detail.project}
-                repo={detail.repo}
-                currentWorkflow={currentWorkflowDefinition}
-                selectedRun={selectedWorkflowRun}
-                selectedRunWorkflow={selectedWorkflowRunWorkflow}
-                selectedRunRequested={Boolean(params.workflowRunId)}
-                onBackToDefinition={() => selectWorkflowRun(null)}
+            {tab === "settings" && (
+              <IssueSettingsPane
+                issue={detail}
+                workflow={editableWorkflowDefinition}
                 signedIn={signedIn}
                 isAdmin={isAdmin}
-                issue={detail}
                 agentProfiles={agentProfiles}
                 agentSlots={editableAgentSlots}
                 globalAgentRuntime={snap?.agent_runtime ?? null}
                 projectAgentRuntime={projectAgentRuntime}
                 onIssueAgentSaved={() => setRefreshTick((t) => t + 1)}
-                onWorkflowChanged={() => setWorkflowRefreshTick((t) => t + 1)}
               />
             )}
             {tab === "touchpoint" && (
@@ -1319,7 +1273,6 @@ export function RunViewer({
       return (
         <>
           {actions}
-          <DefinitionDag workflow={null} project={project} />
           <div className="empty">
             Run lock held — waiting for the run record to land.
           </div>
@@ -1329,7 +1282,6 @@ export function RunViewer({
     return (
       <>
         {actions}
-        <DefinitionDag workflow={null} project={project} />
         <div className="empty">No runs yet — re-dispatch above to start one.</div>
       </>
     );
@@ -1369,48 +1321,6 @@ export function RunViewer({
         <RunMetaSummary run={focused} graph={graph} repo={repo} live={isActive} />
       )}
     </>
-  );
-}
-
-// Cool-toned definition view of the workflow's DAG when no run has
-// landed yet.
-function DefinitionDag({
-  workflow,
-  project,
-}: {
-  workflow: Workflow | null;
-  project: string;
-}) {
-  const location = useLocation();
-  const graphModel = workflow ? workflowToPhaseGraphModel(workflow) : null;
-  return (
-    <div className="dag-wrap">
-      {graphModel && (
-        <PhaseGraph
-          phases={graphModel.phases}
-          dagClassName="dag-definition"
-          ariaLabel="workflow definition"
-          entryArrows={graphModel.entryArrows}
-          recycleArrows={graphModel.recycleArrows}
-        />
-      )}
-      {!workflow && (
-        <div className="dim mono" style={{ marginTop: "0.5rem" }}>
-          Workflow definition unavailable in the current snapshot.
-        </div>
-      )}
-      {workflow && (
-        <div style={{ marginTop: "0.5rem" }}>
-          <Link
-            className="link"
-            to={`/projects/${encodeURIComponent(project)}/workflows/${encodeURIComponent(workflow.name)}`}
-            state={{ returnTo: location.pathname, returnLabel: "issue" }}
-          >
-            view workflow definition
-          </Link>
-        </div>
-      )}
-    </div>
   );
 }
 
@@ -1880,7 +1790,6 @@ function RunsPane({
   executionLoading,
   onSelectProjectionRun,
   onSelectProjectionNode,
-  onViewRunWorkflow,
   onDispatch,
   onOpenTouchpoint,
 }: {
@@ -1907,7 +1816,6 @@ function RunsPane({
   executionLoading: boolean;
   onSelectProjectionRun: (run: RunProjectionRun) => void;
   onSelectProjectionNode: (run: RunProjectionRun, selection: ProjectionSelection) => void;
-  onViewRunWorkflow: (runId: string) => void;
   onDispatch: () => void;
   onOpenTouchpoint: () => void;
 }) {
@@ -2064,7 +1972,6 @@ function RunsPane({
         repo={repo}
         currentWorkflow={currentWorkflow}
         onBackToRuns={() => onSelectRun(null)}
-        onViewRunWorkflow={() => onViewRunWorkflow(selectedRunId)}
         onOpenTouchpoint={onOpenTouchpoint}
       />
     );
@@ -2706,101 +2613,62 @@ function projectionJobToNativeJob(job: RunProjectionPhase["jobs"][number]): Nati
   };
 }
 
-function WorkflowPane({
-  graph,
-  graphAvailable,
-  project,
-  repo,
-  currentWorkflow,
-  selectedRun,
-  selectedRunWorkflow,
-  selectedRunRequested,
-  onBackToDefinition,
+function IssueSettingsPane({
+  issue,
+  workflow,
   signedIn,
   isAdmin,
-  issue,
   agentProfiles,
   agentSlots,
   globalAgentRuntime,
   projectAgentRuntime,
   onIssueAgentSaved,
-  onWorkflowChanged,
 }: {
-  graph: IssueGraph | null;
-  graphAvailable: boolean;
-  project: string;
-  repo: string | null;
-  currentWorkflow: Workflow | null;
-  selectedRun: GraphNode | null;
-  selectedRunWorkflow: Workflow | null;
-  selectedRunRequested: boolean;
-  onBackToDefinition: () => void;
+  issue: IssueDetail;
+  workflow: Workflow | null;
   signedIn: boolean;
   isAdmin: boolean;
-  issue: IssueDetail;
   agentProfiles: ReturnType<typeof agentRuntimeProfiles>;
   agentSlots: string[];
   globalAgentRuntime: AgentRuntimeConfig | null;
   projectAgentRuntime: AgentRuntimeConfig | null;
   onIssueAgentSaved: () => void;
-  onWorkflowChanged: () => void;
 }) {
-  if (!graphAvailable) {
-    return (
-      <div className="empty">
-        Workflow state isn't available for native issues yet.
-      </div>
-    );
-  }
-  if (selectedRunRequested && !graph) {
-    return <div className="empty">Loading run workflow…</div>;
-  }
-  if (selectedRunRequested && !selectedRun) {
-    return (
-      <>
-        <button type="button" className="link" onClick={onBackToDefinition}>
-          back to workflow definition
-        </button>
-        <div className="empty">Run workflow was not found.</div>
-      </>
-    );
-  }
-  if (selectedRun && graph) {
-    return (
-      <>
-        <div className="run-section-header">
-          <h2>{runDisplayName(selectedRun)} workflow</h2>
-          <button type="button" className="link" onClick={onBackToDefinition}>
-            back to workflow definition
-          </button>
-        </div>
-        <RunViewer
-          graph={graph}
-          graphAvailable={graphAvailable}
-          signedIn={false}
-          project={project}
-          repo={repo}
-          workflow={selectedRunWorkflow}
-          inFlight={selectedRun.state === "in_progress"}
-          dispatchState={RUN_VIEWER_IDLE_DISPATCH}
-          onRedispatch={() => undefined}
-          abortState={RUN_VIEWER_IDLE_ABORT}
-          onArmAbort={() => undefined}
-          onCancelAbort={() => undefined}
-          onConfirmAbort={() => undefined}
-          selectedRunId={runIdFromNode(selectedRun)}
-          onBackToRuns={onBackToDefinition}
-          actionsVisible={false}
-        />
-      </>
-    );
-  }
+  const location = useLocation();
   return (
     <section>
       <div className="run-section-header">
-        <h2>Workflow definition</h2>
+        <h2>Issue settings</h2>
       </div>
-      <DefinitionDag workflow={currentWorkflow} project={project} />
+      <section className="run-panel">
+        <div className="run-section-header">
+          <h2>Workflow definition</h2>
+        </div>
+        <div className="run-panel-meta">
+          <div>
+            <span className="key">project</span> <span className="mono">{issue.project}</span>
+          </div>
+          <div>
+            <span className="key">workflow</span>{" "}
+            <span className="mono">{workflow?.name ?? stringOrNull(issue.metadata?.workflow) ?? "unavailable"}</span>
+          </div>
+        </div>
+        {workflow ? (
+          <div style={{ marginTop: "0.75rem" }}>
+            <Link
+              className="link"
+              to={`/projects/${encodeURIComponent(issue.project)}/workflows/${encodeURIComponent(workflow.name)}`}
+              state={{ returnTo: location.pathname, returnLabel: `issue #${issue.number ?? issue.ref}` }}
+            >
+              view workflow definition
+            </Link>
+          </div>
+        ) : (
+          <div className="empty" style={{ marginTop: "0.75rem" }}>
+            Workflow definition unavailable in the current snapshot.
+          </div>
+        )}
+      </section>
       <IssueAgentRuntimePanel
         detail={issue}
         profiles={agentProfiles}
@@ -2811,14 +2679,6 @@ function WorkflowPane({
         projectAgentRuntime={projectAgentRuntime}
         onSaved={onIssueAgentSaved}
       />
-      {currentWorkflow && (
-        <RecyclePolicyPanel
-          workflow={currentWorkflow}
-          signedIn={signedIn}
-          isAdmin={isAdmin}
-          onSaved={onWorkflowChanged}
-        />
-      )}
     </section>
   );
 }
@@ -2830,7 +2690,6 @@ function RunDetailView({
   repo,
   currentWorkflow,
   onBackToRuns,
-  onViewRunWorkflow,
   onOpenTouchpoint,
 }: {
   graph: IssueGraph;
@@ -2839,9 +2698,9 @@ function RunDetailView({
   repo: string | null;
   currentWorkflow: Workflow | null;
   onBackToRuns: () => void;
-  onViewRunWorkflow: () => void;
   onOpenTouchpoint: () => void;
 }) {
+  const location = useLocation();
   if (!run) {
     return (
       <>
@@ -2860,15 +2719,22 @@ function RunDetailView({
   const cumulativeCost = numberOrNull(meta.cumulative_cost_usd);
   const prNumber = numberOrNull(meta.pr_number);
   const lineage = computeCycleLineage(graph, runIdFromNode(run));
+  const workflowDefinitionName = workflow ?? currentWorkflow?.name ?? null;
   return (
     <>
       <div className="run-section-header">
         <button type="button" className="link" onClick={onBackToRuns}>
           ← runs
         </button>
-        <button type="button" className="link" onClick={onViewRunWorkflow}>
-          view run workflow
-        </button>
+        {workflowDefinitionName && (
+          <Link
+            className="link"
+            to={`/projects/${encodeURIComponent(project)}/workflows/${encodeURIComponent(workflowDefinitionName)}`}
+            state={{ returnTo: location.pathname, returnLabel: "run" }}
+          >
+            view workflow definition
+          </Link>
+        )}
       </div>
       <section>
         <div className="run-section-header">
@@ -4654,11 +4520,6 @@ function mergeWorkflows(primary: Workflow[], fallback: Workflow[]): Workflow[] {
 function singleProjectWorkflow(workflows: Workflow[], project: string): Workflow | null {
   const projectWorkflows = workflows.filter((workflow) => workflow.project === project);
   return projectWorkflows.length === 1 ? projectWorkflows[0] : null;
-}
-
-function resolveRunWorkflow(workflows: Workflow[], project: string, run: GraphNode | null): Workflow | null {
-  if (!run) return null;
-  return resolveProjectWorkflow(workflows, project, [stringOrNull(run.metadata.workflow)]);
 }
 
 function isRecord(x: unknown): x is Record<string, unknown> {
