@@ -19,7 +19,7 @@ type RunsStore struct {
 type RunRow struct {
 	ID          string
 	Project     string
-	IssueNumber *int
+	IssueNumber int
 	Payload     []byte
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
@@ -121,6 +121,9 @@ func (s *RunsStore) Create(ctx context.Context, row RunRow) (RunRow, error) {
 	if s == nil || s.pool == nil {
 		return RunRow{}, fmt.Errorf("runs store not configured")
 	}
+	if row.IssueNumber <= 0 {
+		return RunRow{}, fmt.Errorf("runs: create: issue_number must be positive")
+	}
 	const insertSQL = `
 		INSERT INTO runs (id, project, issue_number, payload, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, now(), now())
@@ -173,10 +176,13 @@ func (s *RunsStore) PatchPayload(ctx context.Context, project, id string, mutate
 	if err != nil {
 		return RunRow{}, fmt.Errorf("runs: marshal patched payload: %w", err)
 	}
-	// issue_number column tracks payload.issue_number for the partial index.
-	var issueNumArg any
+	// issue_number column tracks payload.issue_number for the project/issue index.
+	var issueNumArg int
 	if v, ok := payload["issue_number"].(float64); ok && int(v) > 0 {
 		issueNumArg = int(v)
+	}
+	if issueNumArg <= 0 {
+		return RunRow{}, fmt.Errorf("runs: patch: issue_number must be positive")
 	}
 	const updateSQL = `
 		UPDATE runs SET payload = $3, issue_number = $4, updated_at = now()

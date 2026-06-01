@@ -1,6 +1,6 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter } from "react-router-dom";
 
 import {
@@ -13,6 +13,8 @@ import {
 import { installMockFetch, isMockMode } from "./mockApi";
 
 afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
   sessionStorage.clear();
   window.history.pushState({}, "", "/");
 });
@@ -110,5 +112,53 @@ describe("test environment slots", () => {
     expect(await screen.findByRole("heading", { name: "glimmung-test-1" })).toBeInTheDocument();
     expect(screen.getByText("Raw slot snapshot")).toBeInTheDocument();
     expect(screen.getAllByText("glimmung/glimmung-test-1/leases/42").length).toBeGreaterThan(0);
+  });
+});
+
+describe("project runs", () => {
+  it("cancels an active issue run from the project runs table", async () => {
+    const requests: Array<{ path: string; method: string }> = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url =
+        typeof input === "string"
+          ? new URL(input, "https://glimmung.test")
+          : input instanceof URL
+            ? input
+            : new URL(input.url);
+      const method = (init?.method ?? "GET").toUpperCase();
+      requests.push({ path: url.pathname, method });
+      if (url.pathname === "/v1/auth/me") {
+        return new Response(JSON.stringify({
+          signed_in: true,
+          email: "admin@glimmung.test",
+          name: "Admin",
+          is_admin: true,
+        }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      if (
+        url.pathname === "/v1/projects/glimmung/issues/206/runs/1.1/abort" &&
+        method === "POST"
+      ) {
+        return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      throw new Error(`unhandled fetch ${method} ${url.pathname}`);
+    }));
+
+    window.history.pushState({}, "", "/projects/glimmung/runs?mock=1");
+    render(
+      <MemoryRouter initialEntries={["/projects/glimmung/runs?mock=1"]}>
+        <App />
+      </MemoryRouter>,
+    );
+
+    await userEvent.click(await screen.findByRole("button", { name: "cancel run" }));
+    await userEvent.click(screen.getByRole("button", { name: "cancel?" }));
+
+    await waitFor(() => {
+      expect(requests).toContainEqual({
+        path: "/v1/projects/glimmung/issues/206/runs/1.1/abort",
+        method: "POST",
+      });
+    });
   });
 });

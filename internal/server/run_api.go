@@ -137,9 +137,9 @@ type RunReport struct {
 	AdmissionError       *string               `json:"admission_error"`
 	SlotLeaseRef         *string               `json:"slot_lease_ref"`
 	Workflow             string                `json:"workflow"`
-	IssueRef             *string               `json:"issue_ref"`
+	IssueRef             string                `json:"issue_ref"`
 	IssueRepo            *string               `json:"issue_repo"`
-	IssueNumber          *int                  `json:"issue_number"`
+	IssueNumber          int                   `json:"issue_number"`
 	State                string                `json:"state"`
 	CurrentPhase         *string               `json:"current_phase"`
 	AttemptsCount        int                   `json:"attempts_count"`

@@ -22,6 +22,73 @@ func TestNativeEventAttemptIndexAcceptsExplicitOrMetadataValue(t *testing.T) {
 	}
 }
 
+func TestRunDocFromPGRowRequiresMatchingIssueNumber(t *testing.T) {
+	t.Parallel()
+	payload, err := json.Marshal(runDoc{
+		ID:          "run-1",
+		Project:     "glimmung",
+		IssueNumber: 141,
+		State:       "in_progress",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	good, err := runDocFromPGRow(pgstore.RunRow{
+		ID:          "run-1",
+		Project:     "glimmung",
+		IssueNumber: 141,
+		Payload:     payload,
+	})
+	if err != nil {
+		t.Fatalf("valid issue-scoped run row rejected: %v", err)
+	}
+	if good.IssueNumber != 141 {
+		t.Fatalf("issue_number=%d, want 141", good.IssueNumber)
+	}
+
+	cases := []struct {
+		name        string
+		issueNumber int
+		payload     []byte
+		want        string
+	}{
+		{
+			name:        "zero row issue number",
+			issueNumber: 0,
+			payload:     payload,
+			want:        "invalid issue_number 0",
+		},
+		{
+			name:        "mismatched payload issue number",
+			issueNumber: 142,
+			payload:     payload,
+			want:        "payload issue_number 141 does not match row issue_number 142",
+		},
+		{
+			name:        "missing payload issue number",
+			issueNumber: 141,
+			payload:     []byte(`{"id":"run-1","project":"glimmung","state":"in_progress"}`),
+			want:        "payload issue_number 0 does not match row issue_number 141",
+		},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := runDocFromPGRow(pgstore.RunRow{
+				ID:          "run-1",
+				Project:     "glimmung",
+				IssueNumber: tc.issueNumber,
+				Payload:     tc.payload,
+			})
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error=%v, want substring %q", err, tc.want)
+			}
+		})
+	}
+}
+
 func TestTerminalStateReleasesSlotLease(t *testing.T) {
 	cases := []struct {
 		name            string

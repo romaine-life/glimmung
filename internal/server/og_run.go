@@ -60,14 +60,6 @@ var runIssueScopedURLPattern = regexp.MustCompile(
 	`^/projects/([^/]+)/issues/(\d+)/runs/([^/]+)`,
 )
 
-// Project-scoped run URL (no issue), used by ProjectRunRedirectRoute.
-// /projects/{project}/runs/{run_id}. We don't enrich these because the URL
-// doesn't carry an issue number; the SPA itself redirects to the
-// issue-scoped variant.
-var runProjectScopedURLPattern = regexp.MustCompile(
-	`^/projects/([^/]+)/runs/([^/]+)`,
-)
-
 // matchRunURL extracts a run identifier from a dashboard URL path, or
 // returns ok=false if the path is not a run URL we know how to enrich.
 func matchRunURL(urlPath string) (runURLMatch, bool) {
@@ -89,9 +81,6 @@ func matchRunURL(urlPath string) (runURLMatch, bool) {
 			issueNumber: issueNumber,
 			runSlug:     runSlug,
 		}, true
-	}
-	if runProjectScopedURLPattern.MatchString(urlPath) {
-		return runURLMatch{}, false
 	}
 	return runURLMatch{}, false
 }

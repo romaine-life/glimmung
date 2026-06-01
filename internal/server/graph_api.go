@@ -529,10 +529,10 @@ func buildSystemGraph(ctx context.Context, store GraphRuntimeStore, signalStore 
 		addWorkflowSchemasForRuns(ctx, store, runs, workflowsByKey)
 		sort.SliceStable(runs, func(i, j int) bool { return runs[i].StartedAt.Before(runs[j].StartedAt) })
 		for _, run := range runs {
-			if !runStateIsActive(run.State) || run.IssueRef == nil {
+			if !runStateIsActive(run.State) || run.IssueRef == "" {
 				continue
 			}
-			issueNodeID := issueNodeByRef[*run.IssueRef]
+			issueNodeID := issueNodeByRef[run.IssueRef]
 			if issueNodeID == "" {
 				continue
 			}
@@ -609,11 +609,11 @@ func issueGraphRuns(runs []RunReport, project string, number int, issueRef strin
 		if run.Project != project {
 			continue
 		}
-		if run.IssueNumber != nil && *run.IssueNumber == number {
+		if run.IssueNumber == number {
 			out = append(out, run)
 			continue
 		}
-		if run.IssueRef != nil && *run.IssueRef == issueRef {
+		if run.IssueRef == issueRef {
 			out = append(out, run)
 		}
 	}

@@ -132,6 +132,7 @@ func TestNativeJobManifestIncludesStringMapPhaseInputs(t *testing.T) {
 		Run: RunReplayData{
 			ID:            "run-123",
 			Project:       "ambience",
+			IssueNumber:   42,
 			CallbackToken: stringPtr("callback-token"),
 			Attempts:      []RunAttemptData{{AttemptIndex: 1, Phase: "llm-work"}},
 		},
@@ -160,6 +161,7 @@ func TestNativeJobManifestManagedJobUsesSharedRunnerEntrypoint(t *testing.T) {
 		Run: RunReplayData{
 			ID:            "run-123",
 			Project:       "ambience",
+			IssueNumber:   42,
 			CallbackToken: stringPtr("callback-token"),
 			Attempts:      []RunAttemptData{{AttemptIndex: 1, Phase: "env-prep"}},
 		},
@@ -214,6 +216,7 @@ func TestNativeJobManifestDoesNotMountProviderCredentialSecret(t *testing.T) {
 		Run: RunReplayData{
 			ID:            "run-123",
 			Project:       "ambience",
+			IssueNumber:   42,
 			CallbackToken: stringPtr("callback-token"),
 			Attempts:      []RunAttemptData{{AttemptIndex: 1, Phase: "llm-work"}},
 		},
@@ -255,6 +258,7 @@ func TestNativeJobManifestWiresProviderAPIProxyForAgentJob(t *testing.T) {
 		Run: RunReplayData{
 			ID:            "run-123",
 			Project:       "ambience",
+			IssueNumber:   42,
 			CallbackToken: stringPtr("callback-token"),
 			Attempts:      []RunAttemptData{{AttemptIndex: 1, Phase: "llm-work"}},
 		},
@@ -354,6 +358,7 @@ func TestLaunchNativePhaseResolvesProviderAPIProxyForAgentJobs(t *testing.T) {
 		Run: RunReplayData{
 			ID:            "run-123",
 			Project:       "ambience",
+			IssueNumber:   42,
 			CallbackToken: stringPtr("callback-token"),
 			Attempts:      []RunAttemptData{{AttemptIndex: 1, Phase: "llm-work"}},
 		},
@@ -406,6 +411,7 @@ func TestNativeJobManifestEvidenceGateUsesManagedRunner(t *testing.T) {
 		Run: RunReplayData{
 			ID:            "run-123",
 			Project:       "ambience",
+			IssueNumber:   42,
 			CallbackToken: stringPtr("callback-token"),
 			Attempts:      []RunAttemptData{{AttemptIndex: 3, Phase: "evidence-gate"}},
 		},

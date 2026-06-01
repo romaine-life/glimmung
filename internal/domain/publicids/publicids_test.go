@@ -39,7 +39,10 @@ func runPublicIDCase(t *testing.T, tc goldenCase) string {
 	case "issue_ref":
 		return IssueRef(tc.Project, tc.Number)
 	case "run_ref":
-		return RunRef(tc.Project, tc.IssueNumber, tc.RunDisplay)
+		if tc.IssueNumber == nil {
+			t.Fatalf("run_ref golden case %q must define issue_number", tc.Name)
+		}
+		return RunRef(tc.Project, *tc.IssueNumber, tc.RunDisplay)
 	case "touchpoint_ref":
 		return TouchpointRef(tc.Repo, tc.Number)
 	case "lease_ref":

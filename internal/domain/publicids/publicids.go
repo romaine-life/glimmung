@@ -13,16 +13,16 @@ func IssueRef(project string, number *int) string {
 	return project + "#" + strconv.Itoa(*number)
 }
 
-// RunRef returns the operator-facing run reference.
-func RunRef(project string, issueNumber *int, runDisplay string) string {
+// RunRef returns the operator-facing issue-scoped run reference.
+func RunRef(project string, issueNumber int, runDisplay string) string {
+	if issueNumber <= 0 {
+		panic("run issue number must be positive")
+	}
 	runPart := strings.TrimSpace(runDisplay)
 	if runPart == "" {
 		runPart = "unknown"
 	}
-	if issueNumber == nil {
-		return project + "/runs/" + runPart
-	}
-	return project + "#" + strconv.Itoa(*issueNumber) + "/runs/" + runPart
+	return project + "#" + strconv.Itoa(issueNumber) + "/runs/" + runPart
 }
 
 // TouchpointRef returns the operator-facing touchpoint or pull request reference.

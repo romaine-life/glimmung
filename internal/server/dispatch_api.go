@@ -367,7 +367,7 @@ func dispatchRunWithAgentRuntime(ctx context.Context, dispatchStore RunDispatchS
 	}
 	metrics.RecordRunCreated(wf.Name)
 
-	runRef := publicids.RunRef(req.Project, &issueNum, run.RunDisplay)
+	runRef := publicids.RunRef(req.Project, issueNum, run.RunDisplay)
 	runData := RunReplayData{
 		ID:                   run.ID,
 		Project:              req.Project,
