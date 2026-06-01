@@ -1034,7 +1034,10 @@ func leaseForRunPhase(ctx context.Context, store RunCompletionStore, run RunRepl
 	metadata["phase_inputs"] = phaseInputs
 	metadata["issue_ref"] = publicids.IssueRef(run.Project, &run.IssueNumber)
 	metadata["issue_number"] = strconv.Itoa(run.IssueNumber)
-	metadata["work_context_branch"] = workContextBranch(run, metadata)
+	applyWorkContextMetadata(run, metadata)
+	if branch := workContextBranch(run, metadata); branch != "" {
+		metadata["work_context_branch"] = branch
+	}
 	metadata["native_k8s"] = true
 	if run.CallbackToken != nil && *run.CallbackToken != "" {
 		metadata["run_callback_token"] = *run.CallbackToken
@@ -1046,6 +1049,9 @@ func leaseForRunPhase(ctx context.Context, store RunCompletionStore, run RunRepl
 		metadata["agent_runtime"] = run.AgentRuntime
 	}
 	lease.Metadata = metadata
+	if err := persistLeaseMetadata(ctx, store, lease, metadata); err != nil {
+		return Lease{}, fmt.Errorf("persist lease metadata: %w", err)
+	}
 	return lease, nil
 }
 

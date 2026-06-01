@@ -21,9 +21,9 @@ func workContextBranch(run RunReplayData, metadata map[string]any) string {
 }
 
 func issueRunBranch(run RunReplayData) string {
-	display := "unknown"
-	if run.RunDisplayNumber != nil && *run.RunDisplayNumber != "" {
-		display = *run.RunDisplayNumber
+	display := strings.TrimSpace(stringValueFromPtr(run.RunDisplayNumber))
+	if display == "" {
+		return ""
 	}
 	return fmt.Sprintf("issue-%d-run-%s", run.IssueNumber, display)
 }
