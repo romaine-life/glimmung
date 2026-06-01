@@ -603,6 +603,15 @@ func TestRunCycleGraphProjectionUsesDurableExecutions(t *testing.T) {
 	}
 }
 
+func TestProjectionExecutionStateKeepsAbortedStepTerminal(t *testing.T) {
+	if got := projectionExecutionState("aborted"); got != "aborted" {
+		t.Fatalf("projectionExecutionState(aborted)=%q", got)
+	}
+	if got := projectionStepState("aborted"); got != "aborted" {
+		t.Fatalf("projectionStepState(aborted)=%q", got)
+	}
+}
+
 func TestRunCycleGraphProjectionShowsCarriedForwardEntrypointInputs(t *testing.T) {
 	issueNumber := 171
 	runNumber := 4
