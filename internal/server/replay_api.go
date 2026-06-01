@@ -55,6 +55,7 @@ type RunReplayData struct {
 	AgentRuntime         agentruntime.Snapshot
 	PreserveTestEnv      bool
 	State                string
+	TerminalObservation  *RunTerminalObservation
 }
 
 // RunAttemptData holds one attempt's decision-engine-relevant fields.

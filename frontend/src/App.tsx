@@ -235,11 +235,24 @@ type RunReport = {
   validation_url: string | null;
   screenshots_markdown: string | null;
   abort_reason: string | null;
+  terminal_observation?: RunTerminalObservation | null;
   agent_runtime?: AgentRuntimeSnapshot;
   started_at: string;
   completed_at: string | null;
   updated_at: string;
   attempts: RunReportAttempt[];
+};
+
+type RunTerminalObservation = {
+  class: string;
+  phase?: string;
+  job_id?: string;
+  step_slug?: string;
+  conclusion?: string;
+  reason?: string;
+  exit_code?: number | null;
+  source: string;
+  message: string;
 };
 
 type Snapshot = {

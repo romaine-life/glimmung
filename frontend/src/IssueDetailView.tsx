@@ -140,6 +140,7 @@ type RunProjectionRun = {
   current_phase?: string | null;
   validation_url?: string | null;
   abort_reason?: string | null;
+  terminal_observation?: RunTerminalObservation | null;
   cost_usd: number;
   attempts_count: number;
   started_at: string;
@@ -148,6 +149,18 @@ type RunProjectionRun = {
   topology: RunProjectionTopology;
   phases: RunProjectionPhase[];
   evidence: RunProjectionEvidence[];
+};
+
+type RunTerminalObservation = {
+  class: string;
+  phase?: string;
+  job_id?: string;
+  step_slug?: string;
+  conclusion?: string;
+  reason?: string;
+  exit_code?: number | null;
+  source: string;
+  message: string;
 };
 
 type RunProjectionTopology = RunProjectionTopologySource & {
@@ -2658,6 +2671,12 @@ function ProjectionRunMetaSummary({ run, repo }: { run: RunProjectionRun; repo: 
           <span className="key">abort</span> <span className="mono">{run.abort_reason}</span>
         </div>
       )}
+      {run.terminal_observation && (
+        <div>
+          <span className="key">terminal cause</span>{" "}
+          <span className="mono">{terminalObservationDisplay(run.terminal_observation)}</span>
+        </div>
+      )}
       {repo && (
         <div>
           <span className="key">repo</span> <span className="mono">{repo}</span>
@@ -2665,6 +2684,15 @@ function ProjectionRunMetaSummary({ run, repo }: { run: RunProjectionRun; repo: 
       )}
     </div>
   );
+}
+
+function terminalObservationDisplay(obs: RunTerminalObservation): string {
+  const parts = [obs.class];
+  if (obs.phase) parts.push(`phase=${obs.phase}`);
+  if (obs.job_id) parts.push(`job=${obs.job_id}`);
+  if (obs.step_slug) parts.push(`step=${obs.step_slug}`);
+  if (obs.exit_code !== null && obs.exit_code !== undefined) parts.push(`exit=${obs.exit_code}`);
+  return parts.join(" ");
 }
 
 function projectionJobToNativeJob(job: RunProjectionPhase["jobs"][number]): NativeAttemptJob {

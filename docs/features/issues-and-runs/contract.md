@@ -16,8 +16,8 @@ browser memory.
 
 - Postgres `issues` owns the canonical issue row and project-scoped issue number.
 - Postgres `runs` owns run state, cycle numbering, phase/job/step ledgers,
-  callback metadata, cost, validation URL, abort reason, terminal state, and
-  the resolved agent runtime snapshot.
+  callback metadata, cost, validation URL, abort reason, typed terminal
+  observation, terminal state, and the resolved agent runtime snapshot.
 - Durable global settings, project metadata, and issue metadata own agent
   runtime defaults before dispatch. Each layer must say `inherit` or
   `override`; executor images and CLI defaults are not sources of truth.
@@ -68,7 +68,8 @@ browser memory.
 ## Observability
 
 - Run state, current phase, attempts/cycles, abort reason, cost, validation
-  URL, and callback status must be inspectable through API/UI surfaces.
+  URL, typed terminal observation, and callback status must be inspectable
+  through API/UI surfaces.
 - Native event inspection should let an operator map hot job events back to
   run, cycle, phase, job, and step.
 - Lock contention and duplicate dispatch attempts should be logged or surfaced

@@ -1401,39 +1401,40 @@ type leaseDoc struct {
 }
 
 type runDoc struct {
-	ID                   string                       `json:"id"`
-	Project              string                       `json:"project"`
-	Workflow             string                       `json:"workflow"`
-	WorkflowSchemaRef    string                       `json:"workflow_schema_ref,omitempty"`
-	RunNumber            *int                         `json:"run_number"`
-	RunCycleNumber       *int                         `json:"run_cycle_number,omitempty"`
-	RunDisplayNumber     *string                      `json:"run_display_number"`
-	ParentRunID          *string                      `json:"parent_run_id"`
-	RootRunID            *string                      `json:"root_run_id"`
-	OriginKind           *string                      `json:"origin_kind"`
-	IsCycle              bool                         `json:"is_cycle"`
-	CycleNumber          *int                         `json:"cycle_number"`
-	IssueID              string                       `json:"issue_id"`
-	IssueRepo            string                       `json:"issue_repo"`
-	IssueNumber          int                          `json:"issue_number"`
-	PRNumber             *int                         `json:"pr_number"`
-	State                string                       `json:"state"`
-	QueueState           *string                      `json:"queue_state,omitempty"`
-	AdmissionError       *string                      `json:"admission_error,omitempty"`
-	SlotLeaseRef         *string                      `json:"slot_lease_ref,omitempty"`
-	Attempts             []attemptDoc                 `json:"attempts"`
-	PhaseExecutions      []phaseExecutionDoc          `json:"phase_executions,omitempty"`
-	CumulativeCostUSD    float64                      `json:"cumulative_cost_usd"`
-	Budget               *budgetDoc                   `json:"budget,omitempty"`
-	ValidationURL        *string                      `json:"validation_url"`
-	ScreenshotsMarkdown  *string                      `json:"screenshots_markdown"`
-	EvidenceRequirements []server.EvidenceRequirement `json:"evidence_requirements,omitempty"`
-	AgentRuntime         agentruntime.Snapshot        `json:"agent_runtime,omitempty"`
-	AbortReason          *string                      `json:"abort_reason"`
-	EntrypointPhase      *string                      `json:"entrypoint_phase,omitempty"`
-	TriggerSource        map[string]any               `json:"trigger_source"`
-	CreatedAt            string                       `json:"created_at"`
-	UpdatedAt            string                       `json:"updated_at"`
+	ID                   string                         `json:"id"`
+	Project              string                         `json:"project"`
+	Workflow             string                         `json:"workflow"`
+	WorkflowSchemaRef    string                         `json:"workflow_schema_ref,omitempty"`
+	RunNumber            *int                           `json:"run_number"`
+	RunCycleNumber       *int                           `json:"run_cycle_number,omitempty"`
+	RunDisplayNumber     *string                        `json:"run_display_number"`
+	ParentRunID          *string                        `json:"parent_run_id"`
+	RootRunID            *string                        `json:"root_run_id"`
+	OriginKind           *string                        `json:"origin_kind"`
+	IsCycle              bool                           `json:"is_cycle"`
+	CycleNumber          *int                           `json:"cycle_number"`
+	IssueID              string                         `json:"issue_id"`
+	IssueRepo            string                         `json:"issue_repo"`
+	IssueNumber          int                            `json:"issue_number"`
+	PRNumber             *int                           `json:"pr_number"`
+	State                string                         `json:"state"`
+	QueueState           *string                        `json:"queue_state,omitempty"`
+	AdmissionError       *string                        `json:"admission_error,omitempty"`
+	SlotLeaseRef         *string                        `json:"slot_lease_ref,omitempty"`
+	Attempts             []attemptDoc                   `json:"attempts"`
+	PhaseExecutions      []phaseExecutionDoc            `json:"phase_executions,omitempty"`
+	CumulativeCostUSD    float64                        `json:"cumulative_cost_usd"`
+	Budget               *budgetDoc                     `json:"budget,omitempty"`
+	ValidationURL        *string                        `json:"validation_url"`
+	ScreenshotsMarkdown  *string                        `json:"screenshots_markdown"`
+	EvidenceRequirements []server.EvidenceRequirement   `json:"evidence_requirements,omitempty"`
+	AgentRuntime         agentruntime.Snapshot          `json:"agent_runtime,omitempty"`
+	AbortReason          *string                        `json:"abort_reason"`
+	TerminalObservation  *server.RunTerminalObservation `json:"terminal_observation,omitempty"`
+	EntrypointPhase      *string                        `json:"entrypoint_phase,omitempty"`
+	TriggerSource        map[string]any                 `json:"trigger_source"`
+	CreatedAt            string                         `json:"created_at"`
+	UpdatedAt            string                         `json:"updated_at"`
 	// Fields used by mutation operations.
 	CallbackToken     *string `json:"callback_token,omitempty"`
 	IssueLockHolderID *string `json:"issue_lock_holder_id,omitempty"`
@@ -1996,6 +1997,7 @@ func runReportFromDoc(doc runDoc, lineageByID map[string]string) server.RunRepor
 		EvidenceRequirements: sliceOrEmpty(doc.EvidenceRequirements),
 		AgentRuntime:         doc.AgentRuntime,
 		AbortReason:          emptyStringNil(doc.AbortReason),
+		TerminalObservation:  doc.TerminalObservation,
 		StartedAt:            parseTimeOrNow(doc.CreatedAt),
 		CompletedAt:          completed,
 		UpdatedAt:            parseTimeOrNow(doc.UpdatedAt),
@@ -5096,6 +5098,7 @@ func runReplayDataFromDoc(doc runDoc) server.RunReplayData {
 		AgentRuntime:         doc.AgentRuntime,
 		PreserveTestEnv:      doc.PreserveTestEnv,
 		State:                doc.State,
+		TerminalObservation:  doc.TerminalObservation,
 	}
 }
 
@@ -5433,9 +5436,16 @@ func (s *Store) AbortRunByID(ctx context.Context, project, runID, reason string)
 	// Patch the run doc to aborted state inside a SELECT FOR UPDATE
 	// transaction — replaces the previous ETag retry loop.
 	now := time.Now().UTC().Format(time.RFC3339Nano)
+	observation := terminalObservationForRun(doc, nil, "aborted", optionalNonEmptyStringPtr(reason), server.TerminalObservationSourceAdminAbort)
+	if observation != nil && strings.TrimSpace(observation.Message) != "" {
+		reason = observation.Message
+	}
 	if _, err := s.pgRuns.PatchPayload(ctx, project, runID, func(raw map[string]any) error {
 		raw["state"] = "aborted"
 		raw["abort_reason"] = reason
+		if observation != nil {
+			raw["terminal_observation"] = observation
+		}
 		delete(raw, "queue_state")
 		raw["updated_at"] = now
 		finalizeExecutionFailureRaw(raw, canonicalExecutionFailureReason(reason), now)
@@ -5496,6 +5506,200 @@ func (s *Store) releaseRunSlotLease(ctx context.Context, doc runDoc) *bool {
 	_, err := s.CancelLeaseByRef(ctx, doc.Project, ref)
 	released := err == nil
 	return &released
+}
+
+func terminalObservationForRun(doc runDoc, wf *server.Workflow, state string, abortReason *string, source string) *server.RunTerminalObservation {
+	if state != "aborted" {
+		return nil
+	}
+	attempt := terminalCauseAttempt(doc)
+	if attempt == nil {
+		reason := strings.TrimSpace(stringOrEmpty(abortReason))
+		if reason == "" {
+			reason = "aborted"
+		}
+		return &server.RunTerminalObservation{
+			Class:   server.TerminalObservationManualAbort,
+			Reason:  reason,
+			Source:  firstNonEmpty(source, server.TerminalObservationSourceDecisionEngine),
+			Message: "run aborted: " + reason,
+		}
+	}
+
+	phase := workflowPhaseByName(wf, attempt.Phase)
+	if reason := strings.TrimSpace(attempt.PhaseOutputs[decision.AbortReasonOutputKey]); reason != "" {
+		return &server.RunTerminalObservation{
+			Class:      server.TerminalObservationPhaseRequestedAbort,
+			Phase:      attempt.Phase,
+			Conclusion: stringOrEmpty(attempt.Conclusion),
+			Reason:     reason,
+			Source:     firstNonEmpty(source, server.TerminalObservationSourceDecisionEngine),
+			Message:    fmt.Sprintf("phase %s requested a fail-closed abort: %s", attempt.Phase, reason),
+		}
+	}
+
+	if completion, ok := firstFailedJobCompletion(attempt.JobCompletions); ok {
+		job, step := failedExecutionForJob(doc.PhaseExecutions, attempt.Phase, completion.JobID)
+		class := server.TerminalObservationProducerPhaseFailed
+		if phase != nil {
+			switch {
+			case phase.EvidenceVerificationGate:
+				class = server.TerminalObservationGateFailed
+			case phase.Verify:
+				class = server.TerminalObservationVerifierFailed
+			}
+		}
+		obs := &server.RunTerminalObservation{
+			Class:      class,
+			Phase:      attempt.Phase,
+			JobID:      completion.JobID,
+			Conclusion: completion.Conclusion,
+			Reason:     firstNonEmpty(completion.TerminalReason, reasonString(job.Reason), reasonString(step.Reason), "job_failed"),
+			Source:     firstNonEmpty(source, server.TerminalObservationSourceCompletionCallback),
+		}
+		if step != nil {
+			obs.StepSlug = step.Slug
+			obs.ExitCode = step.ExitCode
+		}
+		obs.Message = terminalObservationMessage(obs)
+		return obs
+	}
+
+	if phase != nil && phase.Verify && attempt.Verification == nil {
+		obs := &server.RunTerminalObservation{
+			Class:      server.TerminalObservationVerifierContractMissing,
+			Phase:      attempt.Phase,
+			Conclusion: stringOrEmpty(attempt.Conclusion),
+			Reason:     "verification_contract_missing",
+			Source:     firstNonEmpty(source, server.TerminalObservationSourceDecisionEngine),
+		}
+		obs.Message = terminalObservationMessage(obs)
+		return obs
+	}
+
+	reason := strings.TrimSpace(stringOrEmpty(abortReason))
+	if reason == "" {
+		reason = "aborted"
+	}
+	obs := &server.RunTerminalObservation{
+		Class:      server.TerminalObservationMalformed,
+		Phase:      attempt.Phase,
+		Conclusion: stringOrEmpty(attempt.Conclusion),
+		Reason:     reason,
+		Source:     firstNonEmpty(source, server.TerminalObservationSourceDecisionEngine),
+	}
+	obs.Message = terminalObservationMessage(obs)
+	return obs
+}
+
+func terminalCauseAttempt(doc runDoc) *attemptDoc {
+	for i := len(doc.Attempts) - 1; i >= 0; i-- {
+		attempt := &doc.Attempts[i]
+		if attempt.Decision != nil && isTerminalAbortDecision(*attempt.Decision) {
+			return attempt
+		}
+	}
+	for i := len(doc.Attempts) - 1; i >= 0; i-- {
+		attempt := &doc.Attempts[i]
+		if attempt.Conclusion != nil && !decision.IsAdvanceConclusion(*attempt.Conclusion) {
+			return attempt
+		}
+	}
+	return nil
+}
+
+func isTerminalAbortDecision(value string) bool {
+	switch decision.RunDecision(value) {
+	case decision.AbortBudgetAttempts, decision.AbortBudgetCost, decision.AbortMalformed, decision.AbortRequested:
+		return true
+	default:
+		return false
+	}
+}
+
+func firstFailedJobCompletion(completions map[string]nativeJobCompletionDoc) (nativeJobCompletionDoc, bool) {
+	ids := sortedJobCompletionIDs(completions)
+	for _, id := range ids {
+		completion := completions[id]
+		if completion.Conclusion != "" && !decision.IsAdvanceConclusion(completion.Conclusion) {
+			return completion, true
+		}
+	}
+	return nativeJobCompletionDoc{}, false
+}
+
+func failedExecutionForJob(phases []phaseExecutionDoc, phaseName, jobID string) (*jobExecutionDoc, *stepExecutionDoc) {
+	for phaseIndex := range phases {
+		phase := &phases[phaseIndex]
+		if phase.Name != phaseName {
+			continue
+		}
+		for jobIndex := range phase.Jobs {
+			job := &phase.Jobs[jobIndex]
+			if job.ID != jobID {
+				continue
+			}
+			for stepIndex := range job.Steps {
+				step := &job.Steps[stepIndex]
+				if step.State == "failed" || step.ExitCode != nil {
+					return job, step
+				}
+			}
+			return job, nil
+		}
+	}
+	return nil, nil
+}
+
+func workflowPhaseByName(wf *server.Workflow, name string) *server.PhaseSpec {
+	if wf == nil {
+		return nil
+	}
+	for _, phase := range wf.Phases {
+		if phase.Name == name {
+			copy := phase
+			return &copy
+		}
+	}
+	return nil
+}
+
+func reasonString(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return strings.TrimSpace(*value)
+}
+
+func terminalObservationMessage(obs *server.RunTerminalObservation) string {
+	if obs == nil {
+		return ""
+	}
+	switch obs.Class {
+	case server.TerminalObservationProducerPhaseFailed:
+		return terminalJobFailureMessage(obs, "producer phase")
+	case server.TerminalObservationVerifierFailed:
+		return terminalJobFailureMessage(obs, "verification phase")
+	case server.TerminalObservationGateFailed:
+		return terminalJobFailureMessage(obs, "evidence gate")
+	case server.TerminalObservationVerifierContractMissing:
+		return fmt.Sprintf("verification phase %s did not produce a well-formed verification result", obs.Phase)
+	default:
+		if obs.Phase != "" && obs.Conclusion != "" {
+			return fmt.Sprintf("phase %s ended with conclusion %s: %s", obs.Phase, obs.Conclusion, obs.Reason)
+		}
+		return strings.TrimSpace(obs.Reason)
+	}
+}
+
+func terminalJobFailureMessage(obs *server.RunTerminalObservation, label string) string {
+	if obs.StepSlug != "" {
+		if obs.ExitCode != nil {
+			return fmt.Sprintf("%s %s failed at job %s step %s with exit code %d", label, obs.Phase, obs.JobID, obs.StepSlug, *obs.ExitCode)
+		}
+		return fmt.Sprintf("%s %s failed at job %s step %s", label, obs.Phase, obs.JobID, obs.StepSlug)
+	}
+	return fmt.Sprintf("%s %s failed at job %s: %s", label, obs.Phase, obs.JobID, obs.Reason)
 }
 
 // ---- NativeRunStore implementation ----
@@ -7163,6 +7367,11 @@ func (s *Store) SetRunTerminalState(ctx context.Context, project, runID, state s
 	if err != nil {
 		return server.AbortRunResult{}, err
 	}
+	wf, _ := s.workflowForRunExecution(ctx, project, doc.Workflow, doc.WorkflowSchemaRef)
+	observation := terminalObservationForRun(doc, wf, state, abortReason, server.TerminalObservationSourceCompletionCallback)
+	if observation != nil && strings.TrimSpace(observation.Message) != "" {
+		abortReason = &observation.Message
+	}
 
 	siblings, _ := s.issueRunDocs(ctx, project, doc.IssueNumber)
 	numbers := runNumberMap(siblings)
@@ -7175,6 +7384,9 @@ func (s *Store) SetRunTerminalState(ctx context.Context, project, runID, state s
 		raw["updated_at"] = now
 		if abortReason != nil {
 			raw["abort_reason"] = *abortReason
+		}
+		if observation != nil {
+			raw["terminal_observation"] = observation
 		}
 		if state == "aborted" {
 			finalizeExecutionFailureRaw(raw, canonicalExecutionFailureReason(stringOrEmpty(abortReason)), now)
@@ -7218,6 +7430,54 @@ func (s *Store) SetRunTerminalState(ctx context.Context, project, runID, state s
 		PRLockReleased:    prLockReleased,
 		SlotLeaseReleased: slotLeaseReleased,
 	}, nil
+}
+
+type TerminalObservationRepairResult struct {
+	Changed     bool                           `json:"changed"`
+	Previous    *server.RunTerminalObservation `json:"previous,omitempty"`
+	Observation *server.RunTerminalObservation `json:"observation,omitempty"`
+	AbortReason *string                        `json:"abort_reason,omitempty"`
+}
+
+func (s *Store) RepairRunTerminalObservation(ctx context.Context, project, runID string, apply bool) (TerminalObservationRepairResult, error) {
+	doc, _, err := s.readRunDoc(ctx, project, runID)
+	if err != nil {
+		return TerminalObservationRepairResult{}, err
+	}
+	if doc.State != "aborted" {
+		return TerminalObservationRepairResult{Previous: doc.TerminalObservation, Observation: doc.TerminalObservation, AbortReason: doc.AbortReason}, nil
+	}
+	wf, _ := s.workflowForRunExecution(ctx, project, doc.Workflow, doc.WorkflowSchemaRef)
+	observation := terminalObservationForRun(doc, wf, "aborted", doc.AbortReason, server.TerminalObservationSourceDecisionEngine)
+	if observation == nil {
+		return TerminalObservationRepairResult{Previous: doc.TerminalObservation, AbortReason: doc.AbortReason}, nil
+	}
+	abortReason := optionalNonEmptyStringPtr(observation.Message)
+	changed := !reflect.DeepEqual(doc.TerminalObservation, observation) || stringOrEmpty(doc.AbortReason) != stringOrEmpty(abortReason)
+	result := TerminalObservationRepairResult{
+		Changed:     changed,
+		Previous:    doc.TerminalObservation,
+		Observation: observation,
+		AbortReason: abortReason,
+	}
+	if !apply || !changed {
+		return result, nil
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if _, err := s.pgRuns.PatchPayload(ctx, project, runID, func(raw map[string]any) error {
+		raw["terminal_observation"] = observation
+		if abortReason != nil {
+			raw["abort_reason"] = *abortReason
+		}
+		raw["updated_at"] = now
+		return nil
+	}); err != nil {
+		if errors.Is(err, pgstore.ErrRunNotFound) {
+			return TerminalObservationRepairResult{}, server.ErrNotFound
+		}
+		return TerminalObservationRepairResult{}, err
+	}
+	return result, nil
 }
 
 // AppendRunAttempt appends a new PhaseAttempt to an in-progress run before retry dispatch.
