@@ -151,7 +151,13 @@ describe("project runs", () => {
       </MemoryRouter>,
     );
 
-    await userEvent.click(await screen.findByRole("button", { name: "cancel run" }));
+    const cancelButtons = await screen.findAllByRole("button", { name: "cancel run" });
+    expect(cancelButtons.length).toBeGreaterThan(1);
+    expect(cancelButtons.some((button) => button.hasAttribute("disabled"))).toBe(true);
+
+    const activeCancel = cancelButtons.find((button) => !button.hasAttribute("disabled"));
+    expect(activeCancel).toBeTruthy();
+    await userEvent.click(activeCancel!);
     await userEvent.click(screen.getByRole("button", { name: "cancel?" }));
 
     await waitFor(() => {
