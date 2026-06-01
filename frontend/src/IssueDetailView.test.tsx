@@ -932,6 +932,7 @@ describe("IssueDetailView run execution graph", () => {
               state: "active",
               jobs: phase.jobs.map((job) => ({
                 ...job,
+                name: "llm agent",
                 state: "active",
                 steps: job.steps.map((step) => ({
                   ...step,
@@ -1284,6 +1285,7 @@ function activeAgentProjection() {
             state: "active",
             jobs: phase.jobs.map((job) => ({
               ...job,
+              name: "llm agent",
               state: "active",
               steps: job.steps.map((step) => ({
                 ...step,

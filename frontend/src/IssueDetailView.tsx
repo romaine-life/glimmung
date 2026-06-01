@@ -3764,7 +3764,6 @@ function NativeJobInspector({
                   <span>{nativeStepGlyph(step.state ?? "")}</span>
                   <strong>
                     {step.title || step.slug}
-                    {nativeStepLooksLlm(step) && <span className="native-step-llm">llm</span>}
                   </strong>
                   <small>
                     {step.exit_code !== null && step.exit_code !== undefined
@@ -3926,7 +3925,6 @@ function PlannedNativeJobInspector({
                   <span>{nativeStepGlyph(step.state ?? "")}</span>
                   <strong>
                     {step.title || step.slug}
-                    {nativeStepLooksLlm(step) && <span className="native-step-llm">llm</span>}
                   </strong>
                   <small>
                     {step.exit_code !== null && step.exit_code !== undefined
@@ -4463,7 +4461,6 @@ function isRawScreenshotArtifact(item: RunProjectionEvidence): boolean {
 }
 
 function nativeSelectionUsesTranscript(job: NativeAttemptJob | null, step: NativeAttemptStep): boolean {
-  if (nativeStepLooksLlm(step)) return true;
   if (!nativeJobLooksLlm(job)) return false;
   const marker = `${step.slug} ${step.title ?? ""}`.toLowerCase();
   return step.slug.startsWith("run-") || marker.startsWith("run ");
@@ -4474,11 +4471,6 @@ function nativeJobLooksLlm(job: NativeAttemptJob | null): boolean {
     job?.job_id ?? "",
     job?.name ?? "",
   ].join(" ").toLowerCase();
-  return marker.includes("llm") || marker.includes("run-agent") || marker.includes("claude") || marker.includes("codex");
-}
-
-function nativeStepLooksLlm(step: NativeAttemptStep): boolean {
-  const marker = `${step.slug} ${step.title ?? ""}`.toLowerCase();
   return marker.includes("llm") || marker.includes("run-agent") || marker.includes("claude") || marker.includes("codex");
 }
 
