@@ -791,6 +791,9 @@ describe("IssueDetailView run execution graph", () => {
       );
     });
     expect(await screen.findByText("native job inspector")).toBeInTheDocument();
+    const runPanelMeta = document.querySelector(".run-panel-meta");
+    expect(runPanelMeta).not.toBeNull();
+    expect(within(runPanelMeta as HTMLElement).queryByText(/^attempt$/)).not.toBeInTheDocument();
     expect(await screen.findByText(/cloning repo/)).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("button", { name: /Build validation image/ }));
