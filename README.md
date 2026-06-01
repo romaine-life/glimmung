@@ -44,11 +44,10 @@ Project -> Workflow -> Issue -> Run -> Phase/Job -> RunReport
   claimed only when native capacity is assigned, heartbeat/release through
   callback-token APIs, and complete through the native run completion callback.
 
-Workflow registration is an admin/control-plane operation. Consumer repos do
-not need `.glimmung/workflows/<name>.yaml` files for runtime dispatch; changing
-repo files has no effect unless an operator explicitly writes a new Workflow
-  registration into Postgres. The upstream-sync helper is an import
-  convenience for older desired-state flows, not the runtime source of truth.
+Workflow registration is an admin/control-plane operation. Runtime dispatch
+reads the Workflow row in Postgres, not GitHub directly. Consumer repos may
+author `.glimmung/workflows/<name>.yaml` as desired state, but changes only
+take effect after an operator syncs that file into Glimmung.
 
 The "agent" — Claude Code, Codex, whatever runs inside the workflow — is opaque to glimmung. We dispatch a venue to a workflow; the workflow runs an agent on it.
 
