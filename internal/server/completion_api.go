@@ -1034,11 +1034,7 @@ func leaseForRunPhase(ctx context.Context, store RunCompletionStore, run RunRepl
 	metadata["phase_inputs"] = phaseInputs
 	metadata["issue_ref"] = publicids.IssueRef(run.Project, positiveIssueNumber(run.IssueNumber))
 	metadata["issue_number"] = strconv.Itoa(run.IssueNumber)
-	display := "unknown"
-	if run.RunDisplayNumber != nil && *run.RunDisplayNumber != "" {
-		display = *run.RunDisplayNumber
-	}
-	metadata["work_context_branch"] = fmt.Sprintf("issue-%d-run-%s", run.IssueNumber, display)
+	metadata["work_context_branch"] = workContextBranch(run, metadata)
 	metadata["native_k8s"] = true
 	if run.CallbackToken != nil && *run.CallbackToken != "" {
 		metadata["run_callback_token"] = *run.CallbackToken

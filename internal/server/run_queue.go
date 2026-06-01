@@ -373,27 +373,23 @@ func runCycleLeaseMetadata(run RunReplayData, issue IssueDispatchData, issueRepo
 	issueNum := run.IssueNumber
 	issueRef := publicids.IssueRef(run.Project, &issueNum)
 	runRef := runRefFromData(run)
-	display := "unknown"
-	if run.RunDisplayNumber != nil && *run.RunDisplayNumber != "" {
-		display = *run.RunDisplayNumber
-	}
 	metadata := map[string]any{
-		"issue_body":          issue.Body,
-		"issue_ref":           issueRef,
-		"issue_repo":          issueRepo,
-		"issue_title":         issue.Title,
-		"run_id":              run.ID,
-		"run_ref":             runRef,
-		"run_number":          positiveIntString(run.RunNumber),
-		"cycle_number":        positiveIntString(run.CycleNumber),
-		"run_cycle_number":    positiveIntString(run.RunCycleNumber),
-		"run_display_number":  display,
-		"attempt_index":       strconv.Itoa(attemptIndex),
-		"phase_name":          phaseName,
-		"issue_number":        strconv.Itoa(run.IssueNumber),
-		"work_context_branch": fmt.Sprintf("issue-%d-run-%s", run.IssueNumber, display),
-		"native_k8s":          true,
+		"issue_body":         issue.Body,
+		"issue_ref":          issueRef,
+		"issue_repo":         issueRepo,
+		"issue_title":        issue.Title,
+		"run_id":             run.ID,
+		"run_ref":            runRef,
+		"run_number":         positiveIntString(run.RunNumber),
+		"cycle_number":       positiveIntString(run.CycleNumber),
+		"run_cycle_number":   positiveIntString(run.RunCycleNumber),
+		"run_display_number": firstNonEmpty(stringValueFromPtr(run.RunDisplayNumber), "unknown"),
+		"attempt_index":      strconv.Itoa(attemptIndex),
+		"phase_name":         phaseName,
+		"issue_number":       strconv.Itoa(run.IssueNumber),
+		"native_k8s":         true,
 	}
+	metadata["work_context_branch"] = workContextBranch(run, metadata)
 	if run.CallbackToken != nil && *run.CallbackToken != "" {
 		metadata["run_callback_token"] = *run.CallbackToken
 	}
@@ -423,4 +419,11 @@ func positiveIntString(value *int) string {
 		return ""
 	}
 	return strconv.Itoa(*value)
+}
+
+func stringValueFromPtr(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
 }
