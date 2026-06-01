@@ -1489,6 +1489,48 @@ func TestNativeRunCompletedByCallbackTokenAdvanceDispatchesNextPhase(t *testing.
 	}
 }
 
+func TestLeaseForRunPhaseUsesContextIDBranchWhenPresent(t *testing.T) {
+	leaseRef := "proj/leases/proj-1/12"
+	display := "3.1"
+	store := &fakeCompletionStore{
+		leaseResult: Lease{
+			Project: "proj",
+			State:   "claimed",
+			Metadata: map[string]any{
+				"work_context_id":     "a5551acd-008d-4088-b8d5-59e936fa1c8a",
+				"work_context_branch": "issue-168-run-3.1",
+			},
+		},
+	}
+	run := RunReplayData{
+		ID:               "run-3-cycle-1",
+		Project:          "proj",
+		IssueNumber:      168,
+		RunDisplayNumber: &display,
+		SlotLeaseRef:     &leaseRef,
+	}
+
+	lease, err := leaseForRunPhase(context.Background(), store, run, "llm-work", 1, nil)
+	if err != nil {
+		t.Fatalf("leaseForRunPhase: %v", err)
+	}
+	if got, want := lease.Metadata["work_context_branch"], "glimmung/a5551acd-008d-4088-b8d5-59e936fa1c8a"; got != want {
+		t.Fatalf("work_context_branch=%#v, want %q; metadata=%#v", got, want, lease.Metadata)
+	}
+	if got := lease.Metadata["work_context_id"]; got != "a5551acd-008d-4088-b8d5-59e936fa1c8a" {
+		t.Fatalf("work_context_id=%#v", got)
+	}
+}
+
+func TestWorkContextBranchFallsBackToIssueRunDisplay(t *testing.T) {
+	display := "3.1"
+	run := RunReplayData{IssueNumber: 168, RunDisplayNumber: &display}
+
+	if got, want := workContextBranch(run, nil), "issue-168-run-3.1"; got != want {
+		t.Fatalf("workContextBranch=%q, want %q", got, want)
+	}
+}
+
 func TestNativeRunCompletedByCallbackTokenFailureDispatchesCleanup(t *testing.T) {
 	leaseRef := "proj/leases/proj-1/1"
 	store := &fakeCompletionStore{

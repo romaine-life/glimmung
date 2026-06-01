@@ -162,6 +162,15 @@ verification
 screenshots[]
 ```
 
+For implementation branches, `work_context_branch` is the branch contract
+handed to native jobs and `branch_name` is the durable output consumed by
+review touchpoints. When a lease carries a `work_context_id`, Glimmung derives
+the concrete branch as `glimmung/<work_context_id>` and stamps that value into
+`work_context_branch` for every later phase. Step scripts must not mix a
+separate context id branch with an issue-display branch such as
+`issue-168-run-3.1`; the pushed branch, the confirmation check, and
+`branch_name` must be the same value.
+
 Those values are persisted in the run state immediately with provenance:
 
 - project
