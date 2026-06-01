@@ -390,11 +390,11 @@ schema migrations before serving traffic.
 ## Lock semantics
 
 Native lease acquisition is slot-backed and project-local. The allocator reads
-the requested project's active native leases, checks that project against its
-configured slot count and project concurrency, selects the first ready unclaimed
-test slot, and writes one claimed lease document. Leases held by other projects
-do not consume this project's test-slot capacity. If capacity is not available,
-callers get `no_capacity`; executor work is not launched.
+the requested project's durable slot rows inside the configured slot count,
+selects the first provisioned unclaimed test slot, and writes one claimed lease
+document. Leases held by other projects do not consume this project's test-slot
+capacity. If no prepared slot is available, callers get `no_capacity`;
+executor work is not launched.
 
 Release paths:
 - **Fast**: workflow's own release step (if it has one).

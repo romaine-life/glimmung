@@ -19,7 +19,6 @@ nativeRunner:
   image: romainecr.azurecr.io/glimmung-native-runner:native-runner-1767861ce07be779c2a82b3e8c47072aa037923d6b253bba049f7c46fb5ed8c3
   entrypoint: /app/glimmung-native-runner
   callbackBaseUrl: http://glimmung.glimmung.svc.cluster.local
-  projectConcurrency: 5
   jobTtlSeconds: 259200
   namespaceRole: cluster-admin
   standbyDns:

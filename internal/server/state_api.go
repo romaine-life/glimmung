@@ -29,6 +29,7 @@ type StateStore interface {
 type StateSnapshot struct {
 	ActiveLeases            []LeasePublic           `json:"active_leases"`
 	TestEnvironments        []TestEnvironmentPublic `json:"test_environments"`
+	TestSlotAdmissions      []TestSlotAdmission     `json:"test_slot_admissions"`
 	WaitingTestSlotRequests []TestSlotRequestPublic `json:"waiting_test_slot_requests"`
 	TestLeaseDefaults       TestLeaseDefaults       `json:"test_lease_defaults"`
 	AgentRuntime            agentruntime.Config     `json:"agent_runtime"`
@@ -107,6 +108,16 @@ type TestSlotRequestPublic struct {
 	FulfilledAt        *time.Time      `json:"fulfilled_at"`
 	FulfilledLeaseRef  *string         `json:"fulfilled_lease_ref"`
 	TTLSeconds         int             `json:"ttl_seconds"`
+}
+
+type TestSlotAdmission struct {
+	Project                    string  `json:"project"`
+	ConfiguredTestSlots        int     `json:"configured_test_slots"`
+	PreparedAvailableTestSlots int     `json:"prepared_available_test_slots"`
+	ClaimedTestSlots           int     `json:"claimed_test_slots"`
+	CheckoutAvailableTestSlots int     `json:"checkout_available_test_slots"`
+	WaitingCheckoutRequests    int     `json:"waiting_checkout_requests"`
+	SaturationReason           *string `json:"saturation_reason,omitempty"`
 }
 
 type TestEnvironmentPublic struct {
@@ -290,15 +301,66 @@ func computeStateSnapshot(
 		activePublic = append(activePublic, leaseToPublicForState(settings, lease))
 	}
 
+	envs := testEnvironmentsFromSnapshot(ctx, settings, store, projects, active, waiting)
 	return StateSnapshot{
 		ActiveLeases:            activePublic,
-		TestEnvironments:        testEnvironmentsFromSnapshot(ctx, settings, store, projects, active, waiting),
+		TestEnvironments:        envs,
+		TestSlotAdmissions:      testSlotAdmissionsFromEnvironments(envs, waiting),
 		WaitingTestSlotRequests: waiting,
 		TestLeaseDefaults:       readTestLeaseDefaultsOrFallback(ctx, store),
 		AgentRuntime:            agentRuntimeConfigForSettings(settings),
 		Projects:                sliceOrEmpty(projects),
 		Workflows:               sliceOrEmpty(workflows),
 	}
+}
+
+func testSlotAdmissionsFromEnvironments(envs []TestEnvironmentPublic, waiting []TestSlotRequestPublic) []TestSlotAdmission {
+	byProject := map[string]*TestSlotAdmission{}
+	for _, env := range envs {
+		admission := byProject[env.Project]
+		if admission == nil {
+			admission = &TestSlotAdmission{Project: env.Project}
+			byProject[env.Project] = admission
+		}
+		admission.ConfiguredTestSlots++
+		if env.Lease != nil {
+			admission.ClaimedTestSlots++
+			continue
+		}
+		switch env.State {
+		case "available":
+			admission.PreparedAvailableTestSlots++
+			admission.CheckoutAvailableTestSlots++
+		}
+	}
+	for _, req := range waiting {
+		admission := byProject[req.Project]
+		if admission == nil {
+			admission = &TestSlotAdmission{Project: req.Project}
+			byProject[req.Project] = admission
+		}
+		admission.WaitingCheckoutRequests++
+	}
+
+	names := make([]string, 0, len(byProject))
+	for project := range byProject {
+		names = append(names, project)
+	}
+	sort.Strings(names)
+
+	out := make([]TestSlotAdmission, 0, len(names))
+	for _, project := range names {
+		admission := *byProject[project]
+		if admission.CheckoutAvailableTestSlots == 0 {
+			reason := "no_prepared_test_slot"
+			if admission.ConfiguredTestSlots == 0 {
+				reason = "test_slots_not_configured"
+			}
+			admission.SaturationReason = &reason
+		}
+		out = append(out, admission)
+	}
+	return out
 }
 
 func leaseToPublic(lease Lease) LeasePublic {

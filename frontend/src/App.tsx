@@ -82,7 +82,7 @@ type TestEnvironment = {
   // "" means no durable slot status record exists yet (count was bumped and
   // the reconciler has not yet seeded this slot). It is not synonymous with
   // "warming" — warming means preliminary reconciliation is actually running.
-  state: "" | "available" | "warming" | "activating" | "active" | "cleaning" | "claimed" | "reserved" | "error";
+  state: "" | "available" | "warming" | "provisioning" | "provisioned" | "activating" | "active" | "running" | "cleaning" | "claimed" | "reserved" | "error";
   usable?: boolean;
   detail?: string | null;
   updated_at?: string | null;
@@ -101,6 +101,16 @@ type TestEnvironment = {
   playwright_ws_endpoint?: string | null;
   lease: Lease | null;
   waiting_requests: TestSlotRequest[];
+};
+
+type TestSlotAdmission = {
+  project: string;
+  configured_test_slots: number;
+  prepared_available_test_slots: number;
+  claimed_test_slots: number;
+  checkout_available_test_slots: number;
+  waiting_checkout_requests: number;
+  saturation_reason?: string | null;
 };
 
 type Project = {
@@ -259,6 +269,7 @@ type RunTerminalObservation = {
 type Snapshot = {
   active_leases: Lease[];
   test_environments?: TestEnvironment[];
+  test_slot_admissions?: TestSlotAdmission[];
   waiting_test_slot_requests?: TestSlotRequest[];
   test_lease_defaults?: TestLeaseDefaults;
   agent_runtime?: AgentRuntimeConfig;
@@ -2220,9 +2231,13 @@ function TestEnvironmentIndexView({
 }) {
   const environments = (snap.test_environments ?? [])
     .filter((env) => !projectName || env.project === projectName);
-  const available = environments.filter((env) => env.state === "available");
+  const admissions = (snap.test_slot_admissions ?? [])
+    .filter((admission) => !projectName || admission.project === projectName);
+  const preparedAvailable = admissions.reduce((sum, admission) => sum + admission.prepared_available_test_slots, 0);
+  const checkoutAvailable = admissions.reduce((sum, admission) => sum + admission.checkout_available_test_slots, 0);
+  const claimedCount = admissions.reduce((sum, admission) => sum + admission.claimed_test_slots, 0);
   const activating = environments.filter((env) => env.state === "activating");
-  const active = environments.filter((env) => env.state === "active");
+  const active = environments.filter((env) => env.state === "active" || env.state === "running");
   const cleaning = environments.filter((env) => env.state === "cleaning");
   const claimed = environments.filter((env) => env.state === "claimed");
   const errored = environments.filter((env) => env.state === "error");
@@ -2238,10 +2253,12 @@ function TestEnvironmentIndexView({
         <div className="project-hero-main">
           <div className="project-kicker mono">{projectName ? `project / ${projectName}` : "global test environments"}</div>
           <h2>Test environments</h2>
-          <div className="project-repo mono">warm slots and leased runtime</div>
+          <div className="project-repo mono">prepared slots and checkout admission</div>
         </div>
         <div className="project-facts">
-          <div className="project-fact"><span>available</span><strong>{available.length}</strong></div>
+          <div className="project-fact"><span>checkout ready</span><strong>{checkoutAvailable}</strong></div>
+          <div className="project-fact"><span>prepared</span><strong>{preparedAvailable}</strong></div>
+          <div className="project-fact"><span>claimed</span><strong>{claimedCount}</strong></div>
           <div className="project-fact"><span>activating</span><strong>{activating.length}</strong></div>
           <div className="project-fact"><span>active</span><strong>{active.length}</strong></div>
           {cleaning.length > 0 && <div className="project-fact"><span>cleaning</span><strong>{cleaning.length}</strong></div>}
@@ -3104,6 +3121,7 @@ function testEnvironmentPillClass(state: TestEnvironment["state"]): "free" | "bu
     case "available":
       return "free";
     case "active":
+    case "running":
     case "claimed":
     case "reserved":
       return "busy";
@@ -3111,6 +3129,8 @@ function testEnvironmentPillClass(state: TestEnvironment["state"]): "free" | "bu
       return "drain";
     case "":
     case "warming":
+    case "provisioning":
+    case "provisioned":
     case "activating":
     case "cleaning":
     default:

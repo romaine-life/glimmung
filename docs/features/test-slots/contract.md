@@ -57,6 +57,9 @@ running, cleaning, and available explicit.
   leases and runtime cleanup states.
 - Checkout records a lease before activation and returns either ready runtime
   state or an explicit asynchronous activating state.
+- Checkout admission, `/v1/state`, the dashboard, and MCP lease discovery must
+  use the same durable slot-row projection. Operator-visible availability must
+  not be capped or contradicted by process-local manifest configuration.
 - Activation materializes lease-scoped runtime and waits for required runtime
   readiness before `usable=true`.
 - Return and callback release tear down lease-scoped runtime before capacity is

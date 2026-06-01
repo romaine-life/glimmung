@@ -45,7 +45,7 @@ func TestHandlerServesAllRegisteredMetrics(t *testing.T) {
 	RecordRunCreated("test-workflow")
 	RecordPostgresQuery("select_reports", "ok", 5*time.Millisecond)
 	RecordPostgresQuery("insert_runs", "error", 25*time.Millisecond)
-	RecordUnavailable("POST /v1/test-slots/checkout", "test_slot_saturation")
+	RecordUnavailable("POST /v1/test-slots/checkout", "no_prepared_test_slot")
 	// HTTP layer needs a request through the middleware.
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /probe-coverage", func(w http.ResponseWriter, _ *http.Request) {

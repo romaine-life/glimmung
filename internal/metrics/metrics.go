@@ -378,7 +378,7 @@ func RecordTestSlotCleanupClaim(source, outcome string) {
 var unavailableTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "glimmung_unavailable_total",
-		Help: "Deliberate 503 ServiceUnavailable responses emitted by writeUnavailable, labelled by registered route pattern and a short reason enum (e.g. test_slot_saturation). Configuration-absence 503s ('X store not configured') go through writeProblem and are intentionally not counted here.",
+		Help: "Deliberate 503 ServiceUnavailable responses emitted by writeUnavailable, labelled by registered route pattern and a short reason enum (e.g. no_prepared_test_slot). Configuration-absence 503s ('X store not configured') go through writeProblem and are intentionally not counted here.",
 	},
 	[]string{"route", "reason"},
 )
@@ -386,7 +386,7 @@ var unavailableTotal = prometheus.NewCounterVec(
 // RecordUnavailable counts one deliberate 503 response. route is the
 // registered ServeMux pattern (already used by the HTTP middleware so
 // cardinality is bounded); reason is a short, closed-enum string the
-// callsite picks at compile time (e.g. test_slot_saturation). Raw user
+// callsite picks at compile time (e.g. no_prepared_test_slot). Raw user
 // input must not land in either label.
 func RecordUnavailable(route, reason string) {
 	unavailableTotal.WithLabelValues(safeLabel(route), safeLabel(reason)).Inc()

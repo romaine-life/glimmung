@@ -1105,18 +1105,6 @@ func TestCancelLeaseCandidateRankPrefersActiveLease(t *testing.T) {
 	}
 }
 
-func TestNativeProjectConcurrencyCapDefaultAndOverride(t *testing.T) {
-	store := &Store{}
-	if got := store.nativeProjectCap(); got != 5 {
-		t.Fatalf("project cap=%d, want 5", got)
-	}
-
-	store.nativeProjectConcurrency = 2
-	if got := store.nativeProjectCap(); got != 2 {
-		t.Fatalf("project cap override=%d, want 2", got)
-	}
-}
-
 func TestSelectLeaseDocByPublicRefSkipsCountersAndPrefersActive(t *testing.T) {
 	docs := []leaseDoc{
 		{

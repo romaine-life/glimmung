@@ -101,38 +101,39 @@ func TestSelectAvailableNativeSlotUsesProjectLocalClaims(t *testing.T) {
 		}
 	}
 	cases := []struct {
-		name       string
-		ready      []int
-		claimed    []leaseDoc
-		projectCap int
-		want       *int
+		name    string
+		ready   []int
+		claimed []leaseDoc
+		want    *int
 	}{
 		{
-			name:       "first ready slot when project has no claims",
-			ready:      []int{1, 2},
-			projectCap: 5,
-			want:       intPtr(1),
+			name:  "first ready slot when project has no claims",
+			ready: []int{1, 2},
+			want:  intPtr(1),
 		},
 		{
-			name:       "skips claimed slot",
-			ready:      []int{1, 2, 3},
-			claimed:    []leaseDoc{claimed("ambience", 1)},
-			projectCap: 5,
-			want:       intPtr(2),
+			name:    "skips claimed slot",
+			ready:   []int{1, 2, 3},
+			claimed: []leaseDoc{claimed("ambience", 1)},
+			want:    intPtr(2),
 		},
 		{
-			name:       "project cap blocks project only",
-			ready:      []int{1, 2, 3},
-			claimed:    []leaseDoc{claimed("ambience", 1), claimed("ambience", 2)},
-			projectCap: 2,
-			want:       nil,
+			name:  "durable prepared slots remain admissible when five leases are active",
+			ready: []int{6, 7, 8, 9, 10, 11},
+			claimed: []leaseDoc{
+				claimed("ambience", 1),
+				claimed("ambience", 2),
+				claimed("ambience", 3),
+				claimed("ambience", 4),
+				claimed("ambience", 5),
+			},
+			want: intPtr(6),
 		},
 		{
-			name:       "all ready slots already claimed",
-			ready:      []int{1, 2},
-			claimed:    []leaseDoc{claimed("ambience", 1), claimed("ambience", 2)},
-			projectCap: 5,
-			want:       nil,
+			name:    "all ready slots already claimed",
+			ready:   []int{1, 2},
+			claimed: []leaseDoc{claimed("ambience", 1), claimed("ambience", 2)},
+			want:    nil,
 		},
 		{
 			name:  "cross-project claims do not consume capacity",
@@ -142,15 +143,14 @@ func TestSelectAvailableNativeSlotUsesProjectLocalClaims(t *testing.T) {
 				claimed("tank-operator", 2),
 				claimed("tank-operator", 3),
 			},
-			projectCap: 2,
-			want:       intPtr(1),
+			want: intPtr(1),
 		},
 	}
 	for _, tc := range cases {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			got := selectAvailableNativeSlot("ambience", tc.ready, tc.claimed, tc.projectCap)
+			got := selectAvailableNativeSlot("ambience", tc.ready, tc.claimed)
 			if tc.want == nil {
 				if got != nil {
 					t.Fatalf("got %v, want nil", *got)
