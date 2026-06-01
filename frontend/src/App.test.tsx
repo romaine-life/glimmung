@@ -91,6 +91,18 @@ describe("breadcrumbs", () => {
       to: "/projects/ambience/issues/170/runs/3/cycles/3/phases/env-prep/jobs/env-prep",
     });
   });
+
+  it("tracks issue settings", () => {
+    const crumbs = buildBreadcrumbs("/projects/ambience/issues/170/settings");
+    expect(crumbs.map((crumb) => crumb.label)).toEqual([
+      "Home",
+      "Projects",
+      "ambience",
+      "Issues",
+      "#170",
+      "Settings",
+    ]);
+  });
 });
 
 describe("test environment slots", () => {
@@ -112,6 +124,40 @@ describe("test environment slots", () => {
     expect(await screen.findByRole("heading", { name: "glimmung-test-1" })).toBeInTheDocument();
     expect(screen.getByText("Raw slot snapshot")).toBeInTheDocument();
     expect(screen.getAllByText("glimmung/glimmung-test-1/leases/42").length).toBeGreaterThan(0);
+  });
+});
+
+describe("project workflow definitions", () => {
+  it("opens declared job steps from the canonical workflow page", async () => {
+    window.history.pushState({}, "", "/projects/glimmung/workflows/default?mock=1");
+    installMockFetch();
+
+    render(
+      <MemoryRouter
+        initialEntries={[{
+          pathname: "/projects/glimmung/workflows/default",
+          search: "?mock=1",
+          state: { returnTo: "/projects/glimmung/issues/206/settings", returnLabel: "issue #206" },
+        }]}
+      >
+        <App />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByRole("link", { name: "← back to issue #206" })).toHaveAttribute(
+      "href",
+      "/projects/glimmung/issues/206/settings",
+    );
+
+    const jobLabel = await screen.findByText("PR touchpoint", { selector: ".dag-job-title" });
+    const jobButton = jobLabel.closest("button");
+    if (!jobButton) throw new Error("missing workflow job button");
+    await userEvent.click(jobButton);
+
+    expect(await screen.findByText("native job inspector")).toBeInTheDocument();
+    expect(screen.getByText("planned")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Ensure PR touchpoint/ })).toBeInTheDocument();
+    expect(screen.getByText(/\$ step ensure-pr-touchpoint/)).toBeInTheDocument();
   });
 });
 

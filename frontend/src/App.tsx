@@ -8,7 +8,7 @@ import { PortfolioView } from "./PortfolioView";
 import { RunCancelAction, RUN_CANCEL_IDLE_STATE, runStateCanCancel, type AbortState } from "./RunCancelAction";
 import { TouchpointsView } from "./TouchpointsView";
 import { StyleguideView } from "./StyleguideView";
-import { PhaseGraph, type PhaseGraphPhase } from "./PhaseGraph";
+import { PhaseGraph, type PhaseGraphJob, type PhaseGraphPhase, type PhaseGraphStep } from "./PhaseGraph";
 import { RecyclePolicyPanel } from "./RecyclePolicyPanel";
 import { AgentRuntimePolicyFields } from "./AgentRuntimePolicyFields";
 import { workflowToPhaseGraphModel } from "./workflowGraphModel";
@@ -154,6 +154,7 @@ type NativeJobSpec = {
 
 type NativeStepSpec = {
   slug: string;
+  title?: string | null;
   type?: string;
   run?: string;
   agent?: {
@@ -358,8 +359,7 @@ export function App() {
           <Route path={ISSUE_DETAIL_CHILD_ROUTES.runPhase} element={null} />
           <Route path={ISSUE_DETAIL_CHILD_ROUTES.runJob} element={null} />
           <Route path={ISSUE_DETAIL_CHILD_ROUTES.runStep} element={null} />
-          <Route path={ISSUE_DETAIL_CHILD_ROUTES.workflow} element={null} />
-          <Route path={ISSUE_DETAIL_CHILD_ROUTES.workflowRun} element={null} />
+          <Route path={ISSUE_DETAIL_CHILD_ROUTES.settings} element={null} />
           <Route path={ISSUE_DETAIL_CHILD_ROUTES.touchpoint} element={null} />
         </Route>
         <Route path="projects/:project/needs-attention" element={<ProjectNeedsAttentionRoute />} />
@@ -1154,29 +1154,41 @@ function RequirementPills({ requirements }: { requirements: Record<string, unkno
 
 function WorkflowDefinitionGraph({ workflow }: { workflow: Workflow }) {
   const graphModel = workflowToPhaseGraphModel(workflow);
+  const [selection, setSelection] = useState<{ phaseName: string; jobId: string; stepSlug?: string | null } | null>(null);
+  const selectedPhase = graphModel.phases.find((phase) => phase.name === selection?.phaseName) ?? null;
+  const selectedJob = selectedPhase?.jobs?.find((job) => job.id === selection?.jobId) ?? null;
+  const selectedInspectableJob = selectedJob ? definitionJobToInspectableJob(selectedJob) : null;
+  const selectedStepSlug = selection?.stepSlug ?? null;
+
+  useEffect(() => {
+    setSelection(null);
+  }, [workflow.id]);
 
   const renderPhase = (phase: PhaseGraphPhase) => {
-    const meta = phase.purpose
-      ? phase.purpose.replaceAll("_", "-")
-      : phase.evidence_verification_gate
-        ? "evidence-gate"
-        : phase.verify
-          ? "verification"
-          : phase.kind;
+    const meta = definitionPhaseMeta(phase);
     const jobs = phase.jobs && phase.jobs.length > 0
       ? phase.jobs
       : [{ id: phase.name, name: phase.name }];
     return (
       <>
-        {jobs.map((job) => (
-          <div className="dag-node dag-node-phase dag-node-definition" key={job.id}>
-            <div className="dag-job-head">
-              <span className="dag-job-title">{job.name || job.id}</span>
-              <span className="dag-job-kicker">job</span>
-            </div>
-            <div className="dag-node-meta dim mono">{job.id === phase.name ? meta : job.id}</div>
-          </div>
-        ))}
+        {jobs.map((job) => {
+          const selected = selection?.phaseName === phase.name && selection.jobId === job.id;
+          return (
+            <button
+              type="button"
+              className={`dag-node dag-node-phase dag-node-definition dag-node-definition-button${selected ? " selected" : ""}`}
+              key={job.id}
+              onClick={() => setSelection(selected ? null : { phaseName: phase.name, jobId: job.id })}
+              aria-pressed={selected}
+            >
+              <div className="dag-job-head">
+                <span className="dag-job-title">{job.name || job.id}</span>
+                <span className="dag-job-kicker">job</span>
+              </div>
+              <div className="dag-node-meta dim mono">{job.id === phase.name ? meta : job.id}</div>
+            </button>
+          );
+        })}
       </>
     );
   };
@@ -1190,11 +1202,136 @@ function WorkflowDefinitionGraph({ workflow }: { workflow: Workflow }) {
           dagClassName="dag-definition"
           ariaLabel={`${workflow.name} workflow graph`}
           renderPhase={renderPhase}
+          selectedPhaseName={selectedPhase?.name ?? null}
           entryArrows={graphModel.entryArrows}
           recycleArrows={graphModel.recycleArrows}
         />
       </div>
+      {selectedPhase && selectedJob && selectedInspectableJob && (
+        <div className="run-panel workflow-definition-inspector">
+          <div className="run-panel-header">
+            <div>
+              <strong>{selectedJob.name || selectedJob.id}</strong>
+              <span className="pill info" style={{ marginLeft: "0.5rem" }}>defined</span>
+            </div>
+            <button type="button" className="link" onClick={() => setSelection(null)}>
+              close
+            </button>
+          </div>
+          <div className="run-panel-meta">
+            <div>
+              <span className="key">phase</span> <span className="mono">{selectedPhase.name}</span>
+            </div>
+            <div>
+              <span className="key">job</span> <span className="mono">{selectedJob.id}</span>
+            </div>
+            {selectedJob.image && (
+              <div>
+                <span className="key">image</span> <span className="mono">{selectedJob.image}</span>
+              </div>
+            )}
+            {selectedJob.primitive && (
+              <div>
+                <span className="key">primitive</span> <span className="mono">{selectedJob.primitive}</span>
+              </div>
+            )}
+          </div>
+          <DefinitionJobInspector
+            job={selectedInspectableJob}
+            selectedStepSlug={selectedStepSlug}
+            onSelectStep={(stepSlug) => setSelection({ phaseName: selectedPhase.name, jobId: selectedJob.id, stepSlug })}
+          />
+        </div>
+      )}
     </section>
+  );
+}
+
+type DefinitionInspectableJob = {
+  id: string;
+  name: string;
+  steps: DefinitionInspectableStep[];
+};
+
+type DefinitionInspectableStep = {
+  slug: string;
+  title: string;
+};
+
+function definitionPhaseMeta(phase: PhaseGraphPhase): string {
+  if (phase.purpose) return phase.purpose.replaceAll("_", "-");
+  if (phase.evidence_verification_gate) return "evidence-gate";
+  if (phase.verify) return "verification";
+  return phase.kind;
+}
+
+function definitionJobToInspectableJob(job: PhaseGraphJob): DefinitionInspectableJob {
+  return {
+    id: job.id,
+    name: job.name ?? job.id,
+    steps: job.steps && job.steps.length > 0
+      ? job.steps.map(definitionStepToInspectableStep)
+      : [{ slug: "job", title: job.name ?? job.id }],
+  };
+}
+
+function definitionStepToInspectableStep(step: PhaseGraphStep): DefinitionInspectableStep {
+  return {
+    slug: step.slug,
+    title: definitionStepTitle(step),
+  };
+}
+
+function definitionStepTitle(step: PhaseGraphStep): string {
+  if (step.title) return step.title;
+  if (step.type === "agent" && step.agent?.slot) return `${step.slug} (${step.agent.slot})`;
+  return step.slug;
+}
+
+function DefinitionJobInspector({
+  job,
+  selectedStepSlug,
+  onSelectStep,
+}: {
+  job: DefinitionInspectableJob;
+  selectedStepSlug: string | null;
+  onSelectStep: (stepSlug: string) => void;
+}) {
+  const selectedStep = job.steps.find((step) => step.slug === selectedStepSlug) ?? job.steps[0] ?? null;
+  return (
+    <div className="native-inspector">
+      <div className="native-inspector-head">
+        <div>
+          <span className="key">native job inspector</span>
+          <span className="mono dim">planned</span>
+        </div>
+      </div>
+      <div className="step-log-layout native-step-log-layout">
+        <aside className="step-list" aria-label="native job steps">
+          <div className="native-job-label">
+            <span className="mono">{job.name}</span>
+            <span className="pill pending">not_started</span>
+          </div>
+          {job.steps.map((step) => (
+            <button
+              type="button"
+              className={`step-row pending${step.slug === selectedStep?.slug ? " selected" : ""}`}
+              key={step.slug}
+              onClick={() => onSelectStep(step.slug)}
+            >
+              <span>·</span>
+              <strong>{step.title}</strong>
+              <small>not started</small>
+            </button>
+          ))}
+        </aside>
+        <pre className="step-terminal native-step-terminal">
+          {selectedStep
+            ? [`# ${job.name}`, `$ step ${selectedStep.slug}`, "", "No hot native events recorded for this selection."].join("\n")
+            : "# native events\n\nNo hot native events recorded for this selection."}
+        </pre>
+      </div>
+    </div>
   );
 }
 
@@ -1205,6 +1342,7 @@ function ProjectWorkflowView({
   projectName,
   workflowName,
 }: LayoutContext & { projectName: string; workflowName: string }) {
+  const location = useLocation();
   if (snap === null) return <div className="empty">Connecting…</div>;
 
   const project = snap.projects.find((p) => p.name === projectName);
@@ -1219,9 +1357,17 @@ function ProjectWorkflowView({
 
   const active = snap.active_leases.filter((l) => l.project === project.name && l.workflow === workflow.name);
   const currentWork = active;
+  const returnTarget = workflowReturnTarget(location.state);
 
   return (
     <div className="project-workspace">
+      {returnTarget && (
+        <div className="section-actions">
+          <Link className="link" to={returnTarget.to}>
+            ← back to {returnTarget.label}
+          </Link>
+        </div>
+      )}
       <section className="project-hero">
         <div className="project-hero-main">
           <div className="project-kicker mono">workflow</div>
@@ -1263,6 +1409,16 @@ function ProjectWorkflowView({
       />
     </div>
   );
+}
+
+function workflowReturnTarget(state: unknown): { to: string; label: string } | null {
+  if (!isRecord(state)) return null;
+  const to = typeof state.returnTo === "string" ? state.returnTo : "";
+  if (!to.startsWith("/projects/")) return null;
+  const label = typeof state.returnLabel === "string" && state.returnLabel.trim()
+    ? state.returnLabel.trim()
+    : "previous page";
+  return { to, label };
 }
 
 function ProjectIssuesView({

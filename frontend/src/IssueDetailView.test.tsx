@@ -445,7 +445,7 @@ describe("IssueDetailView run execution graph", () => {
     expect(screen.getByText("rendered").tagName).toBe("STRONG");
   });
 
-  it("edits issue agent runtime from the workflow tab, not the summary editor", async () => {
+  it("edits issue agent runtime from the settings tab, not the summary editor", async () => {
     let patchBody: Record<string, unknown> | null = null;
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url =
@@ -471,9 +471,15 @@ describe("IssueDetailView run execution graph", () => {
     await userEvent.click(await screen.findByRole("button", { name: "edit" }));
     expect(screen.queryByText("Agent runtime")).not.toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole("button", { name: "workflow" }));
+    expect(screen.queryByRole("button", { name: "workflow" })).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "settings" }));
     expect(await screen.findByRole("heading", { name: "Issue agent runtime" })).toBeInTheDocument();
     expect(screen.getByText("new runs only")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "view workflow definition" })).toHaveAttribute(
+      "href",
+      "/projects/ambience/workflows/default",
+    );
 
     await userEvent.selectOptions(screen.getByLabelText("Agent runtime"), "claude-sonnet");
     await userEvent.selectOptions(screen.getByLabelText("verification agent"), "codex-deep");
@@ -1226,6 +1232,27 @@ describe("IssueDetailView run execution graph", () => {
       );
     });
   });
+
+  it("does not render workflow as an issue tab", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url =
+        typeof input === "string"
+          ? new URL(input, "https://glimmung.test")
+          : input instanceof URL
+            ? input
+            : new URL(input.url);
+      if (url.pathname === "/v1/issues/by-number/ambience/172") return json(issueDetail);
+      if (url.pathname === "/v1/issues/by-number/ambience/172/graph") return json(issueGraph);
+      if (url.pathname === "/v1/workflows") return json([agentWorkflow]);
+      throw new Error(`unhandled fetch ${url.pathname}`);
+    }));
+
+    renderIssueDetail("/projects/ambience/issues/172/settings", runtimeContext);
+
+    expect(await screen.findByLabelText("issue sections")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "workflow" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "settings" })).toHaveAttribute("aria-pressed", "true");
+  });
 });
 
 function renderIssueDetail(
@@ -1254,8 +1281,7 @@ function renderIssueDetail(
             <Route path={ISSUE_DETAIL_CHILD_ROUTES.runPhase} element={null} />
             <Route path={ISSUE_DETAIL_CHILD_ROUTES.runJob} element={null} />
             <Route path={ISSUE_DETAIL_CHILD_ROUTES.runStep} element={null} />
-            <Route path={ISSUE_DETAIL_CHILD_ROUTES.workflow} element={null} />
-            <Route path={ISSUE_DETAIL_CHILD_ROUTES.workflowRun} element={null} />
+            <Route path={ISSUE_DETAIL_CHILD_ROUTES.settings} element={null} />
             <Route path={ISSUE_DETAIL_CHILD_ROUTES.touchpoint} element={null} />
           </Route>
         </Route>

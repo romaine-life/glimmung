@@ -11,9 +11,8 @@
 // which mints a new immutable workflow schema and moves the logical
 // pointer forward (in-flight runs keep the schema they started with).
 //
-// Shared by the issue workflow tab and the standalone workflow view, so
-// the typings here are structural — anything shaped like a workflow with
-// phases + a pr recycle policy can render through it.
+// Kept structural so anything shaped like a workflow with phases + a pr
+// recycle policy can render through the project workflow view.
 
 import { useEffect, useMemo, useState } from "react";
 import { authedFetch } from "./auth";

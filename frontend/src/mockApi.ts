@@ -285,7 +285,12 @@ export const mockSnapshot = {
 	          purpose: "review_touchpoint",
 	          depends_on: ["verify"],
 	          recycle_policy: null,
-	          jobs: [{ id: "pr-touchpoint", name: "PR touchpoint", primitive: "pr_touchpoint" }],
+	          jobs: [{
+	            id: "pr-touchpoint",
+	            name: "PR touchpoint",
+	            primitive: "pr_touchpoint",
+	            steps: [{ slug: "ensure-pr-touchpoint", title: "Ensure PR touchpoint" }],
+	          }],
 	        },
 		        {
 		          name: "touchpoint_gate",

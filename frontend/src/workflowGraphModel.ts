@@ -108,6 +108,8 @@ export function workflowToPhaseGraphModel(
       name: job.name,
       image: job.image,
       primitive: job.primitive,
+      managed: job.managed,
+      steps: job.steps,
     })),
   }));
   const touchpointPhase = prTouchpointPhaseName(workflow.phases);
@@ -135,6 +137,9 @@ export function runTopologyToPhaseGraphModel(topology: RunProjectionTopologySour
       id: job.id,
       name: job.name ?? job.id,
       image: job.image,
+      primitive: job.primitive,
+      managed: job.managed,
+      steps: job.steps,
     })),
   }));
   return {
