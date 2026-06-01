@@ -174,13 +174,17 @@ data:
                     codec_type: AUTO
                     stream_idle_timeout: 600s
                     request_timeout: 600s
+                    {{- if eq $provider "codex" }}
+                    upgrade_configs:
+                      - upgrade_type: websocket
+                    {{- end }}
                     access_log:
                       - name: envoy.access_loggers.stdout
                         typed_config:
                           "@type": type.googleapis.com/envoy.extensions.access_loggers.stream.v3.StdoutAccessLog
                           log_format:
                             text_format_source:
-                              inline_string: "[%START_TIME%] %REQ(:METHOD)% %REQ(:PATH)% -> %RESPONSE_CODE% %RESPONSE_FLAGS% rx=%BYTES_RECEIVED% tx=%BYTES_SENT% dur_ms=%DURATION% req_id=%REQ(x-request-id)% retry=%REQ(x-envoy-attempt-count)%\n"
+                              inline_string: "[%START_TIME%] %REQ(:METHOD)% %REQ(:PATH)% -> %RESPONSE_CODE% %RESPONSE_FLAGS% rx=%BYTES_RECEIVED% tx=%BYTES_SENT% dur_ms=%DURATION% req_id=%REQ(x-request-id)%{{- if eq $provider "claude" }} anthropic_req_id=%RESP(anthropic-request-id)%{{- end }} retry=%REQ(x-envoy-attempt-count)%\n"
                     common_http_protocol_options:
                       idle_timeout: 600s
                     http_filters:
@@ -225,11 +229,13 @@ data:
           connect_timeout: 5s
           dns_lookup_family: V4_ONLY
           lb_policy: ROUND_ROBIN
+          {{- if eq $provider "claude" }}
           typed_extension_protocol_options:
             envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
               "@type": type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions
               explicit_http_config:
                 http2_protocol_options: {}
+          {{- end }}
           load_assignment:
             cluster_name: provider_api
             endpoints:
