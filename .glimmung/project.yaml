@@ -2,8 +2,8 @@
 #
 # This is the complete authored-config source of truth for the `glimmung`
 # project row in Postgres. It is reconciled into the durable row by the
-# project sync path (`POST /v1/projects/glimmung/sync`), mirroring the
-# workflow `.glimmung/workflows/<name>.yaml` model. See
+# project sync path (`POST /v1/projects/glimmung/sync`), using the same durable
+# replace semantics as workflow registration. See
 # docs/durable-project-config.md.
 #
 # Authored config only. Reconciler-owned status keys

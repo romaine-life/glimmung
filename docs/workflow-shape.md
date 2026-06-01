@@ -367,9 +367,9 @@ contracts, threat model, and orchestrator-side flow.
 ## Runtime source of truth
 
 Postgres workflow registrations are the runtime source of truth. The
-`.glimmung/workflows/<name>.yaml` upstream endpoints remain an import/sync
-convenience for older desired-state flows, but dispatch reads the registered
-workflow document, not a consumer repository file.
+workflow upstream endpoints remain an import/sync convenience for older flows,
+but dispatch reads the registered workflow document, not a consumer repository
+file.
 The native runner direction is documented in
 [`project-native-runner-architecture.md`](project-native-runner-architecture.md):
 Glimmung owns the runner contract and project workflows use inline step

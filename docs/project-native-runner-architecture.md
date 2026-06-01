@@ -12,10 +12,9 @@ workflows. It follows the repository policies in
 
 Glimmung owns project workflow schemas, native runner execution, callback
 protocol, durable state, output storage, cleanup semantics, and run history.
-Consumer repositories remain normal source repositories. They may keep
-`.glimmung/workflows/*` files as desired state for sync, but runtime dispatch
-still reads Glimmung's database row. Repos do not need app-specific Glimmung
-runner images by default.
+Consumer repositories remain normal source repositories. Runtime dispatch reads
+Glimmung's database row; repos do not need Glimmung workflow files or
+app-specific Glimmung runner images by default.
 
 Project-specific work is expressed as Glimmung project configuration and inline
 step commands. Those commands may run ordinary repository scripts, tests,

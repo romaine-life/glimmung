@@ -15,7 +15,7 @@ Glimmung shape.
 ## Design Stance
 
 - **Runtime source of truth:** Postgres workflow registrations remain the runtime
-  contract. Repository workflow files are import/sync inputs, not what dispatch
+  contract. Any workflow import artifact is an admin input, not what dispatch
   reads.
 - **Execution layer:** Glimmung-managed phases run as Kubernetes Jobs. Another
   workflow engine can be useful under a phase later, but it should not become
