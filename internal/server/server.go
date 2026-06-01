@@ -57,8 +57,11 @@ type Settings struct {
 	NativeRunnerJobTTLSeconds          int
 	NativeRunnerImage                  string
 	NativeRunnerEntrypoint             string
-	NativeRunnerCodexSecret            string
-	NativeRunnerCodexMountPath         string
+	ProviderAPIProxyNamespace          string
+	ProviderAPIProxyCASecret           string
+	ProviderAPIProxyCABundlePath       string
+	ProviderAPIProxyClaudeService      string
+	ProviderAPIProxyCodexService       string
 	NativeRunnerPlaywrightEnabled      bool
 	NativeRunnerPlaywrightImage        string
 	NativeRunnerPlaywrightPort         string
@@ -174,13 +177,25 @@ func SettingsFromEnv() Settings {
 			"NATIVE_RUNNER_ENTRYPOINT",
 			"/app/glimmung-native-runner",
 		),
-		NativeRunnerCodexSecret: envOrDefault(
-			"NATIVE_RUNNER_CODEX_CREDENTIALS_SECRET",
-			"codex-credentials",
+		ProviderAPIProxyNamespace: envOrDefault(
+			"PROVIDER_API_PROXY_NAMESPACE",
+			"glimmung-runs",
 		),
-		NativeRunnerCodexMountPath: envOrDefault(
-			"NATIVE_RUNNER_CODEX_CREDENTIALS_MOUNT_PATH",
-			"/etc/codex-creds",
+		ProviderAPIProxyCASecret: envOrDefault(
+			"PROVIDER_API_PROXY_CA_SECRET",
+			"glimmung-provider-api-proxy-ca",
+		),
+		ProviderAPIProxyCABundlePath: envOrDefault(
+			"PROVIDER_API_PROXY_CA_BUNDLE_PATH",
+			"/etc/glimmung-provider-api-proxy-bundle/ca-certificates.crt",
+		),
+		ProviderAPIProxyClaudeService: envOrDefault(
+			"PROVIDER_API_PROXY_CLAUDE_SERVICE",
+			"claude-api-proxy",
+		),
+		ProviderAPIProxyCodexService: envOrDefault(
+			"PROVIDER_API_PROXY_CODEX_SERVICE",
+			"codex-api-proxy",
 		),
 		NativeRunnerPlaywrightEnabled: envBoolOrDefault(
 			"NATIVE_RUNNER_PLAYWRIGHT_ENABLED",

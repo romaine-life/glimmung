@@ -9,14 +9,14 @@ const AgentBashScript = `set -euo pipefail
 # script just leaves the files on disk for inspection in the live pod.
 mkdir -p /workspace/evidence/screenshots /workspace/evidence/videos
 
-# Seed claude state with placeholder credentials so claude never tries to
-# refresh, project trust, and onboarding flags so it boots straight into the run.
+# Seed claude state with Glimmung's provider-proxy placeholder credentials,
+# project trust, and onboarding flags so it boots straight into the run.
 mkdir -p $HOME/.claude
 cat > $HOME/.claude/.credentials.json <<'EOF'
 {
   "claudeAiOauth": {
-    "accessToken": "managed-by-tank-operator",
-    "refreshToken": "managed-by-tank-operator",
+    "accessToken": "managed-by-glimmung",
+    "refreshToken": "managed-by-glimmung",
     "expiresAt": 9999999999000,
     "scopes": ["user:inference", "user:profile"],
     "subscriptionType": "max",

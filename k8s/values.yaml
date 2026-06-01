@@ -28,15 +28,6 @@ nativeRunner:
     gatewayName: main
     target: ""
     defaultTtl: 300
-  codexCredentials:
-    enabled: true
-    secretName: codex-credentials
-    mountPath: /etc/codex-creds
-    storeName: ng6-glimmung
-    storeKind: ClusterSecretStore
-    refreshInterval: 1h
-    kvKey: codex-credentials
-    secretKey: auth.json
   playwright:
     enabled: true
     # Built from slot-playwright/Dockerfile. The slot-playwright build workflow
@@ -54,6 +45,44 @@ nativeRunner:
   # Dedicated native runner identity from tofu/identity.tf's
   # `glimmung_native_runner_identity_client_id` output.
   serviceAccountClientId: "a865aa27-e76e-4363-ab53-375712bd6db8"
+
+providerApiProxy:
+  enabled: true
+  namespace: glimmung-runs
+  serviceAccount: glimmung-provider-api-proxy
+  # Optional direct annotation. In prod the proxy reads AZURE_CLIENT_ID and
+  # AZURE_TENANT_ID from configSecret below so chart rollout does not require
+  # hand-pinning a freshly created UAMI client id into values.
+  serviceAccountClientId: ""
+  configSecret:
+    name: glimmung-provider-api-proxy-identity
+    clientIdKvKey: glimmung-provider-api-proxy-mi-client-id
+    tenantIdKvKey: glimmung-tenant-id
+  image:
+    repository: romainecr.azurecr.io/glimmung-api-proxy
+    tag: api-proxy-dev
+    pullPolicy: IfNotPresent
+  envoyImage: envoyproxy/envoy:v1.34.0
+  placeholderBearer: "Bearer managed-by-glimmung"
+  keyVaultUrl: https://ng6-glimmung.vault.azure.net/
+  caSecretName: glimmung-provider-api-proxy-ca
+  caBundlePath: /etc/glimmung-provider-api-proxy-bundle/ca-certificates.crt
+  credentials:
+    storeName: ng6-glimmung
+    storeKind: ClusterSecretStore
+    refreshInterval: 1h
+  claude:
+    serviceName: claude-api-proxy
+    secretName: claude-code-credentials
+    kvKey: claude-code-credentials
+    secretKey: credentials.json
+    credentialMountPath: /etc/claude-credentials
+  codex:
+    serviceName: codex-api-proxy
+    secretName: codex-credentials
+    kvKey: codex-credentials
+    secretKey: auth.json
+    credentialMountPath: /etc/codex-credentials
 
 artifacts:
   storageAccount: romaineglimmungartifacts
