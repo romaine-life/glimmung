@@ -367,10 +367,6 @@ func (c *fakePullRequestClient) MergePullRequest(_ context.Context, req PullRequ
 	return c.mergeRes, nil
 }
 
-func (c *fakePullRequestClient) FetchWorkflowFile(context.Context, string, string, string) ([]byte, int, error) {
-	return nil, 0, ErrNotFound
-}
-
 func aggregateFakeNativePayload(expected []string, completions map[string]CompletionPayload) CompletionPayload {
 	payload := CompletionPayload{Conclusion: "success", PhaseOutputs: map[string]string{}}
 	for _, id := range expected {

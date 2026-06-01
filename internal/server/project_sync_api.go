@@ -15,10 +15,6 @@ import (
 // ProjectSyncClient fetches the declarative project-config file
 // (`.glimmung/project.yaml`) from a project's own GitHub repo. Returns
 // ErrNotFound / status 404 when the file does not exist in the repo.
-//
-// This mirrors WorkflowSyncClient: the same concrete GitHub adapter
-// satisfies both interfaces, so the router passes a single ghClient value
-// and the project handlers type-assert it to ProjectSyncClient.
 type ProjectSyncClient interface {
 	FetchProjectFile(ctx context.Context, repo, ref string) ([]byte, int, error)
 }
@@ -46,6 +42,14 @@ func isServerManagedProjectStatusKey(key string) bool {
 	return false
 }
 
+// upstreamError carries an HTTP status alongside the error message.
+type upstreamError struct {
+	status  int
+	message string
+}
+
+func (e *upstreamError) Error() string { return e.message }
+
 // ProjectUpstreamResult is returned by the project upstream + sync endpoints.
 type ProjectUpstreamResult struct {
 	Project    string           `json:"project"`
@@ -57,7 +61,7 @@ type ProjectUpstreamResult struct {
 	FetchError *string          `json:"fetch_error"`
 }
 
-func getProjectUpstream(store ReadStore, ghClient WorkflowSyncClient) http.HandlerFunc {
+func getProjectUpstream(store ReadStore, ghClient any) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		project := r.PathValue("project")
 		ref := r.URL.Query().Get("ref")
@@ -73,7 +77,7 @@ func getProjectUpstream(store ReadStore, ghClient WorkflowSyncClient) http.Handl
 	}
 }
 
-func syncProject(store ReadStore, ghClient WorkflowSyncClient) http.HandlerFunc {
+func syncProject(store ReadStore, ghClient any) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		project := r.PathValue("project")
 		ref := r.URL.Query().Get("ref")
@@ -170,9 +174,25 @@ func fetchProjectUpstreamResult(
 	}, nil
 }
 
-func projectSyncClientFrom(ghClient WorkflowSyncClient) ProjectSyncClient {
+func projectSyncClientFrom(ghClient any) ProjectSyncClient {
 	if c, ok := ghClient.(ProjectSyncClient); ok {
 		return c
+	}
+	return nil
+}
+
+func findProjectForSync(ctx context.Context, store ReadStore, project string) *Project {
+	if store == nil {
+		return nil
+	}
+	projects, err := store.ListProjects(ctx)
+	if err != nil {
+		return nil
+	}
+	for _, p := range projects {
+		if firstNonEmpty(p.Name, p.ID) == project {
+			return &p
+		}
 	}
 	return nil
 }

@@ -48,6 +48,17 @@ jobs:
       - name: Guard against retired store surface reintroduction
         run: node scripts/check-removed-retired-store.mjs
 
+  check-removed-workflow-file-sync:
+    name: Removed workflow file sync surface
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Guard against repo-backed workflow sync reintroduction
+        run: node scripts/check-removed-workflow-file-sync.mjs
+
   check-handler-5xx-migration:
     name: Handler 5xx observability contract
     runs-on: ubuntu-latest

@@ -239,14 +239,14 @@ func main() {
 		server.StartRunQueueReconciler(context.Background(), rt, nativeLauncher, log.Printf)
 		server.StartRunDispatchTimeoutReconciler(context.Background(), settings, rt, nativeLauncher, log.Printf)
 		server.StartNativeJobWatcher(context.Background(), settings, rt, nativeLauncher, log.Printf)
-		if nativeMinter, ok := ghClient.(server.NativeGitHubTokenMinter); ok {
+		if ghClient != nil {
 			// One-shot recovery sweep at startup: re-arm per-lease TTL
 			// timers, resume in-flight warming/activating/cleaning work, and
 			// warm any slots that should exist by count but have no record
 			// yet. After this returns, the test-slot lifecycle is purely
 			// event-driven — HTTP handlers and per-lease AfterFunc timers,
 			// no polling loop.
-			go server.RecoverInFlightTestSlots(context.Background(), rt, nativeLauncher, nativeMinter, log.Printf)
+			go server.RecoverInFlightTestSlots(context.Background(), rt, nativeLauncher, ghClient, log.Printf)
 		}
 	}
 	addr := ":" + settings.Port
@@ -306,22 +306,8 @@ type gitHubClientAdapter struct {
 	client *githubclient.Client
 }
 
-func (a *gitHubClientAdapter) FetchWorkflowFile(ctx context.Context, repo, name, ref string) ([]byte, int, error) {
-	path := ".glimmung/workflows/" + name + ".yaml"
-	data, err := a.client.FetchFileContents(ctx, repo, path, ref)
-	if errors.Is(err, githubclient.ErrNotFound) {
-		return nil, 404, err
-	}
-	if err != nil {
-		return nil, 502, err
-	}
-	return data, 200, nil
-}
-
 // FetchProjectFile reads the declarative project-config document
-// `.glimmung/project.yaml` from a project's own repo. Satisfies
-// server.ProjectSyncClient; the same adapter value already satisfies
-// server.WorkflowSyncClient, so the router passes one ghClient for both.
+// `.glimmung/project.yaml` from a project's own repo.
 func (a *gitHubClientAdapter) FetchProjectFile(ctx context.Context, repo, ref string) ([]byte, int, error) {
 	data, err := a.client.FetchFileContents(ctx, repo, ".glimmung/project.yaml", ref)
 	if errors.Is(err, githubclient.ErrNotFound) {
@@ -379,7 +365,7 @@ func (a *gitHubClientAdapter) MergePullRequest(ctx context.Context, req server.P
 	}, nil
 }
 
-func buildGitHubClient(settings server.Settings) server.WorkflowSyncClient {
+func buildGitHubClient(settings server.Settings) *gitHubClientAdapter {
 	if settings.GitHubAppID == "" || settings.GitHubAppInstallationID == "" || settings.GitHubAppPrivateKey == "" {
 		return nil
 	}

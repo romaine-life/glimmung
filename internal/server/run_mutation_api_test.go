@@ -70,11 +70,11 @@ func (s *fakeRunMutationStore) ListNativeEventsByID(_ context.Context, project, 
 }
 
 func newRunMutHandlerAdmin(store *fakeRunMutationStore) http.Handler {
-	return NewWithSyncClient(Settings{}, store, fakeAdminAuthenticator{user: auth.User{Sub: "admin"}}, nil)
+	return NewWithGitHubClient(Settings{}, store, fakeAdminAuthenticator{user: auth.User{Sub: "admin"}}, nil)
 }
 
 func newRunMutHandlerNoAuth(store *fakeRunMutationStore) http.Handler {
-	return NewWithSyncClient(Settings{}, store, nil, nil)
+	return NewWithGitHubClient(Settings{}, store, nil, nil)
 }
 
 // --- abort tests ---

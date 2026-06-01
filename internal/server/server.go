@@ -237,16 +237,17 @@ func NewWithStore(settings Settings, store ReadStore) http.Handler {
 	return NewWithDependencies(settings, store, nil)
 }
 
-// NewWithSyncClient extends NewWithDependencies with an optional GitHub client for workflow sync.
-func NewWithSyncClient(settings Settings, store ReadStore, authResolver AuthResolver, ghClient WorkflowSyncClient, artifactStores ...ArtifactStore) http.Handler {
+// NewWithGitHubClient extends NewWithDependencies with an optional GitHub client
+// for project config sync, native token minting, and PR operations.
+func NewWithGitHubClient(settings Settings, store ReadStore, authResolver AuthResolver, ghClient any, artifactStores ...ArtifactStore) http.Handler {
 	return newHandler(settings, store, authResolver, ghClient, nil, artifactStores...)
 }
 
-func NewWithRuntimeClients(settings Settings, store ReadStore, authResolver AuthResolver, ghClient WorkflowSyncClient, nativeLauncher NativeLauncher, artifactStores ...ArtifactStore) http.Handler {
+func NewWithRuntimeClients(settings Settings, store ReadStore, authResolver AuthResolver, ghClient any, nativeLauncher NativeLauncher, artifactStores ...ArtifactStore) http.Handler {
 	return newHandlerWithReconcilers(settings, store, authResolver, ghClient, nil, nil, nativeLauncher, artifactStores...)
 }
 
-func NewWithRuntimeReconcilers(settings Settings, store ReadStore, authResolver AuthResolver, ghClient WorkflowSyncClient, workloadIdentities NativeWorkloadIdentityReconciler, nativeLauncher NativeLauncher, artifactStores ...ArtifactStore) http.Handler {
+func NewWithRuntimeReconcilers(settings Settings, store ReadStore, authResolver AuthResolver, ghClient any, workloadIdentities NativeWorkloadIdentityReconciler, nativeLauncher NativeLauncher, artifactStores ...ArtifactStore) http.Handler {
 	return newHandlerWithReconcilers(settings, store, authResolver, ghClient, workloadIdentities, nil, nativeLauncher, artifactStores...)
 }
 
@@ -254,7 +255,7 @@ func NewWithRuntimeReconcilers(settings Settings, store ReadStore, authResolver 
 // managed-auth-origins reconciler (glimmung#142 stage 2). Existing callers
 // keep working through NewWithRuntimeReconcilers (which passes nil for the
 // origins reconciler); new wiring in cmd/glimmung-go uses this.
-func NewWithReconcilers(settings Settings, store ReadStore, authResolver AuthResolver, ghClient WorkflowSyncClient, workloadIdentities NativeWorkloadIdentityReconciler, managedOrigins ManagedOriginReconciler, nativeLauncher NativeLauncher, artifactStores ...ArtifactStore) http.Handler {
+func NewWithReconcilers(settings Settings, store ReadStore, authResolver AuthResolver, ghClient any, workloadIdentities NativeWorkloadIdentityReconciler, managedOrigins ManagedOriginReconciler, nativeLauncher NativeLauncher, artifactStores ...ArtifactStore) http.Handler {
 	return newHandlerWithReconcilers(settings, store, authResolver, ghClient, workloadIdentities, managedOrigins, nativeLauncher, artifactStores...)
 }
 
@@ -262,11 +263,11 @@ func NewWithDependencies(settings Settings, store ReadStore, authResolver AuthRe
 	return newHandler(settings, store, authResolver, nil, nil, artifactStores...)
 }
 
-func newHandler(settings Settings, store ReadStore, authResolver AuthResolver, ghClient WorkflowSyncClient, nativeLauncher NativeLauncher, artifactStores ...ArtifactStore) http.Handler {
+func newHandler(settings Settings, store ReadStore, authResolver AuthResolver, ghClient any, nativeLauncher NativeLauncher, artifactStores ...ArtifactStore) http.Handler {
 	return newHandlerWithReconcilers(settings, store, authResolver, ghClient, nil, nil, nativeLauncher, artifactStores...)
 }
 
-func newHandlerWithReconcilers(settings Settings, store ReadStore, authResolver AuthResolver, ghClient WorkflowSyncClient, workloadIdentities NativeWorkloadIdentityReconciler, managedOrigins ManagedOriginReconciler, nativeLauncher NativeLauncher, artifactStores ...ArtifactStore) http.Handler {
+func newHandlerWithReconcilers(settings Settings, store ReadStore, authResolver AuthResolver, ghClient any, workloadIdentities NativeWorkloadIdentityReconciler, managedOrigins ManagedOriginReconciler, nativeLauncher NativeLauncher, artifactStores ...ArtifactStore) http.Handler {
 	var artifactStore ArtifactStore
 	if len(artifactStores) > 0 {
 		artifactStore = artifactStores[0]
@@ -405,8 +406,6 @@ func newHandlerWithReconcilers(settings Settings, store ReadStore, authResolver 
 	mux.Handle("PATCH /v1/leases/ttl", requireAdmin(adminAuthenticator, http.HandlerFunc(updateLeaseTTLByRef(store, testSlotPreparer, nativeTokenMinter))))
 	mux.Handle("PATCH /v1/test-slots/default-ttl", requireAdmin(adminAuthenticator, http.HandlerFunc(updateTestLeaseDefaultTTL(store))))
 	mux.Handle("PATCH /v1/test-slots/hot-swap-min-ttl", requireAdmin(adminAuthenticator, http.HandlerFunc(updateTestLeaseHotSwapMinTTL(store))))
-	mux.HandleFunc("GET /v1/projects/{project}/workflows/{name}/upstream", getWorkflowUpstream(store, ghClient))
-	mux.Handle("POST /v1/projects/{project}/workflows/{name}/sync", requireAdmin(adminAuthenticator, http.HandlerFunc(syncWorkflow(store, ghClient))))
 	mux.HandleFunc("GET /v1/projects/{project}/upstream", getProjectUpstream(store, ghClient))
 	mux.Handle("POST /v1/projects/{project}/sync", requireAdmin(adminAuthenticator, http.HandlerFunc(syncProject(store, ghClient))))
 	mux.Handle("POST /v1/projects/{project}/issues/{issue_number}/runs/{run_number}/abort", requireAdmin(adminAuthenticator, http.HandlerFunc(abortRunByNumber(store))))
