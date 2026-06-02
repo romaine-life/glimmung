@@ -74,7 +74,9 @@ half-updated dashboard.
   those boundaries.
 - Terminal run observations should distinguish producer phase failure,
   verifier contract absence, verifier failure, evidence-gate failure, and
-  phase-requested abort with stable phase/job/step identifiers when observed.
+  dispatch failure, and phase-requested abort with stable phase/job/step
+  identifiers when observed. Dispatch failure observations use
+  `step_slug=dispatch` because no workload step has started yet.
 - Operator dashboards or API responses should expose stale lock, stale run,
   and missing evidence conditions when those states affect user trust.
 

@@ -502,7 +502,13 @@ func TestFinalizeExecutionFailureClassifiesForwardDispatchFailure(t *testing.T) 
 		if got := stringValue(job["reason"]); got != "dispatch_failed" {
 			t.Fatalf("%s reason=%q", id, got)
 		}
-		for _, stepValue := range job["steps"].([]any) {
+		steps := job["steps"].([]any)
+		dispatch := steps[0].(map[string]any)
+		if stringValue(dispatch["slug"]) != "dispatch" || stringValue(dispatch["state"]) != "failed" ||
+			stringValue(dispatch["reason"]) != "dispatch_failed" {
+			t.Fatalf("%s dispatch ownership step=%#v", id, dispatch)
+		}
+		for _, stepValue := range steps[1:] {
 			step := stepValue.(map[string]any)
 			if got := stringValue(step["state"]); got != "not_started" {
 				t.Fatalf("%s step %#v should remain not_started", id, step)

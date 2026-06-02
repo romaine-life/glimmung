@@ -923,7 +923,7 @@ func TestRunCycleGraphProjectionShowsLegacyAbortedDispatchTimeout(t *testing.T) 
 	}
 }
 
-func TestRunCycleGraphProjectionShowsForwardDispatchFailureWithoutFakeStepFailure(t *testing.T) {
+func TestRunCycleGraphProjectionShowsForwardDispatchFailureWithDispatchStepOwnership(t *testing.T) {
 	issueNumber := 171
 	runNumber := 3
 	cycleNumber := 4
@@ -1000,10 +1000,116 @@ func TestRunCycleGraphProjectionShowsForwardDispatchFailureWithoutFakeStepFailur
 		if job.State != "failed" || job.Reason == nil || *job.Reason != "dispatch_failed" {
 			t.Fatalf("llm-work job projection=%#v", job)
 		}
-		for _, step := range job.Steps {
+		if len(job.Steps) == 0 || job.Steps[0].Slug != "dispatch" || job.Steps[0].State != "failed" ||
+			job.Steps[0].Reason == nil || *job.Steps[0].Reason != "dispatch_failed" {
+			t.Fatalf("dispatch failure should be owned by a dispatch step: %#v", job.Steps)
+		}
+		for _, step := range job.Steps[1:] {
 			if step.State != "not_started" || step.Reason != nil || step.ExitCode != nil {
-				t.Fatalf("dispatch failure should not synthesize failed step: %#v", step)
+				t.Fatalf("workflow step should remain unstarted under dispatch failure: %#v", step)
 			}
+		}
+	}
+}
+
+func TestRunCycleGraphProjectionPromotesSkippedRowsForDispatchFailureOwnership(t *testing.T) {
+	issueNumber := 168
+	runNumber := 5
+	cycleNumber := 8
+	runCycle := 2
+	runDisplay := "5.2"
+	now := time.Date(2026, 6, 1, 7, 19, 41, 0, time.UTC)
+	abortReason := `forward_dispatch_failed: native lease state is "released" for ambience-slot-3, want claimed; cleanup_dispatch_failed: native lease state is "released" for ambience-slot-3, want claimed`
+	store := fakeGraphStore{
+		fakeReadStore: fakeReadStore{workflows: []Workflow{{
+			Project: "ambience",
+			Name:    "default",
+			Phases: []PhaseSpec{
+				{Name: "prepare", Kind: "k8s_job", Jobs: []NativeJobSpec{{ID: "env-prep"}}},
+				{Name: "llm-work", Kind: "k8s_job", DependsOn: []string{"prepare"}, Jobs: []NativeJobSpec{{ID: "llm-implement"}}},
+				{
+					Name:      "llm-verify",
+					Kind:      "k8s_job",
+					DependsOn: []string{"llm-work"},
+					Verify:    true,
+					Jobs: []NativeJobSpec{{
+						ID: "llm-verify",
+						Steps: []NativeStepSpec{
+							{Slug: "clone", Title: stringPtr("Clone repo")},
+							{Slug: "run-verification", Title: stringPtr("Run verification")},
+						},
+					}},
+				},
+			},
+		}}},
+		issue: IssueDetail{
+			Ref:     "ambience#168",
+			Project: "ambience",
+			Number:  &issueNumber,
+			Title:   "Magic portal",
+			State:   "open",
+		},
+		runs: []RunReport{{
+			ID:               "run-5",
+			Project:          "ambience",
+			RunRef:           "ambience#168/runs/5.2",
+			RunNumber:        &runNumber,
+			CycleNumber:      &cycleNumber,
+			RunCycleNumber:   &runCycle,
+			RunDisplayNumber: &runDisplay,
+			Workflow:         "default",
+			IssueRef:         "ambience#168",
+			IssueNumber:      issueNumber,
+			State:            "aborted",
+			CurrentPhase:     stringPtr("llm-verify"),
+			AbortReason:      &abortReason,
+			StartedAt:        now.Add(-20 * time.Minute),
+			UpdatedAt:        now,
+			PhaseExecutions: []RunPhaseExecution{{
+				Name:      "llm-verify",
+				Kind:      "k8s_job",
+				State:     "failed",
+				Reason:    stringPtr("dispatch_failed"),
+				CreatedAt: now.Add(-20 * time.Minute).Format(time.RFC3339Nano),
+				Jobs: []RunJobExecution{{
+					ID:          "llm-verify",
+					Name:        stringPtr("LLM: Run tests"),
+					State:       "skipped",
+					CompletedAt: stringPtr(now.Add(-11 * time.Minute).Format(time.RFC3339Nano)),
+					Steps: []RunStepExecution{
+						{Slug: "clone", Title: stringPtr("Clone repo"), State: "skipped"},
+						{Slug: "run-verification", Title: stringPtr("Run verification"), State: "skipped"},
+					},
+				}},
+			}},
+			Attempts: []RunReportAttempt{{
+				AttemptIndex:     2,
+				Phase:            "llm-verify",
+				PhaseKind:        "k8s_job",
+				WorkflowFilename: "k8s_job:llm-verify",
+				DispatchedAt:     now.Add(-time.Second),
+			}},
+		}},
+	}
+	handler := NewWithStore(Settings{}, store)
+
+	var projection RunGraphProjection
+	getJSON(t, handler, "/v1/projects/ambience/issues/168/runs/5/cycles/2/graph", &projection)
+
+	verifyPhase := assertProjectionPhase(t, projection.Runs[0], "llm-verify")
+	if verifyPhase.State != "failed" || verifyPhase.Reason == nil || *verifyPhase.Reason != "dispatch_failed" {
+		t.Fatalf("llm-verify projection=%#v", verifyPhase)
+	}
+	job := verifyPhase.Jobs[0]
+	if job.State != "failed" || job.Reason == nil || *job.Reason != "dispatch_failed" {
+		t.Fatalf("llm-verify job projection=%#v", job)
+	}
+	if len(job.Steps) != 3 || job.Steps[0].Slug != "dispatch" || job.Steps[0].State != "failed" {
+		t.Fatalf("llm-verify dispatch ownership steps=%#v", job.Steps)
+	}
+	for _, step := range job.Steps[1:] {
+		if step.State != "not_started" || step.Reason != nil || step.ExitCode != nil {
+			t.Fatalf("workflow step should not own dispatch failure: %#v", step)
 		}
 	}
 }

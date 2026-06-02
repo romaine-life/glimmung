@@ -5550,6 +5550,11 @@ func terminalObservationForRun(doc runDoc, wf *server.Workflow, state string, ab
 		return obs
 	}
 
+	if obs := dispatchFailureObservationForRun(doc, abortReason, source); obs != nil {
+		obs.Message = terminalObservationMessage(obs)
+		return obs
+	}
+
 	if phase != nil && phase.Verify && attempt.Verification == nil {
 		obs := &server.RunTerminalObservation{
 			Class:      server.TerminalObservationVerifierContractMissing,
@@ -5611,6 +5616,57 @@ func firstFailedJobCompletion(completions map[string]nativeJobCompletionDoc) (na
 		}
 	}
 	return nativeJobCompletionDoc{}, false
+}
+
+func dispatchFailureObservationForRun(doc runDoc, abortReason *string, source string) *server.RunTerminalObservation {
+	reason := canonicalExecutionFailureReason(stringOrEmpty(abortReason))
+	if !isDispatchExecutionFailureReason(reason) {
+		return nil
+	}
+	for phaseIndex := range doc.PhaseExecutions {
+		phase := &doc.PhaseExecutions[phaseIndex]
+		if phase.State != "failed" || canonicalExecutionFailureReason(reasonString(phase.Reason)) != reason {
+			continue
+		}
+		job := dispatchFailureJobForPhase(phase, reason)
+		if job == nil {
+			return &server.RunTerminalObservation{
+				Class:    server.TerminalObservationDispatchFailed,
+				Phase:    phase.Name,
+				StepSlug: "dispatch",
+				Reason:   reason,
+				Source:   firstNonEmpty(source, server.TerminalObservationSourceDecisionEngine),
+			}
+		}
+		return &server.RunTerminalObservation{
+			Class:    server.TerminalObservationDispatchFailed,
+			Phase:    phase.Name,
+			JobID:    job.ID,
+			StepSlug: "dispatch",
+			Reason:   reason,
+			Source:   firstNonEmpty(source, server.TerminalObservationSourceDecisionEngine),
+		}
+	}
+	return nil
+}
+
+func dispatchFailureJobForPhase(phase *phaseExecutionDoc, reason string) *jobExecutionDoc {
+	if phase == nil {
+		return nil
+	}
+	for jobIndex := range phase.Jobs {
+		job := &phase.Jobs[jobIndex]
+		if job.State == "failed" && canonicalExecutionFailureReason(reasonString(job.Reason)) == reason {
+			return job
+		}
+	}
+	for jobIndex := range phase.Jobs {
+		job := &phase.Jobs[jobIndex]
+		if job.ID != "" {
+			return job
+		}
+	}
+	return nil
 }
 
 func failedExecutionForJob(phases []phaseExecutionDoc, phaseName, jobID string) (*jobExecutionDoc, *stepExecutionDoc) {
@@ -5708,6 +5764,8 @@ func terminalObservationMessage(obs *server.RunTerminalObservation) string {
 		return terminalJobFailureMessage(obs, "verification phase")
 	case server.TerminalObservationGateFailed:
 		return terminalJobFailureMessage(obs, "evidence gate")
+	case server.TerminalObservationDispatchFailed:
+		return terminalDispatchFailureMessage(obs)
 	case server.TerminalObservationVerifierContractMissing:
 		return fmt.Sprintf("verification phase %s did not produce a well-formed verification result", obs.Phase)
 	default:
@@ -5726,6 +5784,13 @@ func terminalJobFailureMessage(obs *server.RunTerminalObservation, label string)
 		return fmt.Sprintf("%s %s failed at job %s step %s", label, obs.Phase, obs.JobID, obs.StepSlug)
 	}
 	return fmt.Sprintf("%s %s failed at job %s: %s", label, obs.Phase, obs.JobID, obs.Reason)
+}
+
+func terminalDispatchFailureMessage(obs *server.RunTerminalObservation) string {
+	if obs.JobID != "" {
+		return fmt.Sprintf("phase %s failed to dispatch job %s: %s", obs.Phase, obs.JobID, obs.Reason)
+	}
+	return fmt.Sprintf("phase %s failed to dispatch: %s", obs.Phase, obs.Reason)
 }
 
 // ---- NativeRunStore implementation ----
@@ -6886,6 +6951,10 @@ func finalizeExecutionFailureRaw(raw map[string]any, failureReason, now string) 
 		}
 		phaseState := stringValue(phase["state"])
 		if phaseState == "failed" {
+			if isDispatchExecutionFailureReason(failureReason) {
+				phase["reason"] = firstNonEmpty(stringValue(phase["reason"]), failureReason)
+				ownDispatchFailureJobsRaw(phase, failureReason, now)
+			}
 			failedSeen = true
 			failedAny = true
 		} else if phaseState == "dispatching" || phaseState == "active" {
@@ -6909,6 +6978,9 @@ func finalizeExecutionFailureRaw(raw map[string]any, failureReason, now string) 
 				jobs[j] = job
 			}
 			phase["jobs"] = jobs
+			if isDispatchExecutionFailureReason(failureReason) {
+				ownDispatchFailureJobsRaw(phase, failureReason, now)
+			}
 		} else if failedSeen && phaseState == "not_started" {
 			phase["state"] = "skipped"
 			phase["completed_at"] = now
@@ -6964,6 +7036,9 @@ func finalizeExecutionFailureRaw(raw map[string]any, failureReason, now string) 
 				jobs[j] = job
 			}
 			phase["jobs"] = jobs
+			if isDispatchExecutionFailureReason(failureReason) {
+				ownDispatchFailureJobsRaw(phase, failureReason, now)
+			}
 			phases[i] = phase
 			failedAny = true
 			failedSeen = true
@@ -7013,9 +7088,73 @@ func finalizeExecutionFailureRaw(raw map[string]any, failureReason, now string) 
 	raw["phase_executions"] = phases
 }
 
+func ownDispatchFailureJobsRaw(phase map[string]any, failureReason, completedAt string) {
+	jobs, _ := phase["jobs"].([]any)
+	for j, jobValue := range jobs {
+		job, ok := jobValue.(map[string]any)
+		if !ok {
+			continue
+		}
+		switch stringValue(job["state"]) {
+		case "succeeded", "active", "dispatching":
+			jobs[j] = job
+			continue
+		}
+		job["state"] = "failed"
+		job["reason"] = failureReason
+		job["completed_at"] = completedAt
+		job["steps"] = dispatchFailureStepsRaw(job["steps"], failureReason, completedAt)
+		jobs[j] = job
+	}
+	phase["jobs"] = jobs
+}
+
+func dispatchFailureStepsRaw(value any, failureReason, completedAt string) []any {
+	steps, _ := value.([]any)
+	out := make([]any, 0, len(steps)+1)
+	out = append(out, map[string]any{
+		"slug":         "dispatch",
+		"title":        "Dispatch job",
+		"state":        "failed",
+		"reason":       failureReason,
+		"completed_at": completedAt,
+	})
+	for _, stepValue := range steps {
+		step, ok := stepValue.(map[string]any)
+		if !ok {
+			continue
+		}
+		if stringValue(step["slug"]) == "dispatch" {
+			continue
+		}
+		switch stringValue(step["state"]) {
+		case "failed", "aborted", "skipped":
+			step["state"] = "not_started"
+			delete(step, "reason")
+			delete(step, "exit_code")
+			delete(step, "completed_at")
+		}
+		out = append(out, step)
+	}
+	return out
+}
+
+func isDispatchExecutionFailureReason(reason string) bool {
+	switch reason {
+	case "dispatch_failed", "dispatch_timeout":
+		return true
+	default:
+		return false
+	}
+}
+
 func canonicalExecutionFailureReason(reason string) string {
 	reason = strings.ToLower(strings.TrimSpace(reason))
 	switch {
+	case reason == "dispatch_failed" || reason == "dispatch_timeout":
+		return reason
+	case strings.Contains(reason, "dispatch_failed"):
+		return "dispatch_failed"
 	case strings.Contains(reason, "dispatch_timeout"):
 		return "dispatch_timeout"
 	case strings.Contains(reason, "forward_dispatch_failed"),

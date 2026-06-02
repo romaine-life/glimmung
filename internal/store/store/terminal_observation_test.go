@@ -163,3 +163,58 @@ func TestTerminalObservationNamesVerifierContractMissing(t *testing.T) {
 		t.Fatalf("message=%q", got.Message)
 	}
 }
+
+func TestTerminalObservationNamesDispatchFailureAsDispatchStep(t *testing.T) {
+	abortDecision := string(decision.AbortMalformed)
+	abortReason := `forward_dispatch_failed: native lease state is "released" for ambience-slot-3, want claimed`
+	doc := runDoc{
+		Attempts: []attemptDoc{{
+			AttemptIndex: 1,
+			Phase:        "llm-work",
+			Conclusion:   stringPtrValue("success"),
+			Decision:     &abortDecision,
+		}},
+		PhaseExecutions: []phaseExecutionDoc{
+			{Name: "llm-work", State: "succeeded"},
+			{
+				Name:   "llm-verify",
+				State:  "failed",
+				Reason: stringPtrValue("dispatch_failed"),
+				Jobs: []jobExecutionDoc{{
+					ID:     "llm-verify",
+					State:  "failed",
+					Reason: stringPtrValue("dispatch_failed"),
+					Steps: []stepExecutionDoc{{
+						Slug:   "dispatch",
+						State:  "failed",
+						Reason: stringPtrValue("dispatch_failed"),
+					}},
+				}},
+			},
+		},
+	}
+	wf := &server.Workflow{Phases: []server.PhaseSpec{{Name: "llm-work"}, {Name: "llm-verify", Verify: true}}}
+
+	got := terminalObservationForRun(doc, wf, "aborted", &abortReason, server.TerminalObservationSourceCompletionCallback)
+	if got == nil {
+		t.Fatal("terminal observation missing")
+	}
+	if got.Class != server.TerminalObservationDispatchFailed ||
+		got.Phase != "llm-verify" ||
+		got.JobID != "llm-verify" ||
+		got.StepSlug != "dispatch" ||
+		got.Reason != "dispatch_failed" {
+		t.Fatalf("observation=%#v", got)
+	}
+	if !strings.Contains(got.Message, "phase llm-verify failed to dispatch job llm-verify") {
+		t.Fatalf("message=%q", got.Message)
+	}
+}
+
+func TestCanonicalExecutionFailureReasonRoundTripsDispatchReason(t *testing.T) {
+	for _, reason := range []string{"dispatch_failed", "dispatch_timeout"} {
+		if got := canonicalExecutionFailureReason(reason); got != reason {
+			t.Fatalf("canonicalExecutionFailureReason(%q)=%q", reason, got)
+		}
+	}
+}
