@@ -1409,6 +1409,7 @@ func runProjectionJobsForExecution(
 ) []RunProjectionJob {
 	executionJobs := runProjectionJobsFromExecutions(execution.Jobs, latestJobCompletionsByJob(attempts))
 	executionJobs = applyUndispatchedPhaseReason(executionJobs, phaseReason, len(attempts) == 0)
+	executionJobs = applyDispatchFailureOwnership(executionJobs, phaseState, phaseReason, latestJobCompletionsByJob(attempts))
 	if len(spec.Jobs) == 0 {
 		return executionJobs
 	}
@@ -1495,6 +1496,26 @@ func applyUndispatchedPhaseReason(jobs []RunProjectionJob, phaseReason *string, 
 		if out[i].Reason == nil || *out[i].Reason == "" || *out[i].Reason == "job_failed" {
 			out[i].Reason = phaseReason
 		}
+	}
+	return out
+}
+
+func applyDispatchFailureOwnership(jobs []RunProjectionJob, phaseState string, phaseReason *string, completions map[string]RunAttemptJobCompletion) []RunProjectionJob {
+	if phaseState != "failed" || !isDispatchFailureProjectionReason(phaseReason) {
+		return jobs
+	}
+	out := make([]RunProjectionJob, len(jobs))
+	copy(out, jobs)
+	for i := range out {
+		if _, completed := completions[out[i].ID]; completed {
+			continue
+		}
+		if out[i].State == "succeeded" || out[i].State == "active" || out[i].State == "dispatching" {
+			continue
+		}
+		out[i].State = "failed"
+		out[i].Reason = phaseReason
+		out[i].Steps = dispatchFailureOwnedSteps(out[i].Steps, phaseReason)
 	}
 	return out
 }
@@ -1625,6 +1646,10 @@ func projectionPhaseReason(state string, attempts []RunReportAttempt, abortReaso
 func projectionFailureReason(reason string) string {
 	normalized := strings.ToLower(strings.TrimSpace(reason))
 	switch {
+	case normalized == "dispatch_failed" || normalized == "dispatch_timeout":
+		return normalized
+	case strings.Contains(normalized, "dispatch_failed"):
+		return "dispatch_failed"
 	case strings.Contains(normalized, "dispatch_timeout"):
 		return "dispatch_timeout"
 	case strings.Contains(normalized, "forward_dispatch_failed"),
@@ -1660,6 +1685,14 @@ func runProjectionJobs(phase PhaseSpec, phaseState string, phaseReason *string, 
 		}
 		state, conclusion, completedAt := projectionJobCompletionAttrs(jobCompletions[jobID], phaseState, len(attempts) > 0)
 		reason := projectionJobReason(state, jobCompletions[jobID], phaseReason)
+		steps := []RunProjectionStep{{
+			Slug:  "workflow-run",
+			Title: stringPointerOrNil("Workflow run"),
+			State: projectionStepStateForJob(state, reason, jobCompletions[jobID]),
+		}}
+		if isDispatchFailureProjectionReason(reason) && jobCompletions[jobID].JobID == "" {
+			steps = dispatchFailureOwnedSteps(steps, reason)
+		}
 		return []RunProjectionJob{{
 			ID:          jobID,
 			Name:        stringPointerOrNil(jobID),
@@ -1668,11 +1701,7 @@ func runProjectionJobs(phase PhaseSpec, phaseState string, phaseReason *string, 
 			Conclusion:  conclusion,
 			CompletedAt: completedAt,
 			CostUSD:     completionCostPtr(jobCompletions[jobID]),
-			Steps: []RunProjectionStep{{
-				Slug:  "workflow-run",
-				Title: stringPointerOrNil("Workflow run"),
-				State: projectionStepStateForJob(state, reason, jobCompletions[jobID]),
-			}},
+			Steps:       steps,
 		}}
 	}
 	jobs := make([]RunProjectionJob, 0, len(phase.Jobs))
@@ -1697,6 +1726,9 @@ func runProjectionJobs(phase PhaseSpec, phaseState string, phaseReason *string, 
 				State: stepState,
 			})
 		}
+		if isDispatchFailureProjectionReason(reason) && jobCompletions[jobID].JobID == "" {
+			steps = dispatchFailureOwnedSteps(steps, reason)
+		}
 		jobs = append(jobs, RunProjectionJob{
 			ID:          jobID,
 			Name:        job.Name,
@@ -1709,6 +1741,40 @@ func runProjectionJobs(phase PhaseSpec, phaseState string, phaseReason *string, 
 		})
 	}
 	return jobs
+}
+
+func isDispatchFailureProjectionReason(reason *string) bool {
+	if reason == nil {
+		return false
+	}
+	switch *reason {
+	case "dispatch_failed", "dispatch_timeout":
+		return true
+	default:
+		return false
+	}
+}
+
+func dispatchFailureOwnedSteps(steps []RunProjectionStep, reason *string) []RunProjectionStep {
+	out := make([]RunProjectionStep, 0, len(steps)+1)
+	out = append(out, RunProjectionStep{
+		Slug:   "dispatch",
+		Title:  stringPointerOrNil("Dispatch job"),
+		State:  "failed",
+		Reason: reason,
+	})
+	for _, step := range steps {
+		if step.Slug == "dispatch" {
+			continue
+		}
+		if step.State == "skipped" || step.State == "failed" || step.State == "aborted" {
+			step.State = "not_started"
+			step.Reason = nil
+			step.ExitCode = nil
+		}
+		out = append(out, step)
+	}
+	return out
 }
 
 func completionCostPtr(completion RunAttemptJobCompletion) *float64 {

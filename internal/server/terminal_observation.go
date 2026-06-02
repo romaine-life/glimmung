@@ -21,6 +21,7 @@ const (
 	TerminalObservationVerifierContractMissing = "verifier_contract_missing"
 	TerminalObservationVerifierFailed          = "verifier_failed"
 	TerminalObservationGateFailed              = "gate_failed"
+	TerminalObservationDispatchFailed          = "dispatch_failed"
 	TerminalObservationPhaseRequestedAbort     = "phase_requested_abort"
 	TerminalObservationManualAbort             = "manual_abort"
 	TerminalObservationMalformed               = "malformed_terminal"

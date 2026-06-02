@@ -58,6 +58,10 @@ agent pipeline.
   leaving a stale admin panel.
 - A route refresh on a detail page should land back on the same durable entity
   or show an explicit not-found/error state.
+- Run detail graphs must show a failed owner node for terminal failures. When
+  dispatch fails before a native job exists, the visible job inspector should
+  show `dispatch` as the failed step rather than leaving every workflow step
+  succeeded, skipped, or not-started.
 
 ## Observability
 

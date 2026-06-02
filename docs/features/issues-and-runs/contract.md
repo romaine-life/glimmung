@@ -51,6 +51,10 @@ browser memory.
   state for queued runs.
 - Job completion callbacks include `job_id`; phase completion waits for every
   registered job in the phase.
+- A phase dispatch failure is a terminal workflow-owned failure, not an absence
+  of evidence. Run history must expose the failed phase/job and a failed
+  `dispatch` step so no aborted run can show every workflow step as succeeded,
+  skipped, or not-started.
 - Recycle policy creates a new Cycle under the same Run. Manual rerun after a
   terminal state creates a new Run.
 - Run display numbering remains stable across reloads and schema changes.
@@ -70,6 +74,9 @@ browser memory.
 - Run state, current phase, attempts/cycles, abort reason, cost, validation
   URL, typed terminal observation, and callback status must be inspectable
   through API/UI surfaces.
+- Typed terminal observations for dispatch failures must include stable phase
+  identity, job identity when known, `step_slug=dispatch`, and the normalized
+  reason (`dispatch_failed` or `dispatch_timeout`).
 - Native event inspection should let an operator map hot job events back to
   run, cycle, phase, job, and step.
 - Lock contention and duplicate dispatch attempts should be logged or surfaced
