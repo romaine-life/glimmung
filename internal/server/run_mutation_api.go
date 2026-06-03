@@ -6,9 +6,12 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strconv"
+
+	"github.com/romaine-life/glimmung/internal/domain/publicids"
 )
 
 // RunMutationStore handles state-mutating run operations.
@@ -60,6 +63,12 @@ func abortRunByNumber(store ReadStore) http.HandlerFunc {
 			return
 		}
 		runNumber := r.PathValue("run_number")
+		if _, err := publicids.ParseRunCycleAddress(runNumber); err != nil {
+			writeProblem(w, http.StatusBadRequest, fmt.Sprintf(
+				"run_number must be a canonical run-cycle number like %q (run.cycle); got %q",
+				"6.1", runNumber))
+			return
+		}
 		reason := r.URL.Query().Get("reason")
 		if reason == "" {
 			reason = "aborted_via_admin_api"

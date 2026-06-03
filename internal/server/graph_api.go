@@ -991,38 +991,25 @@ func workflowSchemaMapKey(project, schemaRef string) string {
 	return project + "/schema/" + schemaRef
 }
 
+// selectRunCycleForProjection resolves the /runs/{run_number}/cycles/{cycle_number}
+// path segments to a single run cycle by its canonical address
+// (run_number.run_cycle_number). It matches durable identity only; the flat
+// issue-scoped cycle ledger (CycleNumber) is a display value and is never an
+// address, so a stale ledger-form deep link resolves to nothing rather than to
+// a different run cycle.
 func selectRunCycleForProjection(runs []RunReport, runSegment, cycleSegment string) (RunReport, bool) {
-	runSegment = strings.TrimSpace(runSegment)
-	cycleSegment = strings.TrimSpace(cycleSegment)
-	display := runSegment
-	if cycleSegment != "" && !strings.Contains(runSegment, ".") {
-		display = runSegment + "." + cycleSegment
+	addr, err := publicids.ParseRunCycleSegments(runSegment, cycleSegment)
+	if err != nil {
+		return RunReport{}, false
 	}
+	want := addr.String()
 	for _, run := range runs {
-		if run.RunDisplayNumber != nil && strings.TrimSpace(*run.RunDisplayNumber) == display {
+		if run.RunNumber != nil && *run.RunNumber == addr.Run &&
+			run.RunCycleNumber != nil && *run.RunCycleNumber == addr.Cycle {
 			return run, true
 		}
-		if run.RunNumber != nil && run.RunCycleNumber != nil &&
-			strconv.Itoa(*run.RunNumber) == runSegment &&
-			strconv.Itoa(*run.RunCycleNumber) == cycleSegment {
+		if run.RunDisplayNumber != nil && strings.TrimSpace(*run.RunDisplayNumber) == want {
 			return run, true
-		}
-	}
-	if cycleSegment == "" {
-		for _, run := range runs {
-			if run.RunDisplayNumber != nil && strings.TrimSpace(*run.RunDisplayNumber) == runSegment {
-				return run, true
-			}
-			if run.CycleNumber != nil && strconv.Itoa(*run.CycleNumber) == runSegment {
-				return run, true
-			}
-		}
-	}
-	for _, run := range runs {
-		if run.CycleNumber != nil && strconv.Itoa(*run.CycleNumber) == runSegment {
-			if cycleSegment == "" || run.RunCycleNumber == nil || strconv.Itoa(*run.RunCycleNumber) == cycleSegment {
-				return run, true
-			}
 		}
 	}
 	return RunReport{}, false

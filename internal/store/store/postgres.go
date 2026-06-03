@@ -822,18 +822,12 @@ func (s *Store) GetRunReportByNumber(ctx context.Context, project string, issueN
 	if err != nil {
 		return server.RunReport{}, err
 	}
-	numbers := runNumberMap(docs)
-	for _, doc := range docs {
-		display := ""
-		if doc.RunDisplayNumber != nil {
-			display = strings.TrimSpace(*doc.RunDisplayNumber)
-		}
-		if display != "" && display == strings.TrimSpace(runNumber) {
-			return runReportFromDoc(doc, runRefMapFromDocs(docs)), nil
-		}
-		if fmt.Sprintf("%d", numbers[doc.ID]) == strings.TrimSpace(runNumber) {
-			return runReportFromDoc(doc, runRefMapFromDocs(docs)), nil
-		}
+	addr, err := publicids.ParseRunCycleAddress(runNumber)
+	if err != nil {
+		return server.RunReport{}, server.ErrNotFound
+	}
+	if doc, ok := matchRunDocByAddress(docs, addr); ok {
+		return runReportFromDoc(doc, runRefMapFromDocs(docs)), nil
 	}
 	return server.RunReport{}, server.ErrNotFound
 }
@@ -1921,6 +1915,28 @@ func runLedgerNumber(doc runDoc) int {
 		return *doc.RunNumber
 	}
 	return 0
+}
+
+// matchRunDocByAddress finds the run doc whose canonical run-cycle address
+// (run_number.run_cycle_number, surfaced as run_display_number) equals addr.
+//
+// It matches durable identity only. The flat issue-scoped cycle ledger
+// (CycleNumber) and the read-time positional ordinals from runNumberMap are
+// display values, never addresses — matching against them is exactly what let
+// get_run_report(run_number=9) return the run displaying as "6.1". Returns
+// false when no doc carries that canonical address.
+func matchRunDocByAddress(docs []runDoc, addr publicids.RunCycleAddress) (runDoc, bool) {
+	want := addr.String()
+	for _, doc := range docs {
+		if doc.RunNumber != nil && *doc.RunNumber == addr.Run &&
+			doc.RunCycleNumber != nil && *doc.RunCycleNumber == addr.Cycle {
+			return doc, true
+		}
+		if doc.RunDisplayNumber != nil && strings.TrimSpace(*doc.RunDisplayNumber) == want {
+			return doc, true
+		}
+	}
+	return runDoc{}, false
 }
 
 func runReportFromDoc(doc runDoc, lineageByID map[string]string) server.RunReport {
@@ -3215,17 +3231,13 @@ func (s *Store) resolveRunIDByRef(ctx context.Context, project, ref string) *str
 	if err != nil {
 		return nil
 	}
-	numbers := runNumberMap(docs)
-	for _, doc := range docs {
-		display := ""
-		if doc.RunDisplayNumber != nil {
-			display = strings.TrimSpace(*doc.RunDisplayNumber)
-		}
-		if (display != "" && display == strings.TrimSpace(runPart)) ||
-			fmt.Sprintf("%d", numbers[doc.ID]) == strings.TrimSpace(runPart) {
-			id := doc.ID
-			return &id
-		}
+	addr, err := publicids.ParseRunCycleAddress(runPart)
+	if err != nil {
+		return nil
+	}
+	if doc, ok := matchRunDocByAddress(docs, addr); ok {
+		id := doc.ID
+		return &id
 	}
 	return nil
 }
@@ -5346,17 +5358,14 @@ func (s *Store) ReadRunIDForNumber(ctx context.Context, project string, issueNum
 	if err != nil {
 		return "", "", err
 	}
-	numbers := runNumberMap(docs)
-	for _, doc := range docs {
-		display := ""
-		if doc.RunDisplayNumber != nil {
-			display = strings.TrimSpace(*doc.RunDisplayNumber)
-		}
-		if (display != "" && display == strings.TrimSpace(runNumber)) ||
-			fmt.Sprintf("%d", numbers[doc.ID]) == strings.TrimSpace(runNumber) {
-			ref := publicids.RunRef(doc.Project, doc.IssueNumber, runDisplayNumber(doc, numbers[doc.ID]))
-			return doc.ID, ref, nil
-		}
+	addr, err := publicids.ParseRunCycleAddress(runNumber)
+	if err != nil {
+		return "", "", server.ErrNotFound
+	}
+	if doc, ok := matchRunDocByAddress(docs, addr); ok {
+		numbers := runNumberMap(docs)
+		ref := publicids.RunRef(doc.Project, doc.IssueNumber, runDisplayNumber(doc, numbers[doc.ID]))
+		return doc.ID, ref, nil
 	}
 	return "", "", server.ErrNotFound
 }
@@ -8130,19 +8139,12 @@ func (s *Store) ReadRunByNumber(ctx context.Context, project string, issueNumber
 	if err != nil {
 		return "", err
 	}
-	numbers := runNumberMap(docs)
-	runNumber = strings.TrimSpace(runNumber)
-	for _, doc := range docs {
-		display := ""
-		if doc.RunDisplayNumber != nil {
-			display = strings.TrimSpace(*doc.RunDisplayNumber)
-		}
-		if display != "" && display == runNumber {
-			return doc.ID, nil
-		}
-		if fmt.Sprintf("%d", numbers[doc.ID]) == runNumber {
-			return doc.ID, nil
-		}
+	addr, err := publicids.ParseRunCycleAddress(runNumber)
+	if err != nil {
+		return "", server.ErrNotFound
+	}
+	if doc, ok := matchRunDocByAddress(docs, addr); ok {
+		return doc.ID, nil
 	}
 	return "", server.ErrNotFound
 }

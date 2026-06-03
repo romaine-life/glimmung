@@ -479,7 +479,8 @@ export function IssueDetailView() {
   // Tab is URL-driven so each tab is deep-linkable. Bare issue URLs are
   // normalized to `/summary` so the breadcrumb leaf and address bar stay aligned.
   const lastSeg = location.pathname.split("/").filter(Boolean).pop() ?? "";
-  // params.runId holds a user-facing run number (e.g. "3"), not an internal ID.
+  // params.runId holds the canonical run-cycle address (e.g. "6.1"), not an
+  // internal ID and not the flat cycle ledger number.
   // It forces the runs tab independent of graph load.
   const tab: Tab = params.runId ? "runs" : (SLUG_TO_TAB[lastSeg] ?? "summary");
   const setTab = (t: Tab) => navigate(`${baseUrl}/${TAB_SLUGS[t]}`);
@@ -495,7 +496,7 @@ export function IssueDetailView() {
     if (!params.runId || !graph) return null;
     const node = graph.nodes
       .filter((n) => n.kind === "run")
-      .find((n) => issueRunSlug(graph, n) === params.runId);
+      .find((n) => issueRunRouteSlug(n) === params.runId);
     return node ? runIdFromNode(node) : null;
   })();
   // Navigate to a run using its user-facing issue-scoped number (issueRunSlug),
@@ -503,7 +504,7 @@ export function IssueDetailView() {
   const selectRun = (runId: string | null) => {
     if (!runId) { navigate(`${baseUrl}/runs`); return; }
     const node = graph?.nodes.find((n) => n.kind === "run" && runIdFromNode(n) === runId);
-    const slug = node && graph ? issueRunSlug(graph, node) : runId;
+    const slug = node ? issueRunRouteSlug(node) : runId;
     navigate(`${baseUrl}/runs/${slug}`);
   };
   const [error, setError] = useState<string | null>(null);
@@ -585,7 +586,7 @@ export function IssueDetailView() {
       setRefreshTick((t) => t + 1);
       setTab("runs");
       const runId = runRouteSegment(result.run_number);
-      const cycleId = runRouteSegment(result.run_cycle_number) ?? runRouteSegment(result.cycle_number);
+      const cycleId = runRouteSegment(result.run_cycle_number);
       if (runId && cycleId) {
         navigate(issueRunSelectionPath(baseUrl, { runId, cycleId }));
       } else {
@@ -3129,23 +3130,24 @@ function recycledTargetRunRef(graph: IssueGraph, runRef: string): string | null 
   return edge ? edge.target.slice("run:".length) : null;
 }
 
-function projectionRunByLegacySlug(projection: RunGraphProjection, slug: string): RunProjectionRun | null {
-  return projection.runs.find((run) => {
-    const cycle = run.cycle_number !== null && run.cycle_number !== undefined ? String(run.cycle_number) : null;
-    return cycle === slug || run.run_display_number === slug || projectionRunNumberSegment(run) === slug;
-  }) ?? null;
-}
-
 function latestProjectionCycleForRun(projection: RunGraphProjection, runSegment: string): RunProjectionRun | null {
+  // Match by canonical run address only: the run part of the display number, or
+  // the full display ("6.1"). The flat cycle ledger is a display value, never an
+  // address, so a stale ledger slug resolves to nothing.
   const matches = projection.runs
     .filter((run) => projectionRunNumberSegment(run) === runSegment || run.run_display_number === runSegment)
     .sort((a, b) => (b.run_cycle_number ?? 0) - (a.run_cycle_number ?? 0));
-  return matches[0] ?? projectionRunByLegacySlug(projection, runSegment);
+  return matches[0] ?? null;
 }
 
 function projectionRunNumberSegment(run: RunProjectionRun): string {
   if (run.run_number !== null && run.run_number !== undefined) return String(run.run_number);
-  if (run.cycle_number !== null && run.cycle_number !== undefined) return String(run.cycle_number);
+  // Canonical fallback: the run part of the display number. Never the flat
+  // cycle ledger (cycle_number), which is a display value, not an address.
+  if (run.run_display_number) {
+    const runPart = run.run_display_number.split(".")[0];
+    if (runPart) return runPart;
+  }
   return encodeURIComponent(run.run_ref);
 }
 
@@ -4392,6 +4394,9 @@ function runIdFromNode(n: GraphNode): string {
   return n.id.startsWith("run:") ? n.id.slice(4) : n.id;
 }
 
+// issueRunSlug is the DISPLAY label for the issue history's flat cycle ledger
+// column (1, 2, 3, ...). It is not an address — routing and matching use
+// issueRunRouteSlug. See docs/run-graph-display-design.md.
 function issueRunSlug(graph: IssueGraph, run: GraphNode): string {
   const explicit = numberOrNull(run.metadata.cycle_number);
   if (explicit !== null) return String(explicit);
@@ -4405,6 +4410,19 @@ function issueRunSlug(graph: IssueGraph, run: GraphNode): string {
   return String(Math.max(ordinal, 1));
 }
 
+// issueRunRouteSlug is the canonical single-segment run-cycle address used for
+// routing and matching: the run_display_number ("6.1"), which uniquely
+// identifies a cycle. Never the flat issue-scoped cycle ledger number — that is
+// a display value, not an address, and addressing by it returned the wrong run.
+function issueRunRouteSlug(run: GraphNode): string {
+  const display = stringOrNull(run.metadata.run_display_number);
+  if (display) return display;
+  const logicalRun = numberOrNull(run.metadata.run_number);
+  const runCycle = numberOrNull(run.metadata.run_cycle_number);
+  if (logicalRun !== null && runCycle !== null) return `${logicalRun}.${runCycle}`;
+  return runIdFromNode(run);
+}
+
 function runSlugDisplay(slug: string): string {
   return /^\d+(\.\d+)?$/.test(slug) ? `cycle ${slug}` : `${slug.slice(0, 8)}…`;
 }
@@ -4416,10 +4434,9 @@ function runSlugValueDisplay(slug: string): string {
 function runRouteSlugFromNode(run: GraphNode): string | null {
   const display = stringOrNull(run.metadata.run_display_number);
   if (display) return display;
-  const cycle = numberOrNull(run.metadata.cycle_number);
-  if (cycle !== null) return String(cycle);
   const logicalRun = numberOrNull(run.metadata.run_number);
-  if (logicalRun !== null) return String(logicalRun);
+  const runCycle = numberOrNull(run.metadata.run_cycle_number);
+  if (logicalRun !== null && runCycle !== null) return `${logicalRun}.${runCycle}`;
   return null;
 }
 
