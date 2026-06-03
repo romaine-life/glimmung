@@ -140,7 +140,6 @@ type evidenceArtifact struct {
 }
 
 type githubTokenResult struct {
-	Repo  string `json:"repo"`
 	Token string `json:"token"`
 }
 
@@ -760,7 +759,7 @@ func (r *nativeRunner) checkout(ctx context.Context, checkout checkoutSpec) erro
 	if err != nil {
 		return err
 	}
-	repo := firstNonEmpty(checkout.Repo, token.Repo)
+	repo := strings.TrimSpace(checkout.Repo)
 	if repo == "" {
 		return errors.New("checkout repo required")
 	}
