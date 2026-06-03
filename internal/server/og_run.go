@@ -39,51 +39,11 @@ import (
 	"net/url"
 	"os"
 	"path"
-	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/romaine-life/glimmung/internal/domain/publicids"
 )
-
-// runURLMatch describes a run extracted from a dashboard URL path.
-// runSlug is the slug exposed in the SPA route (issue-scoped run number or
-// cycle number, what the frontend calls "cycle N").
-type runURLMatch struct {
-	project     string
-	issueNumber int
-	runSlug     string
-}
-
-// Issue-scoped run URL. Matches the SPA's
-// /projects/{project}/issues/{issue_number}/runs/{run_slug}[/cycles/{cycle}...]
-// routes — see App.tsx route table.
-var runIssueScopedURLPattern = regexp.MustCompile(
-	`^/projects/([^/]+)/issues/(\d+)/runs/([^/]+)`,
-)
-
-// matchRunURL extracts a run identifier from a dashboard URL path, or
-// returns ok=false if the path is not a run URL we know how to enrich.
-func matchRunURL(urlPath string) (runURLMatch, bool) {
-	if m := runIssueScopedURLPattern.FindStringSubmatch(urlPath); m != nil {
-		issueNumber, err := strconv.Atoi(m[2])
-		if err != nil {
-			return runURLMatch{}, false
-		}
-		project, errP := url.PathUnescape(m[1])
-		if errP != nil {
-			return runURLMatch{}, false
-		}
-		runSlug, errR := url.PathUnescape(m[3])
-		if errR != nil {
-			return runURLMatch{}, false
-		}
-		return runURLMatch{
-			project:     project,
-			issueNumber: issueNumber,
-			runSlug:     runSlug,
-		}, true
-	}
-	return runURLMatch{}, false
-}
 
 // --- shared raster helpers used by og_run_png.go ---
 
@@ -124,19 +84,40 @@ func truncate(s string, n int) string {
 
 // --- SPA HTML meta injection ---
 
-// serveSPAWithOG wraps serveSPA with logic that, for run URLs, reads the
-// run report and rewrites the HTML head to include OG/Twitter meta tags
-// that describe the run and point to the public PNG image.
+// serveSPAWithOG is the dashboard catch-all. It resolves the request path as a
+// dashboard deep link via publicids.ParseDashboardPath — the single canonical
+// parser, shared with the JSON resource surface — and then:
 //
-// On any failure to enrich (run lookup error, parse failure, etc.) the
-// handler falls back to serving the plain SPA HTML. Run URLs are common
-// and the SPA must still work for humans even when the embed enrichment
-// path can't run.
+//   - serves the canonical resource JSON when the caller asked for it
+//     (Accept: application/json or ?format=json), so an agent or `curl` handed
+//     a dashboard URL gets the resource straight back; or
+//   - for run-and-deeper URLs, reads the run report and rewrites the HTML head
+//     with OG/Twitter meta tags pointing at the public PNG image; or
+//   - serves the plain SPA shell for every other path.
+//
+// On any failure to enrich an HTML response (run lookup error, missing index,
+// etc.) the handler falls back to the plain SPA, which renders its own state.
+// A bare, ambiguous run number (/runs/9 with no cycle) does not parse, so it is
+// never enriched against the wrong run — the publicids defect guard.
 func serveSPAWithOG(settings Settings, store ReadStore) http.HandlerFunc {
 	plain := serveSPA(settings)
 	return func(w http.ResponseWriter, r *http.Request) {
-		match, ok := matchRunURL(r.URL.Path)
-		if !ok {
+		addr, err := publicids.ParseDashboardPath(r.URL.Path)
+		if err != nil {
+			// Not a recognized dashboard resource path. A JSON client gets an
+			// explicit 404; a browser gets the SPA shell.
+			if wantsResourceJSON(r) {
+				writeProblem(w, http.StatusNotFound, "not a glimmung dashboard resource path")
+				return
+			}
+			plain(w, r)
+			return
+		}
+		if wantsResourceJSON(r) {
+			serveDashboardResourceJSON(w, r, store, addr)
+			return
+		}
+		if !addrHasRunCycle(addr) {
 			plain(w, r)
 			return
 		}
@@ -155,13 +136,14 @@ func serveSPAWithOG(settings Settings, store ReadStore) http.HandlerFunc {
 			plain(w, r)
 			return
 		}
-		report, err := runStore.GetRunReportByNumber(r.Context(), match.project, match.issueNumber, match.runSlug)
+		runDisplay := addr.RunCycle.String()
+		report, err := runStore.GetRunReportByNumber(r.Context(), addr.Project, addr.IssueNumber, runDisplay)
 		if err != nil {
 			// Unknown run — let the SPA render its own 404 surface.
 			plain(w, r)
 			return
 		}
-		tags := buildRunOGTags(r, match, report)
+		tags := buildRunOGTags(r, addr.Project, addr.IssueNumber, runDisplay, report)
 		patched := injectOGTags(raw, tags)
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-cache")
@@ -174,21 +156,21 @@ func serveSPAWithOG(settings Settings, store ReadStore) http.HandlerFunc {
 // og:image points at the PNG image surface served by runOGImagePNG.
 // Discord (and a few other unfurlers) only rasterise PNG/JPEG/GIF/WEBP
 // and silently drop SVG, which is why PNG is the only format we serve.
-func buildRunOGTags(r *http.Request, match runURLMatch, report RunReport) string {
+func buildRunOGTags(r *http.Request, project string, issueNumber int, runDisplay string, report RunReport) string {
 	base := externalBaseURL(r)
 	pageURL := base + r.URL.Path
 	imageURL := base + path.Join(
 		"/og/runs",
-		url.PathEscape(match.project),
-		strconv.Itoa(match.issueNumber),
-		url.PathEscape(match.runSlug)+".png",
+		url.PathEscape(project),
+		strconv.Itoa(issueNumber),
+		url.PathEscape(runDisplay)+".png",
 	)
 
 	workflow := report.Workflow
 	if workflow == "" {
 		workflow = "run"
 	}
-	title := fmt.Sprintf("%s · %s #%d · run %s", workflow, match.project, match.issueNumber, match.runSlug)
+	title := fmt.Sprintf("%s · %s #%d · run %s", workflow, project, issueNumber, runDisplay)
 
 	descParts := []string{
 		fmt.Sprintf("state: %s", orUnknown(report.State)),

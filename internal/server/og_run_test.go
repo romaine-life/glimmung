@@ -11,69 +11,6 @@ import (
 	"time"
 )
 
-func TestMatchRunURL(t *testing.T) {
-	t.Parallel()
-	cases := []struct {
-		name      string
-		path      string
-		wantOK    bool
-		wantProj  string
-		wantIssue int
-		wantSlug  string
-	}{
-		{
-			name:      "issue-scoped run",
-			path:      "/projects/glimmung/issues/141/runs/3",
-			wantOK:    true,
-			wantProj:  "glimmung",
-			wantIssue: 141,
-			wantSlug:  "3",
-		},
-		{
-			name:      "issue-scoped run with cycle suffix",
-			path:      "/projects/glimmung/issues/141/runs/3/cycles/2",
-			wantOK:    true,
-			wantProj:  "glimmung",
-			wantIssue: 141,
-			wantSlug:  "3",
-		},
-		{
-			name:      "escaped project name",
-			path:      "/projects/tank-operator/issues/22/runs/1",
-			wantOK:    true,
-			wantProj:  "tank-operator",
-			wantIssue: 22,
-			wantSlug:  "1",
-		},
-		{
-			name:   "unrelated path",
-			path:   "/projects/glimmung/issues/141",
-			wantOK: false,
-		},
-		{
-			name:   "root",
-			path:   "/",
-			wantOK: false,
-		},
-	}
-	for _, tc := range cases {
-		tc := tc
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			got, ok := matchRunURL(tc.path)
-			if ok != tc.wantOK {
-				t.Fatalf("ok=%v want=%v (match=%+v)", ok, tc.wantOK, got)
-			}
-			if !ok {
-				return
-			}
-			if got.project != tc.wantProj || got.issueNumber != tc.wantIssue || got.runSlug != tc.wantSlug {
-				t.Fatalf("got=%+v want project=%q issue=%d slug=%q", got, tc.wantProj, tc.wantIssue, tc.wantSlug)
-			}
-		})
-	}
-}
-
 func TestInjectOGTags(t *testing.T) {
 	t.Parallel()
 	html := []byte(`<!doctype html><html><head><title>glimmung</title></head><body></body></html>`)
@@ -198,7 +135,7 @@ func TestServeSPAWithOGInjectsRunTags(t *testing.T) {
 	handler := NewWithStore(Settings{StaticDir: dir}, store)
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/projects/glimmung/issues/141/runs/1", nil)
+	req := httptest.NewRequest(http.MethodGet, "/projects/glimmung/issues/141/runs/9/cycles/1", nil)
 	req.Host = "glimmung.example"
 	req.Header.Set("X-Forwarded-Proto", "https")
 	handler.ServeHTTP(rec, req)
@@ -209,13 +146,14 @@ func TestServeSPAWithOGInjectsRunTags(t *testing.T) {
 	body := rec.Body.String()
 	wantSnippets := []string{
 		`<meta property="og:type" content="article">`,
-		`<meta property="og:title" content="default · glimmung #141 · run 1">`,
+		`<meta property="og:title" content="default · glimmung #141 · run 9.1">`,
 		// og:image points at the PNG variant so Discord and other
-		// strictly-raster unfurlers render the picture.
-		`<meta property="og:image" content="https://glimmung.example/og/runs/glimmung/141/1.png">`,
+		// strictly-raster unfurlers render the picture. The run is addressed
+		// by its canonical dotted run.cycle number, not the raw URL segment.
+		`<meta property="og:image" content="https://glimmung.example/og/runs/glimmung/141/9.1.png">`,
 		`<meta property="og:image:type" content="image/png">`,
 		`<meta name="twitter:card" content="summary_large_image">`,
-		`<meta name="twitter:image" content="https://glimmung.example/og/runs/glimmung/141/1.png">`,
+		`<meta name="twitter:image" content="https://glimmung.example/og/runs/glimmung/141/9.1.png">`,
 	}
 	for _, snip := range wantSnippets {
 		if !strings.Contains(body, snip) {
@@ -255,7 +193,7 @@ func TestServeSPAWithOGFallsBackOnRunLookupError(t *testing.T) {
 	handler := NewWithStore(Settings{StaticDir: dir}, store)
 
 	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/projects/glimmung/issues/999/runs/1", nil))
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/projects/glimmung/issues/999/runs/9/cycles/1", nil))
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
