@@ -2003,8 +2003,16 @@ function projectRunLabel(run: ProjectRun, runs: ProjectRun[]): string {
 }
 
 function projectRunSlug(run: ProjectRun, runs: ProjectRun[]): string {
+  // Canonical run-cycle address (run.cycle), never the flat cycle ledger
+  // (cycle_number) — the ledger is a display value and the abort/graph routes
+  // reject it.
   if (run.run_display_number) return run.run_display_number;
-  if (run.cycle_number !== null && run.cycle_number !== undefined) return String(run.cycle_number);
+  if (
+    run.run_number !== null && run.run_number !== undefined &&
+    run.run_cycle_number !== null && run.run_cycle_number !== undefined
+  ) {
+    return `${run.run_number}.${run.run_cycle_number}`;
+  }
   return projectRunLabel(run, runs).replace(/^cycle\s+/, "").replace(/^#/, "");
 }
 
