@@ -13,7 +13,7 @@ function AdminPanel({ projects, onClose }) {
       {tab === "project" && (
         <form className="admin-form" onSubmit={e => { e.preventDefault(); onClose && onClose(); }}>
           <Field label="name"><input type="text" placeholder="spirelens" /></Field>
-          <Field label="github_repo"><input type="text" className="mono" placeholder="nelsong6/spirelens" /></Field>
+          <Field label="github_repo"><input type="text" className="mono" placeholder="romaine-life/spirelens" /></Field>
           <Button type="submit">register project</Button>
         </form>
       )}

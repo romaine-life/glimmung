@@ -104,7 +104,7 @@ k8sSaAuth:
 # wildcards (https://*.<record_base>) in the managed_origin store. Inbound
 # auth on the admin surface is a projected SA token with audience scoped
 # to auth.romaine.life; the deployment mounts that token below. See
-# nelsong6/glimmung#142 stage 2.
+# romaine-life/glimmung#142 stage 2.
 authRomaineLife:
   baseUrl: https://auth.romaine.life
   # In-pod mount path for the projected SA token. The token file lands

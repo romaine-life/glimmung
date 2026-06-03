@@ -9,7 +9,7 @@ import { ISSUE_DETAIL_CHILD_ROUTES } from "./routes";
 const issueDetail = {
   ref: "ambience#172",
   project: "ambience",
-  repo: "nelsong6/ambience",
+  repo: "romaine-life/ambience",
   number: 172,
   title: "Effect: Distant storm at sea horizon",
   body: "storm",
@@ -229,7 +229,7 @@ const runtimeContext = {
     },
     projects: [{
       name: "ambience",
-      github_repo: "nelsong6/ambience",
+      github_repo: "romaine-life/ambience",
       metadata: {
         agent_runtime: {
           policy: { default: { mode: "inherit" } },

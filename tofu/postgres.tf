@@ -2,7 +2,7 @@
 # Azure Database for PostgreSQL — Flexible Server
 # ============================================================================
 # Glimmung's durable store. Mirrors the tank-operator pattern established in
-# nelsong6/tank-operator#466: same SKU shape, same AAD-via-UAMI auth model,
+# romaine-life/tank-operator#466: same SKU shape, same AAD-via-UAMI auth model,
 # same break-glass-password-in-KV escape hatch.
 #
 # Sized for glimmung's workload: B1ms (1 vCore burstable, 2 GiB RAM), single

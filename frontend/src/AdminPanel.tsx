@@ -75,7 +75,7 @@ function ProjectForm({ onSuccess }: { onSuccess: () => void }) {
         <input
           value={githubRepo}
           onChange={(e) => setGithubRepo(e.target.value)}
-          placeholder="nelsong6/spirelens"
+          placeholder="romaine-life/spirelens"
           required
         />
       </label>

@@ -19,7 +19,7 @@ when it is not.
 - `internal/server/route_inventory_test.go` owns the explicit route inventory.
 - `docs/mcp-surface-rollout.md` owns rollout sequencing for MCP-used route
   changes.
-- `nelsong6/mcp-glimmung` owns the session-facing MCP tool schema for HTTP
+- `romaine-life/mcp-glimmung` owns the session-facing MCP tool schema for HTTP
   actions exposed to agents.
 - GitHub webhook delivery is an input only; canonical run-state transitions
   flow through Glimmung issues, runs, callbacks, signals, and reports.

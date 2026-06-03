@@ -37,7 +37,7 @@ email allowlist.
 ## Hostnames
 
 auth.romaine.life's `trustedOrigins` covers glimmung's slot pool via the
-wildcard `https://*.glimmung.dev.romaine.life` (see nelsong6/auth#20), so new
+wildcard `https://*.glimmung.dev.romaine.life` (see romaine-life/auth#20), so new
 slots don't need any Entra-side registration — just route the hostname at the
 repo-specific validation environment.
 

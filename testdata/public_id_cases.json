@@ -32,16 +32,16 @@
   {
     "name": "touchpoint with number",
     "function": "touchpoint_ref",
-    "repo": "nelsong6/ambience",
+    "repo": "romaine-life/ambience",
     "number": 42,
-    "want": "nelsong6/ambience#42"
+    "want": "romaine-life/ambience#42"
   },
   {
     "name": "touchpoint without number",
     "function": "touchpoint_ref",
-    "repo": "nelsong6/ambience",
+    "repo": "romaine-life/ambience",
     "number": null,
-    "want": "nelsong6/ambience"
+    "want": "romaine-life/ambience"
   },
   {
     "name": "lease slot wins",

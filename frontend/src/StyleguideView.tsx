@@ -515,7 +515,7 @@ const DESIGN_FILE_ITEMS: PortfolioItem[] = [
       <Specimen title="project workspace">
         <div className="project-info">
           <div className="row"><span className="key">project</span><span className="val mono">glimmung</span></div>
-          <div className="row"><span className="key">github</span><span className="val mono">nelsong6/glimmung</span></div>
+          <div className="row"><span className="key">github</span><span className="val mono">romaine-life/glimmung</span></div>
           <div className="row"><span className="key">work</span><span className="val mono">1 active</span></div>
           <div className="row"><span className="key">executor</span><span className="val mono">native k8s jobs</span></div>
         </div>

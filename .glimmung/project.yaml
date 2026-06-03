@@ -14,7 +14,7 @@
 # A full sync replaces authored config wholesale, so this document must carry
 # EVERY authored field — a partial file would drop the others.
 name: glimmung
-github_repo: nelsong6/glimmung
+github_repo: romaine-life/glimmung
 metadata:
   # Warmed standby DNS records for test slots.
   native_standby_dns:

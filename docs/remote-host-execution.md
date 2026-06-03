@@ -3,7 +3,7 @@
 Some workloads cannot be modeled as a Glimmung-managed Kubernetes Job in the
 cluster: they need access to a stateful, host-pinned, scarce resource that
 lives outside Glimmung's cluster. The canonical example is a desktop-game mod
-(`nelsong6/spirelens`) whose verify loop requires a warm copy of the game
+(`romaine-life/spirelens`) whose verify loop requires a warm copy of the game
 installed on a specific physical machine. Re-running the warm-state setup per
 attempt is impractical; running the verify on a hosted cloud runner is
 impossible because the game install is not available there.
@@ -313,7 +313,7 @@ auth.romaine.life side must therefore allowlist `glimmung/infra-shared` for:
 - the **ssh-cert exchange** (`POST /api/auth/exchange/ssh-cert`) — caller SA
   allowlist; and
 - the **federation exchange** (`POST /api/auth/exchange/federation`, added in
-  `nelsong6/auth#63`) — `K8S_FEDERATION_SA_ALLOWLIST`, plus `api.tailscale.com/*`
+  `romaine-life/auth#63`) — `K8S_FEDERATION_SA_ALLOWLIST`, plus `api.tailscale.com/*`
   in `FEDERATION_AUDIENCE_ALLOWLIST`.
 
 ## Runner-image surface

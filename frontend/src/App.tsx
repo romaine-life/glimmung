@@ -1523,7 +1523,7 @@ function ProjectOnboardingView({ signedIn }: LayoutContext) {
           </label>
           <label>
             <span>Repository</span>
-            <input value={githubRepo} onChange={(e) => setGithubRepo(e.target.value)} placeholder="nelsong6/ambience" required />
+            <input value={githubRepo} onChange={(e) => setGithubRepo(e.target.value)} placeholder="romaine-life/ambience" required />
           </label>
           <label>
             <span>App type</span>

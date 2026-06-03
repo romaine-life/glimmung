@@ -169,7 +169,7 @@ the `playwright` package version in `mcp-glimmung` before changing either side.
 
 ### MCP Checkout Surface
 
-`nelsong6/mcp-glimmung` exposes `checkout_test_slot` as the session-facing MCP
+`romaine-life/mcp-glimmung` exposes `checkout_test_slot` as the session-facing MCP
 wrapper for `POST /v1/test-slots/checkout`. Its tool signature must match the
 HTTP request contract: project identity, requester/Tank session identity,
 optional workflow, and optional TTL only.

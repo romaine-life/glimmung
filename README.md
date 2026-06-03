@@ -19,7 +19,7 @@ Native Kubernetes jobs are the execution layer for managed workflow phases.
 Apps should not register app-specific GitHub runner pools or keep repo-backed
 workflow files as the runtime source of truth.
 
-Full design + intent: [issue #1](https://github.com/nelsong6/glimmung/issues/1).
+Full design + intent: [issue #1](https://github.com/romaine-life/glimmung/issues/1).
 
 ## Mental model
 
@@ -107,7 +107,7 @@ matching surface in the same PR:
 - Add or update the frontend affordance when the action belongs in the
   dashboard.
 - Add or update the matching tool in
-  [`nelsong6/mcp-glimmung`](https://github.com/nelsong6/mcp-glimmung) when the
+  [`romaine-life/mcp-glimmung`](https://github.com/romaine-life/mcp-glimmung) when the
   action should be available to LLM/session callers.
 - When an HTTP request schema changes, update the MCP tool signature,
   docstring, and payload tests in the same rollout. A server-side rejection is
@@ -189,7 +189,7 @@ auth service completes the Microsoft handshake under a single org-wide app
 reg, and 302s back to the slot.
 
 The trustedOrigins allowlist for slot hostnames is **owned by glimmung**,
-not statically listed in `nelsong6/auth` source. Each project that opts in
+not statically listed in `romaine-life/auth` source. Each project that opts in
 sets `managed_auth_origins.enabled=true` in its project metadata;
 glimmung's reconciler (`internal/server/managed_origins.go`) derives the
 wildcard mechanically from `native_standby_dns.record_base`
@@ -197,9 +197,9 @@ wildcard mechanically from `native_standby_dns.record_base`
 `auth.romaine.life/api/admin/origins/{project}` via the projected SA
 token mounted with `audience: https://auth.romaine.life`. The wildcard
 unions into Better Auth's `trustedOrigins` and Hono's CORS allowlist on
-`/api/auth/*` at request time (60s in-process cache). See nelsong6/glimmung#142
+`/api/auth/*` at request time (60s in-process cache). See romaine-life/glimmung#142
 for the full architecture; auth's CI guard
-(`nelsong6/auth/scripts/check-static-slot-origins.mjs`) prevents any
+(`romaine-life/auth/scripts/check-static-slot-origins.mjs`) prevents any
 project-specific slot wildcard from being re-added to auth source.
 
 Reconciliation triggers on `scaleProjectTestEnvironments`,
@@ -508,7 +508,7 @@ requests and HTTP >= 400 responses, optional accessibility data, optional
 screenshot path, and canvas nonblank sampling. Use it when rendered browser
 state matters more than a static screenshot alone.
 
-The attended-pickup launch flow ([#127](https://github.com/nelsong6/glimmung/issues/127))
+The attended-pickup launch flow ([#127](https://github.com/romaine-life/glimmung/issues/127))
 is dogfooded against real Glimmung PR rows: a Glimmung run produces an
 actual PR in this repo, and that PR is the fixture used to exercise the
 `start Tank session` flow before #127 can close. The launch URL hands the
@@ -522,7 +522,7 @@ Glimmung-as-orchestrator wedge: when a verify phase fails, glimmung launches
 the configured native recycle phase with the prior verification context,
 repeating until verification passes, attempt count exceeds N, or cumulative
 cost exceeds $X. The substrate that lands here is reused by every other
-[meta #17](https://github.com/nelsong6/glimmung/issues/17) child.
+[meta #17](https://github.com/romaine-life/glimmung/issues/17) child.
 
 ### Opting a workflow in
 
@@ -677,5 +677,5 @@ live in [`docs/go-runtime-cleanup-inventory.md`](docs/go-runtime-cleanup-invento
 1. **Phase 1** ✓ — lease primitive, sweep job, initial durable backend.
 2. **Phase 2** ✓ — GitHub App webhook receiver, ingress at `glimmung.romaine.life`, Entra ID auth on admin endpoints.
 3. **Phase 3** ✓ — Dashboard with SSE, project side pane, workflow as first-class abstraction, MSAL sign-in + admin panel.
-4. **Phase 2.5** ✓ — Migrate spirelens `issue-agent.yaml` to consume glimmung leases. (Numbered out of order; see [glimmung issue #2](https://github.com/nelsong6/glimmung/issues/2) for the build order that actually happened.)
+4. **Phase 2.5** ✓ — Migrate spirelens `issue-agent.yaml` to consume glimmung leases. (Numbered out of order; see [glimmung issue #2](https://github.com/romaine-life/glimmung/issues/2) for the build order that actually happened.)
 5. **Phase 4** — Native-runner grounding, dashboard cancel/preempt, and project migrations onto the single native lease path.
