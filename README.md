@@ -423,12 +423,42 @@ KV-resident SSH CA key or Tailscale client secret is needed. The Tailscale
 OIDC trust credential ID lives in `k8s/values.yaml`
 (`remoteHost.tailscaleOidcClientId`), since it is not secret.
 
-The GitHub App is created via the GitHub UI — one webhook URL per App means glimmung needs its own (the shared `github-app-*` keys still serve mcp-github / diagrams). Configure the App with:
+The GitHub App is created with the GitHub App manifest flow. One webhook URL
+per App means glimmung needs its own app; do not co-tenant it on Tank, ArgoCD,
+or a generic host app. Do not rely on settings page query parameters for
+webhook events; GitHub can ignore them silently.
 
-- Webhook URL: `https://glimmung.romaine.life/v1/webhook/github`
-- Subscribe to events: **Issues**, **Workflow runs**
-- Permissions: Actions `read+write`, Issues `read`, Metadata `read`
-- Install on whichever repos use it
+```json
+{
+  "name": "romaine-life-glimmung",
+  "url": "https://glimmung.romaine.life",
+  "hook_attributes": {
+    "url": "https://glimmung.romaine.life/v1/webhook/github"
+  },
+  "redirect_url": "http://localhost:9/github-app-manifest-callback",
+  "public": false,
+  "default_permissions": {
+    "actions": "write",
+    "contents": "write",
+    "issues": "write",
+    "metadata": "read",
+    "pull_requests": "write"
+  },
+  "default_events": [
+    "issues",
+    "pull_request",
+    "pull_request_review",
+    "pull_request_review_comment",
+    "pull_request_review_thread",
+    "workflow_run"
+  ]
+}
+```
+
+Install it on whichever `romaine-life` repositories use Glimmung. After
+creation, write the app id, installation id, and private key into the
+`glimmung-github-*` Key Vault secrets, and set the app webhook secret to
+`glimmung-github-webhook-secret`.
 
 ## Admin (dashboard)
 
