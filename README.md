@@ -496,7 +496,7 @@ local app setup, or repo-local ops CLI. Use the MCP `inspect_browser_url` tool,
 or run the same implementation from the standalone repo:
 
 ```sh
-git clone https://github.com/nelsong6/mcp-glimmung.git
+git clone https://github.com/romaine-life/mcp-glimmung.git
 cd mcp-glimmung
 uv run glimmung-browser-inspect https://example.romaine.life \
   --width 1440 --height 900 --wait-ms 2000 --screenshot

@@ -131,7 +131,7 @@ func TestApplyTestSlotHotSwapHappyPathResolves(t *testing.T) {
 		t.Fatalf("performer TargetNamespace = %q, want tank-operator-slot-1-sessions", seen.TargetNamespace)
 	}
 	// RepoURL derived from project.github_repo
-	if seen.RepoURL != "https://github.com/nelsong6/tank-operator.git" {
+	if seen.RepoURL != "https://github.com/romaine-life/tank-operator.git" {
 		t.Fatalf("performer RepoURL = %q", seen.RepoURL)
 	}
 	// Contract.AgentRunner.BuilderImage flowed through

@@ -59,7 +59,7 @@ func TestApplyHotSwapHappyPathDispatchesJob(t *testing.T) {
 		Project:          "tank-operator",
 		ArtifactKind:     "agent_runner",
 		GitRef:           "feat/x",
-		RepoURL:          "https://github.com/nelsong6/tank-operator.git",
+		RepoURL:          "https://github.com/romaine-life/tank-operator.git",
 		TargetNamespace:  "tank-operator-slot-1-sessions",
 		ValidationTarget: "new_session",
 		JobNamespace:     "glimmung",
@@ -134,7 +134,7 @@ func TestApplyHotSwapCodexRunnerDispatchesJob(t *testing.T) {
 		Project:         "tank-operator",
 		ArtifactKind:    "codex_runner",
 		GitRef:          "feat/codex",
-		RepoURL:         "https://github.com/nelsong6/tank-operator.git",
+		RepoURL:         "https://github.com/romaine-life/tank-operator.git",
 		TargetNamespace: "tank-operator-slot-1-sessions",
 		JobNamespace:    "glimmung",
 		Timeout:         30 * time.Second,
@@ -188,7 +188,7 @@ func TestApplyHotSwapGeminiRunnerDispatchesJob(t *testing.T) {
 		Project:         "tank-operator",
 		ArtifactKind:    "gemini_runner",
 		GitRef:          "feat/gemini",
-		RepoURL:         "https://github.com/nelsong6/tank-operator.git",
+		RepoURL:         "https://github.com/romaine-life/tank-operator.git",
 		TargetNamespace: "tank-operator-slot-1-sessions",
 		JobNamespace:    "glimmung",
 		Timeout:         30 * time.Second,
@@ -257,7 +257,7 @@ func TestApplyHotSwapRejectsMissingBuilderImage(t *testing.T) {
 	_, err := ApplyHotSwap(context.Background(), k8s, ApplyHotSwapOptions{
 		ArtifactKind:    "agent_runner",
 		TargetNamespace: "ns",
-		RepoURL:         "https://github.com/nelsong6/tank-operator.git",
+		RepoURL:         "https://github.com/romaine-life/tank-operator.git",
 		Contract: hotswap.Contract{
 			Enabled:     true,
 			AgentRunner: hotswap.AgentRunnerContract{Enabled: true /* BuilderImage empty */},
@@ -281,7 +281,7 @@ func TestApplyHotSwapJobFailureSurfacesLogs(t *testing.T) {
 	result, err := ApplyHotSwap(context.Background(), k8s, ApplyHotSwapOptions{
 		ArtifactKind:    "agent_runner",
 		GitRef:          "main",
-		RepoURL:         "https://github.com/nelsong6/tank-operator.git",
+		RepoURL:         "https://github.com/romaine-life/tank-operator.git",
 		TargetNamespace: "ns",
 		JobNamespace:    "glimmung",
 		Timeout:         30 * time.Second,
@@ -314,7 +314,7 @@ func TestApplyHotSwapJobTimeoutSurfaces(t *testing.T) {
 	result, _ := ApplyHotSwap(context.Background(), k8s, ApplyHotSwapOptions{
 		ArtifactKind:    "agent_runner",
 		GitRef:          "main",
-		RepoURL:         "https://github.com/nelsong6/tank-operator.git",
+		RepoURL:         "https://github.com/romaine-life/tank-operator.git",
 		TargetNamespace: "ns",
 		JobNamespace:    "glimmung",
 		Timeout:         30 * time.Second,
