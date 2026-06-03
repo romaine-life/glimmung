@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/nelsong6/glimmung/internal/domain/agentruntime"
+	"github.com/romaine-life/glimmung/internal/domain/agentruntime"
 )
 
 type IssueStore interface {

@@ -24,7 +24,7 @@ import (
 //   - `registerProject` / project metadata update → ReconcileManagedOrigins
 //   - project deregister → DeleteManagedOrigins
 //
-// See nelsong6/glimmung#142 stage 2 for the cross-repo architecture.
+// See romaine-life/glimmung#142 stage 2 for the cross-repo architecture.
 const (
 	ManagedAuthOriginStatusOK      = "ok"
 	ManagedAuthOriginStatusSkipped = "skipped"

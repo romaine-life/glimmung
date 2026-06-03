@@ -7,9 +7,9 @@ import (
 
 	"github.com/google/uuid"
 
-	pgstore "github.com/nelsong6/glimmung/internal/store/pg"
+	pgstore "github.com/romaine-life/glimmung/internal/store/pg"
 
-	"github.com/nelsong6/glimmung/internal/server"
+	"github.com/romaine-life/glimmung/internal/server"
 )
 
 // slotHistoryDoc is the on-the-wire shape for one slot_history entry.

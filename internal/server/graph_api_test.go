@@ -106,7 +106,7 @@ func TestIssueGraphByNumberBuildsRunAttemptAndTouchpointNodes(t *testing.T) {
 	runDisplay := "1"
 	now := time.Date(2026, 5, 12, 18, 0, 0, 0, time.UTC)
 	runRef := "glimmung#17/runs/1"
-	touchpointRef := "nelsong6/glimmung#452"
+	touchpointRef := "romaine-life/glimmung#452"
 	store := fakeGraphStore{
 		fakeReadStore: fakeReadStore{workflows: []Workflow{{
 			Project: "glimmung",
@@ -175,11 +175,11 @@ func TestIssueGraphByNumberBuildsRunAttemptAndTouchpointNodes(t *testing.T) {
 		touchpoints: []TouchpointRow{{
 			Ref:          touchpointRef,
 			Project:      "glimmung",
-			Repo:         "nelsong6/glimmung",
+			Repo:         "romaine-life/glimmung",
 			PRNumber:     452,
 			Title:        "graph port",
 			State:        "ready",
-			HTMLURL:      stringPtr("https://github.com/nelsong6/glimmung/pull/452"),
+			HTMLURL:      stringPtr("https://github.com/romaine-life/glimmung/pull/452"),
 			LinkedRunRef: stringPtr(runRef),
 			Evidence: []TouchpointEvidence{{
 				Kind:         "screenshot",
@@ -259,7 +259,7 @@ func TestIssueGraphByNumberBuildsRunAttemptAndTouchpointNodes(t *testing.T) {
 	assertProjectionEvidence(t, graph.Projection.Runs[0], "artifact", "blob://artifacts/glimmung/17/verification.json")
 	assertProjectionEvidence(t, graph.Projection.Runs[0], "log", "blob://artifacts/glimmung/17/native.log")
 	assertProjectionEvidence(t, graph.Projection.Runs[0], "screenshot", "blob://artifacts/runs/glimmung/run-1/screenshots/default.png")
-	assertProjectionEvidence(t, graph.Projection.Runs[0], "pull_request", "https://github.com/nelsong6/glimmung/pull/452")
+	assertProjectionEvidence(t, graph.Projection.Runs[0], "pull_request", "https://github.com/romaine-life/glimmung/pull/452")
 	if len(graph.Projection.Signals) != 1 || graph.Projection.Signals[0].Kind != "reject" {
 		t.Fatalf("projection signals=%#v", graph.Projection.Signals)
 	}

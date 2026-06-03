@@ -8,8 +8,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/nelsong6/glimmung/internal/auth"
-	"github.com/nelsong6/glimmung/internal/domain/budget"
+	"github.com/romaine-life/glimmung/internal/auth"
+	"github.com/romaine-life/glimmung/internal/domain/budget"
 )
 
 // fakeRunReplayStore extends fakeRunMutationStore with RunReplayStore methods.

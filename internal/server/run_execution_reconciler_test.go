@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nelsong6/glimmung/internal/domain/budget"
+	"github.com/romaine-life/glimmung/internal/domain/budget"
 )
 
 type fakeRunDispatchTimeoutStore struct {

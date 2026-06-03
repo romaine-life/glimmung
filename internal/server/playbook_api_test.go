@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nelsong6/glimmung/internal/auth"
+	"github.com/romaine-life/glimmung/internal/auth"
 )
 
 type fakePlaybookStore struct {

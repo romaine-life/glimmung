@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nelsong6/glimmung/internal/domain/hotswap"
+	"github.com/romaine-life/glimmung/internal/domain/hotswap"
 )
 
 type recordedCommand struct {
@@ -166,7 +166,7 @@ func TestApplyAgentJobAppliesRenderedJobJSON(t *testing.T) {
 		JobName:           "agent-1",
 		IssueNumber:       "42",
 		IssueTitle:        "do work",
-		IssueURL:          "https://github.com/nelsong6/glimmung/issues/42",
+		IssueURL:          "https://github.com/romaine-life/glimmung/issues/42",
 		ValidationURL:     "https://issue-42.example.test",
 		BranchName:        "glimmung/run-1",
 		ProxyIP:           "10.0.0.4",

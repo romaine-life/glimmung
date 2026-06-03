@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/nelsong6/glimmung/internal/domain/agentruntime"
-	"github.com/nelsong6/glimmung/internal/domain/hotswap"
+	"github.com/romaine-life/glimmung/internal/domain/agentruntime"
+	"github.com/romaine-life/glimmung/internal/domain/hotswap"
 )
 
 type ProjectWriter interface {
@@ -76,7 +76,7 @@ func registerProject(store ReadStore, managedOrigins ManagedOriginReconciler) ht
 		// project. Skipped when the project doesn't opt in via
 		// managed_auth_origins.enabled; failed status persists on the
 		// project row so dashboards surface the broken state. See
-		// nelsong6/glimmung#142 stage 2.
+		// romaine-life/glimmung#142 stage 2.
 		if updated, ok := reconcileManagedAuthOrigins(r.Context(), store, managedOrigins, project); ok {
 			project = updated
 		}

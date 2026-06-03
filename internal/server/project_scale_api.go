@@ -163,7 +163,7 @@ func scaleProjectTestEnvironments(store ReadStore, workloadIdentities NativeWork
 		// row but does not abort the scale operation — slots are already
 		// reconciled at this point; broken sign-in is a softer failure
 		// than a half-scaled project.
-		// See nelsong6/glimmung#142 stage 2.
+		// See romaine-life/glimmung#142 stage 2.
 		if managedOrigins != nil {
 			originStatus, originErr := managedOrigins.ReconcileManagedOrigins(r.Context(), updated)
 			if originStatus.State != "" && originStatus.State != ManagedAuthOriginStatusSkipped {

@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nelsong6/glimmung/internal/auth"
+	"github.com/romaine-life/glimmung/internal/auth"
 )
 
 func newApplyHotSwapStore(t *testing.T) *fakeLeaseStore {
@@ -20,7 +20,7 @@ func newApplyHotSwapStore(t *testing.T) *fakeLeaseStore {
 			projects: []Project{
 				{
 					Name:       "tank-operator",
-					GitHubRepo: "nelsong6/tank-operator",
+					GitHubRepo: "romaine-life/tank-operator",
 					Metadata: map[string]any{
 						"test_slot_hot_swap": map[string]any{
 							"enabled": true,

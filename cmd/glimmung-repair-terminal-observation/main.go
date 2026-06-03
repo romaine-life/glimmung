@@ -13,9 +13,9 @@ import (
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 
-	"github.com/nelsong6/glimmung/internal/server"
-	pgstore "github.com/nelsong6/glimmung/internal/store/pg"
-	storewrap "github.com/nelsong6/glimmung/internal/store/store"
+	"github.com/romaine-life/glimmung/internal/server"
+	pgstore "github.com/romaine-life/glimmung/internal/store/pg"
+	storewrap "github.com/romaine-life/glimmung/internal/store/store"
 )
 
 type repairOutput struct {

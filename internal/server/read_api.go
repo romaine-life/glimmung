@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/nelsong6/glimmung/internal/domain/budget"
-	"github.com/nelsong6/glimmung/internal/metrics"
+	"github.com/romaine-life/glimmung/internal/domain/budget"
+	"github.com/romaine-life/glimmung/internal/metrics"
 )
 
 type ReadStore interface {

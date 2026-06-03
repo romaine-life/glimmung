@@ -19,7 +19,7 @@ const (
 	ImageRepository = "glimmung"
 	ProdNamespace   = "glimmung"
 	IssueChartPath  = "k8s/issue"
-	RepoSlugDefault = "nelsong6/glimmung"
+	RepoSlugDefault = "romaine-life/glimmung"
 )
 
 type Ops struct {

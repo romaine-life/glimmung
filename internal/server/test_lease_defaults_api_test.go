@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nelsong6/glimmung/internal/auth"
+	"github.com/romaine-life/glimmung/internal/auth"
 )
 
 func TestUpdateGlobalTestLeaseDefaultTTL(t *testing.T) {

@@ -50,7 +50,7 @@ func TestListProjectRuns(t *testing.T) {
 		RunNumber:         intPtr(1),
 		Workflow:          "default",
 		IssueRef:          "glimmung#141",
-		IssueRepo:         stringPtr("nelsong6/glimmung"),
+		IssueRepo:         stringPtr("romaine-life/glimmung"),
 		IssueNumber:       141,
 		State:             "in_progress",
 		AttemptsCount:     0,

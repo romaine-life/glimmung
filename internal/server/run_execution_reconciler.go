@@ -13,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/nelsong6/glimmung/internal/metrics"
+	"github.com/romaine-life/glimmung/internal/metrics"
 )
 
 const defaultRunDispatchTimeoutSeconds = 600

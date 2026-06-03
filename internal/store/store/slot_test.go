@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nelsong6/glimmung/internal/server"
+	"github.com/romaine-life/glimmung/internal/server"
 )
 
 // selectReadySlotIndices is the pure-function form of the slot-eligibility

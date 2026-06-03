@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nelsong6/glimmung/internal/domain/agentruntime"
+	"github.com/romaine-life/glimmung/internal/domain/agentruntime"
 )
 
 func TestNativeJobManifestIncludesRunnerCallbackEnv(t *testing.T) {
@@ -581,7 +581,7 @@ func TestReturnTestSlotRuntimeUninstallsHelmRuntimeRelease(t *testing.T) {
 	}
 	project := Project{
 		Name:       "tank-operator",
-		GitHubRepo: "nelsong6/tank-operator",
+		GitHubRepo: "romaine-life/tank-operator",
 		Metadata:   map[string]any{"test_slot_helm": map[string]any{"enabled": true}},
 	}
 
@@ -649,7 +649,7 @@ func TestReturnTestSlotRuntimeRetiresTankSessionScopeBeforeHelmUninstall(t *test
 	}
 	project := Project{
 		Name:       "tank-operator",
-		GitHubRepo: "nelsong6/tank-operator",
+		GitHubRepo: "romaine-life/tank-operator",
 		Metadata:   map[string]any{"test_slot_helm": map[string]any{"enabled": true}},
 	}
 	ctx := contextWithTankSessionScopeRetireAuth(context.Background(), "Bearer caller-jwt")
@@ -731,7 +731,7 @@ func TestReturnTestSlotRuntimeExchangesServiceTokenWhenCallerAuthMissing(t *test
 	}
 	project := Project{
 		Name:       "tank-operator",
-		GitHubRepo: "nelsong6/tank-operator",
+		GitHubRepo: "romaine-life/tank-operator",
 		Metadata:   map[string]any{"test_slot_helm": map[string]any{"enabled": true}},
 	}
 
@@ -838,7 +838,7 @@ func TestEnsureTestSlotPreliminariesRunsWarmHelmOnly(t *testing.T) {
 	}
 	project := Project{
 		Name:       "tank-operator",
-		GitHubRepo: "nelsong6/tank-operator",
+		GitHubRepo: "romaine-life/tank-operator",
 		Metadata:   map[string]any{"test_slot_helm": map[string]any{"enabled": true}},
 	}
 
@@ -890,7 +890,7 @@ func TestEnsureTestSlotPreliminariesRequiresMinterForWarmHelm(t *testing.T) {
 	}
 	project := Project{
 		Name:       "tank-operator",
-		GitHubRepo: "nelsong6/tank-operator",
+		GitHubRepo: "romaine-life/tank-operator",
 		Metadata:   map[string]any{"test_slot_helm": map[string]any{"enabled": true}},
 	}
 
@@ -938,7 +938,7 @@ func TestActivateTestSlotRuntimeRunsHelmInstallerAfterLeaseAssignment(t *testing
 	}
 	project := Project{
 		Name:       "tank-operator",
-		GitHubRepo: "nelsong6/tank-operator",
+		GitHubRepo: "romaine-life/tank-operator",
 		Metadata:   map[string]any{"test_slot_helm": map[string]any{"enabled": true}},
 	}
 
@@ -1005,7 +1005,7 @@ func TestActivateTestSlotRuntimeCreatesReadyPlaywrightRuntime(t *testing.T) {
 	}
 	project := Project{
 		Name:       "tank-operator",
-		GitHubRepo: "nelsong6/tank-operator",
+		GitHubRepo: "romaine-life/tank-operator",
 		Metadata:   map[string]any{"test_slot_helm": map[string]any{"enabled": true}},
 	}
 
@@ -1144,7 +1144,7 @@ func TestTestSlotHelmConfigDefaultsTankChart(t *testing.T) {
 	config, ok := testSlotHelmConfig(Project{
 		ID:         "tank-operator",
 		Name:       "tank-operator",
-		GitHubRepo: "nelsong6/tank-operator",
+		GitHubRepo: "romaine-life/tank-operator",
 		Metadata: map[string]any{
 			"test_slot_helm": map[string]any{"enabled": true},
 		},
@@ -1178,7 +1178,7 @@ func TestTestSlotInstallJobManifestRendersHelmApplyJob(t *testing.T) {
 	}
 	project := Project{
 		Name:       "tank-operator",
-		GitHubRepo: "nelsong6/tank-operator",
+		GitHubRepo: "romaine-life/tank-operator",
 		Metadata: map[string]any{
 			"native_standby_dns": map[string]any{
 				"record_base": "tank.dev.romaine.life",
@@ -1206,7 +1206,7 @@ func TestTestSlotInstallJobManifestRendersHelmApplyJob(t *testing.T) {
 	if strings.Contains(initScript, "ghs_") {
 		t.Fatalf("clone script should not contain token: %s", initScript)
 	}
-	if !strings.Contains(initScript, "nelsong6/tank-operator") {
+	if !strings.Contains(initScript, "romaine-life/tank-operator") {
 		t.Fatalf("clone script missing repo: %s", initScript)
 	}
 	installScript := spec["containers"].([]any)[0].(map[string]any)["command"].([]string)[2]

@@ -16,7 +16,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/nelsong6/glimmung/internal/metrics"
+	"github.com/romaine-life/glimmung/internal/metrics"
 )
 
 // Inspection upload size caps. The screenshot bound mirrors typical

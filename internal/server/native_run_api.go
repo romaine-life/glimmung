@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/nelsong6/glimmung/internal/metrics"
+	"github.com/romaine-life/glimmung/internal/metrics"
 )
 
 // NativeRunStore handles native k8s_job runner event recording and status.

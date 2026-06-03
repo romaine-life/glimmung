@@ -12,7 +12,7 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/policy"
 
-	"github.com/nelsong6/glimmung/internal/server"
+	"github.com/romaine-life/glimmung/internal/server"
 )
 
 type fakeTokenCredential struct{}

@@ -1,4 +1,4 @@
-module github.com/nelsong6/glimmung
+module github.com/romaine-life/glimmung
 
 go 1.25.0
 

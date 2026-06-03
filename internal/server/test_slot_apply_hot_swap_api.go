@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/nelsong6/glimmung/internal/domain/hotswap"
+	"github.com/romaine-life/glimmung/internal/domain/hotswap"
 )
 
 // applyHotSwapTimeoutDefault is the server-side default when the caller

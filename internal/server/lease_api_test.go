@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nelsong6/glimmung/internal/auth"
+	"github.com/romaine-life/glimmung/internal/auth"
 )
 
 type fakeLeaseStore struct {

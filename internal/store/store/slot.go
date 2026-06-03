@@ -7,9 +7,9 @@ import (
 	"fmt"
 	"time"
 
-	pgstore "github.com/nelsong6/glimmung/internal/store/pg"
+	pgstore "github.com/romaine-life/glimmung/internal/store/pg"
 
-	"github.com/nelsong6/glimmung/internal/server"
+	"github.com/romaine-life/glimmung/internal/server"
 )
 
 // slotDoc is the JSON payload stored in the pg slots table.

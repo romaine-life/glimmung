@@ -51,7 +51,7 @@ const tailscaleAccessTokenSkew = 60 * time.Second
 const federationAudiencePrefix = "api.tailscale.com"
 
 // federationExchangePath is the auth.romaine.life endpoint that mints
-// custom-audience JWTs (added in nelsong6/auth#63). It accepts an
+// custom-audience JWTs (added in romaine-life/auth#63). It accepts an
 // inbound projected k8s SA token (audience = https://auth.romaine.life)
 // and returns an auth.romaine.life-signed JWT with the requested `aud`.
 const federationExchangePath = "/api/auth/exchange/federation"

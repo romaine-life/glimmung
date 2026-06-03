@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nelsong6/glimmung/internal/auth"
+	"github.com/romaine-life/glimmung/internal/auth"
 )
 
 type fakeProjectStore struct {
@@ -31,7 +31,7 @@ func (s *fakeProjectStore) UpsertProject(_ context.Context, req ProjectRegister)
 func TestRegisterProjectRequiresAdmin(t *testing.T) {
 	handler := NewWithDependencies(Settings{}, &fakeProjectStore{}, nil)
 	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/projects", strings.NewReader(`{"name":"ambience","github_repo":"nelsong6/ambience"}`)))
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/projects", strings.NewReader(`{"name":"ambience","github_repo":"romaine-life/ambience"}`)))
 
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status=%d, want 503", rec.Code)
@@ -43,7 +43,7 @@ func TestRegisterProjectUpsertsProject(t *testing.T) {
 	store := &fakeProjectStore{project: Project{
 		ID:         "ambience",
 		Name:       "ambience",
-		GitHubRepo: "nelsong6/ambience",
+		GitHubRepo: "romaine-life/ambience",
 		Metadata:   map[string]any{"tier": "app"},
 		CreatedAt:  created,
 	}}
@@ -54,12 +54,12 @@ func TestRegisterProjectUpsertsProject(t *testing.T) {
 	)
 
 	var project Project
-	postJSON(t, handler, "/v1/projects", `{"name":"ambience","github_repo":"nelsong6/ambience","argocd_app":"ignored","metadata":{"tier":"app"}}`, &project)
+	postJSON(t, handler, "/v1/projects", `{"name":"ambience","github_repo":"romaine-life/ambience","argocd_app":"ignored","metadata":{"tier":"app"}}`, &project)
 
-	if project.Name != "ambience" || project.GitHubRepo != "nelsong6/ambience" {
+	if project.Name != "ambience" || project.GitHubRepo != "romaine-life/ambience" {
 		t.Fatalf("project=%#v", project)
 	}
-	if store.req.Name != "ambience" || store.req.GitHubRepo != "nelsong6/ambience" {
+	if store.req.Name != "ambience" || store.req.GitHubRepo != "romaine-life/ambience" {
 		t.Fatalf("req=%#v", store.req)
 	}
 	if store.req.Metadata["tier"] != "app" {
@@ -92,7 +92,7 @@ func TestRegisterProjectRejectsInvalidHotSwapMetadata(t *testing.T) {
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/projects", strings.NewReader(`{
 		"name":"tank-operator",
-		"github_repo":"nelsong6/tank-operator",
+		"github_repo":"romaine-life/tank-operator",
 		"metadata":{"test_slot_hot_swap":{"enabled":true,"backend":{"enabled":true,"target":"/var/run/app-hot/app"}}}
 	}`)))
 
@@ -116,27 +116,27 @@ func TestRegisterProjectRejectsRetiredImageTagInTestSlotHelm(t *testing.T) {
 	}{
 		{
 			name: "values.image.tag flat",
-			body: `{"name":"glimmung","github_repo":"nelsong6/glimmung","metadata":{"test_slot_helm":{"enabled":true,"values":{"image.tag":"app-abc"}}}}`,
+			body: `{"name":"glimmung","github_repo":"romaine-life/glimmung","metadata":{"test_slot_helm":{"enabled":true,"values":{"image.tag":"app-abc"}}}}`,
 		},
 		{
 			name: "values.imageTag camelCase",
-			body: `{"name":"glimmung","github_repo":"nelsong6/glimmung","metadata":{"test_slot_helm":{"enabled":true,"values":{"imageTag":"app-abc"}}}}`,
+			body: `{"name":"glimmung","github_repo":"romaine-life/glimmung","metadata":{"test_slot_helm":{"enabled":true,"values":{"imageTag":"app-abc"}}}}`,
 		},
 		{
 			name: "values.image.tag nested",
-			body: `{"name":"glimmung","github_repo":"nelsong6/glimmung","metadata":{"test_slot_helm":{"enabled":true,"values":{"image":{"tag":"app-abc"}}}}}`,
+			body: `{"name":"glimmung","github_repo":"romaine-life/glimmung","metadata":{"test_slot_helm":{"enabled":true,"values":{"image":{"tag":"app-abc"}}}}}`,
 		},
 		{
 			name: "set_string_values.image.tag",
-			body: `{"name":"glimmung","github_repo":"nelsong6/glimmung","metadata":{"test_slot_helm":{"enabled":true,"set_string_values":{"image.tag":"app-abc"}}}}`,
+			body: `{"name":"glimmung","github_repo":"romaine-life/glimmung","metadata":{"test_slot_helm":{"enabled":true,"set_string_values":{"image.tag":"app-abc"}}}}`,
 		},
 		{
 			name: "setStringValues camelCase block",
-			body: `{"name":"glimmung","github_repo":"nelsong6/glimmung","metadata":{"test_slot_helm":{"enabled":true,"setStringValues":{"image.tag":"app-abc"}}}}`,
+			body: `{"name":"glimmung","github_repo":"romaine-life/glimmung","metadata":{"test_slot_helm":{"enabled":true,"setStringValues":{"image.tag":"app-abc"}}}}`,
 		},
 		{
 			name: "testSlotHelm camelCase top-level",
-			body: `{"name":"glimmung","github_repo":"nelsong6/glimmung","metadata":{"testSlotHelm":{"enabled":true,"values":{"image.tag":"app-abc"}}}}`,
+			body: `{"name":"glimmung","github_repo":"romaine-life/glimmung","metadata":{"testSlotHelm":{"enabled":true,"values":{"image.tag":"app-abc"}}}}`,
 		},
 	}
 	for _, tc := range cases {
@@ -161,7 +161,7 @@ func TestRegisterProjectRejectsRetiredImageTagInTestSlotHelm(t *testing.T) {
 
 func TestRegisterProjectAcceptsTestSlotHelmWithoutImageTag(t *testing.T) {
 	// Negative control: the same shape minus image.tag must pass.
-	store := &fakeProjectStore{project: Project{Name: "glimmung", GitHubRepo: "nelsong6/glimmung"}}
+	store := &fakeProjectStore{project: Project{Name: "glimmung", GitHubRepo: "romaine-life/glimmung"}}
 	handler := NewWithDependencies(
 		Settings{},
 		store,
@@ -170,7 +170,7 @@ func TestRegisterProjectAcceptsTestSlotHelmWithoutImageTag(t *testing.T) {
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/projects", strings.NewReader(`{
 		"name":"glimmung",
-		"github_repo":"nelsong6/glimmung",
+		"github_repo":"romaine-life/glimmung",
 		"metadata":{"test_slot_helm":{"enabled":true,"chart_path":"k8s/issue","values":{"hostname":"{host}","prNumber":"test-slot"}}}
 	}`)))
 	if rec.Code != http.StatusOK {
@@ -186,7 +186,7 @@ func TestRegisterProjectStoreErrorsReturn500(t *testing.T) {
 	)
 
 	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/projects", strings.NewReader(`{"name":"ambience","github_repo":"nelsong6/ambience"}`)))
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/projects", strings.NewReader(`{"name":"ambience","github_repo":"romaine-life/ambience"}`)))
 
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("status=%d, want 500", rec.Code)

@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nelsong6/glimmung/internal/server"
-	pgstore "github.com/nelsong6/glimmung/internal/store/pg"
+	"github.com/romaine-life/glimmung/internal/server"
+	pgstore "github.com/romaine-life/glimmung/internal/store/pg"
 )
 
 func TestNativeEventAttemptIndexAcceptsExplicitOrMetadataValue(t *testing.T) {
@@ -866,7 +866,7 @@ func TestRunReportsFromDocsBuildsPublicRefsAndAttempts(t *testing.T) {
 			Project:           "glimmung",
 			Workflow:          "default",
 			RunNumber:         intPtr(2),
-			IssueRepo:         "nelsong6/glimmung",
+			IssueRepo:         "romaine-life/glimmung",
 			IssueNumber:       141,
 			State:             "passed",
 			CumulativeCostUSD: 3.5,
@@ -901,7 +901,7 @@ func TestRunReportsFromDocsBuildsPublicRefsAndAttempts(t *testing.T) {
 			ID:          "old",
 			Project:     "glimmung",
 			Workflow:    "default",
-			IssueRepo:   "nelsong6/glimmung",
+			IssueRepo:   "romaine-life/glimmung",
 			IssueNumber: 141,
 			State:       "in_progress",
 			CreatedAt:   "2026-05-11T02:00:00Z",
@@ -941,7 +941,7 @@ func TestRunReportAttemptFallsBackToVerificationPhaseOutputEvidenceRefs(t *testi
 		Project:     "ambience",
 		Workflow:    "default",
 		RunNumber:   intPtr(4),
-		IssueRepo:   "nelsong6/ambience",
+		IssueRepo:   "romaine-life/ambience",
 		IssueNumber: 171,
 		State:       "review_required",
 		CreatedAt:   "2026-05-11T03:00:00Z",

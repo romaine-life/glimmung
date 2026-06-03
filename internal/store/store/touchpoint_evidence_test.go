@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nelsong6/glimmung/internal/server"
+	"github.com/romaine-life/glimmung/internal/server"
 )
 
 func TestTouchpointDocPreservesStructuredEvidence(t *testing.T) {

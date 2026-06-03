@@ -12,9 +12,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nelsong6/glimmung/internal/auth"
-	"github.com/nelsong6/glimmung/internal/domain/budget"
-	"github.com/nelsong6/glimmung/internal/domain/decision"
+	"github.com/romaine-life/glimmung/internal/auth"
+	"github.com/romaine-life/glimmung/internal/domain/budget"
+	"github.com/romaine-life/glimmung/internal/domain/decision"
 )
 
 type fakeCompletionStore struct {

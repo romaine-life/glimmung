@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nelsong6/glimmung/internal/domain/decision"
-	"github.com/nelsong6/glimmung/internal/server"
+	"github.com/romaine-life/glimmung/internal/domain/decision"
+	"github.com/romaine-life/glimmung/internal/server"
 )
 
 func TestTerminalObservationNamesProducerJobAndStep(t *testing.T) {

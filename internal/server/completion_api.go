@@ -9,11 +9,11 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/nelsong6/glimmung/internal/domain/budget"
-	"github.com/nelsong6/glimmung/internal/domain/decision"
-	"github.com/nelsong6/glimmung/internal/domain/phaserefs"
-	"github.com/nelsong6/glimmung/internal/domain/publicids"
-	"github.com/nelsong6/glimmung/internal/metrics"
+	"github.com/romaine-life/glimmung/internal/domain/budget"
+	"github.com/romaine-life/glimmung/internal/domain/decision"
+	"github.com/romaine-life/glimmung/internal/domain/phaserefs"
+	"github.com/romaine-life/glimmung/internal/domain/publicids"
+	"github.com/romaine-life/glimmung/internal/metrics"
 )
 
 // CompletionPayload carries the completion data to stamp on a run attempt.

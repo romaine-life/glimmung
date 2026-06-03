@@ -14,8 +14,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/nelsong6/glimmung/internal/domain/hotswap"
-	"github.com/nelsong6/glimmung/internal/metrics"
+	"github.com/romaine-life/glimmung/internal/domain/hotswap"
+	"github.com/romaine-life/glimmung/internal/metrics"
 )
 
 // ApplyHotSwapOptions describes the inputs to the server-side

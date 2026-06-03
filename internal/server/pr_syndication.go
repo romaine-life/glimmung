@@ -8,8 +8,8 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/nelsong6/glimmung/internal/domain/decision"
-	"github.com/nelsong6/glimmung/internal/domain/publicids"
+	"github.com/romaine-life/glimmung/internal/domain/decision"
+	"github.com/romaine-life/glimmung/internal/domain/publicids"
 )
 
 type PullRequestClient interface {

@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nelsong6/glimmung/internal/domain/hotswap"
+	"github.com/romaine-life/glimmung/internal/domain/hotswap"
 )
 
 // fakeK8sJobClient records the calls ApplyHotSwap makes against the

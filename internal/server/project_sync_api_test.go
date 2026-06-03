@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nelsong6/glimmung/internal/auth"
+	"github.com/romaine-life/glimmung/internal/auth"
 )
 
 // fakeProjectSyncClient exercises the project-config sync surface.
@@ -335,8 +335,8 @@ func TestCommittedProjectYAMLParsesAndCarriesHotSwap(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parseProjectYAML(committed file): %v", err)
 	}
-	if reg.GitHubRepo != "nelsong6/glimmung" {
-		t.Fatalf("github_repo=%q, want nelsong6/glimmung", reg.GitHubRepo)
+	if reg.GitHubRepo != "romaine-life/glimmung" {
+		t.Fatalf("github_repo=%q, want romaine-life/glimmung", reg.GitHubRepo)
 	}
 
 	// The complete authored config must be present (sync replaces wholesale).

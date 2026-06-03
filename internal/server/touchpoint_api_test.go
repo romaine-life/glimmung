@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nelsong6/glimmung/internal/auth"
+	"github.com/romaine-life/glimmung/internal/auth"
 )
 
 type fakeTouchpointStore struct {
@@ -51,9 +51,9 @@ func itoa(n int) string {
 
 func TestListTouchpoints(t *testing.T) {
 	store := &fakeTouchpointStore{rows: []TouchpointRow{{
-		Ref:      "nelsong6/glimmung#42",
+		Ref:      "romaine-life/glimmung#42",
 		Project:  "glimmung",
-		Repo:     "nelsong6/glimmung",
+		Repo:     "romaine-life/glimmung",
 		PRNumber: 42,
 		Title:    "Fix dashboard",
 		State:    "ready",
@@ -66,14 +66,14 @@ func TestListTouchpoints(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), `"ref":"nelsong6/glimmung#42"`) {
+	if !strings.Contains(rec.Body.String(), `"ref":"romaine-life/glimmung#42"`) {
 		t.Fatalf("body=%s", rec.Body.String())
 	}
 }
 
 func TestIssueTouchpointDetail(t *testing.T) {
 	store := &fakeTouchpointStore{detail: TouchpointDetail{
-		Ref: "nelsong6/glimmung#42", Project: "glimmung", Repo: "nelsong6/glimmung", PRNumber: 42, Title: "Fix dashboard", State: "ready",
+		Ref: "romaine-life/glimmung#42", Project: "glimmung", Repo: "romaine-life/glimmung", PRNumber: 42, Title: "Fix dashboard", State: "ready",
 	}}
 	handler := NewWithStore(Settings{}, store)
 
@@ -90,7 +90,7 @@ func TestCreateTouchpoint(t *testing.T) {
 	handler := NewWithDependencies(Settings{}, store, fakeAdminAuthenticator{user: auth.User{Sub: "admin", Email: "admin@example.com"}})
 
 	rec := httptest.NewRecorder()
-	body := `{"project":"glimmung","repo":"nelsong6/glimmung","number":42,"title":"Fix","branch":"fix-branch"}`
+	body := `{"project":"glimmung","repo":"romaine-life/glimmung","number":42,"title":"Fix","branch":"fix-branch"}`
 	req := httptest.NewRequest(http.MethodPost, "/v1/touchpoints", strings.NewReader(body))
 	req.Header.Set("Authorization", "Bearer admin")
 	handler.ServeHTTP(rec, req)
@@ -110,11 +110,11 @@ func TestCreateTouchpointValidates(t *testing.T) {
 		body string
 		desc string
 	}{
-		{`{"repo":"nelsong6/glimmung","number":1,"title":"t","branch":"b"}`, "missing project"},
+		{`{"repo":"romaine-life/glimmung","number":1,"title":"t","branch":"b"}`, "missing project"},
 		{`{"project":"glimmung","number":1,"title":"t","branch":"b"}`, "missing repo"},
-		{`{"project":"glimmung","repo":"nelsong6/glimmung","title":"t","branch":"b"}`, "missing number"},
-		{`{"project":"glimmung","repo":"nelsong6/glimmung","number":1,"branch":"b"}`, "missing title"},
-		{`{"project":"glimmung","repo":"nelsong6/glimmung","number":1,"title":"t"}`, "missing branch"},
+		{`{"project":"glimmung","repo":"romaine-life/glimmung","title":"t","branch":"b"}`, "missing number"},
+		{`{"project":"glimmung","repo":"romaine-life/glimmung","number":1,"branch":"b"}`, "missing title"},
+		{`{"project":"glimmung","repo":"romaine-life/glimmung","number":1,"title":"t"}`, "missing branch"},
 	}
 	for _, tc := range cases {
 		rec := httptest.NewRecorder()

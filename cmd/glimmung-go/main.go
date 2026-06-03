@@ -12,14 +12,14 @@ import (
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 
-	"github.com/nelsong6/glimmung/internal/auth"
-	azureclient "github.com/nelsong6/glimmung/internal/azure"
-	githubclient "github.com/nelsong6/glimmung/internal/github"
-	"github.com/nelsong6/glimmung/internal/metrics"
-	"github.com/nelsong6/glimmung/internal/server"
-	artifactstore "github.com/nelsong6/glimmung/internal/store/artifacts"
-	pgstore "github.com/nelsong6/glimmung/internal/store/pg"
-	glimmungstore "github.com/nelsong6/glimmung/internal/store/store"
+	"github.com/romaine-life/glimmung/internal/auth"
+	azureclient "github.com/romaine-life/glimmung/internal/azure"
+	githubclient "github.com/romaine-life/glimmung/internal/github"
+	"github.com/romaine-life/glimmung/internal/metrics"
+	"github.com/romaine-life/glimmung/internal/server"
+	artifactstore "github.com/romaine-life/glimmung/internal/store/artifacts"
+	pgstore "github.com/romaine-life/glimmung/internal/store/pg"
+	glimmungstore "github.com/romaine-life/glimmung/internal/store/store"
 )
 
 // runtimeStore is the combined store passed to the HTTP server and the

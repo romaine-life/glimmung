@@ -527,7 +527,7 @@ func (l *KubernetesNativeLauncher) retireTankSessionScope(ctx context.Context, l
 
 func isTankOperatorProject(project Project) bool {
 	return strings.EqualFold(strings.TrimSpace(project.Name), "tank-operator") ||
-		strings.EqualFold(strings.TrimSpace(project.GitHubRepo), "nelsong6/tank-operator")
+		strings.EqualFold(strings.TrimSpace(project.GitHubRepo), "romaine-life/tank-operator")
 }
 
 // waitForInstallerPodsTerminated polls for the helm-install pod(s) spawned
@@ -1710,7 +1710,7 @@ func testSlotHelmConfig(project Project) (testSlotHelmSettings, bool) {
 }
 
 func defaultTestSlotClusterRoleBindings(project Project) []map[string]any {
-	if project.Name != "tank-operator" && project.ID != "tank-operator" && !strings.EqualFold(project.GitHubRepo, "nelsong6/tank-operator") {
+	if project.Name != "tank-operator" && project.ID != "tank-operator" && !strings.EqualFold(project.GitHubRepo, "romaine-life/tank-operator") {
 		return nil
 	}
 	return []map[string]any{

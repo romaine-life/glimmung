@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nelsong6/glimmung/internal/auth"
-	"github.com/nelsong6/glimmung/internal/metrics"
+	"github.com/romaine-life/glimmung/internal/auth"
+	"github.com/romaine-life/glimmung/internal/metrics"
 )
 
 type fakeTestSlotPreparer struct {

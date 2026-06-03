@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nelsong6/glimmung/internal/domain/budget"
+	"github.com/romaine-life/glimmung/internal/domain/budget"
 )
 
 type fakeReadStore struct {
@@ -38,7 +38,7 @@ func TestListProjectsFiltersAndLimits(t *testing.T) {
 		{
 			ID:         "ambience",
 			Name:       "ambience",
-			GitHubRepo: "nelsong6/ambience",
+			GitHubRepo: "romaine-life/ambience",
 			ArgoCDApp:  "ambience",
 			Metadata:   map[string]any{"tier": "app"},
 			CreatedAt:  created,
@@ -46,7 +46,7 @@ func TestListProjectsFiltersAndLimits(t *testing.T) {
 		{
 			ID:         "glimmung",
 			Name:       "glimmung",
-			GitHubRepo: "nelsong6/glimmung",
+			GitHubRepo: "romaine-life/glimmung",
 			CreatedAt:  created,
 		},
 	}}

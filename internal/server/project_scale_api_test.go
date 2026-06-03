@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nelsong6/glimmung/internal/auth"
+	"github.com/romaine-life/glimmung/internal/auth"
 )
 
 type fakeProjectScalerStore struct {
@@ -198,7 +198,7 @@ func TestScaleProjectTestEnvironmentsUpdatesCount(t *testing.T) {
 	store := &fakeProjectScalerStore{project: Project{
 		ID:         "ambience",
 		Name:       "ambience",
-		GitHubRepo: "nelsong6/ambience",
+		GitHubRepo: "romaine-life/ambience",
 		Metadata: map[string]any{
 			"native_standby_dns": map[string]any{"count": float64(3)},
 		},
@@ -225,7 +225,7 @@ func TestScaleProjectTestEnvironmentsPersistsWorkloadIdentityStatus(t *testing.T
 	store := &fakeProjectScalerStore{project: Project{
 		ID:         "tank",
 		Name:       "tank",
-		GitHubRepo: "nelsong6/tank-operator",
+		GitHubRepo: "romaine-life/tank-operator",
 		Metadata: map[string]any{
 			"native_standby_dns": map[string]any{"count": float64(4)},
 			"native_standby_workload_identity": map[string]any{
@@ -275,7 +275,7 @@ func TestScaleProjectTestEnvironmentsDoesNotWarmSynchronously(t *testing.T) {
 	store := &fakeProjectScalerStore{project: Project{
 		ID:         "tank",
 		Name:       "tank",
-		GitHubRepo: "nelsong6/tank-operator",
+		GitHubRepo: "romaine-life/tank-operator",
 		Metadata: map[string]any{
 			"native_standby_dns": map[string]any{
 				"count":       float64(2),
@@ -318,7 +318,7 @@ func TestScaleProjectTestEnvironmentsDeprovisionsRemovedSlots(t *testing.T) {
 	project := Project{
 		ID:         "tank",
 		Name:       "tank",
-		GitHubRepo: "nelsong6/tank-operator",
+		GitHubRepo: "romaine-life/tank-operator",
 		Metadata: map[string]any{
 			"native_standby_dns": map[string]any{
 				"count":       float64(3),
@@ -368,7 +368,7 @@ func TestScaleProjectTestEnvironmentsRejectsRemovingActiveSlot(t *testing.T) {
 	project := Project{
 		ID:         "tank",
 		Name:       "tank",
-		GitHubRepo: "nelsong6/tank-operator",
+		GitHubRepo: "romaine-life/tank-operator",
 		Metadata: map[string]any{
 			"native_standby_dns": map[string]any{
 				"count":       float64(3),
@@ -425,7 +425,7 @@ func TestScaleProjectTestEnvironmentsRequiresLeaseVisibilityWhenRemovingSlots(t 
 	project := Project{
 		ID:         "tank",
 		Name:       "tank",
-		GitHubRepo: "nelsong6/tank-operator",
+		GitHubRepo: "romaine-life/tank-operator",
 		Metadata: map[string]any{
 			"native_standby_dns": map[string]any{
 				"count": float64(2),

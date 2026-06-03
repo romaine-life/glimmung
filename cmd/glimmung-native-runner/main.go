@@ -21,10 +21,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/nelsong6/glimmung/internal/domain/agentcost"
-	"github.com/nelsong6/glimmung/internal/domain/agentruntime"
-	"github.com/nelsong6/glimmung/internal/domain/decision"
-	"github.com/nelsong6/glimmung/internal/domain/innerjob"
+	"github.com/romaine-life/glimmung/internal/domain/agentcost"
+	"github.com/romaine-life/glimmung/internal/domain/agentruntime"
+	"github.com/romaine-life/glimmung/internal/domain/decision"
+	"github.com/romaine-life/glimmung/internal/domain/innerjob"
 )
 
 const (

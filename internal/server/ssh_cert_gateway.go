@@ -38,7 +38,7 @@ const sshCertExchangePath = "/api/auth/exchange/ssh-cert"
 // sshCertGatewayTTLSeconds is the certificate validity window glimmung
 // asks auth to stamp. auth bounds this to [60, 3600] and rejects (does
 // not clamp) anything outside that range; 600s covers orchestrator setup
-// plus the rest of the phase. See nelsong6/auth src/ssh-cert-helpers.ts.
+// plus the rest of the phase. See romaine-life/auth src/ssh-cert-helpers.ts.
 const sshCertGatewayTTLSeconds = 600
 
 // sshCertPermitPTY is the single extension glimmung requests. The

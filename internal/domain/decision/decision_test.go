@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nelsong6/glimmung/internal/domain/budget"
+	"github.com/romaine-life/glimmung/internal/domain/budget"
 )
 
 func workflow(opts ...func(*PhaseSpec)) Workflow {

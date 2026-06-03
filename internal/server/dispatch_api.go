@@ -10,10 +10,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/nelsong6/glimmung/internal/domain/agentruntime"
-	"github.com/nelsong6/glimmung/internal/domain/budget"
-	"github.com/nelsong6/glimmung/internal/domain/publicids"
-	"github.com/nelsong6/glimmung/internal/metrics"
+	"github.com/romaine-life/glimmung/internal/domain/agentruntime"
+	"github.com/romaine-life/glimmung/internal/domain/budget"
+	"github.com/romaine-life/glimmung/internal/domain/publicids"
+	"github.com/romaine-life/glimmung/internal/metrics"
 )
 
 const defaultIssueLockTTLSeconds = 14400 // 4 hours

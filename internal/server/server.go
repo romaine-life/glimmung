@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/nelsong6/glimmung/internal/domain/agentruntime"
-	"github.com/nelsong6/glimmung/internal/metrics"
+	"github.com/romaine-life/glimmung/internal/domain/agentruntime"
+	"github.com/romaine-life/glimmung/internal/metrics"
 )
 
 const (
@@ -84,7 +84,7 @@ type Settings struct {
 	// auth.romaine.life's JWKS), exchange this SA token at
 	//   POST {AuthRomaineLifeBaseURL}/api/auth/exchange/k8s
 	// and present the returned `token` as the Bearer on Glimmung
-	// requests. The exchange is documented in nelsong6/auth's README.
+	// requests. The exchange is documented in romaine-life/auth's README.
 	AuthRomaineLifeTokenPath string
 	GitHubAppID              string
 	GitHubAppInstallationID  string

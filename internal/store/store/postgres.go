@@ -15,13 +15,13 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/nelsong6/glimmung/internal/domain/agentruntime"
-	"github.com/nelsong6/glimmung/internal/domain/budget"
-	"github.com/nelsong6/glimmung/internal/domain/decision"
-	"github.com/nelsong6/glimmung/internal/domain/publicids"
-	"github.com/nelsong6/glimmung/internal/metrics"
-	"github.com/nelsong6/glimmung/internal/server"
-	pgstore "github.com/nelsong6/glimmung/internal/store/pg"
+	"github.com/romaine-life/glimmung/internal/domain/agentruntime"
+	"github.com/romaine-life/glimmung/internal/domain/budget"
+	"github.com/romaine-life/glimmung/internal/domain/decision"
+	"github.com/romaine-life/glimmung/internal/domain/publicids"
+	"github.com/romaine-life/glimmung/internal/metrics"
+	"github.com/romaine-life/glimmung/internal/server"
+	pgstore "github.com/romaine-life/glimmung/internal/store/pg"
 )
 
 // Store is the Postgres-backed data-access wrapper used by server-side
@@ -522,7 +522,7 @@ func (s *Store) SetProjectNativeWorkloadIdentityStatus(ctx context.Context, proj
 
 // SetProjectManagedAuthOriginStatus persists the auth.romaine.life
 // origin reconciler result. Delegates to pg.ProjectsStore. See
-// nelsong6/glimmung#142 stage 2.
+// romaine-life/glimmung#142 stage 2.
 func (s *Store) SetProjectManagedAuthOriginStatus(ctx context.Context, project string, status server.ManagedAuthOriginStatus) (server.Project, error) {
 	rec, err := s.pgProjects.SetManagedAuthOriginStatus(ctx, project, status)
 	if errors.Is(err, pgstore.ErrProjectNotFound) {

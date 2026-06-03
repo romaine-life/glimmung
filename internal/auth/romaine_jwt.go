@@ -16,7 +16,7 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 
-	"github.com/nelsong6/glimmung/internal/metrics"
+	"github.com/romaine-life/glimmung/internal/metrics"
 )
 
 // auth.romaine.life is the single upstream identity provider for the
@@ -172,7 +172,7 @@ func (v *RomaineLifeJWTVerifier) Decode(ctx context.Context, tokenString string)
 			// exchange, not an auth.romaine.life-issued JWT. The
 			// caller needs to POST it to
 			// {auth_base}/api/auth/exchange/k8s first and present
-			// the returned `token`. See nelsong6/auth's README.
+			// the returned `token`. See romaine-life/auth's README.
 			message += " (looks like a k8s SA token — exchange it at POST {auth_base}/api/auth/exchange/k8s and present the returned `token` as Bearer)"
 		}
 		return User{}, AuthError{Status: http.StatusUnauthorized, Message: message}

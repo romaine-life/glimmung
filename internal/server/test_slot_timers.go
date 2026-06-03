@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/nelsong6/glimmung/internal/metrics"
+	"github.com/romaine-life/glimmung/internal/metrics"
 )
 
 // testSlotLeaseTimers holds one *time.Timer per claimed test-slot lease that
