@@ -3,11 +3,13 @@ package server
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"time"
 
 	"github.com/romaine-life/glimmung/internal/domain/agentruntime"
+	"github.com/romaine-life/glimmung/internal/domain/publicids"
 )
 
 type RunStore interface {
@@ -189,11 +191,18 @@ func getRunReportByNumber(store ReadStore) http.HandlerFunc {
 			writeProblem(w, http.StatusBadRequest, "issue_number must be a positive integer")
 			return
 		}
+		runNumber := r.PathValue("run_number")
+		if _, err := publicids.ParseRunCycleAddress(runNumber); err != nil {
+			writeProblem(w, http.StatusBadRequest, fmt.Sprintf(
+				"run_number must be a canonical run-cycle number like %q (run.cycle); got %q — the flat cycle ledger number is a display value, not an address",
+				"6.1", runNumber))
+			return
+		}
 		report, err := runStore.GetRunReportByNumber(
 			r.Context(),
 			r.PathValue("project"),
 			issueNumber,
-			r.PathValue("run_number"),
+			runNumber,
 		)
 		switch {
 		case errors.Is(err, ErrNotFound):

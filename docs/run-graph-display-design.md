@@ -318,6 +318,22 @@ The execution work surface uses the run-scoped projection endpoint:
 
 `GET /v1/projects/{project}/issues/{issue_number}/runs/{run_number}/cycles/{cycle_number}/graph`
 
+**Run-cycle addressing.** A run cycle has exactly one address: its canonical
+`run.cycle` number (`run_number` "." `run_cycle_number`), surfaced as
+`run_display_number`, e.g. `6.1`. On the two-segment routes the `run_number`
+segment is the logical run number and the `cycle_number` segment is the
+run-local cycle ordinal (`run_cycle_number`) — `runs/6/cycles/1` addresses
+`6.1`. The single-segment report/abort routes (`/runs/{run_number}/…`) take the
+full `run.cycle` string. The flat issue-scoped cycle ledger (`cycle_number` on
+the run document — the leftmost issue-history column) is a **display value, not
+an address**. Every resolver matches the canonical run-cycle identity only and
+rejects a bare integer or a ledger number; clients build deep links from
+`run_number`/`run_cycle_number` (or `run_display_number`), never from the
+ledger. Addressing a run by its ledger number is what made
+`get_run_report(run_number=9)` return the run displaying as `6.1` — the 9th
+cycle of the issue, whose canonical address is `6.1`. Stale ledger-form deep
+links resolve to nothing rather than to a different run cycle.
+
 The projection is separate from storage and separate from any executor's
 native model. The execution UI renders from this projection, not from generic
 graph `nodes` / `edges` metadata.

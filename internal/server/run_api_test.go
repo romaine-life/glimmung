@@ -120,12 +120,12 @@ func TestGetRunReportByNumber(t *testing.T) {
 	handler := NewWithStore(Settings{}, store)
 
 	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/projects/glimmung/issues/141/runs/1/report", nil))
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/projects/glimmung/issues/141/runs/1.1/report", nil))
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
-	if store.project != "glimmung" || store.issueNumber != 141 || store.runNumber != "1" {
+	if store.project != "glimmung" || store.issueNumber != 141 || store.runNumber != "1.1" {
 		t.Fatalf("project=%q issue=%d run=%q", store.project, store.issueNumber, store.runNumber)
 	}
 	if !strings.Contains(rec.Body.String(), `"ref":"glimmung#141/runs/1/report"`) {
@@ -137,14 +137,36 @@ func TestGetRunReportByNumberMapsNotFoundAndBadIssueNumber(t *testing.T) {
 	handler := NewWithStore(Settings{}, &fakeRunStore{})
 
 	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/projects/glimmung/issues/141/runs/1/report", nil))
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/projects/glimmung/issues/141/runs/1.1/report", nil))
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
 
 	rec = httptest.NewRecorder()
-	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/projects/glimmung/issues/zero/runs/1/report", nil))
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/projects/glimmung/issues/zero/runs/1.1/report", nil))
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestGetRunReportByNumberRejectsNonCanonicalRunNumber is the HTTP-layer
+// migration guard for the reported bug: a flat cycle-ledger integer ("9") or a
+// bare run number ("6") is not a run address and must be rejected with 400,
+// never silently resolved to a different run cycle (which is what
+// get_run_report(run_number=9) -> "6.1" used to do).
+func TestGetRunReportByNumberRejectsNonCanonicalRunNumber(t *testing.T) {
+	store := &fakeRunStore{rows: []RunReport{{Ref: "ambience#168/runs/6.1/report"}}}
+	handler := NewWithStore(Settings{}, store)
+
+	for _, bad := range []string{"9", "6", "0", "6.0", "abc"} {
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet,
+			"/v1/projects/ambience/issues/168/runs/"+bad+"/report", nil))
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("run_number=%q: status=%d body=%s (want 400)", bad, rec.Code, rec.Body.String())
+		}
+	}
+	if store.runNumber != "" {
+		t.Fatalf("store should never be queried for a malformed run number; got %q", store.runNumber)
 	}
 }

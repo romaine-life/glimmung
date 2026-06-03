@@ -80,7 +80,7 @@ func newRunMutHandlerNoAuth(store *fakeRunMutationStore) http.Handler {
 // --- abort tests ---
 
 func TestAbortRunByNumber(t *testing.T) {
-	runRef := "myproject#42/runs/1"
+	runRef := "myproject#42/runs/1.1"
 	store := &fakeRunMutationStore{
 		runID:       "run-123",
 		runRef:      runRef,
@@ -88,7 +88,7 @@ func TestAbortRunByNumber(t *testing.T) {
 	}
 	handler := newRunMutHandlerAdmin(store)
 
-	req := httptest.NewRequest(http.MethodPost, "/v1/projects/myproject/issues/42/runs/1/abort", nil)
+	req := httptest.NewRequest(http.MethodPost, "/v1/projects/myproject/issues/42/runs/1.1/abort", nil)
 	req.Header.Set("Authorization", "Bearer admin")
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
@@ -102,7 +102,7 @@ func TestAbortRunByNumber(t *testing.T) {
 }
 
 func TestAbortRunByNumberAlreadyTerminal(t *testing.T) {
-	runRef := "myproject#42/runs/2"
+	runRef := "myproject#42/runs/2.1"
 	store := &fakeRunMutationStore{
 		runID:       "run-456",
 		runRef:      runRef,
@@ -110,7 +110,7 @@ func TestAbortRunByNumberAlreadyTerminal(t *testing.T) {
 	}
 	handler := newRunMutHandlerAdmin(store)
 
-	req := httptest.NewRequest(http.MethodPost, "/v1/projects/myproject/issues/42/runs/2/abort", nil)
+	req := httptest.NewRequest(http.MethodPost, "/v1/projects/myproject/issues/42/runs/2.1/abort", nil)
 	req.Header.Set("Authorization", "Bearer admin")
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
@@ -127,7 +127,7 @@ func TestAbortRunByNumberNotFound(t *testing.T) {
 	store := &fakeRunMutationStore{notFound: true}
 	handler := newRunMutHandlerAdmin(store)
 
-	req := httptest.NewRequest(http.MethodPost, "/v1/projects/myproject/issues/42/runs/99/abort", nil)
+	req := httptest.NewRequest(http.MethodPost, "/v1/projects/myproject/issues/42/runs/99.1/abort", nil)
 	req.Header.Set("Authorization", "Bearer admin")
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
@@ -141,12 +141,29 @@ func TestAbortRunByNumberRequiresAdmin(t *testing.T) {
 	store := &fakeRunMutationStore{runID: "x", runRef: "y", abortResult: AbortRunResult{State: "aborted", RunRef: "y"}}
 	handler := newRunMutHandlerNoAuth(store)
 
-	req := httptest.NewRequest(http.MethodPost, "/v1/projects/myproject/issues/42/runs/1/abort", nil)
+	req := httptest.NewRequest(http.MethodPost, "/v1/projects/myproject/issues/42/runs/1.1/abort", nil)
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 
 	if rec.Code == http.StatusOK {
 		t.Fatalf("expected non-200 without admin auth, got 200")
+	}
+}
+
+// TestAbortRunByNumberRejectsNonCanonical guards the agent-facing abort_run
+// surface: a bare or ledger run number is rejected before any store lookup.
+func TestAbortRunByNumberRejectsNonCanonical(t *testing.T) {
+	store := &fakeRunMutationStore{runID: "x", runRef: "y", abortResult: AbortRunResult{State: "aborted", RunRef: "y"}}
+	handler := newRunMutHandlerAdmin(store)
+
+	for _, bad := range []string{"1", "9", "6.0"} {
+		req := httptest.NewRequest(http.MethodPost, "/v1/projects/myproject/issues/42/runs/"+bad+"/abort", nil)
+		req.Header.Set("Authorization", "Bearer admin")
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("run_number=%q: status=%d body=%s (want 400)", bad, rec.Code, rec.Body.String())
+		}
 	}
 }
 
