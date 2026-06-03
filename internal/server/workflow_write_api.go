@@ -449,6 +449,11 @@ func ValidateWorkflowRegister(req WorkflowRegister) error {
 		} else if purpose == PhasePurposeEvidenceGate {
 			return ValidationError{Message: fmt.Sprintf("workflow %s phase %q purpose=%q must set evidence_verification_gate=true", req.Name, name, PhasePurposeEvidenceGate)}
 		}
+		for _, job := range phase.Jobs {
+			if job.Checkout != nil && strings.TrimSpace(job.Checkout.Repo) != "" {
+				return ValidationError{Message: fmt.Sprintf("workflow %s job %q in phase %q sets checkout.repo %q; the primary checkout repo is derived from the project's github_repo and must be empty (use extra_checkouts for additional repos)", req.Name, job.ID, name, job.Checkout.Repo)}
+			}
+		}
 		if len(phase.Jobs) > 0 {
 			seenJobs := map[string]int{}
 			for j, job := range phase.Jobs {

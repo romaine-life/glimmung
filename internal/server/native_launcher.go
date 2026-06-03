@@ -183,6 +183,11 @@ func (l *KubernetesNativeLauncher) LaunchNativePhase(ctx context.Context, req Na
 	} else {
 		req.Phase = CanonicalNativePhase(req.Phase)
 	}
+	derivedPhase, err := derivePrimaryCheckoutRepo(req.Phase, req.Run.IssueRepo)
+	if err != nil {
+		return nil, err
+	}
+	req.Phase = derivedPhase
 	if len(req.Phase.Jobs) == 0 {
 		return nil, fmt.Errorf("native phase %q has no jobs", req.Phase.Name)
 	}
@@ -219,6 +224,34 @@ func (l *KubernetesNativeLauncher) LaunchNativePhase(ctx context.Context, req Na
 		launched = append(launched, jobName)
 	}
 	return launched, nil
+}
+
+// derivePrimaryCheckoutRepo sets every code job's primary checkout repo to the
+// project-bound issue repo. The primary checkout repo is not author-controlled:
+// it is derived from the project's github_repo (carried on the run as
+// IssueRepo) so an org/repo migration updates one project record instead of
+// every baked workflow literal. ExtraCheckouts remain author-controlled for the
+// cross-repo case; jobs without a checkout (managed primitives) are untouched.
+func derivePrimaryCheckoutRepo(phase PhaseSpec, issueRepo string) (PhaseSpec, error) {
+	issueRepo = strings.TrimSpace(issueRepo)
+	if len(phase.Jobs) == 0 {
+		return phase, nil
+	}
+	jobs := make([]NativeJobSpec, len(phase.Jobs))
+	copy(jobs, phase.Jobs)
+	for i := range jobs {
+		if jobs[i].Checkout == nil {
+			continue
+		}
+		if issueRepo == "" {
+			return PhaseSpec{}, fmt.Errorf("native phase %q job %q requires a checkout but the run has no issue repo", phase.Name, jobs[i].ID)
+		}
+		checkout := *jobs[i].Checkout
+		checkout.Repo = issueRepo
+		jobs[i].Checkout = &checkout
+	}
+	phase.Jobs = jobs
+	return phase, nil
 }
 
 func nativePhaseRequiresProviderAPIProxy(phase PhaseSpec) bool {

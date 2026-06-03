@@ -21,7 +21,6 @@ func positivePathInt(w http.ResponseWriter, r *http.Request, name string) (int, 
 }
 
 type NativeGitHubTokenResult struct {
-	Repo  string `json:"repo"`
 	Token string `json:"token"`
 }
 
@@ -105,5 +104,5 @@ func writeNativeGitHubToken(w http.ResponseWriter, r *http.Request, store RunCom
 		writeProblem(w, http.StatusBadGateway, "mint GitHub token failed")
 		return
 	}
-	writeJSON(w, http.StatusOK, NativeGitHubTokenResult{Repo: run.IssueRepo, Token: token})
+	writeJSON(w, http.StatusOK, NativeGitHubTokenResult{Token: token})
 }
