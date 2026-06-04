@@ -1,4 +1,6 @@
 @import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&display=swap");
+/* Heldscalla redesign typefaces — consumed by the .app-scoped tokens below. */
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Hanken+Grotesk:wght@400;500;600;700;800&family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&family=JetBrains+Mono:wght@400;500;600&display=swap');
 
 /**
  * Glimmung Design System — Colors & Type
@@ -368,4 +370,150 @@ td {
 }
 .pulse {
   animation: pulse var(--pulse-duration) ease-in-out infinite;
+}
+
+
+/* ============================================================
+   GLIMMUNG — "Heldscalla" redesign tokens (scoped to .app)
+   Appended for the dashboard redesign. The legacy tokens above
+   stay intact for views not yet migrated to the new shell.
+   These are SCOPED to .app so they never override legacy pages.
+   ============================================================ */
+/* ============================================================
+   GLIMMUNG — design language "Heldscalla"
+   A fresh, dark, premium control-plane system.
+   Switchable foundations via [data-base], [data-accent], [data-type] on <html>.
+   ============================================================ */
+
+/* ---------- Fonts ---------- */
+
+/* ============================================================
+   BASE PALETTES
+   ============================================================ */
+.app,
+.app[data-base="abyss"] {
+  --bg:           #0a0e13;
+  --bg-sunken:    #070a0e;
+  --surface:      #10151c;
+  --surface-2:    #151c25;
+  --surface-3:    #1c2531;
+  --surface-hover:#1a2330;
+  --border:       #222c38;
+  --border-strong:#303d4c;
+  --hairline:     rgba(150,180,210,0.07);
+
+  --fg:           #e8eef4;
+  --fg-muted:     #a3b4c4;
+  --fg-dim:       #6f8090;
+  --fg-faint:     #4d5b6a;
+
+  --shadow-sm: 0 1px 2px rgba(0,0,0,0.4);
+  --shadow-md: 0 6px 22px -8px rgba(0,0,0,0.65);
+  --shadow-lg: 0 24px 60px -20px rgba(0,0,0,0.75);
+}
+
+.app[data-base="graphite"] {
+  --bg:           #0c0c0e;
+  --bg-sunken:    #08080a;
+  --surface:      #141417;
+  --surface-2:    #1a1a1e;
+  --surface-3:    #222227;
+  --surface-hover:#1e1e23;
+  --border:       #2a2a30;
+  --border-strong:#393941;
+  --hairline:     rgba(255,255,255,0.06);
+
+  --fg:           #ededf0;
+  --fg-muted:     #adadb6;
+  --fg-dim:       #76767f;
+  --fg-faint:     #54545c;
+}
+
+/* ============================================================
+   ACCENT THEMES  (independent of semantic state colors)
+   ============================================================ */
+.app[data-accent="glimmer"] {
+  --accent:        #35d6c5;   /* bioluminescent teal — "a glimmer in the deep" */
+  --accent-strong: #5fe8d8;
+  --accent-dim:    #1d8c80;
+  --accent-bg:     rgba(53,214,197,0.12);
+  --accent-line:   rgba(53,214,197,0.30);
+  --accent-ink:    #052723;   /* text on a solid accent fill */
+}
+.app[data-accent="lantern"] {
+  --accent:        #f1b13a;   /* lantern gold */
+  --accent-strong: #ffc861;
+  --accent-dim:    #a8761b;
+  --accent-bg:     rgba(241,177,58,0.12);
+  --accent-line:   rgba(241,177,58,0.32);
+  --accent-ink:    #2a1c02;
+}
+.app[data-accent="signal"] {
+  --accent:        #8a93ff;   /* periwinkle signal */
+  --accent-strong: #a8aeff;
+  --accent-dim:    #5560cc;
+  --accent-bg:     rgba(138,147,255,0.14);
+  --accent-line:   rgba(138,147,255,0.34);
+  --accent-ink:    #0c1030;
+}
+
+/* ============================================================
+   SEMANTIC STATE COLORS  (stable across themes)
+   green=pass/free/approve/advance · amber=in-progress/busy
+   red=abort/fail/drain/needs-work · blue=review/info/manual
+   violet=touchpoint/signal
+   ============================================================ */
+.app {
+  --ok-fg:   #4cd99a;  --ok-bg:   rgba(76,217,154,0.12);  --ok-line: rgba(76,217,154,0.28);
+  --warn-fg: #f3b44c;  --warn-bg: rgba(243,180,76,0.12);  --warn-line: rgba(243,180,76,0.28);
+  --bad-fg:  #f47068;  --bad-bg:  rgba(244,112,104,0.12); --bad-line: rgba(244,112,104,0.28);
+  --info-fg: #5fa8ff;  --info-bg: rgba(95,168,255,0.12);  --info-line: rgba(95,168,255,0.28);
+  --vio-fg:  #b98cff;  --vio-bg:  rgba(185,140,255,0.13); --vio-line: rgba(185,140,255,0.30);
+
+  /* type tokens (default = Console pairing) */
+  --font-display: "Space Grotesk", system-ui, sans-serif;
+  --font-ui:      "Hanken Grotesk", system-ui, sans-serif;
+  --font-mono:    "JetBrains Mono", ui-monospace, monospace;
+
+  --r-xs: 4px; --r-sm: 6px; --r-md: 9px; --r-lg: 14px; --r-pill: 999px;
+
+  --t-xs: 11px; --t-sm: 12px; --t-base: 13px; --t-md: 14px; --t-lg: 16px;
+  --t-xl: 20px; --t-2xl: 26px; --t-3xl: 34px;
+}
+
+.app[data-type="console"] {
+  --font-display: "Space Grotesk", system-ui, sans-serif;
+  --font-ui:      "Hanken Grotesk", system-ui, sans-serif;
+  --font-mono:    "JetBrains Mono", ui-monospace, monospace;
+}
+.app[data-type="clean"] {
+  --font-display: "Hanken Grotesk", system-ui, sans-serif;
+  --font-ui:      "Hanken Grotesk", system-ui, sans-serif;
+  --font-mono:    "JetBrains Mono", ui-monospace, monospace;
+}
+.app[data-type="archive"] {
+  --font-display: "Newsreader", Georgia, serif;
+  --font-ui:      "Hanken Grotesk", system-ui, sans-serif;
+  --font-mono:    "JetBrains Mono", ui-monospace, monospace;
+}
+
+
+/* ============================================================
+   HELDSCALLA DEFAULTS — approved combo on the .app shell root
+   (abyss base · signal accent · clean type) so the redesign
+   renders without requiring data-* attributes. Theme switches
+   still work via .app[data-base|accent|type].
+   ============================================================ */
+.app {
+  /* signal accent */
+  --accent:        #8a93ff;
+  --accent-strong: #a8aeff;
+  --accent-dim:    #5560cc;
+  --accent-bg:     rgba(138,147,255,0.14);
+  --accent-line:   rgba(138,147,255,0.34);
+  --accent-ink:    #0c1030;
+  /* clean type pairing (Hanken display) */
+  --font-display: "Hanken Grotesk", system-ui, sans-serif;
+  --font-ui:      "Hanken Grotesk", system-ui, sans-serif;
+  --font-mono:    "JetBrains Mono", ui-monospace, monospace;
 }

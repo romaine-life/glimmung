@@ -1,6 +1,12 @@
 [
-  { "path": "/", "label": "home" },
-  { "path": "/issues", "label": "issues-list" },
-  { "path": "/issues/romaine-life/glimmung/1", "label": "issue-detail" },
+  { "path": "/", "label": "overview" },
+  { "path": "/needs-attention", "label": "needs-attention" },
+  { "path": "/issues", "label": "issues" },
+  { "path": "/runs", "label": "runs" },
+  { "path": "/touchpoints", "label": "touchpoints" },
+  { "path": "/workflows", "label": "workflows" },
+  { "path": "/leases", "label": "leases" },
+  { "path": "/test-slots", "label": "test-slots" },
+  { "path": "/admin", "label": "admin" },
   { "path": "/_styleguide", "label": "styleguide" }
 ]

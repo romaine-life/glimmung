@@ -1,12 +1,8 @@
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
-import { Link, Navigate, NavLink, Outlet, Route, Routes, useLocation, useNavigate, useOutletContext, useParams } from "react-router-dom";
-import { AdminPanel } from "./AdminPanel";
+import { Link, Navigate, Outlet, Route, Routes, useLocation, useNavigate, useOutletContext, useParams } from "react-router-dom";
 import { IssueDetailView } from "./IssueDetailView";
 import { IssuesView } from "./IssuesView";
-import { PlaybooksView } from "./PlaybooksView";
-import { PortfolioView } from "./PortfolioView";
 import { RunCancelAction, RUN_CANCEL_IDLE_STATE, runStateCanCancel, type AbortState } from "./RunCancelAction";
-import { TouchpointsView } from "./TouchpointsView";
 import { StyleguideView } from "./StyleguideView";
 import { PhaseGraph, type PhaseGraphJob, type PhaseGraphPhase, type PhaseGraphStep } from "./PhaseGraph";
 import { RecyclePolicyPanel } from "./RecyclePolicyPanel";
@@ -14,7 +10,18 @@ import { AgentRuntimePolicyFields } from "./AgentRuntimePolicyFields";
 import { workflowToPhaseGraphModel } from "./workflowGraphModel";
 import { authedFetch, currentAccount, initAuth, signIn, signOut, type Account } from "./auth";
 import { isMockMode, mockRuns, mockSnapshot } from "./mockApi";
-import { ISSUE_DETAIL_CHILD_ROUTES, buildBreadcrumbs } from "./routes";
+import { ISSUE_DETAIL_CHILD_ROUTES } from "./routes";
+import { IconSprite } from "./ui/Icon";
+import { Shell, type ShellAccount } from "./ui/Shell";
+import { Overview } from "./views/Overview";
+import { NeedsAttention } from "./views/NeedsAttention";
+import { Issues } from "./views/Issues";
+import { Runs } from "./views/Runs";
+import { Touchpoints } from "./views/Touchpoints";
+import { Workflows } from "./views/Workflows";
+import { Leases } from "./views/Leases";
+import { TestSlots } from "./views/TestSlots";
+import { Admin } from "./views/Admin";
 import {
   agentRuntimeConfigFromMetadata,
   agentRuntimeProfiles,
@@ -323,63 +330,92 @@ const ALL: Selection = { kind: "all" };
 const testSlotBuiltInDefaultTTLSeconds = 3600;
 const testSlotBuiltInHotSwapMinTTLSeconds = 1800;
 
+// Types the redesign views consume via `useOutletContext<LayoutContext>()` and
+// `import type`. Type-only re-exports — erased at build, no runtime cycle.
+export type {
+  LayoutContext,
+  Lease,
+  LeaseKind,
+  TestSlotRequest,
+  TestSlotReturnHistoryEntry,
+  TestEnvironment,
+  Project,
+  Workflow,
+  PhaseSpec,
+  RecyclePolicy,
+  ProjectRun,
+  RunReport,
+  RunReportAttempt,
+  Snapshot,
+};
+
 export function App() {
   // Routes-only — Layout owns the SSE/auth state and provides it via Outlet
-  // context so deep-link reloads (e.g. /issues/<owner>/<repo>/<n>) land
-  // straight on the right view without a viewMode flip.
+  // context so deep-link reloads land straight on the right view. The new
+  // "Heldscalla" IA puts global Work/Review/Orchestrate/Capacity/System views
+  // in the sidebar shell; project-scoped detail routes stay underneath.
   return (
-    <Routes>
-      {/* Platform route: visual catalog of components, served outside
-          Layout so the validation-step curl check (#86) doesn't need
-          auth or SSE. Contract: docs/styleguide-contract.md. */}
-      <Route path="/_styleguide" element={<StyleguideView />} />
-      <Route path="/_design-portfolio" element={<StyleguideView />} />
-      <Route path="/_mock/*" element={<MockModeRedirect />} />
-      <Route path="/" element={<Layout />}>
-        <Route index element={<HomeRoute />} />
-        <Route path="dashboard" element={<Navigate to="/leases/test" replace />} />
-        <Route path="leases" element={<Navigate to="/leases/test" replace />} />
-        <Route path="leases/test" element={<GlobalLeaseRoute kind="test" />} />
-        <Route path="leases/test/:leaseId" element={<GlobalLeaseDetailRoute kind="test" />} />
-        <Route path="leases/agent" element={<GlobalLeaseRoute kind="agent" />} />
-        <Route path="leases/agent/:leaseId" element={<GlobalLeaseDetailRoute kind="agent" />} />
-        <Route path="needs-attention" element={<NeedsAttentionRoute />} />
-        <Route path="playbooks" element={<PlaybooksRoute />} />
-        <Route path="graph" element={<Navigate to="/leases/test" replace />} />
-        <Route path="projects" element={<ProjectsRoute />} />
-        <Route path="projects/new" element={<ProjectOnboardingRoute />} />
-        <Route path="projects/:project" element={<ProjectRoute />} />
-        <Route path="projects/:project/leases" element={<ProjectLeaseRedirectRoute />} />
-        <Route path="projects/:project/leases/test" element={<ProjectLeaseRoute kind="test" />} />
-        <Route path="projects/:project/leases/test/slots/:slotId" element={<ProjectTestEnvironmentDetailRoute />} />
-        <Route path="projects/:project/leases/test/:leaseId" element={<ProjectLeaseDetailRoute kind="test" />} />
-        <Route path="projects/:project/leases/agent" element={<ProjectLeaseRoute kind="agent" />} />
-        <Route path="projects/:project/leases/agent/:leaseId" element={<ProjectLeaseDetailRoute kind="agent" />} />
-        <Route path="projects/:project/workflows" element={<ProjectWorkflowsRoute />} />
-        <Route path="projects/:project/workflows/:workflow" element={<ProjectWorkflowRoute />} />
-        <Route path="projects/:project/issues" element={<ProjectIssuesRoute />} />
-        <Route path="projects/:project/playbooks" element={<ProjectPlaybooksRoute />} />
-        <Route path="projects/:project/playbooks/:playbookRef" element={<ProjectPlaybookDetailRoute />} />
-        <Route path="projects/:project/portfolio" element={<ProjectPortfolioRoute />} />
-        <Route path="projects/:project/issues/new" element={<IssueOnboardingRoute />} />
-        <Route path="projects/:project/issues/:issueNumber" element={<IssueDetailView />}>
-          <Route path={ISSUE_DETAIL_CHILD_ROUTES.summary} element={null} />
-          <Route path={ISSUE_DETAIL_CHILD_ROUTES.runs} element={null} />
-          <Route path={ISSUE_DETAIL_CHILD_ROUTES.run} element={null} />
-          <Route path={ISSUE_DETAIL_CHILD_ROUTES.runCycle} element={null} />
-          <Route path={ISSUE_DETAIL_CHILD_ROUTES.runPhase} element={null} />
-          <Route path={ISSUE_DETAIL_CHILD_ROUTES.runJob} element={null} />
-          <Route path={ISSUE_DETAIL_CHILD_ROUTES.runStep} element={null} />
-          <Route path={ISSUE_DETAIL_CHILD_ROUTES.settings} element={null} />
-          <Route path={ISSUE_DETAIL_CHILD_ROUTES.touchpoint} element={null} />
+    <>
+      <IconSprite />
+      <Routes>
+        {/* Platform route: visual catalog of components, served outside
+            Layout so the validation-step curl check doesn't need auth or
+            SSE. Contract: docs/styleguide-contract.md. */}
+        <Route path="/_styleguide" element={<StyleguideView />} />
+        <Route path="/_design-portfolio" element={<StyleguideView />} />
+        <Route path="/_mock/*" element={<MockModeRedirect />} />
+        <Route path="/" element={<Layout />}>
+          {/* Work */}
+          <Route index element={<Overview />} />
+          <Route path="needs-attention" element={<NeedsAttention />} />
+          <Route path="issues" element={<Issues />} />
+          <Route path="runs" element={<Runs />} />
+          {/* Review */}
+          <Route path="touchpoints" element={<Touchpoints />} />
+          {/* Orchestrate */}
+          <Route path="workflows" element={<Workflows />} />
+          {/* Capacity */}
+          <Route path="leases" element={<Leases />} />
+          <Route path="test-slots" element={<TestSlots />} />
+          {/* System */}
+          <Route path="admin" element={<Admin />} />
+
+          {/* Deep / detail routes (project-scoped) — kept for full fidelity */}
+          <Route path="dashboard" element={<Navigate to="/leases/test" replace />} />
+          <Route path="graph" element={<Navigate to="/leases/test" replace />} />
+          <Route path="leases/test" element={<GlobalLeaseRoute kind="test" />} />
+          <Route path="leases/test/:leaseId" element={<GlobalLeaseDetailRoute kind="test" />} />
+          <Route path="leases/agent" element={<GlobalLeaseRoute kind="agent" />} />
+          <Route path="leases/agent/:leaseId" element={<GlobalLeaseDetailRoute kind="agent" />} />
+          <Route path="projects" element={<ProjectsRoute />} />
+          <Route path="projects/new" element={<ProjectOnboardingRoute />} />
+          <Route path="projects/:project" element={<ProjectRoute />} />
+          <Route path="projects/:project/leases" element={<ProjectLeaseRedirectRoute />} />
+          <Route path="projects/:project/leases/test" element={<ProjectLeaseRoute kind="test" />} />
+          <Route path="projects/:project/leases/test/slots/:slotId" element={<ProjectTestEnvironmentDetailRoute />} />
+          <Route path="projects/:project/leases/test/:leaseId" element={<ProjectLeaseDetailRoute kind="test" />} />
+          <Route path="projects/:project/leases/agent" element={<ProjectLeaseRoute kind="agent" />} />
+          <Route path="projects/:project/leases/agent/:leaseId" element={<ProjectLeaseDetailRoute kind="agent" />} />
+          <Route path="projects/:project/workflows" element={<ProjectWorkflowsRoute />} />
+          <Route path="projects/:project/workflows/:workflow" element={<ProjectWorkflowRoute />} />
+          <Route path="projects/:project/issues" element={<ProjectIssuesRoute />} />
+          <Route path="projects/:project/issues/new" element={<IssueOnboardingRoute />} />
+          <Route path="projects/:project/issues/:issueNumber" element={<IssueDetailView />}>
+            <Route path={ISSUE_DETAIL_CHILD_ROUTES.summary} element={null} />
+            <Route path={ISSUE_DETAIL_CHILD_ROUTES.runs} element={null} />
+            <Route path={ISSUE_DETAIL_CHILD_ROUTES.run} element={null} />
+            <Route path={ISSUE_DETAIL_CHILD_ROUTES.runCycle} element={null} />
+            <Route path={ISSUE_DETAIL_CHILD_ROUTES.runPhase} element={null} />
+            <Route path={ISSUE_DETAIL_CHILD_ROUTES.runJob} element={null} />
+            <Route path={ISSUE_DETAIL_CHILD_ROUTES.runStep} element={null} />
+            <Route path={ISSUE_DETAIL_CHILD_ROUTES.settings} element={null} />
+            <Route path={ISSUE_DETAIL_CHILD_ROUTES.touchpoint} element={null} />
+          </Route>
+          <Route path="projects/:project/needs-attention" element={<ProjectNeedsAttentionRoute />} />
+          <Route path="projects/:project/runs" element={<ProjectRunsRoute />} />
         </Route>
-        <Route path="projects/:project/needs-attention" element={<ProjectNeedsAttentionRoute />} />
-        <Route path="projects/:project/runs" element={<ProjectRunsRoute />} />
-        <Route path="issues" element={<Navigate to="/needs-attention" replace />} />
-        <Route path="touchpoints" element={<TouchpointsRoute />} />
-        <Route path="portfolio" element={<PortfolioRoute />} />
-      </Route>
-    </Routes>
+      </Routes>
+    </>
   );
 }
 
@@ -393,13 +429,11 @@ function MockModeRedirect() {
 }
 
 function Layout() {
-  const location = useLocation();
   const [snap, setSnap] = useState<Snapshot | null>(null);
   const selected = ALL;
   const [account, setAccount] = useState<Account | null>(null);
   const [authReady, setAuthReady] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
-  const [showAdmin, setShowAdmin] = useState(false);
 
   useEffect(() => {
     initAuth()
@@ -472,8 +506,6 @@ function Layout() {
   // poll of /v1/issues + /v1/touchpoints that previously fed this
   // boolean was deleted because it forced unnecessary cross-project work on
   // every tick only to compute a single bool.
-  const inflightIssues = Boolean(snap?.inflight_locks?.issues || snap?.inflight_locks?.prs);
-
   const ctx: LayoutContext = {
     snap,
     signedIn: !!account,
@@ -481,151 +513,30 @@ function Layout() {
     selected,
   };
 
-  const dashboardLinkClass = ({ isActive }: { isActive: boolean }) =>
-    `dashboard-nav-link ${isActive ? "selected" : ""}`;
-  const homeRoute = location.pathname === "/";
-  const breadcrumbs = buildBreadcrumbs(location.pathname);
-  const returnTarget = returnTargetFromState(location.state, location.pathname);
+  const shellAccount: ShellAccount = account
+    ? { signedIn: true, name: account.username, email: account.username, isAdmin }
+    : { signedIn: false };
 
   return (
-    <div className="layout">
-      <main className="content">
-        <header className="app-header">
-          <div className="header-left">
-            <div className="header-title">
-              <h1>glimmung</h1>
-              {isMockMode() && <span className="connection info">mock</span>}
-            </div>
-            <div className="epigraph">
-              “The Glimmung scanned the assembled list of beings he had summoned. From a thousand worlds they had come, each with a craft to contribute.”
-            </div>
-          </div>
-          <div className="header-right">
-            {!authReady ? null : account ? (
-              <div className="user-cluster">
-                <button
-                  type="button"
-                  className={`gb sm${showAdmin ? " active" : ""}`}
-                  onClick={() => setShowAdmin((s) => !s)}
-                  aria-label="admin"
-                  title={showAdmin ? "hide admin" : "admin"}
-                >
-                  <span className="sigil">∷</span>
-                  <span className="label">admin</span>
-                </button>
-                <span className="user-id">
-                  <span className="user-dot" />
-                  <span className="user-handle">{account.username}</span>
-                </span>
-                <button
-                  type="button"
-                  className="gb sm quiet"
-                  onClick={async () => {
-                    await signOut();
-                    setAccount(null);
-                    setShowAdmin(false);
-                  }}
-                  aria-label="sign out"
-                  title="sign out"
-                >
-                  <span className="label">sign out</span>
-                </button>
-              </div>
-            ) : (
-              <button
-                type="button"
-                className="gb sm primary"
-                onClick={async () => {
-                  try {
-                    setAccount(await signIn());
-                  } catch (e) {
-                    console.error("sign-in failed", e);
-                  }
-                }}
-              >
-                <span className="sigil">›</span>
-                <span className="label">sign in</span>
-              </button>
-            )}
-          </div>
-        </header>
-
-        <nav className="workspace-breadcrumb app-breadcrumb" aria-label="breadcrumb">
-          <ol className="breadcrumb-trail">
-            {breadcrumbs.map((crumb, index) => {
-              const isCurrent = index === breadcrumbs.length - 1;
-              return (
-                <li className="breadcrumb-segment" key={`${crumb.label}:${index}`}>
-                  {index > 0 && <span className="breadcrumb-sep">/</span>}
-                  {crumb.to && !isCurrent ? (
-                    <Link to={crumb.to}>{crumb.label}</Link>
-                  ) : (
-                    <strong aria-current={isCurrent ? "page" : undefined}>{crumb.label}</strong>
-                  )}
-                </li>
-              );
-            })}
-          </ol>
-          {returnTarget && (
-            <Link className="breadcrumb-return" to={returnTarget.to}>
-              ← return to {returnTarget.label}
-            </Link>
-          )}
-        </nav>
-
-        {homeRoute && (
-            <nav className="dashboard-nav" aria-label="dashboard views">
-              <NavLink to="/leases/test" className={dashboardLinkClass}>
-                test leases
-              </NavLink>
-              <NavLink to="/leases/agent" className={dashboardLinkClass}>
-                agent leases
-              </NavLink>
-              <NavLink to="/needs-attention" className={dashboardLinkClass}>
-                needs attention
-                {inflightIssues && <span className="tab-dot" />}
-              </NavLink>
-              <NavLink to="/projects" className={dashboardLinkClass}>
-                projects
-              </NavLink>
-              <NavLink to="/portfolio" className={dashboardLinkClass}>
-                portfolio
-              </NavLink>
-              <NavLink to="/playbooks" className={dashboardLinkClass}>
-                playbooks
-              </NavLink>
-            </nav>
-        )}
-
-        {account && showAdmin && (
-          <AdminPanel projects={snap?.projects ?? []} onSuccess={() => setShowAdmin(false)} />
-        )}
-
-        <Outlet context={ctx} />
-      </main>
-    </div>
+    <Shell
+      snap={snap}
+      account={shellAccount}
+      isMock={isMockMode()}
+      onSignIn={async () => {
+        try {
+          setAccount(await signIn());
+        } catch (e) {
+          console.error("sign-in failed", e);
+        }
+      }}
+      onSignOut={async () => {
+        await signOut();
+        setAccount(null);
+      }}
+    >
+      <Outlet context={ctx} />
+    </Shell>
   );
-}
-
-type ReturnNavigationState = {
-  returnTo?: unknown;
-  returnLabel?: unknown;
-};
-
-function returnTargetFromState(state: unknown, currentPath: string): { to: string; label: string } | null {
-  if (typeof state !== "object" || state === null) return null;
-  const candidate = state as ReturnNavigationState;
-  if (typeof candidate.returnTo !== "string" || !candidate.returnTo.startsWith("/")) return null;
-  if (candidate.returnTo === currentPath) return null;
-  const label = typeof candidate.returnLabel === "string" && candidate.returnLabel.trim()
-    ? candidate.returnLabel
-    : "previous view";
-  return { to: candidate.returnTo, label };
-}
-
-function HomeRoute() {
-  const ctx = useOutletContext<LayoutContext>();
-  return <HomeView {...ctx} />;
 }
 
 function GlobalLeaseRoute({ kind }: { kind: LeaseKind }) {
@@ -675,29 +586,6 @@ function ProjectLeaseDetailRoute({ kind }: { kind: LeaseKind }) {
   );
 }
 
-function NeedsAttentionRoute() {
-  const { signedIn } = useOutletContext<LayoutContext>();
-  return (
-    <IssuesView
-      signedIn={signedIn}
-      projectFilter={null}
-      headingLabel="Needs attention"
-      needsAttentionOnly
-    />
-  );
-}
-
-function PlaybooksRoute() {
-  const { signedIn, isAdmin, selected } = useOutletContext<LayoutContext>();
-  return (
-    <PlaybooksView
-      signedIn={signedIn}
-      isAdmin={isAdmin}
-      projectFilter={selected.kind === "all" ? null : selected.project}
-    />
-  );
-}
-
 function ProjectsRoute() {
   const ctx = useOutletContext<LayoutContext>();
   return <ProjectsView {...ctx} />;
@@ -738,42 +626,6 @@ function ProjectIssuesRoute() {
   return <ProjectIssuesView {...ctx} projectName={decodeURIComponent(params.project ?? "")} />;
 }
 
-function ProjectPlaybooksRoute() {
-  const params = useParams<{ project?: string }>();
-  const { signedIn, isAdmin } = useOutletContext<LayoutContext>();
-  return (
-    <PlaybooksView
-      signedIn={signedIn}
-      isAdmin={isAdmin}
-      projectFilter={decodeURIComponent(params.project ?? "")}
-    />
-  );
-}
-
-function ProjectPlaybookDetailRoute() {
-  const params = useParams<{ project?: string; playbookRef?: string }>();
-  const { signedIn, isAdmin } = useOutletContext<LayoutContext>();
-  return (
-    <PlaybooksView
-      signedIn={signedIn}
-      isAdmin={isAdmin}
-      projectFilter={decodeURIComponent(params.project ?? "")}
-      playbookRef={decodeURIComponent(params.playbookRef ?? "")}
-    />
-  );
-}
-
-function ProjectPortfolioRoute() {
-  const params = useParams<{ project?: string }>();
-  const { signedIn } = useOutletContext<LayoutContext>();
-  return (
-    <PortfolioView
-      signedIn={signedIn}
-      projectFilter={decodeURIComponent(params.project ?? "")}
-    />
-  );
-}
-
 function IssueOnboardingRoute() {
   const params = useParams<{ project?: string }>();
   const ctx = useOutletContext<LayoutContext>();
@@ -792,77 +644,6 @@ function ProjectRunsRoute() {
   return <ProjectRunsView {...ctx} projectName={decodeURIComponent(params.project ?? "")} />;
 }
 
-function TouchpointsRoute() {
-  const { selected } = useOutletContext<LayoutContext>();
-  return (
-    <TouchpointsView
-      projectFilter={selected.kind === "all" ? null : selected.project}
-    />
-  );
-}
-
-function PortfolioRoute() {
-  const { signedIn, selected } = useOutletContext<LayoutContext>();
-  return (
-    <PortfolioView
-      signedIn={signedIn}
-      projectFilter={selected.kind === "all" ? null : selected.project}
-    />
-  );
-}
-
-function HomeView({ snap }: LayoutContext) {
-  const projects = snap?.projects.length ?? 0;
-  const workflows = snap?.workflows.length ?? 0;
-  const active = snap?.active_leases.length ?? 0;
-
-  return (
-    <div className="project-workspace">
-      <section className="project-hero">
-        <div className="project-hero-main">
-          <div className="project-kicker mono">home</div>
-          <h2>Glimmung coordinates agent work across projects</h2>
-          <div className="project-repo mono">
-            capacity, issue runs, touchpoints, and project-scoped workflow state
-          </div>
-        </div>
-        <div className="project-facts">
-          <div className="project-fact">
-            <span>projects</span>
-            <strong>{projects}</strong>
-          </div>
-          <div className="project-fact">
-            <span>workflows</span>
-            <strong>{workflows}</strong>
-          </div>
-          <div className="project-fact">
-            <span>active</span>
-            <strong>{active}</strong>
-          </div>
-        </div>
-      </section>
-
-      <section className="home-links" aria-label="primary destinations">
-        <Link to="/projects" className="home-link">
-          <span className="key">Projects</span>
-          <strong>Project workspaces, workflows, and scoped issues</strong>
-        </Link>
-        <Link to="/leases/test" className="home-link">
-          <span className="key">Test leases</span>
-          <strong>Current test environments and queued checkouts</strong>
-        </Link>
-        <Link to="/leases/agent" className="home-link">
-          <span className="key">Agent leases</span>
-          <strong>Active native agent work leases</strong>
-        </Link>
-        <Link to="/needs-attention" className="home-link">
-          <span className="key">Needs attention</span>
-          <strong>Open work that needs a decision or follow-up</strong>
-        </Link>
-      </section>
-    </div>
-  );
-}
 
 function ProjectsView({ snap }: LayoutContext) {
   if (snap === null) return <div className="empty">Connecting…</div>;
@@ -1021,17 +802,9 @@ function ProjectView({
           <span className="key">Workflows</span>
           <strong>Definitions, triggers, requirements, and workflow-scoped work</strong>
         </Link>
-        <Link to={`${projectPath}/playbooks`} className="home-link">
-          <span className="key">Playbooks</span>
-          <strong>Executable plans, gates, dependencies, and linked runs</strong>
-        </Link>
         <Link to={`${projectPath}/needs-attention`} className="home-link">
           <span className="key">Needs attention</span>
           <strong>Project work that needs a decision or follow-up</strong>
-        </Link>
-        <Link to={`${projectPath}/portfolio`} className="home-link">
-          <span className="key">Portfolio</span>
-          <strong>Review UI package rows and dispatch explicit follow-up</strong>
         </Link>
         <Link to={`${projectPath}/runs`} className="home-link">
           <span className="key">Runs</span>

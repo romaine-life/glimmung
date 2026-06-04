@@ -41,14 +41,9 @@ const APP_ROUTES = {
   issueRunStep: `/projects/:project/issues/:issueNumber/${ISSUE_DETAIL_CHILD_ROUTES.runStep}`,
   issueSettings: `/projects/:project/issues/:issueNumber/${ISSUE_DETAIL_CHILD_ROUTES.settings}`,
   issueTouchpoint: `/projects/:project/issues/:issueNumber/${ISSUE_DETAIL_CHILD_ROUTES.touchpoint}`,
-  projectPlaybooks: "/projects/:project/playbooks",
-  projectPlaybook: "/projects/:project/playbooks/:playbookRef",
   projectNeedsAttention: "/projects/:project/needs-attention",
-  projectPortfolio: "/projects/:project/portfolio",
   projectRuns: "/projects/:project/runs",
   touchpoints: "/touchpoints",
-  portfolio: "/portfolio",
-  playbooks: "/playbooks",
 } as const;
 
 type IssueRunSelectionParams = {
@@ -209,15 +204,7 @@ const breadcrumbRoutes: BreadcrumbRouteObject[] = [
                   },
                 ],
               },
-              {
-                path: "playbooks",
-                handle: { crumb: (match) => ({ label: "Playbooks", to: routePath(APP_ROUTES.projectPlaybooks, match.params) }) },
-                children: [
-                  { path: ":playbookRef", handle: { crumb: (match) => ({ label: match.params.playbookRef ?? "" }) } },
-                ],
-              },
               { path: "needs-attention", handle: { crumb: () => ({ label: "Needs attention" }) } },
-              { path: "portfolio", handle: { crumb: () => ({ label: "Portfolio" }) } },
               {
                 path: "runs",
                 handle: { crumb: (match) => ({ label: "Runs", to: routePath(APP_ROUTES.projectRuns, match.params) }) },
@@ -227,8 +214,12 @@ const breadcrumbRoutes: BreadcrumbRouteObject[] = [
         ],
       },
       { path: "touchpoints", handle: { crumb: () => ({ label: "Touchpoints", to: APP_ROUTES.touchpoints }) } },
-      { path: "portfolio", handle: { crumb: () => ({ label: "Portfolio" }) } },
-      { path: "playbooks", handle: { crumb: () => ({ label: "Playbooks" }) } },
+      { path: "issues", handle: { crumb: () => ({ label: "Issues", to: "/issues" }) } },
+      { path: "runs", handle: { crumb: () => ({ label: "Runs", to: "/runs" }) } },
+      { path: "workflows", handle: { crumb: () => ({ label: "Workflows", to: "/workflows" }) } },
+      { path: "leases", handle: { crumb: () => ({ label: "Leases", to: "/leases" }) } },
+      { path: "test-slots", handle: { crumb: () => ({ label: "Test slots", to: "/test-slots" }) } },
+      { path: "admin", handle: { crumb: () => ({ label: "Admin", to: "/admin" }) } },
     ],
   },
 ];
