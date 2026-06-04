@@ -1,0 +1,639 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>glimmung verification model</title>
+  <style>
+    :root {
+      --bg: #0a0a0a;
+      --surface: #171717;
+      --surface2: #101820;
+      --fg: #e7e7e7;
+      --muted: #a3a3a3;
+      --line: #3f3f46;
+      --llm: #7dd3fc;
+      --glim: #86efac;
+      --store: #facc15;
+      --bad: #f87171;
+      --accent: #86efac;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--fg);
+      font: 14px/1.4 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    .shell {
+      display: grid;
+      grid-template-columns: minmax(720px, 1fr) 340px;
+      min-height: 100vh;
+    }
+
+    main {
+      padding: 24px 28px 32px;
+      overflow: auto;
+    }
+
+    aside {
+      border-left: 1px solid var(--line);
+      background: #0f0f0f;
+      padding: 24px;
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      overflow: auto;
+    }
+
+    h1 {
+      margin: 0 0 4px;
+      font-size: 20px;
+      font-weight: 650;
+      letter-spacing: 0;
+    }
+
+    .subhead {
+      color: var(--muted);
+      margin-bottom: 18px;
+      max-width: 850px;
+    }
+
+    .toolbar {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 16px;
+      flex-wrap: wrap;
+    }
+
+    button {
+      border: 1px solid var(--line);
+      border-left: 2px solid var(--accent);
+      background: var(--surface);
+      color: var(--fg);
+      padding: 8px 12px;
+      font: inherit;
+      cursor: pointer;
+      clip-path: polygon(8px 0, 100% 0, 100% 100%, 0 100%, 0 8px);
+    }
+
+    button.active {
+      border-color: var(--accent);
+      background: #142018;
+    }
+
+    .legend {
+      display: flex;
+      gap: 12px;
+      color: var(--muted);
+      font-size: 12px;
+      margin: 8px 0 18px;
+      flex-wrap: wrap;
+    }
+
+    .key {
+      display: inline-flex;
+      gap: 6px;
+      align-items: center;
+    }
+
+    .swatch {
+      width: 14px;
+      height: 8px;
+      border: 1px solid currentColor;
+      display: inline-block;
+    }
+
+    svg {
+      width: 100%;
+      min-width: 900px;
+      height: auto;
+      background: #111;
+      border: 1px solid var(--line);
+      display: block;
+    }
+
+    .edge {
+      stroke: #777;
+      stroke-width: 1.5;
+      fill: none;
+      marker-end: url(#arrow);
+    }
+
+    .edge.bad {
+      stroke: var(--bad);
+      stroke-dasharray: 6 4;
+    }
+
+    .node rect {
+      fill: var(--surface);
+      stroke: var(--line);
+      stroke-width: 1.3;
+      transition: stroke 120ms ease, fill 120ms ease;
+      clip-path: polygon(8px 0, 100% 0, 100% 100%, 0 100%, 0 8px);
+    }
+
+    .node.llm rect { stroke: var(--llm); }
+    .node.glim rect { stroke: var(--glim); }
+    .node.store rect { fill: var(--surface2); stroke: var(--store); }
+    .node.problem rect { stroke: var(--bad); }
+
+    .node text {
+      fill: var(--fg);
+      pointer-events: none;
+    }
+
+    .node .minor {
+      fill: var(--muted);
+      font-size: 11px;
+    }
+
+    .node {
+      cursor: pointer;
+    }
+
+    .node:hover rect,
+    .node.selected rect {
+      stroke-width: 2.4;
+      fill: #202020;
+    }
+
+    .mode { display: none; }
+    .mode.active { display: block; }
+
+    .panel-label {
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      font-size: 12px;
+      margin-bottom: 8px;
+    }
+
+    .panel-title {
+      font-size: 18px;
+      font-weight: 650;
+      margin-bottom: 8px;
+    }
+
+    .pill {
+      display: inline-block;
+      border: 1px solid var(--line);
+      border-left: 2px solid var(--accent);
+      color: var(--muted);
+      padding: 3px 8px;
+      margin: 0 6px 12px 0;
+      font-size: 12px;
+      clip-path: polygon(6px 0, 100% 0, 100% 100%, 0 100%, 0 6px);
+    }
+
+    .panel-body {
+      color: #d4d4d8;
+      margin-bottom: 18px;
+    }
+
+    .panel-body p {
+      margin: 0 0 10px;
+    }
+
+    .panel-body ul {
+      padding-left: 18px;
+      margin: 8px 0 0;
+    }
+
+    .panel-body li {
+      margin: 5px 0;
+    }
+
+    pre {
+      white-space: pre-wrap;
+      word-break: break-word;
+      background: #090909;
+      border: 1px solid var(--line);
+      padding: 12px;
+      color: #d4d4d8;
+      font-size: 12px;
+    }
+
+    @media (max-width: 980px) {
+      .shell { grid-template-columns: 1fr; }
+      aside {
+        position: static;
+        height: auto;
+        border-left: 0;
+        border-top: 1px solid var(--line);
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <main>
+      <h1>glimmung verification model</h1>
+      <div class="subhead">
+        click a node. the left graph shows the current failure-prone shape; the right graph shows the north-star replacement.
+      </div>
+
+      <div class="toolbar">
+        <button class="active" data-mode-button="today">today</button>
+        <button data-mode-button="proposed">north-star</button>
+      </div>
+
+      <div class="legend">
+        <span class="key" style="color: var(--llm)"><span class="swatch"></span>LLM owns</span>
+        <span class="key" style="color: var(--glim)"><span class="swatch"></span>Glimmung deterministic</span>
+        <span class="key" style="color: var(--store)"><span class="swatch"></span>durable state</span>
+        <span class="key" style="color: var(--bad)"><span class="swatch"></span>trust gap</span>
+      </div>
+
+      <section class="mode active" data-mode="today">
+        <svg viewBox="0 0 1080 620" aria-label="today verification flow">
+          <defs>
+            <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+              <path d="M0,0 L0,6 L8,3 z" fill="#888"></path>
+            </marker>
+          </defs>
+
+          <path class="edge" d="M180 95 H270"></path>
+          <path class="edge" d="M460 95 H550"></path>
+          <path class="edge" d="M180 245 H270"></path>
+          <path class="edge" d="M460 245 H550"></path>
+          <path class="edge" d="M180 395 H270"></path>
+          <path class="edge bad" d="M760 95 C845 120, 835 345, 760 395"></path>
+          <path class="edge bad" d="M760 245 C820 270, 820 365, 760 395"></path>
+          <path class="edge" d="M760 395 H870"></path>
+          <path class="edge bad" d="M960 455 C980 505, 945 545, 880 545"></path>
+
+          <g class="node llm" data-node="today-issue-agent" transform="translate(40 60)">
+            <rect width="140" height="70"></rect>
+            <text x="16" y="30">issue-contract</text>
+            <text class="minor" x="16" y="50">LLM drafts scope</text>
+          </g>
+
+          <g class="node store" data-node="today-issue-contract" transform="translate(270 60)">
+            <rect width="190" height="70"></rect>
+            <text x="16" y="30">issue contract json</text>
+            <text class="minor" x="16" y="50">semantic target/surface</text>
+          </g>
+
+          <g class="node llm" data-node="today-test-plan-agent" transform="translate(40 210)">
+            <rect width="140" height="70"></rect>
+            <text x="16" y="30">test-plan</text>
+            <text class="minor" x="16" y="50">LLM proposes checks</text>
+          </g>
+
+          <g class="node problem" data-node="today-test-plan" transform="translate(270 210)">
+            <rect width="190" height="70"></rect>
+            <text x="16" y="30">required_evidence</text>
+            <text class="minor" x="16" y="50">looks operational</text>
+          </g>
+
+          <g class="node glim" data-node="today-workflow" transform="translate(40 360)">
+            <rect width="140" height="70"></rect>
+            <text x="16" y="30">workflow</text>
+            <text class="minor" x="16" y="50">platform gate</text>
+          </g>
+
+          <g class="node store" data-node="today-workflow-evidence" transform="translate(270 360)">
+            <rect width="190" height="70"></rect>
+            <text x="16" y="30">evidence reqs</text>
+            <text class="minor" x="16" y="50">also required</text>
+          </g>
+
+          <g class="node problem" data-node="today-verify" transform="translate(550 360)">
+            <rect width="210" height="92"></rect>
+            <text x="16" y="30">llm-verify</text>
+            <text class="minor" x="16" y="50">decides precedence</text>
+            <text class="minor" x="16" y="68">executes checks</text>
+            <text class="minor" x="16" y="86">judges evidence</text>
+          </g>
+
+          <g class="node problem" data-node="today-timeout" transform="translate(870 510)">
+            <rect width="160" height="70"></rect>
+            <text x="16" y="30">timeout</text>
+            <text class="minor" x="16" y="50">abort_malformed</text>
+          </g>
+
+          <g class="node store" data-node="today-verdict" transform="translate(870 360)">
+            <rect width="160" height="70"></rect>
+            <text x="16" y="30">verdict</text>
+            <text class="minor" x="16" y="50">only if emitted</text>
+          </g>
+        </svg>
+      </section>
+
+      <section class="mode" data-mode="proposed">
+        <svg viewBox="0 0 1080 680" aria-label="north-star verification flow">
+          <defs>
+            <marker id="arrow2" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+              <path d="M0,0 L0,6 L8,3 z" fill="#888"></path>
+            </marker>
+          </defs>
+
+          <path class="edge" style="marker-end:url(#arrow2)" d="M180 95 H270"></path>
+          <path class="edge" style="marker-end:url(#arrow2)" d="M460 95 H550"></path>
+          <path class="edge" style="marker-end:url(#arrow2)" d="M760 95 H850"></path>
+          <path class="edge" style="marker-end:url(#arrow2)" d="M960 130 V185"></path>
+          <path class="edge" style="marker-end:url(#arrow2)" d="M850 220 C690 230, 560 275, 460 330"></path>
+          <path class="edge" style="marker-end:url(#arrow2)" d="M460 330 H550"></path>
+          <path class="edge" style="marker-end:url(#arrow2)" d="M180 510 H290"></path>
+          <path class="edge" style="marker-end:url(#arrow2)" d="M180 600 C220 600, 245 545, 290 545"></path>
+          <path class="edge" style="marker-end:url(#arrow2)" d="M850 220 C760 330, 565 420, 500 510"></path>
+          <path class="edge" style="marker-end:url(#arrow2)" d="M500 510 H620"></path>
+          <path class="edge" style="marker-end:url(#arrow2)" d="M800 510 H890"></path>
+          <path class="edge" style="marker-end:url(#arrow2)" d="M980 545 V600"></path>
+          <path class="edge" style="marker-end:url(#arrow2)" d="M890 620 H760"></path>
+          <path class="edge" style="marker-end:url(#arrow2)" d="M655 365 V585"></path>
+          <path class="edge" style="marker-end:url(#arrow2)" d="M850 220 C780 360, 745 500, 725 585"></path>
+          <path class="edge" style="marker-end:url(#arrow2)" d="M620 620 H500"></path>
+          <path class="edge" style="marker-end:url(#arrow2)" d="M340 620 H230"></path>
+
+          <g class="node llm" data-node="new-drafter" transform="translate(40 60)">
+            <rect width="140" height="70"></rect>
+            <text x="16" y="30">contract draft</text>
+            <text class="minor" x="16" y="50">LLM interprets</text>
+          </g>
+
+          <g class="node store" data-node="new-draft" transform="translate(270 60)">
+            <rect width="190" height="70"></rect>
+            <text x="16" y="30">draft contract</text>
+            <text class="minor" x="16" y="50">not authoritative yet</text>
+          </g>
+
+          <g class="node glim" data-node="new-validator" transform="translate(550 60)">
+            <rect width="210" height="70"></rect>
+            <text x="16" y="30">contract validator</text>
+            <text class="minor" x="16" y="50">schema + capabilities</text>
+          </g>
+
+          <g class="node store" data-node="new-contract" transform="translate(850 185)">
+            <rect width="180" height="70"></rect>
+            <text x="16" y="30">stored contract</text>
+            <text class="minor" x="16" y="50">durable source</text>
+          </g>
+
+          <g class="node llm" data-node="new-implement" transform="translate(270 295)">
+            <rect width="190" height="70"></rect>
+            <text x="16" y="30">implement</text>
+            <text class="minor" x="16" y="50">agent builds</text>
+          </g>
+
+          <g class="node store" data-node="new-branch" transform="translate(550 295)">
+            <rect width="210" height="70"></rect>
+            <text x="16" y="30">branch + summary</text>
+            <text class="minor" x="16" y="50">diff and claims</text>
+          </g>
+
+          <g class="node store" data-node="new-workflow" transform="translate(40 475)">
+            <rect width="140" height="70"></rect>
+            <text x="16" y="30">workflow</text>
+            <text class="minor" x="16" y="50">budgets/gates</text>
+          </g>
+
+          <g class="node store" data-node="new-capabilities" transform="translate(40 565)">
+            <rect width="140" height="70"></rect>
+            <text x="16" y="30">capabilities</text>
+            <text class="minor" x="16" y="50">typed checks</text>
+          </g>
+
+          <g class="node glim" data-node="new-resolver" transform="translate(290 500)">
+            <rect width="210" height="70"></rect>
+            <text x="16" y="30">manifest resolver</text>
+            <text class="minor" x="16" y="50">single required list</text>
+          </g>
+
+          <g class="node store" data-node="new-manifest" transform="translate(620 500)">
+            <rect width="180" height="70"></rect>
+            <text x="16" y="30">manifest</text>
+            <text class="minor" x="16" y="50">operational truth</text>
+          </g>
+
+          <g class="node glim" data-node="new-runner" transform="translate(890 500)">
+            <rect width="150" height="70"></rect>
+            <text x="16" y="30">evidence runner</text>
+            <text class="minor" x="16" y="50">no improvising</text>
+          </g>
+
+          <g class="node store" data-node="new-ledger" transform="translate(890 600)">
+            <rect width="150" height="70"></rect>
+            <text x="16" y="30">evidence ledger</text>
+            <text class="minor" x="16" y="50">observed facts</text>
+          </g>
+
+          <g class="node llm" data-node="new-adjudicate" transform="translate(620 585)">
+            <rect width="140" height="70"></rect>
+            <text x="16" y="30">adjudicate</text>
+            <text class="minor" x="16" y="50">LLM judges</text>
+          </g>
+
+          <g class="node store" data-node="new-verdict" transform="translate(340 585)">
+            <rect width="160" height="70"></rect>
+            <text x="16" y="30">verdict</text>
+            <text class="minor" x="16" y="50">always emitted</text>
+          </g>
+
+          <g class="node glim" data-node="new-gate" transform="translate(80 585)">
+            <rect width="150" height="70"></rect>
+            <text x="16" y="30">evidence gate</text>
+            <text class="minor" x="16" y="50">retry/review</text>
+          </g>
+        </svg>
+      </section>
+    </main>
+
+    <aside>
+      <div class="panel-label">selected node</div>
+      <div class="panel-title" id="panel-title">click a node</div>
+      <div id="panel-tags"></div>
+      <div class="panel-body" id="panel-body">
+        <p>Use the toggle to compare today with the proposed model. Click any box to see what owns it, why it exists, and what failure it prevents.</p>
+      </div>
+      <pre id="panel-note">north-star rule: durable state is the source of truth; observed outcomes beat claimed intent.</pre>
+    </aside>
+  </div>
+
+  <script>
+    const details = {
+      "today-issue-agent": {
+        title: "issue-contract agent",
+        tags: ["LLM", "semantic scope"],
+        body: "Drafts the normalized issue contract. This is a good use of an LLM because the raw issue is human, ambiguous, and project-specific.",
+        note: "Keep this, but validate and store its output before downstream phases rely on it."
+      },
+      "today-issue-contract": {
+        title: "issue contract json",
+        tags: ["handoff file", "scope"],
+        body: "Contains target, route, event, and naming expectations. It describes what done means, not how evidence should be collected.",
+        note: "Problem today: it is one of several inputs the verifier must interpret."
+      },
+      "today-test-plan-agent": {
+        title: "test-plan agent",
+        tags: ["LLM", "recommendations"],
+        body: "Suggests ways to test the contract. This can be useful, but it should not create operational authority by itself.",
+        note: "The word required in its output is the dangerous part."
+      },
+      "today-test-plan": {
+        title: "test-plan required_evidence",
+        tags: ["trust gap", "ambiguous authority"],
+        body: "In the failed run, this listed eight videos and two Go commands. The verifier treated that as mandatory even though workflow evidence required only one video.",
+        note: "This is where 'strict prompts' still leave variance: two inputs both look required."
+      },
+      "today-workflow": {
+        title: "workflow registration",
+        tags: ["Glimmung", "platform gate"],
+        body: "Owns the registered phase shape, budgets, evidence gate semantics, and cleanup behavior.",
+        note: "This should remain the platform-level source for what gates the run."
+      },
+      "today-workflow-evidence": {
+        title: "workflow evidence requirements",
+        tags: ["required", "but not exclusive today"],
+        body: "In this run it required one primary browser-flow video. The verifier also saw the test-plan evidence list and had to infer precedence.",
+        note: "The fix is not more prose; the fix is one resolved manifest."
+      },
+      "today-verify": {
+        title: "llm-verify",
+        tags: ["trust gap", "too many jobs"],
+        body: "Today this phase decides precedence, executes browser/video/test checks, debugs failures, manages time, and judges the result.",
+        note: "This is the role overload. It caused scope expansion, endpoint guessing, recapture, sleep, and timeout."
+      },
+      "today-verdict": {
+        title: "verdict",
+        tags: ["fragile"],
+        body: "Only exists if the verifier finishes and writes artifacts. If Kubernetes kills the job first, Glimmung gets abort_malformed.",
+        note: "A verdict or incomplete verdict must be a guaranteed terminal output."
+      },
+      "today-timeout": {
+        title: "timeout -> abort_malformed",
+        tags: ["bad terminal state"],
+        body: "The job hit the native time budget after doing extra evidence work. Because it had not emitted structured verification, the run became malformed instead of verification_incomplete.",
+        note: "Timeout should preserve the evidence ledger and produce a clear incomplete/fail state."
+      },
+
+      "new-drafter": {
+        title: "contract drafting agent",
+        tags: ["LLM", "kept"],
+        body: "The LLM still interprets messy issue text. That is the part humans need help with.",
+        note: "The draft is not authoritative until validated."
+      },
+      "new-draft": {
+        title: "draft contract",
+        tags: ["not durable authority yet"],
+        body: "A proposed target, public surface, required behavior, and exclusions.",
+        note: "Reject invalid or unsupported contracts before implementation."
+      },
+      "new-validator": {
+        title: "contract validator",
+        tags: ["Glimmung", "deterministic"],
+        body: "Checks schema, known project target kinds, route/event shapes, and whether verification capabilities can express the public surface.",
+        note: "This is where arbitrary LLM output becomes a platform-owned contract."
+      },
+      "new-contract": {
+        title: "stored issue contract",
+        tags: ["durable", "source of truth"],
+        body: "The accepted contract is stored on the run/cycle and becomes the semantic source for implementation and adjudication.",
+        note: "No downstream phase should scrape or reinterpret arbitrary handoff prose."
+      },
+      "new-implement": {
+        title: "implementation agent",
+        tags: ["LLM", "bounded lane"],
+        body: "Builds against the stored issue contract. It can still summarize claims, but claims are not evidence.",
+        note: "Freedom inside the lane; the lane is real."
+      },
+      "new-branch": {
+        title: "branch + summary",
+        tags: ["durable-ish output"],
+        body: "The branch, diff, implementation summary, and claimed local checks.",
+        note: "Adjudication can read this, but observed evidence wins."
+      },
+      "new-workflow": {
+        title: "workflow registration",
+        tags: ["durable", "budgets"],
+        body: "Owns phase shape, required gates, budgets, and whether this workflow uses slots/browser evidence.",
+        note: "The workflow remains the platform boundary."
+      },
+      "new-capabilities": {
+        title: "project verification capabilities",
+        tags: ["typed checks"],
+        body: "Declares what the project can verify: browser video, trigger probe, Go test, helm template, API probe, schema check, synthetic run replay, etc.",
+        note: "Feature variability belongs here, not inside verifier improvisation."
+      },
+      "new-resolver": {
+        title: "manifest resolver",
+        tags: ["Glimmung", "deterministic"],
+        body: "Combines workflow, capabilities, and stored contract into exactly one verification manifest with required and optional checks.",
+        note: "This replaces competing required lists."
+      },
+      "new-manifest": {
+        title: "verification manifest",
+        tags: ["operational truth"],
+        body: "The only required check list. Every item has kind, input, timeout, artifact shape, and pass/fail/incomplete semantics.",
+        note: "The verifier no longer decides what is mandatory."
+      },
+      "new-runner": {
+        title: "evidence runner",
+        tags: ["Glimmung", "deterministic"],
+        body: "Executes typed checks and uploads artifacts. It knows the correct helper APIs and enforces per-check budgets.",
+        note: "No sleeping for session expiry, no ad-hoc endpoint discovery in the judgment agent."
+      },
+      "new-ledger": {
+        title: "evidence ledger",
+        tags: ["durable", "observed outcomes"],
+        body: "Per-check state: pending, running, pass, fail, incomplete, skipped, plus artifact refs, elapsed time, failure class, and logs.",
+        note: "This is what makes bad states reviewable."
+      },
+      "new-adjudicate": {
+        title: "adjudication agent",
+        tags: ["LLM", "judgment only"],
+        body: "Reads stored contract, branch/summary, and evidence ledger. Decides pass, fail, or incomplete with reasons.",
+        note: "The LLM judges nuanced evidence; it does not execute the checklist."
+      },
+      "new-verdict": {
+        title: "verification verdict",
+        tags: ["durable", "guaranteed"],
+        body: "Always emitted. If evidence collection timed out, the verdict is incomplete with the missing checks listed.",
+        note: "No more timeout-as-malformed for normal verification failures."
+      },
+      "new-gate": {
+        title: "evidence gate",
+        tags: ["Glimmung", "run loop"],
+        body: "Uses verdict and ledger state to advance to review, recycle/retry, or abort with a clear terminal observation.",
+        note: "This is where the verify loop stays explicit and bounded."
+      }
+    };
+
+    const title = document.getElementById("panel-title");
+    const tags = document.getElementById("panel-tags");
+    const body = document.getElementById("panel-body");
+    const note = document.getElementById("panel-note");
+
+    function selectNode(node) {
+      document.querySelectorAll(".node.selected").forEach((n) => n.classList.remove("selected"));
+      node.classList.add("selected");
+      const d = details[node.dataset.node];
+      title.textContent = d.title;
+      tags.innerHTML = d.tags.map((t) => `<span class="pill">${t}</span>`).join("");
+      body.innerHTML = `<p>${d.body}</p>`;
+      note.textContent = d.note;
+    }
+
+    document.querySelectorAll(".node").forEach((node) => {
+      node.addEventListener("click", () => selectNode(node));
+    });
+
+    document.querySelectorAll("[data-mode-button]").forEach((button) => {
+      button.addEventListener("click", () => {
+        const mode = button.dataset.modeButton;
+        document.querySelectorAll("[data-mode-button]").forEach((b) => b.classList.toggle("active", b === button));
+        document.querySelectorAll("[data-mode]").forEach((section) => section.classList.toggle("active", section.dataset.mode === mode));
+        document.querySelectorAll(".node.selected").forEach((n) => n.classList.remove("selected"));
+        title.textContent = "click a node";
+        tags.innerHTML = "";
+        body.innerHTML = "<p>Use the toggle to compare today with the proposed model. Click any box to see what owns it, why it exists, and what failure it prevents.</p>";
+        note.textContent = "north-star rule: durable state is the source of truth; observed outcomes beat claimed intent.";
+      });
+    });
+  </script>
+</body>
+</html>
