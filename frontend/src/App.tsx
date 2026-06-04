@@ -2264,16 +2264,16 @@ function TestEnvironmentIndexView({
           <div className="project-repo mono">prepared slots and checkout admission</div>
         </div>
         <div className="project-facts">
-          <div className="project-fact"><span>checkout ready</span><strong>{checkoutAvailable}</strong></div>
+          <div className="project-fact ok"><span>checkout ready</span><strong>{checkoutAvailable}</strong></div>
           <div className="project-fact"><span>prepared</span><strong>{preparedAvailable}</strong></div>
-          <div className="project-fact"><span>claimed</span><strong>{claimedCount}</strong></div>
-          <div className="project-fact"><span>activating</span><strong>{activating.length}</strong></div>
-          <div className="project-fact"><span>active</span><strong>{active.length}</strong></div>
-          {cleaning.length > 0 && <div className="project-fact"><span>cleaning</span><strong>{cleaning.length}</strong></div>}
-          {claimed.length > 0 && <div className="project-fact"><span>claimed</span><strong>{claimed.length}</strong></div>}
-          {errored.length > 0 && <div className="project-fact"><span>error</span><strong>{errored.length}</strong></div>}
-          {unseeded.length > 0 && <div className="project-fact"><span>unseeded</span><strong>{unseeded.length}</strong></div>}
-          {projectName && <div className="project-fact"><span>configured</span><strong>{environments.length}</strong></div>}
+          <div className="project-fact busy"><span>claimed</span><strong>{claimedCount}</strong></div>
+          <div className="project-fact warn"><span>activating</span><strong>{activating.length}</strong></div>
+          <div className="project-fact busy"><span>active</span><strong>{active.length}</strong></div>
+          {cleaning.length > 0 && <div className="project-fact warn"><span>cleaning</span><strong>{cleaning.length}</strong></div>}
+          {claimed.length > 0 && <div className="project-fact busy"><span>claimed</span><strong>{claimed.length}</strong></div>}
+          {errored.length > 0 && <div className="project-fact bad"><span>error</span><strong>{errored.length}</strong></div>}
+          {unseeded.length > 0 && <div className="project-fact muted"><span>unseeded</span><strong>{unseeded.length}</strong></div>}
+          {projectName && <div className="project-fact muted"><span>configured</span><strong>{environments.length}</strong></div>}
         </div>
       </section>
 

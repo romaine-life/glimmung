@@ -195,6 +195,23 @@ const DESIGN_SYSTEM_ITEMS: PortfolioItem[] = [
     ),
   },
   {
+    id: "stat-card-tones",
+    title: "Stat Card Tones",
+    caption: "State-colored project-fact rails: ok · busy · warn · bad · muted (default keeps the info rail)",
+    render: () => (
+      <Specimen title="stat card tones">
+        <div className="project-facts">
+          <div className="project-fact ok"><span>checkout ready</span><strong>18</strong></div>
+          <div className="project-fact busy"><span>claimed</span><strong>3</strong></div>
+          <div className="project-fact warn"><span>activating</span><strong>2</strong></div>
+          <div className="project-fact bad"><span>error</span><strong>1</strong></div>
+          <div className="project-fact muted"><span>configured</span><strong>23</strong></div>
+          <div className="project-fact"><span>prepared</span><strong>18</strong></div>
+        </div>
+      </Specimen>
+    ),
+  },
+  {
     id: "phase-graph-prepare-recycle",
     title: "Phase Graph Prepare Recycle",
     caption: "Entry recycle lanes from verification and the registered touchpoint phase",

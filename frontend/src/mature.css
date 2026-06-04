@@ -1,0 +1,508 @@
+/* ══════════════════════════════════════════════════════════════════════
+   glimmung — MATURE THEME LAYER
+   ──────────────────────────────────────────────────────────────────────
+   A drop-in override layer applied ON TOP OF the existing frontend/src
+   index.css. It does NOT replace anything structural — it re-themes the
+   real app's existing selectors (.layout/.content/.app-header/.project-
+   hero/.project-facts/.home-link/table/.pill/.gb/.tabs …) into the
+   "mature" direction: Grafana/GitLab-flavoured panels, stat cards,
+   refined surfaces, one restrained shadow, and two live switches.
+
+   HOW TO USE IN THE REPO
+   ----------------------
+   Import it AFTER index.css so its rules win the cascade. Either:
+     • in main.tsx:   import "./index.css";  import "./mature.css";
+     • or append:     @import url("./mature.css");  (last line of index.css)
+   Then set the two switches on <html> (chosen defaults shown):
+     <html data-geometry="chamfer" data-density="compact">
+   Flip data-geometry to "rounded" for soft corners; flip data-density to
+   "comfortable" to loosen rows. The mature panel/stat/badge treatment stays
+   on in BOTH geometries — only the corner shape changes. Chamfer mode drops
+   panel shadows automatically (a box-shadow can't follow a clip-path corner).
+   Nothing here redefines a design-system token, so the token CI stays green.
+   ══════════════════════════════════════════════════════════════════════ */
+
+:root {
+  /* mature surfaces (layered on top of the design-system neutral ramp) */
+  --m-canvas:      #0c0c0e;
+  --m-panel:       #131318;
+  --m-panel-head:  #17171d;
+  --m-panel-2:     #1a1a20;
+  --m-line:        #26262c;
+  --m-line-soft:   #1e1e24;
+  --m-line-strong: #34343c;
+
+  /* mature text ramp */
+  --m-strong:      #e9e9ec;
+  --m-body:        #c9c9cf;
+  --m-muted:       #8b8b94;
+  --m-dim:         #6c6c75;
+  --m-faint:       #4d4d55;
+
+  /* the maturity whisper — one restrained shadow, nothing glowy */
+  --m-shadow:      0 1px 0 rgba(0,0,0,0.40), 0 1px 3px rgba(0,0,0,0.28);
+  --m-shadow-flt:  0 8px 24px rgba(0,0,0,0.50), 0 2px 6px rgba(0,0,0,0.40);
+
+  /* geometry — rounded radii by default; chamfer block zeroes these and
+     re-applies clip-path corners. */
+  --m-r:    8px;   /* panels, cards, tables */
+  --m-r-sm: 6px;   /* buttons, chips, inputs */
+  --m-r-xs: 5px;   /* tiny chips */
+
+  /* density */
+  --m-row-y:   10px;
+  --m-cell-x:  14px;
+  --m-pad:     16px;
+  --m-gap:     22px;
+
+  --m-speed: 120ms;
+  --m-ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+html[data-density="compact"] {
+  --m-row-y:  6px;
+  --m-cell-x: 12px;
+  --m-pad:    12px;
+  --m-gap:    16px;
+}
+
+body {
+  background: var(--m-canvas);
+  color: var(--m-body);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ───────────────────────────── shell ──────────────────────────────── */
+.layout { background: var(--m-canvas); }
+.content {
+  max-width: 1320px;
+  margin: 0 auto;
+  padding: 0 28px 56px;
+}
+
+.app-header {
+  gap: 16px;
+  min-height: 56px;
+  margin-bottom: 2px;
+  border-bottom: 1px solid var(--m-line);
+}
+.app-header h1 {
+  font-size: 1.12rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--m-strong);
+}
+.header-left { gap: 14px; }
+.header-right { white-space: nowrap; }
+.user-cluster .gb .label { white-space: nowrap; }
+.epigraph { color: var(--m-faint); font-size: 0.78rem; }
+
+/* breadcrumb + dashboard nav */
+.app-breadcrumb { border-bottom: 1px solid var(--m-line); }
+.breadcrumb-trail { font-size: 0.8rem; }
+.workspace-breadcrumb a { color: var(--state-busy-fg); }
+.workspace-breadcrumb strong { color: var(--m-muted); }
+
+.dashboard-nav { gap: 6px; margin: 14px 0 4px; padding-bottom: 0; border-bottom: 0; }
+.dashboard-nav-link {
+  min-height: 32px;
+  padding: 0 13px;
+  background: var(--m-panel);
+  border: 1px solid var(--m-line);
+  border-left: 1px solid var(--m-line);
+  border-radius: var(--m-r-sm);
+  color: var(--m-muted);
+  font-size: 0.8rem;
+  letter-spacing: 0.02em;
+  text-transform: none;
+  transition: background var(--m-speed) var(--m-ease), color var(--m-speed) var(--m-ease), border-color var(--m-speed) var(--m-ease);
+}
+.dashboard-nav-link:hover { background: var(--m-panel-2); border-color: var(--m-line-strong); color: var(--m-strong); }
+.dashboard-nav-link.selected {
+  background: color-mix(in srgb, var(--state-success-bg) 36%, var(--m-panel));
+  border-color: color-mix(in srgb, var(--state-success-fg) 38%, var(--m-line));
+  border-left-color: color-mix(in srgb, var(--state-success-fg) 38%, var(--m-line));
+  color: var(--state-success-fg);
+}
+
+/* ───────────────────────── workspace + hero ───────────────────────── */
+.project-workspace { gap: var(--m-gap); }
+.project-hero { gap: 24px; padding: 20px 0 16px; border-bottom: 1px solid var(--m-line); }
+.project-kicker { color: var(--m-dim); font-size: 0.68rem; letter-spacing: 0.14em; }
+.project-hero h2 {
+  font-size: 1.32rem; font-weight: 600; letter-spacing: -0.01em;
+  color: var(--m-strong); text-transform: none;
+}
+.project-repo { color: var(--m-muted); }
+
+/* project-facts → Grafana-style stat cards */
+.project-facts { gap: 12px; }
+.project-fact {
+  min-width: 92px;
+  padding: 11px 14px 12px;
+  background: var(--m-panel);
+  border: 1px solid var(--m-line);
+  border-left: 3px solid var(--state-info-fg);
+  border-radius: var(--m-r);
+  box-shadow: var(--m-shadow);
+}
+.project-fact span { color: var(--m-dim); font-size: 0.66rem; letter-spacing: 0.07em; }
+.project-fact strong { margin-top: 5px; font-size: 1.5rem; font-weight: 600; line-height: 1; color: var(--m-strong); }
+/* optional state-colored accents — add `ok|busy|warn|bad` to a .project-fact's
+   className (see STATE-ACCENTS.md). Default (no modifier) keeps the info-blue rail. */
+.project-fact.ok   { border-left-color: var(--state-success-fg); }
+.project-fact.ok   strong { color: var(--state-success-fg); }
+.project-fact.busy { border-left-color: var(--state-busy-fg); }
+.project-fact.busy strong { color: var(--state-busy-fg); }
+.project-fact.warn { border-left-color: var(--state-pending-fg); }
+.project-fact.warn strong { color: var(--state-pending-fg); }
+.project-fact.bad  { border-left-color: var(--state-danger-fg); }
+.project-fact.bad  strong { color: var(--state-danger-fg); }
+.project-fact.muted { border-left-color: var(--m-line-strong); }
+.project-fact.muted strong { color: var(--m-muted); }
+
+/* home-links → nav cards with a real lift on hover */
+.home-links { gap: 12px; }
+.home-link {
+  min-height: 92px;
+  padding: 15px 16px;
+  background: var(--m-panel);
+  border: 1px solid var(--m-line);
+  border-left: 3px solid var(--m-line-strong);
+  border-radius: var(--m-r);
+  box-shadow: var(--m-shadow);
+  transition: background var(--m-speed) var(--m-ease), border-color var(--m-speed) var(--m-ease), color var(--m-speed) var(--m-ease);
+}
+.home-link:hover { background: var(--m-panel-2); border-color: var(--m-line-strong); border-left-color: var(--state-success-fg); }
+.home-link .key { color: var(--m-dim); font-size: 0.68rem; letter-spacing: 0.07em; }
+.home-link strong { color: var(--m-strong); font-weight: 600; }
+
+/* ─────────────────────────── section heads ────────────────────────── */
+.content h2 { margin-top: var(--m-gap); font-size: 0.82rem; font-weight: 600; letter-spacing: 0.06em; color: var(--m-muted); }
+.project-hero h2, .project-hero-main h2 { letter-spacing: -0.01em; }
+
+/* ────────────────────────────── tables ────────────────────────────── */
+table {
+  background: var(--m-panel);
+  border: 1px solid var(--m-line);
+  border-radius: var(--m-r);
+  overflow: hidden;
+  box-shadow: var(--m-shadow);
+  border-collapse: separate;
+  border-spacing: 0;
+}
+thead th {
+  padding: 10px var(--m-cell-x);
+  background: var(--m-panel-head);
+  border-bottom: 1px solid var(--m-line);
+  color: var(--m-dim);
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+}
+tbody td {
+  padding: var(--m-row-y) var(--m-cell-x);
+  border-bottom: 1px solid var(--m-line-soft);
+  color: var(--m-body);
+  vertical-align: middle;
+}
+tbody tr:last-child td { border-bottom: 0; }
+tbody tr { transition: background var(--m-speed) var(--m-ease); }
+tbody tr:hover td { background: #181820; }
+td.mono { color: var(--m-muted); }
+td.dim { color: var(--m-dim); }
+tr.eligible td:first-child { border-left: 2px solid var(--state-success-fg); }
+
+/* ───────────────────────── pills → badges ─────────────────────────── */
+/* Drop the chamfer clip-path and render GitLab-style pill badges with a
+   leading status dot (the ::before is repurposed as the dot). */
+.pill {
+  height: 20px;
+  padding: 0 9px 0 8px;
+  gap: 6px;
+  border-radius: 999px;
+  clip-path: none;
+  background: var(--pill-bg, transparent);
+  border: 1px solid var(--pill-edge, var(--border));
+  font-weight: 500;
+  letter-spacing: 0.01em;
+}
+.pill::before {
+  content: "";
+  position: static;
+  width: 6px; height: 6px;
+  border-radius: 999px;
+  background: var(--pill-fg, currentColor);
+  inset: auto;
+}
+.pill.free    { --pill-edge: color-mix(in srgb, var(--state-success-fg) 30%, transparent); --pill-bg: color-mix(in srgb, var(--state-success-bg) 40%, transparent); }
+.pill.busy    { --pill-edge: color-mix(in srgb, var(--state-busy-fg) 30%, transparent);    --pill-bg: color-mix(in srgb, var(--state-busy-bg) 40%, transparent); }
+.pill.pending { --pill-edge: color-mix(in srgb, var(--state-pending-fg) 30%, transparent); --pill-bg: color-mix(in srgb, var(--state-pending-bg) 40%, transparent); }
+.pill.drain   { --pill-edge: color-mix(in srgb, var(--state-danger-fg) 30%, transparent);  --pill-bg: color-mix(in srgb, var(--state-danger-bg) 40%, transparent); }
+.pill.info    { --pill-edge: color-mix(in srgb, var(--state-info-fg) 30%, transparent);    --pill-bg: color-mix(in srgb, var(--state-info-bg) 40%, transparent); }
+
+/* ───────────────────────── buttons (.gb) ──────────────────────────── */
+.gb {
+  clip-path: none;
+  border-radius: var(--m-r-sm);
+  border: 1px solid var(--gb-edge, var(--m-line-strong));
+  background: var(--m-panel-2);
+  transition: background var(--m-speed) var(--m-ease), border-color var(--m-speed) var(--m-ease), color var(--m-speed) var(--m-ease);
+}
+.gb::before { display: none; }
+.gb:hover { background: #20202a; border-color: var(--m-line-strong); }
+.gb.primary {
+  background: color-mix(in srgb, var(--state-success-bg) 64%, #101810);
+  border-color: color-mix(in srgb, var(--state-success-fg) 42%, var(--m-line));
+  color: #d7ffe4;
+}
+.gb.primary:hover { background: color-mix(in srgb, var(--state-success-bg) 84%, #101810); }
+.gb.danger { border-color: color-mix(in srgb, var(--state-danger-fg) 36%, var(--m-line)); color: #ffd9d9; }
+.gb.danger:hover { background: color-mix(in srgb, var(--state-danger-bg) 40%, transparent); }
+.gb.active {
+  background: color-mix(in srgb, var(--state-success-bg) 50%, transparent);
+  border-color: color-mix(in srgb, var(--state-success-fg) 40%, var(--m-line));
+  color: var(--state-success-fg);
+}
+.gb.quiet { background: transparent; border-color: transparent; }
+.gb.quiet:hover { background: var(--m-panel-2); }
+/* .gb.ghost / .link stay as plain text links (base.css strips their plate) */
+
+/* user id chip + connection chip */
+.user-id, .connection {
+  clip-path: none;
+  border-radius: var(--m-r-xs);
+  border: 1px solid var(--pill-edge, var(--m-line));
+}
+.user-id { border-color: var(--m-line); }
+.user-id::before, .connection::before { display: none; }
+.project-row .count, .workflow-row .count {
+  clip-path: none;
+  border-radius: 999px;
+  border: 1px solid var(--count-edge, transparent);
+}
+.project-row .count::before, .workflow-row .count::before { display: none; }
+
+/* ───────────────────────────── tabs ───────────────────────────────── */
+.tabs { gap: 2px; border-bottom: 1px solid var(--m-line); margin: 18px 0 0; }
+.tabs .tab {
+  padding: 9px 14px;
+  color: var(--m-muted);
+  font-size: 0.82rem;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  text-transform: none;
+  font-family: var(--font-sans);
+}
+.tabs .tab:hover { background: transparent; color: var(--m-body); }
+.tabs .tab.selected { color: var(--m-strong); border-bottom-color: var(--state-success-fg); }
+
+.issue-state-filter { border-bottom: 1px solid var(--m-line); }
+.issue-state-filter button { font-family: var(--font-sans); text-transform: none; letter-spacing: 0.01em; color: var(--m-muted); }
+.issue-state-filter button.selected { color: var(--state-success-fg); border-bottom-color: var(--state-success-fg); }
+
+/* ───────────────────── inline panels / kv cards ───────────────────── */
+.admin-panel, .project-info {
+  clip-path: none;
+  border: 1px solid var(--m-line);
+  border-radius: var(--m-r);
+  background: var(--m-panel);
+  box-shadow: var(--m-shadow);
+}
+.admin-panel::before, .project-info::before { display: none; }
+
+.kpi-strip {
+  clip-path: none;
+  border: 1px solid var(--m-line);
+  border-radius: var(--m-r);
+  background: var(--m-panel);
+  box-shadow: var(--m-shadow);
+  padding: 14px 18px;
+}
+.kpi-strip::before { display: none; }
+.kpi .k { color: var(--m-dim); }
+.kpi .v { font-size: 1.15rem; color: var(--m-strong); }
+
+.empty {
+  background: color-mix(in srgb, var(--m-panel) 60%, transparent);
+  border: 1px dashed var(--m-line-strong);
+  border-radius: var(--m-r);
+  color: var(--m-dim);
+  font-style: normal;
+  padding: 22px 16px;
+}
+.json-block {
+  background: var(--m-panel-head);
+  border: 1px solid var(--m-line);
+  border-radius: var(--m-r-sm);
+  color: var(--m-muted);
+}
+
+/* ═══════════════════ run detail: workflow / run graph ═══════════════ */
+.run-breadcrumb { color: var(--m-dim); font-size: 0.82rem; }
+.run-breadcrumb strong { color: var(--m-strong); }
+.run-status-banner { color: var(--m-muted); }
+.run-section-header h2 { margin-top: 0; }
+
+/* the gridded run-graph board */
+.run-graph {
+  border: 1px solid var(--m-line);
+  border-radius: var(--m-r);
+  background:
+    linear-gradient(to right, rgb(255 255 255 / 0.022) 1px, transparent 1px),
+    linear-gradient(to bottom, rgb(255 255 255 / 0.022) 1px, transparent 1px),
+    var(--m-panel-head);
+  background-size: 28px 28px;
+  box-shadow: var(--m-shadow);
+}
+.graph-inspector,
+.run-panel {
+  border: 1px solid var(--m-line);
+  border-radius: var(--m-r);
+  background: var(--m-panel);
+  box-shadow: var(--m-shadow);
+}
+.stage-heading strong { color: var(--m-strong); }
+
+/* run-graph-node carries a base clip-path chamfer — soften to radius in
+   rounded mode (the chamfer block re-applies it). */
+.run-graph-node {
+  clip-path: none;
+  border-radius: var(--m-r-sm);
+  background: var(--m-panel);
+}
+.run-graph-node::before { display: none; }
+.run-graph-node {
+  border: 1px solid var(--graph-edge, var(--m-line));
+  border-left: 2px solid var(--graph-rail, var(--m-line-strong));
+}
+.run-graph-node strong { color: var(--m-strong); }
+
+/* dag (react-flow) nodes + phases */
+.dag-entry, .dag-node {
+  background: var(--m-panel);
+  border: 1px solid var(--m-line);
+  border-radius: var(--m-r-sm);
+}
+.dag-phase {
+  background: color-mix(in srgb, var(--m-panel) 78%, var(--m-canvas));
+  border: 1px solid var(--m-line);
+  border-radius: var(--m-r);
+}
+.dag-node.selected, .dag-phase.selected { border-color: var(--state-success-fg); }
+.dag-policy {
+  background: var(--m-panel);
+  border: 1px solid var(--m-line);
+  border-left: 2px solid var(--state-info-fg);
+  border-radius: var(--m-r-sm);
+}
+
+/* attempt cards */
+.attempt-card {
+  background: var(--m-panel);
+  border: 1px solid var(--m-line);
+  border-radius: var(--m-r);
+  box-shadow: var(--m-shadow);
+}
+.attempt-card.running { border-color: color-mix(in srgb, var(--state-busy-fg) 45%, var(--m-line)); }
+.attempt-card.stuck { border-color: color-mix(in srgb, var(--state-danger-fg) 50%, var(--m-line)); }
+.attempt-card-body .key, .attempt-card-head .key { color: var(--m-dim); }
+
+/* step log + terminal */
+.step-log-layout, .native-step-log-layout {
+  border: 1px solid var(--m-line);
+  border-radius: var(--m-r);
+  overflow: hidden;
+  background: var(--m-panel-head);
+  box-shadow: var(--m-shadow);
+}
+.step-list { background: var(--m-panel); border-right: 1px solid var(--m-line); }
+.step-row { border-bottom: 1px solid var(--m-line-soft); color: var(--m-muted); }
+.step-row.active, .step-row.selected { background: var(--m-panel-2); color: var(--m-strong); }
+.step-row strong { color: inherit; }
+.step-terminal, .native-step-terminal { background: #08080a; color: var(--m-body); }
+
+/* agent transcript entries → panels */
+.agent-transcript { background: #08080a; }
+.agent-transcript-entry {
+  background: var(--m-panel);
+  border: 1px solid var(--m-line);
+  border-radius: var(--m-r-sm);
+}
+.agent-transcript-entry strong { color: var(--m-strong); }
+.native-view-toggle, .native-page-controls button {
+  border-color: var(--m-line);
+  border-radius: var(--m-r-sm);
+  background: var(--m-panel);
+}
+.dag-edge-label, .edge-label { color: var(--m-muted); }
+
+/* ══════════════════════════════════════════════════════════════════════
+   GEOMETRY = chamfer  — restore the console-plate corner. Zeroes the
+   rounded radii and re-applies the asymmetric top-left clip-path to
+   panels, cards, tables, buttons, badges and chips.
+   ══════════════════════════════════════════════════════════════════════ */
+html[data-geometry="chamfer"] {
+  --m-r: 0px; --m-r-sm: 0px; --m-r-xs: 0px;
+}
+html[data-geometry="chamfer"] .project-fact,
+html[data-geometry="chamfer"] .home-link,
+html[data-geometry="chamfer"] .admin-panel,
+html[data-geometry="chamfer"] .project-info,
+html[data-geometry="chamfer"] .kpi-strip,
+html[data-geometry="chamfer"] table { clip-path: polygon(13px 0, 100% 0, 100% 100%, 0 100%, 0 13px); }
+html[data-geometry="chamfer"] .dashboard-nav-link,
+html[data-geometry="chamfer"] .gb { clip-path: polygon(8px 0, 100% 0, 100% 100%, 0 100%, 0 8px); }
+html[data-geometry="chamfer"] .pill {
+  clip-path: polygon(7px 0, 100% 0, 100% 100%, 0 100%, 0 7px);
+  padding-left: 10px;
+  box-shadow: inset 2px 0 0 currentColor;
+}
+html[data-geometry="chamfer"] .pill::before { display: none; }
+html[data-geometry="chamfer"] .user-id,
+html[data-geometry="chamfer"] .connection,
+html[data-geometry="chamfer"] .project-row .count,
+html[data-geometry="chamfer"] .workflow-row .count { clip-path: polygon(5px 0, 100% 0, 100% 100%, 0 100%, 0 5px); }
+html[data-geometry="chamfer"] .run-graph,
+html[data-geometry="chamfer"] .graph-inspector,
+html[data-geometry="chamfer"] .run-panel,
+html[data-geometry="chamfer"] .attempt-card,
+html[data-geometry="chamfer"] .step-log-layout,
+html[data-geometry="chamfer"] .native-step-log-layout,
+html[data-geometry="chamfer"] .dag-phase { clip-path: polygon(11px 0, 100% 0, 100% 100%, 0 100%, 0 11px); }
+html[data-geometry="chamfer"] .run-graph-node,
+html[data-geometry="chamfer"] .dag-node,
+html[data-geometry="chamfer"] .dag-entry,
+html[data-geometry="chamfer"] .dag-policy,
+html[data-geometry="chamfer"] .agent-transcript-entry { clip-path: polygon(7px 0, 100% 0, 100% 100%, 0 100%, 0 7px); }
+/* a box-shadow can't follow the clipped corner — drop shadows in chamfer mode */
+html[data-geometry="chamfer"] .project-fact,
+html[data-geometry="chamfer"] .home-link,
+html[data-geometry="chamfer"] table,
+html[data-geometry="chamfer"] .admin-panel,
+html[data-geometry="chamfer"] .project-info,
+html[data-geometry="chamfer"] .kpi-strip,
+html[data-geometry="chamfer"] .run-graph,
+html[data-geometry="chamfer"] .graph-inspector,
+html[data-geometry="chamfer"] .run-panel,
+html[data-geometry="chamfer"] .attempt-card,
+html[data-geometry="chamfer"] .step-log-layout,
+html[data-geometry="chamfer"] .native-step-log-layout { box-shadow: none; }
+
+/* shadows switch (harness tweak) */
+html[data-shadows="off"] .project-fact,
+html[data-shadows="off"] .home-link,
+html[data-shadows="off"] table,
+html[data-shadows="off"] .admin-panel,
+html[data-shadows="off"] .project-info,
+html[data-shadows="off"] .kpi-strip,
+html[data-shadows="off"] .run-graph,
+html[data-shadows="off"] .graph-inspector,
+html[data-shadows="off"] .run-panel,
+html[data-shadows="off"] .attempt-card,
+html[data-shadows="off"] .step-log-layout,
+html[data-shadows="off"] .native-step-log-layout { box-shadow: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; }
+}
