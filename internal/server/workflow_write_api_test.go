@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -47,6 +48,26 @@ func (s *fakeWorkflowWriteStore) PatchWorkflow(_ context.Context, project string
 	return s.workflow, nil
 }
 
+func workflowRegisterBody(t *testing.T, req WorkflowRegister) *strings.Reader {
+	t.Helper()
+	data, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("marshal workflow register: %v", err)
+	}
+	return strings.NewReader(string(data))
+}
+
+func verificationCaseJobsForTest() []NativeJobSpec {
+	jobs := make([]NativeJobSpec, 0, VerificationCaseJobCount)
+	for i := 1; i <= VerificationCaseJobCount; i++ {
+		jobs = append(jobs, NativeJobSpec{
+			ID:             verificationCaseJobID(i),
+			TimeoutSeconds: intPtr(300),
+		})
+	}
+	return jobs
+}
+
 func TestRegisterWorkflowRequiresAdmin(t *testing.T) {
 	handler := NewWithDependencies(Settings{}, &fakeWorkflowWriteStore{}, nil)
 	rec := httptest.NewRecorder()
@@ -70,7 +91,18 @@ func TestRegisterWorkflowUpsertsWorkflow(t *testing.T) {
 	handler := NewWithDependencies(Settings{}, store, fakeAdminAuthenticator{})
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/v1/workflows", strings.NewReader(`{"project":"ambience","name":"agent-run","phases":[{"name":"prepare","outputs":["issue_contract"],"jobs":[{"id":"issue-contract"}]},{"name":"verify","verify":true,"depends_on":["prepare"]},{"name":"cleanup_early","run_on":"always","purpose":"teardown","skip_when_preserve_test_env":true,"depends_on":["verify"]},{"name":"touchpoint","run_on":"success","purpose":"review_touchpoint","depends_on":["cleanup_early"],"jobs":[{"id":"pr-touchpoint","primitive":"pr_touchpoint"}]},{"name":"touchpoint_gate","kind":"k8s_job","purpose":"review_gate","depends_on":["touchpoint"],"jobs":[{"id":"pr-merge","primitive":"pr_merge"}]},{"name":"cleanup_final","run_on":"always","purpose":"teardown","depends_on":["touchpoint_gate"]}]}`))
+	req := httptest.NewRequest(http.MethodPost, "/v1/workflows", workflowRegisterBody(t, WorkflowRegister{
+		Project: "ambience",
+		Name:    "agent-run",
+		Phases: []PhaseSpec{
+			{Name: "prepare", Outputs: []string{IssueContractOutputKey}, Jobs: []NativeJobSpec{{ID: IssueContractJobID}}},
+			{Name: "verify", Verify: true, DependsOn: []string{"prepare"}, Jobs: verificationCaseJobsForTest()},
+			{Name: "cleanup_early", RunOn: PhaseRunOnAlways, Purpose: PhasePurposeTeardown, SkipWhenPreserveTestEnv: true, DependsOn: []string{"verify"}},
+			{Name: "touchpoint", RunOn: PhaseRunOnSuccess, Purpose: PhasePurposeReviewTouchpoint, DependsOn: []string{"cleanup_early"}, Jobs: []NativeJobSpec{{ID: PRTouchpointJobID, Primitive: JobPrimitivePRTouchpoint}}},
+			{Name: "touchpoint_gate", Kind: "k8s_job", Purpose: PhasePurposeReviewGate, DependsOn: []string{"touchpoint"}, Jobs: []NativeJobSpec{{ID: PRMergeJobID, Primitive: JobPrimitivePRMerge}}},
+			{Name: "cleanup_final", RunOn: PhaseRunOnAlways, Purpose: PhasePurposeTeardown, DependsOn: []string{"touchpoint_gate"}},
+		},
+	}))
 	req.Header.Set("Authorization", "Bearer token")
 	handler.ServeHTTP(rec, req)
 
@@ -109,7 +141,18 @@ func TestRegisterWorkflowDefaultsBlankKindToK8sJob(t *testing.T) {
 	handler := NewWithDependencies(Settings{}, store, fakeAdminAuthenticator{})
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/v1/workflows", strings.NewReader(`{"project":"glimmung","name":"agent-run","phases":[{"name":"prepare","outputs":["issue_contract"],"jobs":[{"id":"issue-contract"}]},{"name":"verify","verify":true,"depends_on":["prepare"]},{"name":"cleanup_early","run_on":"always","purpose":"teardown","skip_when_preserve_test_env":true,"depends_on":["verify"]},{"name":"touchpoint","run_on":"success","purpose":"review_touchpoint","depends_on":["cleanup_early"],"jobs":[{"id":"pr-touchpoint","primitive":"pr_touchpoint"}]},{"name":"touchpoint_gate","kind":"k8s_job","purpose":"review_gate","depends_on":["touchpoint"],"jobs":[{"id":"pr-merge","primitive":"pr_merge"}]},{"name":"cleanup_final","run_on":"always","purpose":"teardown","depends_on":["touchpoint_gate"]}]}`))
+	req := httptest.NewRequest(http.MethodPost, "/v1/workflows", workflowRegisterBody(t, WorkflowRegister{
+		Project: "glimmung",
+		Name:    "agent-run",
+		Phases: []PhaseSpec{
+			{Name: "prepare", Outputs: []string{IssueContractOutputKey}, Jobs: []NativeJobSpec{{ID: IssueContractJobID}}},
+			{Name: "verify", Verify: true, DependsOn: []string{"prepare"}, Jobs: verificationCaseJobsForTest()},
+			{Name: "cleanup_early", RunOn: PhaseRunOnAlways, Purpose: PhasePurposeTeardown, SkipWhenPreserveTestEnv: true, DependsOn: []string{"verify"}},
+			{Name: "touchpoint", RunOn: PhaseRunOnSuccess, Purpose: PhasePurposeReviewTouchpoint, DependsOn: []string{"cleanup_early"}, Jobs: []NativeJobSpec{{ID: PRTouchpointJobID, Primitive: JobPrimitivePRTouchpoint}}},
+			{Name: "touchpoint_gate", Kind: "k8s_job", Purpose: PhasePurposeReviewGate, DependsOn: []string{"touchpoint"}, Jobs: []NativeJobSpec{{ID: PRMergeJobID, Primitive: JobPrimitivePRMerge}}},
+			{Name: "cleanup_final", RunOn: PhaseRunOnAlways, Purpose: PhasePurposeTeardown, DependsOn: []string{"touchpoint_gate"}},
+		},
+	}))
 	req.Header.Set("Authorization", "Bearer token")
 	handler.ServeHTTP(rec, req)
 
@@ -126,7 +169,19 @@ func TestRegisterWorkflowAcceptsParallelJobsInsideStrictPhase(t *testing.T) {
 	handler := NewWithDependencies(Settings{}, store, fakeAdminAuthenticator{})
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/v1/workflows", strings.NewReader(`{"project":"ambience","name":"agent-run","phases":[{"name":"prepare","outputs":["issue_contract"],"jobs":[{"id":"prepare"},{"id":"issue-contract"}]},{"name":"work","depends_on":["prepare"],"jobs":[{"id":"test-plan"},{"id":"implement"}]},{"name":"verify","verify":true,"depends_on":["work"],"jobs":[{"id":"verify"}]},{"name":"cleanup_early","run_on":"always","purpose":"teardown","skip_when_preserve_test_env":true,"depends_on":["verify"],"jobs":[{"id":"cleanup-early"}]},{"name":"touchpoint","run_on":"success","purpose":"review_touchpoint","depends_on":["cleanup_early"],"jobs":[{"id":"pr-touchpoint","primitive":"pr_touchpoint"}]},{"name":"touchpoint_gate","kind":"k8s_job","purpose":"review_gate","depends_on":["touchpoint"],"jobs":[{"id":"pr-merge","primitive":"pr_merge"}]},{"name":"cleanup_final","run_on":"always","purpose":"teardown","depends_on":["touchpoint_gate"],"jobs":[{"id":"cleanup-final"}]}]}`))
+	req := httptest.NewRequest(http.MethodPost, "/v1/workflows", workflowRegisterBody(t, WorkflowRegister{
+		Project: "ambience",
+		Name:    "agent-run",
+		Phases: []PhaseSpec{
+			{Name: "prepare", Outputs: []string{IssueContractOutputKey}, Jobs: []NativeJobSpec{{ID: "prepare"}, {ID: IssueContractJobID}}},
+			{Name: "work", DependsOn: []string{"prepare"}, Jobs: []NativeJobSpec{{ID: "test-plan"}, {ID: "implement"}}},
+			{Name: "verify", Verify: true, DependsOn: []string{"work"}, Jobs: verificationCaseJobsForTest()},
+			{Name: "cleanup_early", RunOn: PhaseRunOnAlways, Purpose: PhasePurposeTeardown, SkipWhenPreserveTestEnv: true, DependsOn: []string{"verify"}, Jobs: []NativeJobSpec{{ID: "cleanup-early"}}},
+			{Name: "touchpoint", RunOn: PhaseRunOnSuccess, Purpose: PhasePurposeReviewTouchpoint, DependsOn: []string{"cleanup_early"}, Jobs: []NativeJobSpec{{ID: PRTouchpointJobID, Primitive: JobPrimitivePRTouchpoint}}},
+			{Name: "touchpoint_gate", Kind: "k8s_job", Purpose: PhasePurposeReviewGate, DependsOn: []string{"touchpoint"}, Jobs: []NativeJobSpec{{ID: PRMergeJobID, Primitive: JobPrimitivePRMerge}}},
+			{Name: "cleanup_final", RunOn: PhaseRunOnAlways, Purpose: PhasePurposeTeardown, DependsOn: []string{"touchpoint_gate"}, Jobs: []NativeJobSpec{{ID: "cleanup-final"}}},
+		},
+	}))
 	req.Header.Set("Authorization", "Bearer token")
 	handler.ServeHTTP(rec, req)
 
@@ -151,7 +206,7 @@ func TestValidateWorkflowRegisterAcceptsManagedRunSteps(t *testing.T) {
 					Run:  "echo ready",
 				}},
 			}}},
-			{Name: "verify", Verify: true, DependsOn: []string{"prepare"}},
+			{Name: "verify", Verify: true, DependsOn: []string{"prepare"}, Jobs: verificationCaseJobsForTest()},
 			{Name: "cleanup_early", RunOn: PhaseRunOnAlways, Purpose: PhasePurposeTeardown, SkipWhenPreserveTestEnv: true, DependsOn: []string{"verify"}, Jobs: []NativeJobSpec{{ID: "cleanup-early"}}},
 			{Name: "touchpoint", RunOn: PhaseRunOnSuccess, Purpose: PhasePurposeReviewTouchpoint, DependsOn: []string{"cleanup_early"}, Jobs: []NativeJobSpec{{ID: "pr-touchpoint", Primitive: JobPrimitivePRTouchpoint}}},
 			{Name: "touchpoint_gate", Kind: "k8s_job", Purpose: PhasePurposeReviewGate, DependsOn: []string{"touchpoint"}, Jobs: []NativeJobSpec{{ID: "pr-merge", Primitive: JobPrimitivePRMerge}}},
@@ -182,7 +237,7 @@ func TestValidateWorkflowRegisterAcceptsManagedAgentSteps(t *testing.T) {
 					Agent: &AgentStepSpec{Slot: "implementation", Prompt: "ship it"},
 				}},
 			}}},
-			{Name: "verify", Verify: true, DependsOn: []string{"prepare"}},
+			{Name: "verify", Verify: true, DependsOn: []string{"prepare"}, Jobs: verificationCaseJobsForTest()},
 			{Name: "cleanup_early", RunOn: PhaseRunOnAlways, Purpose: PhasePurposeTeardown, SkipWhenPreserveTestEnv: true, DependsOn: []string{"verify"}, Jobs: []NativeJobSpec{{ID: "cleanup-early"}}},
 			{Name: "touchpoint", RunOn: PhaseRunOnSuccess, Purpose: PhasePurposeReviewTouchpoint, DependsOn: []string{"cleanup_early"}, Jobs: []NativeJobSpec{{ID: "pr-touchpoint", Primitive: JobPrimitivePRTouchpoint}}},
 			{Name: "touchpoint_gate", Kind: "k8s_job", Purpose: PhasePurposeReviewGate, DependsOn: []string{"touchpoint"}, Jobs: []NativeJobSpec{{ID: "pr-merge", Primitive: JobPrimitivePRMerge}}},
@@ -196,13 +251,71 @@ func TestValidateWorkflowRegisterAcceptsManagedAgentSteps(t *testing.T) {
 	}
 }
 
+func TestValidateWorkflowRegisterRequiresVerificationCaseSlots(t *testing.T) {
+	req := workflowWithJobTimeout(nil)
+	req.Phases[1].Jobs = []NativeJobSpec{{ID: "verify", TimeoutSeconds: intPtr(300)}}
+
+	err := ValidateWorkflowRegister(req)
+	if err == nil || !strings.Contains(err.Error(), "exactly 10 bounded case jobs") {
+		t.Fatalf("ValidateWorkflowRegister err=%v, want bounded case slot rejection", err)
+	}
+}
+
+func TestValidateWorkflowRegisterRequiresVerificationCaseJobIDs(t *testing.T) {
+	req := workflowWithJobTimeout(nil)
+	req.Phases[1].Jobs[2].ID = "verify-extra"
+
+	err := ValidateWorkflowRegister(req)
+	if err == nil || !strings.Contains(err.Error(), `job[2] must be "verify-case-03"`) {
+		t.Fatalf("ValidateWorkflowRegister err=%v, want case id rejection", err)
+	}
+}
+
+func TestValidateWorkflowRegisterRequiresVerificationCaseTimeout(t *testing.T) {
+	req := workflowWithJobTimeout(nil)
+	req.Phases[1].Jobs[0].TimeoutSeconds = nil
+
+	err := ValidateWorkflowRegister(req)
+	if err == nil || !strings.Contains(err.Error(), "must set timeout_seconds") {
+		t.Fatalf("ValidateWorkflowRegister err=%v, want missing case timeout rejection", err)
+	}
+}
+
+func TestValidateWorkflowRegisterCapsVerificationCaseTimeout(t *testing.T) {
+	req := workflowWithJobTimeout(nil)
+	req.Phases[1].Jobs[0].TimeoutSeconds = intPtr(MaxVerificationCaseJobTimeoutSeconds + 1)
+
+	err := ValidateWorkflowRegister(req)
+	if err == nil || !strings.Contains(err.Error(), "exceeds maximum") {
+		t.Fatalf("ValidateWorkflowRegister err=%v, want case timeout ceiling rejection", err)
+	}
+}
+
+func TestValidateWorkflowRegisterRejectsMultipleVerificationPhases(t *testing.T) {
+	req := workflowWithJobTimeout(nil)
+	extra := PhaseSpec{
+		Name:      "verify-again",
+		Verify:    true,
+		DependsOn: []string{"verify"},
+		Jobs:      verificationCaseJobsForTest(),
+	}
+	req.Phases = append(req.Phases[:2], append([]PhaseSpec{extra}, req.Phases[2:]...)...)
+	req.Phases[3].DependsOn = []string{"verify-again"}
+	normalizeWorkflowRegister(&req)
+
+	err := ValidateWorkflowRegister(req)
+	if err == nil || !strings.Contains(err.Error(), "exactly one bounded verification phase") {
+		t.Fatalf("ValidateWorkflowRegister err=%v, want multiple verify phase rejection", err)
+	}
+}
+
 func TestNormalizeWorkflowRegisterCanonicalizesEvidenceGate(t *testing.T) {
 	req := WorkflowRegister{
 		Project: "ambience",
 		Name:    "agent-run",
 		Phases: []PhaseSpec{
 			{Name: "prepare", Outputs: []string{IssueContractOutputKey}, Jobs: []NativeJobSpec{{ID: IssueContractJobID}}},
-			{Name: "verify", Verify: true, DependsOn: []string{"prepare"}, Jobs: []NativeJobSpec{{ID: "verify"}}},
+			{Name: "verify", Verify: true, DependsOn: []string{"prepare"}, Jobs: verificationCaseJobsForTest()},
 			{
 				Name:                     "gate",
 				EvidenceVerificationGate: true,
@@ -283,7 +396,7 @@ func TestValidateWorkflowRegisterRequiresPRTouchpoint(t *testing.T) {
 		PR:      PrPrimitive{},
 		Phases: []PhaseSpec{
 			{Name: "prepare", Outputs: []string{IssueContractOutputKey}, Jobs: []NativeJobSpec{{ID: IssueContractJobID}}},
-			{Name: "verify", Verify: true, DependsOn: []string{"prepare"}, Jobs: []NativeJobSpec{{ID: "verify"}}},
+			{Name: "verify", Verify: true, DependsOn: []string{"prepare"}, Jobs: verificationCaseJobsForTest()},
 			{Name: "touchpoint_gate", Kind: "k8s_job", Purpose: PhasePurposeReviewGate, DependsOn: []string{"verify"}, Jobs: []NativeJobSpec{{ID: "pr-merge", Primitive: JobPrimitivePRMerge}}},
 			{Name: "cleanup", RunOn: PhaseRunOnAlways, Purpose: PhasePurposeTeardown, DependsOn: []string{"touchpoint_gate"}, Jobs: []NativeJobSpec{{ID: "cleanup"}}},
 		},
@@ -303,7 +416,7 @@ func TestValidateWorkflowRegisterRequiresPRTouchpointInReviewTouchpointPhase(t *
 		PR:      PrPrimitive{},
 		Phases: []PhaseSpec{
 			{Name: "prepare", Outputs: []string{IssueContractOutputKey}, Jobs: []NativeJobSpec{{ID: IssueContractJobID}}},
-			{Name: "verify", Verify: true, DependsOn: []string{"prepare"}, Jobs: []NativeJobSpec{{ID: "verify"}}},
+			{Name: "verify", Verify: true, DependsOn: []string{"prepare"}, Jobs: verificationCaseJobsForTest()},
 			{Name: "publish", RunOn: PhaseRunOnSuccess, Purpose: PhasePurposeWork, DependsOn: []string{"verify"}, Jobs: []NativeJobSpec{{ID: "publish-pr", Primitive: JobPrimitivePRTouchpoint}}},
 			{Name: "touchpoint_gate", Kind: "k8s_job", Purpose: PhasePurposeReviewGate, DependsOn: []string{"publish"}, Jobs: []NativeJobSpec{{ID: "pr-merge", Primitive: JobPrimitivePRMerge}}},
 			{Name: "cleanup", RunOn: PhaseRunOnAlways, Purpose: PhasePurposeTeardown, DependsOn: []string{"touchpoint_gate"}, Jobs: []NativeJobSpec{{ID: "cleanup"}}},
@@ -325,7 +438,7 @@ func TestValidateWorkflowRegisterRejectsMultiplePrTouchpointJobs(t *testing.T) {
 		PR:      PrPrimitive{},
 		Phases: []PhaseSpec{
 			{Name: "prepare", Outputs: []string{IssueContractOutputKey}, Jobs: []NativeJobSpec{{ID: IssueContractJobID}}},
-			{Name: "verify", Verify: true, DependsOn: []string{"prepare"}, Jobs: []NativeJobSpec{{ID: "verify"}}},
+			{Name: "verify", Verify: true, DependsOn: []string{"prepare"}, Jobs: verificationCaseJobsForTest()},
 			{Name: "touchpoint", RunOn: PhaseRunOnSuccess, Purpose: PhasePurposeReviewTouchpoint, DependsOn: []string{"verify"}, Jobs: []NativeJobSpec{
 				{ID: "publish-pr-a", Primitive: JobPrimitivePRTouchpoint},
 				{ID: "publish-pr-b", Primitive: JobPrimitivePRTouchpoint},
@@ -349,7 +462,7 @@ func TestValidateWorkflowRegisterAcceptsTouchpointGatePhase(t *testing.T) {
 		PR:      PrPrimitive{},
 		Phases: []PhaseSpec{
 			{Name: "prepare", Outputs: []string{IssueContractOutputKey}, Jobs: []NativeJobSpec{{ID: IssueContractJobID}}},
-			{Name: "verify", Verify: true, DependsOn: []string{"prepare"}, Jobs: []NativeJobSpec{{ID: "verify"}}},
+			{Name: "verify", Verify: true, DependsOn: []string{"prepare"}, Jobs: verificationCaseJobsForTest()},
 			{Name: "touchpoint", RunOn: PhaseRunOnSuccess, Purpose: PhasePurposeReviewTouchpoint, DependsOn: []string{"verify"}, Jobs: []NativeJobSpec{{ID: "publish-pr", Primitive: JobPrimitivePRTouchpoint}}},
 			{Name: "touchpoint_gate", Kind: "k8s_job", Purpose: PhasePurposeReviewGate, DependsOn: []string{"touchpoint"}, Jobs: []NativeJobSpec{{ID: "pr-merge", Primitive: JobPrimitivePRMerge}}},
 			{Name: "cleanup", RunOn: PhaseRunOnAlways, Purpose: PhasePurposeTeardown, DependsOn: []string{"touchpoint_gate"}, Jobs: []NativeJobSpec{{ID: "cleanup"}}},
@@ -368,7 +481,7 @@ func TestValidateWorkflowRegisterRejectsTouchpointGateWithoutMergeJob(t *testing
 		Name:    "agent-run",
 		Phases: []PhaseSpec{
 			{Name: "prepare", Outputs: []string{IssueContractOutputKey}, Jobs: []NativeJobSpec{{ID: IssueContractJobID}}},
-			{Name: "verify", Verify: true, DependsOn: []string{"prepare"}, Jobs: []NativeJobSpec{{ID: "verify"}}},
+			{Name: "verify", Verify: true, DependsOn: []string{"prepare"}, Jobs: verificationCaseJobsForTest()},
 			{Name: "touchpoint_gate", Kind: "k8s_job", Purpose: PhasePurposeReviewGate, DependsOn: []string{"verify"}},
 			{Name: "cleanup", RunOn: PhaseRunOnAlways, Purpose: PhasePurposeTeardown, DependsOn: []string{"touchpoint_gate"}, Jobs: []NativeJobSpec{{ID: "cleanup"}}},
 		},
@@ -387,7 +500,7 @@ func TestValidateWorkflowRegisterRejectsPRMergeOutsideGate(t *testing.T) {
 		Name:    "agent-run",
 		Phases: []PhaseSpec{
 			{Name: "prepare", Jobs: []NativeJobSpec{{ID: "prepare"}, {ID: "rogue-merge", Primitive: JobPrimitivePRMerge}}},
-			{Name: "verify", Verify: true, DependsOn: []string{"prepare"}, Jobs: []NativeJobSpec{{ID: "verify"}}},
+			{Name: "verify", Verify: true, DependsOn: []string{"prepare"}, Jobs: verificationCaseJobsForTest()},
 			{Name: "cleanup", RunOn: PhaseRunOnAlways, Purpose: PhasePurposeTeardown, DependsOn: []string{"verify"}, Jobs: []NativeJobSpec{{ID: "cleanup"}}},
 		},
 	}
@@ -406,7 +519,7 @@ func TestValidateWorkflowRegisterRejectsTouchpointGateMarkedVerify(t *testing.T)
 		Phases: []PhaseSpec{
 			{Name: "prepare", Outputs: []string{IssueContractOutputKey}, Jobs: []NativeJobSpec{{ID: IssueContractJobID}}},
 			{Name: "touchpoint_gate", Kind: "k8s_job", Purpose: PhasePurposeReviewGate, Verify: true, DependsOn: []string{"prepare"}},
-			{Name: "verify", Verify: true, DependsOn: []string{"touchpoint_gate"}, Jobs: []NativeJobSpec{{ID: "verify"}}},
+			{Name: "verify", Verify: true, DependsOn: []string{"touchpoint_gate"}, Jobs: verificationCaseJobsForTest()},
 			{Name: "cleanup", RunOn: PhaseRunOnAlways, Purpose: PhasePurposeTeardown, DependsOn: []string{"verify"}, Jobs: []NativeJobSpec{{ID: "cleanup"}}},
 		},
 	}
@@ -424,7 +537,7 @@ func TestValidateWorkflowRegisterRejectsUnknownPhaseKind(t *testing.T) {
 		Name:    "agent-run",
 		Phases: []PhaseSpec{
 			{Name: "prepare", Kind: "mystery_kind", Jobs: []NativeJobSpec{{ID: "prepare"}}},
-			{Name: "verify", Verify: true, DependsOn: []string{"prepare"}, Jobs: []NativeJobSpec{{ID: "verify"}}},
+			{Name: "verify", Verify: true, DependsOn: []string{"prepare"}, Jobs: verificationCaseJobsForTest()},
 			{Name: "cleanup", RunOn: PhaseRunOnAlways, Purpose: PhasePurposeTeardown, DependsOn: []string{"verify"}, Jobs: []NativeJobSpec{{ID: "cleanup"}}},
 		},
 	}
@@ -442,7 +555,7 @@ func TestValidateWorkflowRegisterRejectsTouchpointGateExecutorKind(t *testing.T)
 		Name:    "agent-run",
 		Phases: []PhaseSpec{
 			{Name: "prepare", Outputs: []string{IssueContractOutputKey}, Jobs: []NativeJobSpec{{ID: IssueContractJobID}}},
-			{Name: "verify", Verify: true, DependsOn: []string{"prepare"}, Jobs: []NativeJobSpec{{ID: "verify"}}},
+			{Name: "verify", Verify: true, DependsOn: []string{"prepare"}, Jobs: verificationCaseJobsForTest()},
 			{Name: "touchpoint", RunOn: PhaseRunOnSuccess, Purpose: PhasePurposeReviewTouchpoint, DependsOn: []string{"verify"}, Jobs: []NativeJobSpec{{ID: "publish-pr", Primitive: JobPrimitivePRTouchpoint}}},
 			{Name: "touchpoint_gate", Kind: "touchpoint_gate", Purpose: PhasePurposeReviewGate, DependsOn: []string{"touchpoint"}, Jobs: []NativeJobSpec{{ID: "pr-merge", Primitive: JobPrimitivePRMerge}}},
 			{Name: "cleanup", RunOn: PhaseRunOnAlways, Purpose: PhasePurposeTeardown, DependsOn: []string{"touchpoint_gate"}, Jobs: []NativeJobSpec{{ID: "cleanup"}}},
@@ -461,7 +574,7 @@ func TestValidateWorkflowRegisterRejectsUnknownJobPrimitive(t *testing.T) {
 		Name:    "agent-run",
 		Phases: []PhaseSpec{
 			{Name: "prepare", Jobs: []NativeJobSpec{{ID: "prepare", Primitive: "mystery"}}},
-			{Name: "verify", Verify: true, DependsOn: []string{"prepare"}, Jobs: []NativeJobSpec{{ID: "verify"}}},
+			{Name: "verify", Verify: true, DependsOn: []string{"prepare"}, Jobs: verificationCaseJobsForTest()},
 			{Name: "cleanup", RunOn: PhaseRunOnAlways, Purpose: PhasePurposeTeardown, DependsOn: []string{"verify"}, Jobs: []NativeJobSpec{{ID: "cleanup"}}},
 		},
 	}
@@ -479,7 +592,7 @@ func TestValidateWorkflowRegisterRejectsInvalidManagedSteps(t *testing.T) {
 			Name: "agent-run",
 			Phases: []PhaseSpec{
 				{Name: "prepare", Jobs: []NativeJobSpec{job}},
-				{Name: "verify", Verify: true, DependsOn: []string{"prepare"}},
+				{Name: "verify", Verify: true, DependsOn: []string{"prepare"}, Jobs: verificationCaseJobsForTest()},
 				{Name: "cleanup", RunOn: PhaseRunOnAlways, Purpose: PhasePurposeTeardown, DependsOn: []string{"verify"}},
 			},
 		}
@@ -560,7 +673,7 @@ func TestValidateWorkflowRegisterRequiresPrepareEntryPhase(t *testing.T) {
 		Name:    "agent-run",
 		Phases: []PhaseSpec{
 			{Name: "env-prep", Jobs: []NativeJobSpec{{ID: "env-prep"}}},
-			{Name: "verify", Verify: true, DependsOn: []string{"env-prep"}, Jobs: []NativeJobSpec{{ID: "verify"}}},
+			{Name: "verify", Verify: true, DependsOn: []string{"env-prep"}, Jobs: verificationCaseJobsForTest()},
 			{Name: "cleanup_early", RunOn: PhaseRunOnAlways, Purpose: PhasePurposeTeardown, SkipWhenPreserveTestEnv: true, DependsOn: []string{"verify"}, Jobs: []NativeJobSpec{{ID: "cleanup-early"}}},
 			{Name: "touchpoint", RunOn: PhaseRunOnSuccess, Purpose: PhasePurposeReviewTouchpoint, DependsOn: []string{"cleanup_early"}, Jobs: []NativeJobSpec{{ID: "pr-touchpoint", Primitive: JobPrimitivePRTouchpoint}}},
 			{Name: "touchpoint_gate", Kind: "k8s_job", Purpose: PhasePurposeReviewGate, DependsOn: []string{"touchpoint"}, Jobs: []NativeJobSpec{{ID: "pr-merge", Primitive: JobPrimitivePRMerge}}},
@@ -599,7 +712,15 @@ func TestRegisterWorkflowRejectsMultipleEntryPhases(t *testing.T) {
 	handler := NewWithDependencies(Settings{}, store, fakeAdminAuthenticator{})
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/v1/workflows", strings.NewReader(`{"project":"ambience","name":"agent-run","phases":[{"name":"prepare","outputs":["issue_contract"],"jobs":[{"id":"issue-contract"}]},{"name":"verify","verify":true},{"name":"cleanup","run_on":"always","purpose":"teardown","depends_on":["verify"]}]}`))
+	req := httptest.NewRequest(http.MethodPost, "/v1/workflows", workflowRegisterBody(t, WorkflowRegister{
+		Project: "ambience",
+		Name:    "agent-run",
+		Phases: []PhaseSpec{
+			{Name: "prepare", Outputs: []string{IssueContractOutputKey}, Jobs: []NativeJobSpec{{ID: IssueContractJobID}}},
+			{Name: "verify", Verify: true, Jobs: verificationCaseJobsForTest()},
+			{Name: "cleanup", RunOn: PhaseRunOnAlways, Purpose: PhasePurposeTeardown, DependsOn: []string{"verify"}},
+		},
+	}))
 	req.Header.Set("Authorization", "Bearer token")
 	handler.ServeHTTP(rec, req)
 
@@ -633,7 +754,18 @@ func TestRegisterWorkflowRejectsBadPhaseInputRef(t *testing.T) {
 	handler := NewWithDependencies(Settings{}, store, fakeAdminAuthenticator{})
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/v1/workflows", strings.NewReader(`{"project":"ambience","name":"agent-run","phases":[{"name":"prepare","outputs":["validation_url","issue_contract"],"jobs":[{"id":"issue-contract"}]},{"name":"verify","verify":true,"depends_on":["prepare"],"inputs":{"missing":"${{ phases.prepare.outputs.nope }}"}},{"name":"cleanup_early","run_on":"always","purpose":"teardown","skip_when_preserve_test_env":true,"depends_on":["verify"]},{"name":"touchpoint","run_on":"success","purpose":"review_touchpoint","depends_on":["cleanup_early"],"jobs":[{"id":"pr-touchpoint","primitive":"pr_touchpoint"}]},{"name":"touchpoint_gate","kind":"k8s_job","purpose":"review_gate","depends_on":["touchpoint"],"jobs":[{"id":"pr-merge","primitive":"pr_merge"}]},{"name":"cleanup_final","run_on":"always","purpose":"teardown","depends_on":["touchpoint_gate"]}]}`))
+	req := httptest.NewRequest(http.MethodPost, "/v1/workflows", workflowRegisterBody(t, WorkflowRegister{
+		Project: "ambience",
+		Name:    "agent-run",
+		Phases: []PhaseSpec{
+			{Name: "prepare", Outputs: []string{"validation_url", IssueContractOutputKey}, Jobs: []NativeJobSpec{{ID: IssueContractJobID}}},
+			{Name: "verify", Verify: true, DependsOn: []string{"prepare"}, Inputs: map[string]string{"missing": "${{ phases.prepare.outputs.nope }}"}, Jobs: verificationCaseJobsForTest()},
+			{Name: "cleanup_early", RunOn: PhaseRunOnAlways, Purpose: PhasePurposeTeardown, SkipWhenPreserveTestEnv: true, DependsOn: []string{"verify"}},
+			{Name: "touchpoint", RunOn: PhaseRunOnSuccess, Purpose: PhasePurposeReviewTouchpoint, DependsOn: []string{"cleanup_early"}, Jobs: []NativeJobSpec{{ID: PRTouchpointJobID, Primitive: JobPrimitivePRTouchpoint}}},
+			{Name: "touchpoint_gate", Kind: "k8s_job", Purpose: PhasePurposeReviewGate, DependsOn: []string{"touchpoint"}, Jobs: []NativeJobSpec{{ID: PRMergeJobID, Primitive: JobPrimitivePRMerge}}},
+			{Name: "cleanup_final", RunOn: PhaseRunOnAlways, Purpose: PhasePurposeTeardown, DependsOn: []string{"touchpoint_gate"}},
+		},
+	}))
 	req.Header.Set("Authorization", "Bearer token")
 	handler.ServeHTTP(rec, req)
 
@@ -913,7 +1045,7 @@ func workflowWithJobTimeout(timeout *int) WorkflowRegister {
 		Name:    "agent-run",
 		Phases: []PhaseSpec{
 			{Name: "prepare", Outputs: []string{IssueContractOutputKey}, Jobs: []NativeJobSpec{{ID: IssueContractJobID, TimeoutSeconds: timeout}}},
-			{Name: "verify", Verify: true, DependsOn: []string{"prepare"}, Jobs: []NativeJobSpec{{ID: "verify"}}},
+			{Name: "verify", Verify: true, DependsOn: []string{"prepare"}, Jobs: verificationCaseJobsForTest()},
 			{Name: "cleanup_early", RunOn: PhaseRunOnAlways, Purpose: PhasePurposeTeardown, SkipWhenPreserveTestEnv: true, DependsOn: []string{"verify"}, Jobs: []NativeJobSpec{{ID: "cleanup-early"}}},
 			{Name: "touchpoint", RunOn: PhaseRunOnSuccess, Purpose: PhasePurposeReviewTouchpoint, DependsOn: []string{"cleanup_early"}, Jobs: []NativeJobSpec{{ID: "pr-touchpoint", Primitive: JobPrimitivePRTouchpoint}}},
 			{Name: "touchpoint_gate", Kind: "k8s_job", Purpose: PhasePurposeReviewGate, DependsOn: []string{"touchpoint"}, Jobs: []NativeJobSpec{{ID: "pr-merge", Primitive: JobPrimitivePRMerge}}},

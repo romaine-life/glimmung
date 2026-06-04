@@ -48,10 +48,13 @@ Glimmung-managed workflows must declare:
    implementation jobs later, `prepare` is also the place to produce any
    shared issue contract that both branches may consume without seeing
    each other's output.
-2. **testing** — at least one phase with `verify=True`. The phase
-   emits `verification.json` and exits non-zero on bad verdict
-   (self-enforcing). Even `npm build` or `go test` is enough; what
-   matters is that the workflow produces a verdict.
+2. **testing** — exactly one bounded verification phase with `verify=True`.
+   The phase declares ten fixed jobs named `verify-case-01` through
+   `verify-case-10`. Runtime evidence requirements decide which slots do real
+   work and which slots complete as successful no-ops. Each case job owns one
+   evidence item or one small coherent assertion and must set
+   `timeout_seconds` no higher than 600 seconds. The phase produces the
+   verification verdict by aggregating the case-job completion payloads.
 3. **cleanup** — at least one phase with `purpose: teardown` and
    `run_on: always` or `run_on: failure`. Runs on terminal cleanup paths and
    tears down the validation environment.
@@ -139,40 +142,70 @@ project, or issue defaults later does not mutate an in-flight or historical
 run. This keeps agent selection containerized: a workflow inserts an agent step
 without forking the workflow per model/provider.
 
-## The verify/gate boundary
+## Verification Case Slots
 
-Two valid shapes for emitting a verdict at the testing boundary:
-
-**Self-enforcing verify** (recommended default):
-
-```yaml
-- name: testing
-  kind: k8s_job
-  verify: true
-  jobs:
-    - id: testing
-      managed: true
-      checkout:
-        ref: main
-      working_directory: /workspace/ambience
-      steps:
-        - slug: tests
-          type: run
-          run: |
-            npm test
-            printf 'verification=pass\n' >> "$GLIMMUNG_OUTPUT_FILE"
-      # step writes phase outputs AND exits non-zero
-      # if status != "pass". The phase itself renders red.
-```
-
-**Verify + glimmung-owned gate**:
+The verification phase is intentionally static even though the test plan is
+runtime-defined. Every workflow declares the same ten job slots:
 
 ```yaml
 - name: testing
   kind: k8s_job
+  purpose: verification
   verify: true
   outputs: [verification]
-  jobs: [...]   # writes verification.json, exits 0 always
+  jobs:
+    - id: verify-case-01
+      timeout_seconds: 300
+      managed: true
+      steps: [...]
+    - id: verify-case-02
+      timeout_seconds: 300
+      managed: true
+      steps: [...]
+    # ...
+    - id: verify-case-10
+      timeout_seconds: 300
+      managed: true
+      steps: [...]
+```
+
+Each case runner reads the runtime test/evidence plan, selects the item at its
+1-based index, and then does one bounded task:
+
+- no item at that index: write a no-op completion and exit success
+- video/screenshot/browser item: capture and judge that one artifact
+- command item: run that one command and report the result
+- agentic external item: use only the tools needed for that one item
+
+A case must not debug unrelated tooling, recapture other cases, or consume a
+suite-level retry budget. A Playwright timeout, trigger failure, MCP/tool
+failure, missing artifact, or command timeout fails that case. The case writes
+its own completion payload with `verification.status`, `reasons`, and evidence
+refs/artifacts. When the final registered case job completes, Glimmung
+aggregates the case completions into the phase verdict and synthesizes the
+phase output `verification` for the downstream evidence gate.
+
+The test-plan LLM owns what cases should prove. Glimmung owns the case slots,
+timeouts, aggregation, and visibility. If a plan needs more than ten required
+items, it is too broad for one run and must fail or narrow the plan.
+
+## The verify/gate boundary
+
+The valid shape for emitting a verdict at the testing boundary is bounded
+verification cases followed by a Glimmung-owned evidence gate:
+
+```yaml
+- name: testing
+  kind: k8s_job
+  purpose: verification
+  verify: true
+  outputs: [verification]
+  jobs:
+    - id: verify-case-01
+      timeout_seconds: 300
+    # ...
+    - id: verify-case-10
+      timeout_seconds: 300
 
 - name: gate
   kind: k8s_job

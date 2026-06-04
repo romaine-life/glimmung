@@ -32,6 +32,10 @@ const (
 	IssueContractJobID     = "issue-contract"
 	IssueContractOutputKey = "issue_contract"
 
+	VerificationCaseJobCount             = 10
+	VerificationCaseJobPrefix            = "verify-case-"
+	MaxVerificationCaseJobTimeoutSeconds = 10 * 60
+
 	// MinNativePhaseJobTimeoutSeconds is the floor for a phase job's
 	// activeDeadlineSeconds. Below this the kubelet grace period
 	// (30s default) doesn't leave enough room for the runner's SIGTERM
@@ -368,7 +372,7 @@ func ValidateWorkflowRegister(req WorkflowRegister) error {
 	}
 	phaseRefs := make([]phaserefs.Phase, 0, len(req.Phases))
 	phaseNames := map[string]int{}
-	hasTesting := false
+	testingCount := 0
 	hasCleanup := false
 	prTouchpointJobs := 0
 	reviewGateCount := 0
@@ -398,7 +402,10 @@ func ValidateWorkflowRegister(req WorkflowRegister) error {
 			if purpose != PhasePurposeVerification {
 				return ValidationError{Message: fmt.Sprintf("workflow %s phase %q has verify=true and must set purpose=%q", req.Name, name, PhasePurposeVerification)}
 			}
-			hasTesting = true
+			if err := validateVerificationCaseJobs(req.Name, phase); err != nil {
+				return err
+			}
+			testingCount++
 		} else if purpose == PhasePurposeVerification {
 			return ValidationError{Message: fmt.Sprintf("workflow %s phase %q purpose=%q must set verify=true", req.Name, name, PhasePurposeVerification)}
 		}
@@ -516,7 +523,7 @@ func ValidateWorkflowRegister(req WorkflowRegister) error {
 		})
 	}
 	missing := make([]string, 0, 4)
-	if !hasTesting {
+	if testingCount == 0 {
 		missing = append(missing, "verify")
 	}
 	if !hasCleanup {
@@ -530,6 +537,9 @@ func ValidateWorkflowRegister(req WorkflowRegister) error {
 	}
 	if len(missing) > 0 {
 		return ValidationError{Message: "workflow " + req.Name + " is missing required phases: " + strings.Join(missing, ", ")}
+	}
+	if testingCount > 1 {
+		return ValidationError{Message: fmt.Sprintf("workflow %s declares %d verify=true phases; exactly one bounded verification phase is required", req.Name, testingCount)}
 	}
 	if reviewGateCount > 1 {
 		return ValidationError{Message: fmt.Sprintf("workflow %s declares %d purpose=%q phases; exactly one is required", req.Name, reviewGateCount, PhasePurposeReviewGate)}
@@ -565,6 +575,41 @@ func validatePrepareIssueContract(workflowName string, phase PhaseSpec) error {
 		return ValidationError{Message: fmt.Sprintf("workflow %s entry phase %q must declare job %q", workflowName, PhaseNamePrepare, IssueContractJobID)}
 	}
 	return nil
+}
+
+func validateVerificationCaseJobs(workflowName string, phase PhaseSpec) error {
+	if len(phase.Jobs) != VerificationCaseJobCount {
+		return ValidationError{Message: fmt.Sprintf(
+			"workflow %s verification phase %q must declare exactly %d bounded case jobs %s01..%s%02d",
+			workflowName, phase.Name, VerificationCaseJobCount, VerificationCaseJobPrefix, VerificationCaseJobPrefix, VerificationCaseJobCount,
+		)}
+	}
+	for i, job := range phase.Jobs {
+		wantID := verificationCaseJobID(i + 1)
+		if strings.TrimSpace(job.ID) != wantID {
+			return ValidationError{Message: fmt.Sprintf(
+				"workflow %s verification phase %q job[%d] must be %q",
+				workflowName, phase.Name, i, wantID,
+			)}
+		}
+		if job.TimeoutSeconds == nil {
+			return ValidationError{Message: fmt.Sprintf(
+				"workflow %s verification case job %q must set timeout_seconds; case execution must be bounded",
+				workflowName, job.ID,
+			)}
+		}
+		if *job.TimeoutSeconds > MaxVerificationCaseJobTimeoutSeconds {
+			return ValidationError{Message: fmt.Sprintf(
+				"workflow %s verification case job %q timeout_seconds=%d exceeds maximum %d; split or narrow the case instead of granting a monolithic verifier budget",
+				workflowName, job.ID, *job.TimeoutSeconds, MaxVerificationCaseJobTimeoutSeconds,
+			)}
+		}
+	}
+	return nil
+}
+
+func verificationCaseJobID(index int) string {
+	return fmt.Sprintf("%s%02d", VerificationCaseJobPrefix, index)
 }
 
 func validateNativeJobSpec(workflowName, phaseName string, jobIndex int, job NativeJobSpec) error {
