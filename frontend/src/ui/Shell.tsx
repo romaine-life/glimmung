@@ -79,7 +79,6 @@ function ProfileAvatar({ account }: { account: ShellAccount }) {
 export function Shell({
   snap,
   account,
-  connection = snap ? "live" : "connecting",
   isMock = false,
   onSignIn,
   onSignOut,
@@ -115,9 +114,6 @@ export function Shell({
       ? { name: projects[0].name, sub: projects[0].github_repo ?? "" }
       : { name: "All projects", sub: projects.length ? `${projects.length} projects` : "glimmung" };
 
-  const connLabel = connection === "live" ? "live" : connection === "connecting" ? "connecting" : connection;
-  const connClass = connection === "stale" ? "conn stale" : connection === "dead" ? "conn dead" : "conn";
-
   return (
     <div className={`app${sidebarCollapsed ? " sidebar-collapsed" : ""}`}>
       <aside className="sidebar" id="app-sidebar">
@@ -141,7 +137,7 @@ export function Shell({
             <span className="ps-name">{project.name}</span>
             <span className="ps-sub">{project.sub}</span>
           </div>
-          <Icon name="chevdown" className="ic chev" />
+          <Icon name="chevright" className="ic project-switch-go" />
         </Link>
         <nav className="nav">
           {NAV.map((g) => (
@@ -181,24 +177,16 @@ export function Shell({
               <button
                 className="btn btn-ghost btn-sm mla"
                 title="sign out"
+                aria-label="sign out"
                 onClick={onSignOut}
               >
-                <Icon name="x" />
+                <Icon name="logout" />
               </button>
             </>
           ) : (
-            <>
-              <div className={`${connClass}`}><span className="dot" />{connLabel}</div>
-              <button className="btn btn-sm btn-primary mla" onClick={onSignIn}>
-                Sign in
-              </button>
-            </>
-          )}
-          {account?.signedIn && (
-            <div className={`${connClass}`} style={{ marginLeft: 8 }}>
-              <span className="dot" />
-              {connLabel}
-            </div>
+            <button className="btn btn-sm btn-primary" onClick={onSignIn}>
+              Sign in
+            </button>
           )}
         </div>
       </aside>

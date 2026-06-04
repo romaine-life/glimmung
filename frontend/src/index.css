@@ -2976,7 +2976,7 @@ h2 .inline-action,
 .app .project-switch .ps-label { display: flex; flex-direction: column; line-height: 1.25; }
 .app .project-switch .ps-name { font-weight: 600; font-size: var(--t-md); }
 .app .project-switch .ps-sub { font-size: var(--t-xs); color: var(--fg-dim); }
-.app .project-switch .chev { color: var(--fg-dim); }
+.app .project-switch .project-switch-go { color: var(--fg-dim); }
 
 .app .nav { padding: 6px 10px; overflow-y: auto; flex: 1; }
 .app .nav-group { margin-bottom: 14px; }
@@ -3036,8 +3036,7 @@ h2 .inline-action,
 .app.sidebar-collapsed .nav-label,
 .app.sidebar-collapsed .nav-item .count,
 .app.sidebar-collapsed .sidebar-foot .who,
-.app.sidebar-collapsed .sidebar-foot .btn,
-.app.sidebar-collapsed .sidebar-foot .conn {
+.app.sidebar-collapsed .sidebar-foot .btn {
   display: none;
 }
 .app.sidebar-collapsed .sidebar-toggle {
