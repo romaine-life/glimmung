@@ -102,6 +102,8 @@ type RunStepExecution struct {
 	State       string  `json:"state"`
 	Reason      *string `json:"reason,omitempty"`
 	ExitCode    *int    `json:"exit_code,omitempty"`
+	Group       string  `json:"group,omitempty"`
+	GroupTitle  *string `json:"group_title,omitempty"`
 	CreatedAt   string  `json:"created_at"`
 	StartedAt   *string `json:"started_at,omitempty"`
 	CompletedAt *string `json:"completed_at,omitempty"`

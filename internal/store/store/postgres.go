@@ -1487,6 +1487,8 @@ type stepExecutionDoc struct {
 	State       string  `json:"state"`
 	Reason      *string `json:"reason,omitempty"`
 	ExitCode    *int    `json:"exit_code,omitempty"`
+	Group       string  `json:"group,omitempty"`
+	GroupTitle  *string `json:"group_title,omitempty"`
 	CreatedAt   string  `json:"created_at"`
 	StartedAt   *string `json:"started_at,omitempty"`
 	CompletedAt *string `json:"completed_at,omitempty"`
@@ -1644,6 +1646,8 @@ type nativeStepDoc struct {
 	Shell            string            `json:"shell,omitempty"`
 	WorkingDirectory string            `json:"workingDirectory,omitempty"`
 	Env              map[string]string `json:"env,omitempty"`
+	Group            string            `json:"group,omitempty"`
+	GroupTitle       *string           `json:"groupTitle,omitempty"`
 }
 
 type agentStepDoc struct {
@@ -2031,6 +2035,8 @@ func runPhaseExecutionsFromDocs(docs []phaseExecutionDoc) []server.RunPhaseExecu
 					State:       firstNonEmpty(step.State, "not_started"),
 					Reason:      emptyStringNil(step.Reason),
 					ExitCode:    step.ExitCode,
+					Group:       step.Group,
+					GroupTitle:  emptyStringNil(step.GroupTitle),
 					CreatedAt:   step.CreatedAt,
 					StartedAt:   emptyStringNil(step.StartedAt),
 					CompletedAt: emptyStringNil(step.CompletedAt),
@@ -2268,10 +2274,12 @@ func phaseExecutionDocsFromWorkflow(wf server.Workflow, createdAt string, entryp
 					continue
 				}
 				steps = append(steps, stepExecutionDoc{
-					Slug:      slug,
-					Title:     emptyStringNil(step.Title),
-					State:     state,
-					CreatedAt: createdAt,
+					Slug:       slug,
+					Title:      emptyStringNil(step.Title),
+					State:      state,
+					Group:      step.Group,
+					GroupTitle: emptyStringNil(step.GroupTitle),
+					CreatedAt:  createdAt,
 				})
 			}
 			if len(steps) == 0 {
@@ -2480,6 +2488,8 @@ func nativeJobDocFromSpec(job server.NativeJobSpec) nativeJobDoc {
 			Shell:            step.Shell,
 			WorkingDirectory: step.WorkingDirectory,
 			Env:              stringMapOrEmpty(step.Env),
+			Group:            step.Group,
+			GroupTitle:       step.GroupTitle,
 		})
 	}
 	extraCheckouts := make([]nativeCheckoutDoc, 0, len(job.ExtraCheckouts))
@@ -2701,6 +2711,8 @@ func jobFromDoc(doc nativeJobDoc) server.NativeJobSpec {
 			Shell:            step.Shell,
 			WorkingDirectory: step.WorkingDirectory,
 			Env:              stringMapOrEmpty(step.Env),
+			Group:            step.Group,
+			GroupTitle:       step.GroupTitle,
 		})
 	}
 	extraCheckouts := make([]server.NativeCheckoutSpec, 0, len(doc.ExtraCheckouts))

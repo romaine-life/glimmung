@@ -112,6 +112,8 @@ type NativeStepSpec struct {
 	Shell            string            `json:"shell,omitempty"`
 	WorkingDirectory string            `json:"working_directory,omitempty"`
 	Env              map[string]string `json:"env,omitempty"`
+	Group            string            `json:"group,omitempty"`
+	GroupTitle       *string           `json:"group_title,omitempty"`
 }
 
 type NativeCheckoutSpec struct {

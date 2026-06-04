@@ -716,6 +716,27 @@ func TestNativeJobDocRoundTripsAgentStepConfig(t *testing.T) {
 	}
 }
 
+func TestNativeJobDocRoundTripsStepGroupMetadata(t *testing.T) {
+	job := server.NativeJobSpec{
+		ID: "verify-ui",
+		Steps: []server.NativeStepSpec{{
+			Slug:       "capture-screenshot",
+			Title:      stringPtr("Capture screenshot"),
+			Group:      "sweep-01",
+			GroupTitle: stringPtr("sweep 01"),
+		}},
+	}
+
+	roundTrip := jobFromDoc(nativeJobDocFromSpec(job))
+	if len(roundTrip.Steps) != 1 {
+		t.Fatalf("round trip step=%#v", roundTrip.Steps)
+	}
+	got := roundTrip.Steps[0]
+	if got.Group != "sweep-01" || got.GroupTitle == nil || *got.GroupTitle != "sweep 01" {
+		t.Fatalf("step group metadata=%#v", got)
+	}
+}
+
 func TestValidateWorkflowRegisterRejectsNonNativeKind(t *testing.T) {
 	req := server.WorkflowRegister{
 		Project: "glimmung",

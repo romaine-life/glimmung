@@ -886,7 +886,23 @@ const issueGraph = {
 	        phases: [
 	          { name: "design", kind: "k8s_job", verify: false, run_on: "success", purpose: "work", depends_on: [], jobs: [{ id: "design", name: "design" }] },
 	          { name: "implement", kind: "k8s_job", verify: false, run_on: "success", purpose: "work", depends_on: ["design"], jobs: [{ id: "implement", name: "implement" }] },
-	          { name: "verify", kind: "k8s_job", verify: true, run_on: "success", purpose: "verification", depends_on: ["implement"], jobs: [{ id: "verify-ui", name: "verify ui" }] },
+	          {
+	            name: "verify",
+	            kind: "k8s_job",
+	            verify: true,
+	            run_on: "success",
+	            purpose: "verification",
+	            depends_on: ["implement"],
+	            jobs: [{
+	              id: "verify-ui",
+	              name: "verify ui",
+	              steps: [
+	                { slug: "capture-screenshot", title: "capture screenshot", type: "agent", group: "sweep-01", group_title: "sweep 01" },
+	                { slug: "capture-video", title: "capture video", type: "agent", group: "sweep-01", group_title: "sweep 01" },
+	                { slug: "judge-evidence", title: "judge evidence", type: "agent", group: "sweep-01", group_title: "sweep 01" },
+	              ],
+	            }],
+	          },
 	          { name: "touchpoint", kind: "k8s_job", verify: false, run_on: "success", purpose: "review_touchpoint", depends_on: ["verify"], jobs: [{ id: "pr-touchpoint", name: "PR touchpoint" }] },
 	        ],
 	        default_entry: { target: "design", active: true, kind: "default" },
@@ -898,7 +914,26 @@ const issueGraph = {
       phases: [
 	        { name: "design", kind: "k8s_job", state: "succeeded", verify: false, run_on: "success", purpose: "work", depends_on: [], jobs: [{ id: "design", name: "design", state: "succeeded", steps: [{ slug: "read-docs", title: "read docs", state: "succeeded" }] }], attempts: [] },
 	        { name: "implement", kind: "k8s_job", state: "succeeded", verify: false, run_on: "success", purpose: "work", depends_on: ["design"], jobs: [{ id: "implement", name: "implement", state: "succeeded", steps: [{ slug: "build", title: "build", state: "succeeded" }] }], attempts: [] },
-	        { name: "verify", kind: "k8s_job", state: "claimed", verify: true, run_on: "success", purpose: "verification", depends_on: ["implement"], jobs: [{ id: "verify-ui", name: "verify ui", state: "claimed", steps: [{ slug: "screenshot", title: "screenshot", state: "claimed" }] }], attempts: [] },
+	        {
+	          name: "verify",
+	          kind: "k8s_job",
+	          state: "claimed",
+	          verify: true,
+	          run_on: "success",
+	          purpose: "verification",
+	          depends_on: ["implement"],
+	          jobs: [{
+	            id: "verify-ui",
+	            name: "verify ui",
+	            state: "claimed",
+	            steps: [
+	              { slug: "capture-screenshot", title: "capture screenshot", state: "succeeded", group: "sweep-01", group_title: "sweep 01" },
+	              { slug: "capture-video", title: "capture video", state: "claimed", group: "sweep-01", group_title: "sweep 01" },
+	              { slug: "judge-evidence", title: "judge evidence", state: "not_started", group: "sweep-01", group_title: "sweep 01" },
+	            ],
+	          }],
+	          attempts: [],
+	        },
 	        { name: "touchpoint", kind: "k8s_job", state: "not_started", verify: false, run_on: "success", purpose: "review_touchpoint", depends_on: ["verify"], jobs: [{ id: "pr-touchpoint", name: "PR touchpoint", state: "not_started", steps: [{ slug: "ensure-pr-touchpoint", title: "ensure PR touchpoint", state: "not_started" }] }], attempts: [] },
 	      ],
       evidence: [

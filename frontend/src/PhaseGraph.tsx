@@ -46,6 +46,8 @@ export type PhaseGraphStep = {
     prompt?: string;
     prompt_file?: string;
   } | null;
+  group?: string;
+  group_title?: string | null;
 };
 
 export type RecycleArrow = {
@@ -117,6 +119,8 @@ const PHASE_WIDTH = 172;
 const PHASE_X_GAP = 240;
 const PHASE_Y = 12;
 const JOB_HEIGHT = 70;
+const STEP_ROW_HEIGHT = 17;
+const STEP_GROUP_HEADER_HEIGHT = 17;
 const PHASE_BASE_HEIGHT = 44;
 const HANDLE_SIZE = 1;
 const ADVANCE_HANDLE_WITH_RECYCLE_PERCENT = 34;
@@ -132,8 +136,20 @@ const ENTRY_LEFT_GUTTER = 156;
 
 function estimatedPhaseHeight(col: PhaseGraphPhase[]): number {
   const phase = col[0];
-  const jobCount = Math.max(1, phase?.jobs?.length ?? 0);
-  return PHASE_BASE_HEIGHT + jobCount * JOB_HEIGHT;
+  const jobs = phase?.jobs && phase.jobs.length > 0
+    ? phase.jobs
+    : [{ id: phase?.name ?? "" }];
+  return PHASE_BASE_HEIGHT + jobs.reduce((height, job) => (
+    height + estimatedJobHeight(job)
+  ), 0);
+}
+
+function estimatedJobHeight(job: PhaseGraphJob): number {
+  const groups = groupedSteps(job.steps);
+  if (groups.length === 0) return JOB_HEIGHT;
+  const groupHeaderHeight = groups.filter((group) => group.title).length * STEP_GROUP_HEADER_HEIGHT;
+  const stepRows = groups.reduce((count, group) => count + group.steps.length, 0);
+  return JOB_HEIGHT + groupHeaderHeight + stepRows * STEP_ROW_HEIGHT;
 }
 
 function columnsFor(phases: PhaseGraphPhase[]): PhaseGraphPhase[][] {
@@ -145,6 +161,64 @@ function phaseMeta(phase: PhaseGraphPhase): string {
   if (phase.evidence_verification_gate) return "evidence-gate";
   if (phase.verify) return "verification";
   return phase.kind;
+}
+
+type StepGroup = {
+  key: string;
+  title: string;
+  steps: PhaseGraphStep[];
+};
+
+function groupKeyForStep(step: PhaseGraphStep): string {
+  return step.group?.trim() || "";
+}
+
+function groupTitleForStep(step: PhaseGraphStep): string {
+  return step.group_title?.trim() || step.group?.trim() || "steps";
+}
+
+function groupedSteps(steps: PhaseGraphStep[] | undefined): StepGroup[] {
+  const out: StepGroup[] = [];
+  for (const step of steps ?? []) {
+    const groupKey = groupKeyForStep(step);
+    const key = groupKey || `__step:${step.slug}`;
+    const last = out[out.length - 1];
+    if (last && last.key === key) {
+      last.steps.push(step);
+      continue;
+    }
+    out.push({
+      key,
+      title: groupKey ? groupTitleForStep(step) : "",
+      steps: [step],
+    });
+  }
+  return out;
+}
+
+function StepGroupSummary({ steps }: { steps?: PhaseGraphStep[] }) {
+  const groups = groupedSteps(steps);
+  if (groups.length === 0) return null;
+  return (
+    <div className="dag-step-groups" aria-label="job steps">
+      {groups.map((group) => (
+        <div
+          className={`dag-step-group${group.title ? "" : " ungrouped"}`}
+          key={group.key}
+        >
+          {group.title && <div className="dag-step-group-title">{group.title}</div>}
+          <div className="dag-step-group-steps">
+            {group.steps.map((step) => (
+              <div className="dag-step-item" key={step.slug}>
+                <span>{step.title || step.slug}</span>
+                <small>{step.type || "run"}</small>
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
 }
 
 function defaultPhaseNode(phase: PhaseGraphPhase): ReactNode {
@@ -161,6 +235,7 @@ function defaultPhaseNode(phase: PhaseGraphPhase): ReactNode {
             <span className="dag-job-kicker">job</span>
           </div>
           <div className="dag-node-meta dim mono">{job.id === phase.name ? meta : job.id}</div>
+          <StepGroupSummary steps={job.steps} />
         </div>
       ))}
     </>

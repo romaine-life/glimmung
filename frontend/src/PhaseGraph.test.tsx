@@ -1,11 +1,39 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { render, screen, waitFor } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, describe, expect, it } from "vitest";
 
 import { PhaseGraph } from "./PhaseGraph";
 
+afterEach(() => {
+  cleanup();
+});
+
 describe("PhaseGraph", () => {
+  it("renders grouped job steps under their parent label", () => {
+    render(
+      <PhaseGraph
+        ariaLabel="workflow graph"
+        phases={[{
+          name: "verify",
+          kind: "k8s_job",
+          jobs: [{
+            id: "verify-ui",
+            name: "verify ui",
+            steps: [
+              { slug: "capture-screenshot", title: "capture screenshot", type: "agent", group: "sweep-01", group_title: "sweep 01" },
+              { slug: "judge-evidence", title: "judge evidence", type: "agent", group: "sweep-01", group_title: "sweep 01" },
+            ],
+          }],
+        }]}
+      />,
+    );
+
+    expect(screen.getByText("sweep 01")).toBeInTheDocument();
+    expect(screen.getByText("capture screenshot")).toBeInTheDocument();
+    expect(screen.getByText("judge evidence")).toBeInTheDocument();
+  });
+
   it("reserves routing space for recycle arrows that return to the first phase", async () => {
     const { container } = render(
       <PhaseGraph
