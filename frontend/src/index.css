@@ -2132,6 +2132,8 @@ h2 .inline-action,
    each phase and run as parallel siblings. */
 .dag-wrap {
   margin: 12px 0;
+  min-width: 0;
+  max-width: 100%;
 }
 /* Run-detail DAG: left-click-drag horizontal panning (see
    useHorizontalDragScroll). Wide run graphs overflow the viewport; grabbing
@@ -2139,6 +2141,10 @@ h2 .inline-action,
    the vertical axis stays put. */
 .dag-pan {
   position: relative;
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  contain: inline-size;
   overflow-x: auto;
   overflow-y: hidden;
   cursor: grab;
