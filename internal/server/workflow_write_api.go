@@ -32,9 +32,7 @@ const (
 	IssueContractJobID     = "issue-contract"
 	IssueContractOutputKey = "issue_contract"
 
-	VerificationCaseJobCount             = 10
-	VerificationCaseJobPrefix            = "verify-case-"
-	MaxVerificationCaseJobTimeoutSeconds = 10 * 60
+	MaxVerificationDynamicBlockItemCount = 10
 
 	// MinNativePhaseJobTimeoutSeconds is the floor for a phase job's
 	// activeDeadlineSeconds. Below this the kubelet grace period
@@ -402,7 +400,7 @@ func ValidateWorkflowRegister(req WorkflowRegister) error {
 			if purpose != PhasePurposeVerification {
 				return ValidationError{Message: fmt.Sprintf("workflow %s phase %q has verify=true and must set purpose=%q", req.Name, name, PhasePurposeVerification)}
 			}
-			if err := validateVerificationCaseJobs(req.Name, phase); err != nil {
+			if err := validateVerificationJob(req.Name, phase); err != nil {
 				return err
 			}
 			testingCount++
@@ -577,39 +575,46 @@ func validatePrepareIssueContract(workflowName string, phase PhaseSpec) error {
 	return nil
 }
 
-func validateVerificationCaseJobs(workflowName string, phase PhaseSpec) error {
-	if len(phase.Jobs) != VerificationCaseJobCount {
+func validateVerificationJob(workflowName string, phase PhaseSpec) error {
+	if len(phase.Jobs) != 1 {
 		return ValidationError{Message: fmt.Sprintf(
-			"workflow %s verification phase %q must declare exactly %d bounded case jobs %s01..%s%02d",
-			workflowName, phase.Name, VerificationCaseJobCount, VerificationCaseJobPrefix, VerificationCaseJobPrefix, VerificationCaseJobCount,
+			"workflow %s verification phase %q must declare exactly one sequential verification job with a dynamic test-case block",
+			workflowName, phase.Name,
 		)}
 	}
-	for i, job := range phase.Jobs {
-		wantID := verificationCaseJobID(i + 1)
-		if strings.TrimSpace(job.ID) != wantID {
-			return ValidationError{Message: fmt.Sprintf(
-				"workflow %s verification phase %q job[%d] must be %q",
-				workflowName, phase.Name, i, wantID,
-			)}
+	job := phase.Jobs[0]
+	blockGroup := ""
+	blockMaxItems := 0
+	blockCount := 0
+	for _, step := range job.Steps {
+		if step.DynamicGroup == nil {
+			continue
 		}
-		if job.TimeoutSeconds == nil {
-			return ValidationError{Message: fmt.Sprintf(
-				"workflow %s verification case job %q must set timeout_seconds; case execution must be bounded",
-				workflowName, job.ID,
-			)}
+		blockCount++
+		group := strings.TrimSpace(step.Group)
+		if group == "" {
+			return ValidationError{Message: fmt.Sprintf("workflow %s verification job %q step %q declares dynamic_group without group", workflowName, job.ID, step.Slug)}
 		}
-		if *job.TimeoutSeconds > MaxVerificationCaseJobTimeoutSeconds {
-			return ValidationError{Message: fmt.Sprintf(
-				"workflow %s verification case job %q timeout_seconds=%d exceeds maximum %d; split or narrow the case instead of granting a monolithic verifier budget",
-				workflowName, job.ID, *job.TimeoutSeconds, MaxVerificationCaseJobTimeoutSeconds,
-			)}
+		maxItems := step.DynamicGroup.MaxItems
+		if maxItems < 1 || maxItems > MaxVerificationDynamicBlockItemCount {
+			return ValidationError{Message: fmt.Sprintf("workflow %s verification job %q step %q dynamic_group.max_items=%d is not in [1,%d]", workflowName, job.ID, step.Slug, maxItems, MaxVerificationDynamicBlockItemCount)}
+		}
+		if blockGroup == "" {
+			blockGroup = group
+			blockMaxItems = maxItems
+			continue
+		}
+		if group != blockGroup {
+			return ValidationError{Message: fmt.Sprintf("workflow %s verification job %q declares multiple dynamic test-case groups %q and %q", workflowName, job.ID, blockGroup, group)}
+		}
+		if maxItems != blockMaxItems {
+			return ValidationError{Message: fmt.Sprintf("workflow %s verification job %q dynamic test-case group %q has inconsistent max_items", workflowName, job.ID, group)}
 		}
 	}
+	if blockCount == 0 {
+		return ValidationError{Message: fmt.Sprintf("workflow %s verification job %q must declare a dynamic test-case block", workflowName, job.ID)}
+	}
 	return nil
-}
-
-func verificationCaseJobID(index int) string {
-	return fmt.Sprintf("%s%02d", VerificationCaseJobPrefix, index)
 }
 
 func validateNativeJobSpec(workflowName, phaseName string, jobIndex int, job NativeJobSpec) error {

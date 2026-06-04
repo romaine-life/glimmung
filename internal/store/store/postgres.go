@@ -1482,16 +1482,17 @@ type jobExecutionDoc struct {
 }
 
 type stepExecutionDoc struct {
-	Slug        string  `json:"slug"`
-	Title       *string `json:"title,omitempty"`
-	State       string  `json:"state"`
-	Reason      *string `json:"reason,omitempty"`
-	ExitCode    *int    `json:"exit_code,omitempty"`
-	Group       string  `json:"group,omitempty"`
-	GroupTitle  *string `json:"group_title,omitempty"`
-	CreatedAt   string  `json:"created_at"`
-	StartedAt   *string `json:"started_at,omitempty"`
-	CompletedAt *string `json:"completed_at,omitempty"`
+	Slug         string                   `json:"slug"`
+	Title        *string                  `json:"title,omitempty"`
+	State        string                   `json:"state"`
+	Reason       *string                  `json:"reason,omitempty"`
+	ExitCode     *int                     `json:"exit_code,omitempty"`
+	Group        string                   `json:"group,omitempty"`
+	GroupTitle   *string                  `json:"group_title,omitempty"`
+	DynamicGroup *server.StepDynamicGroup `json:"dynamic_group,omitempty"`
+	CreatedAt    string                   `json:"created_at"`
+	StartedAt    *string                  `json:"started_at,omitempty"`
+	CompletedAt  *string                  `json:"completed_at,omitempty"`
 }
 
 type issueDoc struct {
@@ -1638,16 +1639,17 @@ type nativeJobDoc struct {
 }
 
 type nativeStepDoc struct {
-	Slug             string            `json:"slug"`
-	Title            *string           `json:"title"`
-	Type             string            `json:"type,omitempty"`
-	Run              string            `json:"run,omitempty"`
-	Agent            *agentStepDoc     `json:"agent,omitempty"`
-	Shell            string            `json:"shell,omitempty"`
-	WorkingDirectory string            `json:"workingDirectory,omitempty"`
-	Env              map[string]string `json:"env,omitempty"`
-	Group            string            `json:"group,omitempty"`
-	GroupTitle       *string           `json:"groupTitle,omitempty"`
+	Slug             string                   `json:"slug"`
+	Title            *string                  `json:"title"`
+	Type             string                   `json:"type,omitempty"`
+	Run              string                   `json:"run,omitempty"`
+	Agent            *agentStepDoc            `json:"agent,omitempty"`
+	Shell            string                   `json:"shell,omitempty"`
+	WorkingDirectory string                   `json:"workingDirectory,omitempty"`
+	Env              map[string]string        `json:"env,omitempty"`
+	Group            string                   `json:"group,omitempty"`
+	GroupTitle       *string                  `json:"groupTitle,omitempty"`
+	DynamicGroup     *server.StepDynamicGroup `json:"dynamicGroup,omitempty"`
 }
 
 type agentStepDoc struct {
@@ -2030,16 +2032,17 @@ func runPhaseExecutionsFromDocs(docs []phaseExecutionDoc) []server.RunPhaseExecu
 			steps := make([]server.RunStepExecution, 0, len(job.Steps))
 			for _, step := range job.Steps {
 				steps = append(steps, server.RunStepExecution{
-					Slug:        step.Slug,
-					Title:       emptyStringNil(step.Title),
-					State:       firstNonEmpty(step.State, "not_started"),
-					Reason:      emptyStringNil(step.Reason),
-					ExitCode:    step.ExitCode,
-					Group:       step.Group,
-					GroupTitle:  emptyStringNil(step.GroupTitle),
-					CreatedAt:   step.CreatedAt,
-					StartedAt:   emptyStringNil(step.StartedAt),
-					CompletedAt: emptyStringNil(step.CompletedAt),
+					Slug:         step.Slug,
+					Title:        emptyStringNil(step.Title),
+					State:        firstNonEmpty(step.State, "not_started"),
+					Reason:       emptyStringNil(step.Reason),
+					ExitCode:     step.ExitCode,
+					Group:        step.Group,
+					GroupTitle:   emptyStringNil(step.GroupTitle),
+					DynamicGroup: step.DynamicGroup,
+					CreatedAt:    step.CreatedAt,
+					StartedAt:    emptyStringNil(step.StartedAt),
+					CompletedAt:  emptyStringNil(step.CompletedAt),
 				})
 			}
 			jobs = append(jobs, server.RunJobExecution{
@@ -2274,12 +2277,13 @@ func phaseExecutionDocsFromWorkflow(wf server.Workflow, createdAt string, entryp
 					continue
 				}
 				steps = append(steps, stepExecutionDoc{
-					Slug:       slug,
-					Title:      emptyStringNil(step.Title),
-					State:      state,
-					Group:      step.Group,
-					GroupTitle: emptyStringNil(step.GroupTitle),
-					CreatedAt:  createdAt,
+					Slug:         slug,
+					Title:        emptyStringNil(step.Title),
+					State:        state,
+					Group:        step.Group,
+					GroupTitle:   emptyStringNil(step.GroupTitle),
+					DynamicGroup: step.DynamicGroup,
+					CreatedAt:    createdAt,
 				})
 			}
 			if len(steps) == 0 {
@@ -2490,6 +2494,7 @@ func nativeJobDocFromSpec(job server.NativeJobSpec) nativeJobDoc {
 			Env:              stringMapOrEmpty(step.Env),
 			Group:            step.Group,
 			GroupTitle:       step.GroupTitle,
+			DynamicGroup:     step.DynamicGroup,
 		})
 	}
 	extraCheckouts := make([]nativeCheckoutDoc, 0, len(job.ExtraCheckouts))
@@ -2713,6 +2718,7 @@ func jobFromDoc(doc nativeJobDoc) server.NativeJobSpec {
 			Env:              stringMapOrEmpty(step.Env),
 			Group:            step.Group,
 			GroupTitle:       step.GroupTitle,
+			DynamicGroup:     step.DynamicGroup,
 		})
 	}
 	extraCheckouts := make([]server.NativeCheckoutSpec, 0, len(doc.ExtraCheckouts))

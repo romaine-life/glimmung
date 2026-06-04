@@ -97,16 +97,17 @@ type RunJobExecution struct {
 }
 
 type RunStepExecution struct {
-	Slug        string  `json:"slug"`
-	Title       *string `json:"title,omitempty"`
-	State       string  `json:"state"`
-	Reason      *string `json:"reason,omitempty"`
-	ExitCode    *int    `json:"exit_code,omitempty"`
-	Group       string  `json:"group,omitempty"`
-	GroupTitle  *string `json:"group_title,omitempty"`
-	CreatedAt   string  `json:"created_at"`
-	StartedAt   *string `json:"started_at,omitempty"`
-	CompletedAt *string `json:"completed_at,omitempty"`
+	Slug         string            `json:"slug"`
+	Title        *string           `json:"title,omitempty"`
+	State        string            `json:"state"`
+	Reason       *string           `json:"reason,omitempty"`
+	ExitCode     *int              `json:"exit_code,omitempty"`
+	Group        string            `json:"group,omitempty"`
+	GroupTitle   *string           `json:"group_title,omitempty"`
+	DynamicGroup *StepDynamicGroup `json:"dynamic_group,omitempty"`
+	CreatedAt    string            `json:"created_at"`
+	StartedAt    *string           `json:"started_at,omitempty"`
+	CompletedAt  *string           `json:"completed_at,omitempty"`
 }
 
 type RunAttemptJobCompletion struct {

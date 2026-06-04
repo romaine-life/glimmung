@@ -58,14 +58,23 @@ func workflowRegisterBody(t *testing.T, req WorkflowRegister) *strings.Reader {
 }
 
 func verificationCaseJobsForTest() []NativeJobSpec {
-	jobs := make([]NativeJobSpec, 0, VerificationCaseJobCount)
-	for i := 1; i <= VerificationCaseJobCount; i++ {
-		jobs = append(jobs, NativeJobSpec{
-			ID:             verificationCaseJobID(i),
-			TimeoutSeconds: intPtr(300),
-		})
+	return []NativeJobSpec{verificationJobForTest()}
+}
+
+func verificationJobForTest() NativeJobSpec {
+	groupTitle := "Test cases generated at runtime"
+	dynamicGroup := &StepDynamicGroup{MaxItems: MaxVerificationDynamicBlockItemCount, ItemLabel: "test case"}
+	return NativeJobSpec{
+		ID:             "verify",
+		Managed:        true,
+		TimeoutSeconds: intPtr(1800),
+		Steps: []NativeStepSpec{
+			{Slug: "author-test-plan", Run: "echo plan"},
+			{Slug: "gather-evidence", Run: "echo gather", Group: "test-cases", GroupTitle: &groupTitle, DynamicGroup: dynamicGroup},
+			{Slug: "judge-evidence", Run: "echo judge", Group: "test-cases", GroupTitle: &groupTitle, DynamicGroup: dynamicGroup},
+			{Slug: "aggregate-verification", Run: "echo aggregate"},
+		},
 	}
-	return jobs
 }
 
 func TestRegisterWorkflowRequiresAdmin(t *testing.T) {
@@ -251,43 +260,44 @@ func TestValidateWorkflowRegisterAcceptsManagedAgentSteps(t *testing.T) {
 	}
 }
 
-func TestValidateWorkflowRegisterRequiresVerificationCaseSlots(t *testing.T) {
+func TestValidateWorkflowRegisterRequiresSingleVerificationJob(t *testing.T) {
 	req := workflowWithJobTimeout(nil)
-	req.Phases[1].Jobs = []NativeJobSpec{{ID: "verify", TimeoutSeconds: intPtr(300)}}
+	req.Phases[1].Jobs = []NativeJobSpec{verificationJobForTest(), {ID: "verify-extra"}}
 
 	err := ValidateWorkflowRegister(req)
-	if err == nil || !strings.Contains(err.Error(), "exactly 10 bounded case jobs") {
-		t.Fatalf("ValidateWorkflowRegister err=%v, want bounded case slot rejection", err)
+	if err == nil || !strings.Contains(err.Error(), "exactly one sequential verification job") {
+		t.Fatalf("ValidateWorkflowRegister err=%v, want single verification job rejection", err)
 	}
 }
 
-func TestValidateWorkflowRegisterRequiresVerificationCaseJobIDs(t *testing.T) {
+func TestValidateWorkflowRegisterRequiresVerificationDynamicBlock(t *testing.T) {
 	req := workflowWithJobTimeout(nil)
-	req.Phases[1].Jobs[2].ID = "verify-extra"
+	req.Phases[1].Jobs[0].Steps[1].DynamicGroup = nil
+	req.Phases[1].Jobs[0].Steps[2].DynamicGroup = nil
 
 	err := ValidateWorkflowRegister(req)
-	if err == nil || !strings.Contains(err.Error(), `job[2] must be "verify-case-03"`) {
-		t.Fatalf("ValidateWorkflowRegister err=%v, want case id rejection", err)
+	if err == nil || !strings.Contains(err.Error(), "must declare a dynamic test-case block") {
+		t.Fatalf("ValidateWorkflowRegister err=%v, want dynamic block rejection", err)
 	}
 }
 
-func TestValidateWorkflowRegisterRequiresVerificationCaseTimeout(t *testing.T) {
+func TestValidateWorkflowRegisterRequiresVerificationDynamicBlockGroup(t *testing.T) {
 	req := workflowWithJobTimeout(nil)
-	req.Phases[1].Jobs[0].TimeoutSeconds = nil
+	req.Phases[1].Jobs[0].Steps[1].Group = ""
 
 	err := ValidateWorkflowRegister(req)
-	if err == nil || !strings.Contains(err.Error(), "must set timeout_seconds") {
-		t.Fatalf("ValidateWorkflowRegister err=%v, want missing case timeout rejection", err)
+	if err == nil || !strings.Contains(err.Error(), "declares dynamic_group without group") {
+		t.Fatalf("ValidateWorkflowRegister err=%v, want dynamic group rejection", err)
 	}
 }
 
-func TestValidateWorkflowRegisterCapsVerificationCaseTimeout(t *testing.T) {
+func TestValidateWorkflowRegisterCapsVerificationDynamicBlockItems(t *testing.T) {
 	req := workflowWithJobTimeout(nil)
-	req.Phases[1].Jobs[0].TimeoutSeconds = intPtr(MaxVerificationCaseJobTimeoutSeconds + 1)
+	req.Phases[1].Jobs[0].Steps[1].DynamicGroup.MaxItems = MaxVerificationDynamicBlockItemCount + 1
 
 	err := ValidateWorkflowRegister(req)
-	if err == nil || !strings.Contains(err.Error(), "exceeds maximum") {
-		t.Fatalf("ValidateWorkflowRegister err=%v, want case timeout ceiling rejection", err)
+	if err == nil || !strings.Contains(err.Error(), "dynamic_group.max_items") {
+		t.Fatalf("ValidateWorkflowRegister err=%v, want max items rejection", err)
 	}
 }
 

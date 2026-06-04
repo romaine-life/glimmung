@@ -193,6 +193,7 @@ type RunProjectionPhase = {
       exit_code?: number | null;
       group?: string | null;
       group_title?: string | null;
+      dynamic_group?: StepDynamicGroup | null;
     }>;
   }>;
   attempts: Array<{
@@ -366,6 +367,12 @@ type WorkflowStep = {
   } | null;
   group?: string;
   group_title?: string | null;
+  dynamic_group?: StepDynamicGroup | null;
+};
+
+type StepDynamicGroup = {
+  max_items?: number;
+  item_label?: string;
 };
 
 type WorkflowRecyclePolicy = {
@@ -392,6 +399,7 @@ type NativeAttemptStep = {
   exit_code?: number | null;
   group?: string | null;
   group_title?: string | null;
+  dynamic_group?: StepDynamicGroup | null;
 };
 
 type NativeStepRef = {
@@ -2317,12 +2325,14 @@ type GroupedDisplayStep = {
   type?: string | null;
   group?: string | null;
   group_title?: string | null;
+  dynamic_group?: StepDynamicGroup | null;
 };
 
 type DisplayStepGroup = {
   key: string;
   title: string;
   steps: GroupedDisplayStep[];
+  dynamicGroup?: StepDynamicGroup | null;
 };
 
 function displayStepGroupKey(step: GroupedDisplayStep): string {
@@ -2347,9 +2357,16 @@ function groupedDisplaySteps(steps: GroupedDisplayStep[] | undefined): DisplaySt
       key,
       title: groupKey ? displayStepGroupTitle(step) : "",
       steps: [step],
+      dynamicGroup: step.dynamic_group ?? null,
     });
   }
   return out;
+}
+
+function dynamicDisplayGroupSummary(dynamicGroup: StepDynamicGroup | null | undefined): string {
+  if (!dynamicGroup?.max_items) return "";
+  const itemLabel = dynamicGroup.item_label?.trim() || "item";
+  return `0-${dynamicGroup.max_items} ${itemLabel}${dynamicGroup.max_items === 1 ? "" : "s"} at runtime`;
 }
 
 function RunDagStepGroups({ steps }: { steps?: GroupedDisplayStep[] }) {
@@ -2359,12 +2376,17 @@ function RunDagStepGroups({ steps }: { steps?: GroupedDisplayStep[] }) {
     <div className="dag-step-groups run-dag-step-groups" aria-label="job steps">
       {groups.map((group) => (
         <div className={`dag-step-group${group.title ? "" : " ungrouped"}`} key={group.key}>
-          {group.title && <div className="dag-step-group-title">{group.title}</div>}
+          {group.title && (
+            <div className="dag-step-group-title">
+              <span>{group.title}</span>
+              {group.dynamicGroup && <small>{dynamicDisplayGroupSummary(group.dynamicGroup)}</small>}
+            </div>
+          )}
           <div className="dag-step-group-steps">
             {group.steps.map((step) => (
               <div className="dag-step-item" key={step.slug}>
                 <span>{step.title || step.slug}</span>
-                <small>{formatGraphState(step.state || "not_started")}</small>
+                <small>{step.dynamic_group ? "template" : formatGraphState(step.state || "not_started")}</small>
               </div>
             ))}
           </div>
@@ -2697,6 +2719,7 @@ function projectionJobToNativeJob(job: RunProjectionPhase["jobs"][number]): Nati
       exit_code: step.exit_code ?? null,
       group: step.group ?? null,
       group_title: step.group_title ?? null,
+      dynamic_group: step.dynamic_group ?? null,
     })),
   };
 }

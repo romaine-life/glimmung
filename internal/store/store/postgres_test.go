@@ -2,7 +2,6 @@ package store
 
 import (
 	"encoding/json"
-	"fmt"
 	"strings"
 	"testing"
 
@@ -11,15 +10,20 @@ import (
 )
 
 func verificationCaseJobsForStoreTest() []server.NativeJobSpec {
-	jobs := make([]server.NativeJobSpec, 0, server.VerificationCaseJobCount)
-	for i := 1; i <= server.VerificationCaseJobCount; i++ {
-		timeout := 300
-		jobs = append(jobs, server.NativeJobSpec{
-			ID:             fmt.Sprintf("%s%02d", server.VerificationCaseJobPrefix, i),
-			TimeoutSeconds: &timeout,
-		})
-	}
-	return jobs
+	timeout := 1800
+	groupTitle := "Test cases generated at runtime"
+	dynamicGroup := &server.StepDynamicGroup{MaxItems: 10, ItemLabel: "test case"}
+	return []server.NativeJobSpec{{
+		ID:             "verify",
+		Managed:        true,
+		TimeoutSeconds: &timeout,
+		Steps: []server.NativeStepSpec{
+			{Slug: "author-test-plan", Run: "echo plan"},
+			{Slug: "gather-evidence", Run: "echo gather", Group: "test-cases", GroupTitle: &groupTitle, DynamicGroup: dynamicGroup},
+			{Slug: "judge-evidence", Run: "echo judge", Group: "test-cases", GroupTitle: &groupTitle, DynamicGroup: dynamicGroup},
+			{Slug: "aggregate-verification", Run: "echo aggregate"},
+		},
+	}}
 }
 
 func TestNativeEventAttemptIndexAcceptsExplicitOrMetadataValue(t *testing.T) {

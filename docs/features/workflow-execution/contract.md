@@ -53,10 +53,10 @@ after registration changes.
   IDs, invalid inputs, and unsupported executor kinds before they become a
   runtime contract.
 - A `verify=true` phase is a bounded verification-case phase: it declares
-  exactly ten jobs named `verify-case-01` through `verify-case-10`, and every
-  case job sets `timeout_seconds` at or below 600 seconds. Runtime test plans
-  decide which slots are active; unused slots complete successfully with no-op
-  case results.
+  exactly one sequential verification job with one dynamic test-case block.
+  The block declares `dynamic_group.max_items` at or below 10. Runtime test
+  plans decide how many cases the block expands into. Cases run sequentially
+  unless a future workflow explicitly owns isolated parallel capacity.
 - Jobs inside one phase launch in parallel and complete independently.
 - A step-scoped fail-closed abort is represented by a typed `step_aborted`
   native event and a durable aborted step state. A failed or aborted job whose
@@ -73,11 +73,10 @@ after registration changes.
   completion, watcher, and recovery paths.
 - Phase advancement happens only after all registered jobs in the phase reach
   terminal callback state.
-- Multi-job verification phases aggregate per-job verification statuses,
-  reasons, evidence refs, and typed evidence artifacts into the phase
-  completion. When case jobs report verification data, Glimmung synthesizes the
-  phase output `verification` so the managed evidence gate has a stable JSON
-  verdict even though no monolithic verifier job ran.
+- Verification phases preserve verification statuses, reasons, evidence refs,
+  and typed evidence artifacts in the phase completion. Glimmung synthesizes
+  the phase output `verification` so the managed evidence gate has a stable
+  JSON verdict.
 - Evidence verification gates are canonicalized into managed Glimmung runner
   jobs.
 - Runs use the workflow schema snapshot captured at run/cycle creation, not a

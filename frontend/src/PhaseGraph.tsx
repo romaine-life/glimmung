@@ -48,6 +48,12 @@ export type PhaseGraphStep = {
   } | null;
   group?: string;
   group_title?: string | null;
+  dynamic_group?: StepDynamicGroup | null;
+};
+
+export type StepDynamicGroup = {
+  max_items?: number;
+  item_label?: string;
 };
 
 export type RecycleArrow = {
@@ -167,6 +173,7 @@ type StepGroup = {
   key: string;
   title: string;
   steps: PhaseGraphStep[];
+  dynamicGroup?: StepDynamicGroup | null;
 };
 
 function groupKeyForStep(step: PhaseGraphStep): string {
@@ -191,9 +198,16 @@ function groupedSteps(steps: PhaseGraphStep[] | undefined): StepGroup[] {
       key,
       title: groupKey ? groupTitleForStep(step) : "",
       steps: [step],
+      dynamicGroup: step.dynamic_group ?? null,
     });
   }
   return out;
+}
+
+function dynamicGroupSummary(dynamicGroup: StepDynamicGroup | null | undefined): string {
+  if (!dynamicGroup?.max_items) return "";
+  const itemLabel = dynamicGroup.item_label?.trim() || "item";
+  return `0-${dynamicGroup.max_items} ${itemLabel}${dynamicGroup.max_items === 1 ? "" : "s"} at runtime`;
 }
 
 function StepGroupSummary({ steps }: { steps?: PhaseGraphStep[] }) {
@@ -206,12 +220,17 @@ function StepGroupSummary({ steps }: { steps?: PhaseGraphStep[] }) {
           className={`dag-step-group${group.title ? "" : " ungrouped"}`}
           key={group.key}
         >
-          {group.title && <div className="dag-step-group-title">{group.title}</div>}
+          {group.title && (
+            <div className="dag-step-group-title">
+              <span>{group.title}</span>
+              {group.dynamicGroup && <small>{dynamicGroupSummary(group.dynamicGroup)}</small>}
+            </div>
+          )}
           <div className="dag-step-group-steps">
             {group.steps.map((step) => (
               <div className="dag-step-item" key={step.slug}>
                 <span>{step.title || step.slug}</span>
-                <small>{step.type || "run"}</small>
+                <small>{step.dynamic_group ? "template" : step.type || "run"}</small>
               </div>
             ))}
           </div>

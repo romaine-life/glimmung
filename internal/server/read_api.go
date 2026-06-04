@@ -114,6 +114,12 @@ type NativeStepSpec struct {
 	Env              map[string]string `json:"env,omitempty"`
 	Group            string            `json:"group,omitempty"`
 	GroupTitle       *string           `json:"group_title,omitempty"`
+	DynamicGroup     *StepDynamicGroup `json:"dynamic_group,omitempty"`
+}
+
+type StepDynamicGroup struct {
+	MaxItems  int    `json:"max_items,omitempty"`
+	ItemLabel string `json:"item_label,omitempty"`
 }
 
 type NativeCheckoutSpec struct {

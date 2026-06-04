@@ -2316,10 +2316,25 @@ h2 .inline-action,
   border-left-color: transparent;
 }
 .dag-step-group-title {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
   color: var(--state-info-fg);
   font-family: var(--font-mono);
   font-size: 0.66rem;
   overflow-wrap: anywhere;
+}
+.dag-step-group-title span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.dag-step-group-title small {
+  flex: 0 0 auto;
+  color: var(--fg-dimmer);
+  font-size: 0.58rem;
+  font-weight: 500;
+  text-transform: uppercase;
 }
 .dag-step-group-steps {
   display: flex;

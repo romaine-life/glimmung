@@ -34,6 +34,43 @@ describe("PhaseGraph", () => {
     expect(screen.getByText("judge evidence")).toBeInTheDocument();
   });
 
+  it("marks dynamic grouped steps as runtime templates", () => {
+    render(
+      <PhaseGraph
+        ariaLabel="workflow graph"
+        phases={[{
+          name: "verify",
+          kind: "k8s_job",
+          jobs: [{
+            id: "verify",
+            steps: [
+              {
+                slug: "gather-evidence",
+                title: "Gather evidence",
+                type: "agent",
+                group: "test-cases",
+                group_title: "Test cases generated at runtime",
+                dynamic_group: { max_items: 10, item_label: "test case" },
+              },
+              {
+                slug: "judge-evidence",
+                title: "Judge evidence",
+                type: "agent",
+                group: "test-cases",
+                group_title: "Test cases generated at runtime",
+                dynamic_group: { max_items: 10, item_label: "test case" },
+              },
+            ],
+          }],
+        }]}
+      />,
+    );
+
+    expect(screen.getByText("Test cases generated at runtime")).toBeInTheDocument();
+    expect(screen.getByText("0-10 test cases at runtime")).toBeInTheDocument();
+    expect(screen.getAllByText("template")).toHaveLength(2);
+  });
+
   it("reserves routing space for recycle arrows that return to the first phase", async () => {
     const { container } = render(
       <PhaseGraph
