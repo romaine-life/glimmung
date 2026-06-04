@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { NavLink, Link, useLocation } from "react-router-dom";
 import { Icon } from "./Icon";
 import { buildBreadcrumbs } from "../routes";
@@ -43,6 +43,7 @@ export type ShellAccount = {
   signedIn: boolean;
   name?: string | null;
   email?: string | null;
+  avatarUrl?: string | null;
   isAdmin?: boolean;
 } | null;
 
@@ -54,6 +55,25 @@ function initials(account: ShellAccount): string {
   if (parts.length === 0) return "··";
   if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
   return (parts[0][0] + parts[1][0]).toUpperCase();
+}
+
+function ProfileAvatar({ account }: { account: ShellAccount }) {
+  const avatarUrl = account?.avatarUrl?.trim() ?? "";
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    setFailed(false);
+  }, [avatarUrl]);
+
+  if (!avatarUrl || failed) {
+    return <div className="avatar" aria-hidden="true">{initials(account)}</div>;
+  }
+
+  return (
+    <div className="avatar avatar-image" aria-hidden="true">
+      <img src={avatarUrl} alt="" referrerPolicy="no-referrer" onError={() => setFailed(true)} />
+    </div>
+  );
 }
 
 export function Shell({
@@ -77,6 +97,7 @@ export function Shell({
 }) {
   const location = useLocation();
   const crumbs = buildBreadcrumbs(location.pathname);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
   const leaseCount = snap?.active_leases?.length ?? 0;
   const slotCount = snap?.test_environments?.length ?? 0;
@@ -98,11 +119,21 @@ export function Shell({
   const connClass = connection === "stale" ? "conn stale" : connection === "dead" ? "conn dead" : "conn";
 
   return (
-    <div className="app">
+    <div className={`app${sidebarCollapsed ? " sidebar-collapsed" : ""}`}>
       <aside className="sidebar">
         <div className="brand">
           <div className="brand-mark" />
           <div className="wordmark">glimmung</div>
+          <button
+            className="sidebar-toggle"
+            type="button"
+            title={sidebarCollapsed ? "open sidebar" : "collapse sidebar"}
+            aria-label={sidebarCollapsed ? "open sidebar" : "collapse sidebar"}
+            aria-pressed={sidebarCollapsed}
+            onClick={() => setSidebarCollapsed((current) => !current)}
+          >
+            {sidebarCollapsed ? "open" : "collapse"}
+          </button>
         </div>
         <Link className="project-switch" to="/projects">
           <div className="ps-label">
@@ -125,7 +156,7 @@ export function Shell({
                     className={({ isActive }) => `nav-item${isActive ? " active" : ""}`}
                   >
                     <Icon name={it.icon} />
-                    {it.label}
+                    <span className="nav-label">{it.label}</span>
                     {c?.count != null && (
                       <span className={`count${c.alert ? " alert" : ""}`}>{c.count}</span>
                     )}
@@ -141,7 +172,7 @@ export function Shell({
         <div className="sidebar-foot">
           {account?.signedIn ? (
             <>
-              <div className="avatar">{initials(account)}</div>
+              <ProfileAvatar account={account} />
               <div className="who">
                 <b>{account.name || account.email}</b>
                 <span>{account.isAdmin ? "admin" : "member"}</span>
