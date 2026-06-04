@@ -2155,6 +2155,9 @@ h2 .inline-action,
     inset -18px 0 18px -20px color-mix(in srgb, var(--fg-muted) 60%, transparent),
     inset 18px 0 18px -20px color-mix(in srgb, var(--fg-muted) 60%, transparent);
 }
+.app .dag-pan {
+  width: min(100%, calc(100vw - 248px - 56px));
+}
 .dag-pan.dragging {
   cursor: grabbing;
   user-select: none;
