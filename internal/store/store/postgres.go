@@ -7308,6 +7308,11 @@ func aggregateNativePhaseCompletion(expected []string, completions map[string]na
 			}
 		}
 	}
+	if verificationStatus != "" {
+		if _, exists := phaseOutputs["verification"]; !exists {
+			phaseOutputs["verification"] = synthesizedVerificationOutput(verificationStatus, reasons, evidenceRefs, evidenceArtifacts)
+		}
+	}
 	payload := server.CompletionPayload{
 		Conclusion:          conclusion,
 		VerificationStatus:  verificationStatus,
@@ -7326,6 +7331,20 @@ func aggregateNativePhaseCompletion(expected []string, completions map[string]na
 		payload.ScreenshotsMarkdown = &joined
 	}
 	return payload
+}
+
+func synthesizedVerificationOutput(status string, reasons []string, evidenceRefs []string, evidence []server.EvidenceArtifact) string {
+	payload := map[string]any{
+		"status":        status,
+		"reasons":       sliceOrEmpty(reasons),
+		"evidence_refs": sliceOrEmpty(evidenceRefs),
+		"evidence":      sliceOrEmpty(evidence),
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Sprintf(`{"status":%q,"reasons":["failed to synthesize verification output: %s"]}`, status, err.Error())
+	}
+	return string(data)
 }
 
 func nativeJobMarkdownSection(jobID, markdown string) string {

@@ -2,12 +2,25 @@ package store
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
 	"github.com/romaine-life/glimmung/internal/server"
 	pgstore "github.com/romaine-life/glimmung/internal/store/pg"
 )
+
+func verificationCaseJobsForStoreTest() []server.NativeJobSpec {
+	jobs := make([]server.NativeJobSpec, 0, server.VerificationCaseJobCount)
+	for i := 1; i <= server.VerificationCaseJobCount; i++ {
+		timeout := 300
+		jobs = append(jobs, server.NativeJobSpec{
+			ID:             fmt.Sprintf("%s%02d", server.VerificationCaseJobPrefix, i),
+			TimeoutSeconds: &timeout,
+		})
+	}
+	return jobs
+}
 
 func TestNativeEventAttemptIndexAcceptsExplicitOrMetadataValue(t *testing.T) {
 	explicit := 3
@@ -663,7 +676,7 @@ func TestNormalizeWorkflowRegisterForProjectDefaultsToK8sJob(t *testing.T) {
 		Name:    "agent-run",
 		Phases: []server.PhaseSpec{
 			{Name: "prepare", Outputs: []string{server.IssueContractOutputKey}, Jobs: []server.NativeJobSpec{{ID: server.IssueContractJobID}}},
-			{Name: "test", Verify: true, DependsOn: []string{"prepare"}},
+			{Name: "test", Verify: true, DependsOn: []string{"prepare"}, Jobs: verificationCaseJobsForStoreTest()},
 			{Name: "cleanup_early", RunOn: server.PhaseRunOnAlways, Purpose: server.PhasePurposeTeardown, SkipWhenPreserveTestEnv: true, DependsOn: []string{"test"}, Jobs: []server.NativeJobSpec{{ID: "cleanup-early"}}},
 			{Name: "touchpoint", RunOn: server.PhaseRunOnSuccess, Purpose: server.PhasePurposeReviewTouchpoint, DependsOn: []string{"cleanup_early"}, Jobs: []server.NativeJobSpec{{ID: "pr-touchpoint", Primitive: "pr_touchpoint"}}},
 			{Name: "touchpoint_gate", Kind: "k8s_job", Purpose: server.PhasePurposeReviewGate, DependsOn: []string{"touchpoint"}, Jobs: []server.NativeJobSpec{{ID: "pr-merge", Primitive: "pr_merge"}}},
@@ -983,6 +996,49 @@ func TestAggregateNativePhaseCompletionPreservesEvidenceRefs(t *testing.T) {
 
 	if len(payload.EvidenceRefs) != 1 || payload.EvidenceRefs[0] != "screenshots/default.png" {
 		t.Fatalf("evidence refs=%#v", payload.EvidenceRefs)
+	}
+}
+
+func TestAggregateNativePhaseCompletionSynthesizesVerificationOutput(t *testing.T) {
+	payload := aggregateNativePhaseCompletion([]string{"verify-case-01", "verify-case-02"}, map[string]nativeJobCompletionDoc{
+		"verify-case-01": {
+			JobID:      "verify-case-01",
+			Conclusion: "success",
+			Verification: &verificationDoc{
+				Status:       "pass",
+				EvidenceRefs: []string{"videos/default.webm"},
+			},
+		},
+		"verify-case-02": {
+			JobID:      "verify-case-02",
+			Conclusion: "success",
+			Verification: &verificationDoc{
+				Status:  "fail",
+				Reasons: []string{"playwright timed out waiting for video metadata"},
+			},
+		},
+	})
+
+	raw := payload.PhaseOutputs["verification"]
+	if strings.TrimSpace(raw) == "" {
+		t.Fatalf("verification output missing from %#v", payload.PhaseOutputs)
+	}
+	var decoded struct {
+		Status       string   `json:"status"`
+		Reasons      []string `json:"reasons"`
+		EvidenceRefs []string `json:"evidence_refs"`
+	}
+	if err := json.Unmarshal([]byte(raw), &decoded); err != nil {
+		t.Fatalf("verification output is not json: %v raw=%s", err, raw)
+	}
+	if decoded.Status != "fail" {
+		t.Fatalf("status=%q, want fail", decoded.Status)
+	}
+	if len(decoded.Reasons) != 1 || !strings.Contains(decoded.Reasons[0], "verify-case-02: playwright timed out") {
+		t.Fatalf("reasons=%#v", decoded.Reasons)
+	}
+	if len(decoded.EvidenceRefs) != 1 || decoded.EvidenceRefs[0] != "videos/default.webm" {
+		t.Fatalf("evidence refs=%#v", decoded.EvidenceRefs)
 	}
 }
 
