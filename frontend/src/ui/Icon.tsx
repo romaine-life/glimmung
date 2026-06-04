@@ -17,6 +17,7 @@ const PATHS: Record<string, string> = {
   ext: '<path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>',
   search: '<circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/>',
   chevdown: '<path d="m6 9 6 6 6-6"/>',
+  chevleft: '<path d="m15 6-6 6 6 6"/>',
   chevright: '<path d="m9 6 6 6-6 6"/>',
   dollar: '<path d="M12 1v22"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>',
   clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',

@@ -120,7 +120,7 @@ export function Shell({
 
   return (
     <div className={`app${sidebarCollapsed ? " sidebar-collapsed" : ""}`}>
-      <aside className="sidebar">
+      <aside className="sidebar" id="app-sidebar">
         <div className="brand">
           <div className="brand-mark" />
           <div className="wordmark">glimmung</div>
@@ -129,10 +129,11 @@ export function Shell({
             type="button"
             title={sidebarCollapsed ? "open sidebar" : "collapse sidebar"}
             aria-label={sidebarCollapsed ? "open sidebar" : "collapse sidebar"}
-            aria-pressed={sidebarCollapsed}
+            aria-controls="app-sidebar"
+            aria-expanded={!sidebarCollapsed}
             onClick={() => setSidebarCollapsed((current) => !current)}
           >
-            {sidebarCollapsed ? "open" : "collapse"}
+            <Icon name={sidebarCollapsed ? "chevright" : "chevleft"} className="ic sidebar-toggle-icon" />
           </button>
         </div>
         <Link className="project-switch" to="/projects">

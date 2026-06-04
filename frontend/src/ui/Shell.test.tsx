@@ -41,7 +41,9 @@ describe("Shell", () => {
     await user.click(screen.getByRole("button", { name: "collapse sidebar" }));
 
     expect(container.querySelector(".app")).toHaveClass("sidebar-collapsed");
-    expect(screen.getByRole("button", { name: "open sidebar" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "open sidebar" })).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByText("collapse")).not.toBeInTheDocument();
+    expect(screen.queryByText("open")).not.toBeInTheDocument();
   });
 
   it("renders the account Gravatar image and falls back to initials on error", () => {

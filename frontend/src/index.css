@@ -2908,12 +2908,15 @@ h2 .inline-action,
   border-right: 1px solid var(--border);
   display: flex; flex-direction: column;
   position: sticky; top: 0; height: 100vh;
-  overflow: hidden;
+  overflow: visible;
   width: auto;
+  z-index: 8;
 }
 .app .brand {
   display: flex; align-items: center; gap: 10px;
   padding: 18px 18px 14px;
+  min-height: 58px;
+  position: relative;
 }
 .app .brand-mark {
   width: 26px; height: 26px; border-radius: 7px; flex: none;
@@ -2932,22 +2935,35 @@ h2 .inline-action,
   letter-spacing: -0.02em; color: var(--fg);
 }
 .app .sidebar-toggle {
-  margin-left: auto;
-  min-width: 0;
-  height: 24px;
-  padding: 0 8px;
-  background: transparent;
+  position: absolute;
+  top: 18px;
+  right: -14px;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  background: var(--bg-sunken);
   border: 1px solid var(--border);
   color: var(--fg-dim);
   border-radius: var(--r-sm);
   cursor: pointer;
-  font-size: var(--t-xs);
-  font-weight: 600;
+  z-index: 12;
 }
 .app .sidebar-toggle:hover {
   border-color: var(--border-strong);
   color: var(--fg);
   background: var(--surface);
+}
+.app .sidebar-toggle:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  color: var(--fg);
+  background: var(--surface);
+}
+.app .sidebar-toggle-icon {
+  width: 15px;
+  height: 15px;
 }
 .app .project-switch {
   margin: 2px 12px 10px;
@@ -3011,7 +3027,7 @@ h2 .inline-action,
 .app .sidebar-foot .who span { display: block; font-size: var(--t-xs); color: var(--fg-dim); }
 
 .app.sidebar-collapsed .brand {
-  flex-direction: column;
+  justify-content: center;
   padding: 14px 10px 10px;
 }
 .app.sidebar-collapsed .wordmark,
@@ -3025,9 +3041,8 @@ h2 .inline-action,
   display: none;
 }
 .app.sidebar-collapsed .sidebar-toggle {
-  width: 44px;
-  margin-left: 0;
-  padding: 0;
+  top: 14px;
+  right: -14px;
 }
 .app.sidebar-collapsed .nav {
   padding: 8px 10px;
