@@ -12,11 +12,12 @@ type AuthResolver interface {
 }
 
 type AuthMeResponse struct {
-	SignedIn bool   `json:"signed_in"`
-	IsAdmin  bool   `json:"is_admin"`
-	Sub      string `json:"sub"`
-	Email    string `json:"email"`
-	Name     string `json:"name"`
+	SignedIn  bool   `json:"signed_in"`
+	IsAdmin   bool   `json:"is_admin"`
+	Sub       string `json:"sub"`
+	Email     string `json:"email"`
+	Name      string `json:"name"`
+	AvatarURL string `json:"avatar_url"`
 }
 
 func authMe(authResolver AuthResolver) http.HandlerFunc {
@@ -31,11 +32,12 @@ func authMe(authResolver AuthResolver) http.HandlerFunc {
 			return
 		}
 		writeJSON(w, http.StatusOK, AuthMeResponse{
-			SignedIn: true,
-			IsAdmin:  isAdmin,
-			Sub:      user.Sub,
-			Email:    user.Email,
-			Name:     user.Name,
+			SignedIn:  true,
+			IsAdmin:   isAdmin,
+			Sub:       user.Sub,
+			Email:     user.Email,
+			Name:      user.Name,
+			AvatarURL: auth.GravatarURL(user.Email, 64),
 		})
 	}
 }

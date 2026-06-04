@@ -39,6 +39,7 @@ export type GlimmungConfig = {
 export type Account = {
   username: string;
   name: string;
+  avatarUrl?: string;
 };
 
 let _account: Account | null = null;
@@ -56,7 +57,7 @@ export function initAuth(): Promise<void> {
       agent_runtime: mockSnapshot.agent_runtime,
     };
     const ms = mockAccount();
-    _account = { username: ms.username, name: ms.name ?? ms.username };
+    _account = { username: ms.username, name: ms.name ?? ms.username, avatarUrl: ms.avatar_url };
     return Promise.resolve();
   }
   if (_initPromise) return _initPromise;
@@ -76,12 +77,13 @@ export function initAuth(): Promise<void> {
         signed_in?: boolean;
         email?: string;
         name?: string;
+        avatar_url?: string;
       };
       if (!me.signed_in || !me.email) {
         _account = null;
         return;
       }
-      _account = { username: me.email, name: me.name ?? me.email };
+      _account = { username: me.email, name: me.name ?? me.email, avatarUrl: me.avatar_url };
     } catch {
       _account = null;
     }
@@ -99,7 +101,7 @@ export function currentConfig(): GlimmungConfig | null {
 export function currentAccount(): Account | null {
   if (isMockMode()) {
     const ms = mockAccount();
-    return ms ? { username: ms.username, name: ms.name ?? ms.username } : null;
+    return ms ? { username: ms.username, name: ms.name ?? ms.username, avatarUrl: ms.avatar_url } : null;
   }
   return _account;
 }
@@ -109,7 +111,7 @@ export function currentAccount(): Account | null {
 export async function signIn(): Promise<Account> {
   if (isMockMode()) {
     const ms = mockAccount();
-    return { username: ms.username, name: ms.name ?? ms.username };
+    return { username: ms.username, name: ms.name ?? ms.username, avatarUrl: ms.avatar_url };
   }
   if (!_config) await initAuth();
   const callbackURL = encodeURIComponent(window.location.origin + window.location.pathname);

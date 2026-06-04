@@ -51,6 +51,9 @@ func TestAuthMeSignedInAdmin(t *testing.T) {
 	if !body.SignedIn || !body.IsAdmin || body.Email != "person@example.com" || body.Sub != "sub" {
 		t.Fatalf("body=%#v", body)
 	}
+	if body.AvatarURL != "https://www.gravatar.com/avatar/7de8517bce4457e8390aa4006a1880fb?s=64&d=mp" {
+		t.Fatalf("avatar_url=%q", body.AvatarURL)
+	}
 }
 
 func getAuthMe(t *testing.T, handler http.Handler, authorization string, target *AuthMeResponse) {
