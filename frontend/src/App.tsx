@@ -11,6 +11,7 @@ import { workflowToPhaseGraphModel } from "./workflowGraphModel";
 import { authedFetch, currentAccount, initAuth, signIn, signOut, type Account } from "./auth";
 import { isMockMode, mockRuns, mockSnapshot } from "./mockApi";
 import { ISSUE_DETAIL_CHILD_ROUTES } from "./routes";
+import { useHorizontalDragScroll } from "./useHorizontalDragScroll";
 import { IconSprite } from "./ui/Icon";
 import { Shell, type ShellAccount } from "./ui/Shell";
 import { Overview } from "./views/Overview";
@@ -946,6 +947,7 @@ function RequirementPills({ requirements }: { requirements: Record<string, unkno
 
 function WorkflowDefinitionGraph({ workflow }: { workflow: Workflow }) {
   const graphModel = workflowToPhaseGraphModel(workflow);
+  const { ref: panRef, onClickCapture: onPanClickCapture } = useHorizontalDragScroll<HTMLDivElement>();
   const [selection, setSelection] = useState<{ phaseName: string; jobId: string; stepSlug?: string | null } | null>(null);
   const selectedPhase = graphModel.phases.find((phase) => phase.name === selection?.phaseName) ?? null;
   const selectedJob = selectedPhase?.jobs?.find((job) => job.id === selection?.jobId) ?? null;
@@ -989,7 +991,7 @@ function WorkflowDefinitionGraph({ workflow }: { workflow: Workflow }) {
   return (
     <section>
       <h2>Workflow graph</h2>
-      <div className="dag-wrap">
+      <div className="dag-wrap dag-pan" ref={panRef} onClickCapture={onPanClickCapture}>
         <PhaseGraph
           phases={graphModel.phases}
           dagClassName="dag-definition"

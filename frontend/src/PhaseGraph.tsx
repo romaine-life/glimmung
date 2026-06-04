@@ -122,7 +122,7 @@ type EntryGraphEdge = Edge<EntryEdgeData> & {
 type GraphNodeHandle = NonNullable<Node["handles"]>[number];
 
 const PHASE_WIDTH = 172;
-const PHASE_X_GAP = 240;
+const PHASE_X_GAP = 64;
 const PHASE_Y = 12;
 const JOB_HEIGHT = 70;
 const STEP_ROW_HEIGHT = 17;
@@ -140,6 +140,11 @@ const RECYCLE_APPROACH_STAGGER = 16;
 const RECYCLE_FIRST_COLUMN_GUTTER = 72;
 const ENTRY_LEFT_GUTTER = 156;
 
+type NodeSize = {
+  width: number;
+  height: number;
+};
+
 function estimatedPhaseHeight(col: PhaseGraphPhase[]): number {
   const phase = col[0];
   const jobs = phase?.jobs && phase.jobs.length > 0
@@ -148,6 +153,10 @@ function estimatedPhaseHeight(col: PhaseGraphPhase[]): number {
   return PHASE_BASE_HEIGHT + jobs.reduce((height, job) => (
     height + estimatedJobHeight(job)
   ), 0);
+}
+
+function estimatedPhaseWidth(_col: PhaseGraphPhase[]): number {
+  return PHASE_WIDTH;
 }
 
 function estimatedJobHeight(job: PhaseGraphJob): number {
@@ -276,6 +285,22 @@ function centeredHandleOffset(size: number, percent: number): number {
   return size * (percent / 100) - HANDLE_SIZE / 2;
 }
 
+function phaseXPositions(widths: number[], leftGutter: number): number[] {
+  const out: number[] = [];
+  let x = leftGutter;
+  for (const width of widths) {
+    out.push(x);
+    x += width + PHASE_X_GAP;
+  }
+  return out;
+}
+
+function phaseGraphWidth(widths: number[], positions: number[]): number {
+  if (widths.length === 0) return PHASE_WIDTH;
+  const lastIndex = widths.length - 1;
+  return positions[lastIndex] + widths[lastIndex];
+}
+
 function graphNodeHandle(
   id: string,
   type: "source" | "target",
@@ -286,7 +311,7 @@ function graphNodeHandle(
   return { id, type, position, x, y, width: HANDLE_SIZE, height: HANDLE_SIZE };
 }
 
-function phaseHandles(height: number, recycleTargets: number): GraphNodeHandle[] {
+function phaseHandles(width: number, height: number, recycleTargets: number): GraphNodeHandle[] {
   return [
     graphNodeHandle(
       "advance-in",
@@ -299,14 +324,14 @@ function phaseHandles(height: number, recycleTargets: number): GraphNodeHandle[]
       "advance-out",
       "source",
       Position.Right,
-      PHASE_WIDTH - HANDLE_SIZE,
+      width - HANDLE_SIZE,
       centeredHandleOffset(height, 50),
     ),
     graphNodeHandle(
       "recycle-out",
       "source",
       Position.Bottom,
-      centeredHandleOffset(PHASE_WIDTH, 50),
+      centeredHandleOffset(width, 50),
       height - HANDLE_SIZE,
     ),
     ...Array.from({ length: Math.max(1, recycleTargets) }).map((_, idx) => graphNodeHandle(
@@ -517,7 +542,7 @@ export function PhaseGraph({
   recycleArrows = [],
 }: PhaseGraphProps) {
   const graphRef = useRef<HTMLDivElement | null>(null);
-  const [nodeHeights, setNodeHeights] = useState<Record<string, number>>({});
+  const [nodeSizes, setNodeSizes] = useState<Record<string, NodeSize>>({});
   const columns = useMemo(() => columnsFor(phases), [phases]);
   const phaseToColumn = useMemo(() => {
     const map = new Map<string, number>();
@@ -554,8 +579,11 @@ export function PhaseGraph({
   const leftGutter = Math.max(recycleLeftGutter, entryLeftGutter);
 
   const nodes = useMemo<Node[]>(() => {
-    const phaseHeight = (idx: number, col: PhaseGraphPhase[]) => nodeHeights[`phase:${idx}`] ?? estimatedPhaseHeight(col);
+    const phaseHeight = (idx: number, col: PhaseGraphPhase[]) => nodeSizes[`phase:${idx}`]?.height ?? estimatedPhaseHeight(col);
+    const phaseWidth = (idx: number, col: PhaseGraphPhase[]) => nodeSizes[`phase:${idx}`]?.width ?? estimatedPhaseWidth(col);
     const measuredPhaseHeights = columns.map((col, idx) => phaseHeight(idx, col));
+    const measuredPhaseWidths = columns.map((col, idx) => phaseWidth(idx, col));
+    const phaseXs = phaseXPositions(measuredPhaseWidths, leftGutter);
     const maxPhaseHeight = Math.max(...measuredPhaseHeights, estimatedPhaseHeight([]));
     const entryNodes: Node<EntrySourceNodeData>[] = visibleEntryArrows.map((arrow, idx) => {
       const targetCol = phaseToColumn.get(arrow.target) ?? 0;
@@ -582,17 +610,18 @@ export function PhaseGraph({
     });
     const phaseNodes: Node<PhaseNodeData>[] = columns.map((col, idx) => {
       const height = phaseHeight(idx, col);
+      const width = phaseWidth(idx, col);
       const recycleTargets = Math.max(...col.map((phase) => recycleTargetCounts.get(phase.name) ?? 0), 0);
       return {
         id: `phase:${idx}`,
         type: "phase",
         position: {
-          x: leftGutter + idx * PHASE_X_GAP,
+          x: phaseXs[idx],
           y: PHASE_Y + (maxPhaseHeight - height) / 2,
         },
-        initialWidth: PHASE_WIDTH,
+        initialWidth: width,
         initialHeight: height,
-        handles: phaseHandles(height, recycleTargets),
+        handles: phaseHandles(width, height, recycleTargets),
         style: { pointerEvents: "all" },
         draggable: false,
         selectable: false,
@@ -609,12 +638,12 @@ export function PhaseGraph({
       };
     });
     return [...entryNodes, ...phaseNodes];
-  }, [columns, leftGutter, nodeHeights, onSelectPhase, phaseRef, phaseToColumn, recycleTargetCounts, renderPhase, selectedPhaseName, visibleEntryArrows]);
+  }, [columns, leftGutter, nodeSizes, onSelectPhase, phaseRef, phaseToColumn, recycleTargetCounts, renderPhase, selectedPhaseName, visibleEntryArrows]);
 
   const edges = useMemo<GraphEdge[]>(() => {
     const out: GraphEdge[] = [];
     const maxPhaseHeight = Math.max(
-      ...columns.map((col, idx) => nodeHeights[`phase:${idx}`] ?? estimatedPhaseHeight(col)),
+      ...columns.map((col, idx) => nodeSizes[`phase:${idx}`]?.height ?? estimatedPhaseHeight(col)),
       estimatedPhaseHeight([]),
     );
     const recycleLaneBaseY = PHASE_Y + maxPhaseHeight + RECYCLE_LANE_TOP_OFFSET;
@@ -678,7 +707,7 @@ export function PhaseGraph({
       });
     });
     return out;
-  }, [columns, nodeHeights, phaseToColumn, visibleEntryArrows, visibleRecycleArrows]);
+  }, [columns, nodeSizes, phaseToColumn, visibleEntryArrows, visibleRecycleArrows]);
 
   useLayoutEffect(() => {
     const root = graphRef.current;
@@ -686,15 +715,28 @@ export function PhaseGraph({
 
     let raf = 0;
     const measure = () => {
-      const next: Record<string, number> = {};
+      const next: Record<string, NodeSize> = {};
       for (let idx = 0; idx < columns.length; idx += 1) {
         const el = root.querySelector<HTMLElement>(`.react-flow__node[data-id="phase:${idx}"]`);
-        if (el) next[`phase:${idx}`] = el.getBoundingClientRect().height;
+        if (el) {
+          const rect = el.getBoundingClientRect();
+          const col = columns[idx] ?? [];
+          next[`phase:${idx}`] = {
+            width: Math.max(estimatedPhaseWidth(col), rect.width),
+            height: Math.max(estimatedPhaseHeight(col), rect.height),
+          };
+        }
       }
-      setNodeHeights((current) => {
+      setNodeSizes((current) => {
         const keys = new Set([...Object.keys(current), ...Object.keys(next)]);
         for (const key of keys) {
-          if (Math.abs((current[key] ?? 0) - (next[key] ?? 0)) > 0.5) return next;
+          const currentSize = current[key];
+          const nextSize = next[key];
+          if (!currentSize || !nextSize) return next;
+          if (
+            Math.abs(currentSize.width - nextSize.width) > 0.5
+            || Math.abs(currentSize.height - nextSize.height) > 0.5
+          ) return next;
         }
         return current;
       });
@@ -713,14 +755,16 @@ export function PhaseGraph({
   }, [columns.length]);
 
   const maxPhaseHeight = Math.max(
-    ...columns.map((col, idx) => nodeHeights[`phase:${idx}`] ?? estimatedPhaseHeight(col)),
+    ...columns.map((col, idx) => nodeSizes[`phase:${idx}`]?.height ?? estimatedPhaseHeight(col)),
     estimatedPhaseHeight([]),
   );
+  const phaseWidths = columns.map((col, idx) => nodeSizes[`phase:${idx}`]?.width ?? estimatedPhaseWidth(col));
+  const phaseXs = phaseXPositions(phaseWidths, leftGutter);
   const recycleBottomRoom = maxRecycleLanes > 0
     ? RECYCLE_LANE_TOP_OFFSET + (maxRecycleLanes - 1) * RECYCLE_LANE_GAP + RECYCLE_LANE_BOTTOM_PADDING
     : 64;
   const graphHeight = PHASE_Y + maxPhaseHeight + Math.max(64, recycleBottomRoom);
-  const graphWidth = leftGutter + columns.length * PHASE_X_GAP + PHASE_WIDTH;
+  const graphWidth = phaseGraphWidth(phaseWidths, phaseXs);
 
   return (
     <div className={`dag dag-rf${dagClassName ? " " + dagClassName : ""}`} aria-label={ariaLabel}>

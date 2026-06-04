@@ -2138,10 +2138,17 @@ h2 .inline-action,
    the surface and dragging is the expected way to move it. Horizontal only —
    the vertical axis stays put. */
 .dag-pan {
+  position: relative;
   overflow-x: auto;
   overflow-y: hidden;
   cursor: grab;
   overscroll-behavior-x: contain;
+  padding-bottom: 8px;
+  scrollbar-color: color-mix(in srgb, var(--fg-dimmer) 55%, transparent) transparent;
+  scrollbar-width: thin;
+  box-shadow:
+    inset -18px 0 18px -20px color-mix(in srgb, var(--fg-muted) 60%, transparent),
+    inset 18px 0 18px -20px color-mix(in srgb, var(--fg-muted) 60%, transparent);
 }
 .dag-pan.dragging {
   cursor: grabbing;
