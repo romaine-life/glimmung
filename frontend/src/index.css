@@ -2144,7 +2144,6 @@ h2 .inline-action,
   display: block;
   width: 100%;
   max-width: 100%;
-  contain: inline-size;
   overflow-x: auto;
   overflow-y: hidden;
   cursor: grab;
@@ -2983,7 +2982,7 @@ h2 .inline-action,
    ============================================================ */
 .app {
   display: grid;
-  grid-template-columns: 248px 1fr;
+  grid-template-columns: 248px minmax(0, 1fr);
   min-height: 100vh;
 }
 
@@ -3101,7 +3100,7 @@ h2 .inline-action,
   border-radius: 4px; padding: 1px 5px; color: var(--fg-dim);
 }
 
-.app .content { padding: 26px 28px 60px; }
+.app .content { min-width: 0; padding: 26px 28px 60px; }
 .app .page-head { display: flex; align-items: flex-start; gap: 16px; margin-bottom: 22px; }
 .app .page-head h1 { font-size: var(--t-2xl); }
 .app .page-head .sub { color: var(--fg-dim); font-size: var(--t-md); margin-top: 4px; }
