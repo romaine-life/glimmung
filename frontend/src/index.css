@@ -3035,10 +3035,19 @@ h2 .inline-action,
 }
 
 :root::-webkit-scrollbar-button,
-:where(.app, .app *)::-webkit-scrollbar-button {
+:root::-webkit-scrollbar-button:single-button,
+html::-webkit-scrollbar-button,
+html::-webkit-scrollbar-button:single-button,
+body::-webkit-scrollbar-button,
+body::-webkit-scrollbar-button:single-button,
+:where(.app, .app *)::-webkit-scrollbar-button,
+:where(.app, .app *)::-webkit-scrollbar-button:single-button {
+  -webkit-appearance: none;
+  appearance: none;
   display: none;
   width: 0;
   height: 0;
+  background: transparent;
 }
 
 :root::-webkit-scrollbar-corner,
