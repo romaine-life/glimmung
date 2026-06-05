@@ -523,7 +523,7 @@ function Layout() {
   };
 
   const shellAccount: ShellAccount = account
-    ? { signedIn: true, name: account.username, email: account.username, isAdmin }
+    ? { signedIn: true, name: account.username, email: account.username, avatarUrl: account.avatarUrl, isAdmin }
     : { signedIn: false };
 
   return (

@@ -22,6 +22,7 @@ export function mockAccount() {
     username: "mock.designer@glimmung.local",
     localAccountId: "mock",
     name: "Mock Designer",
+    avatar_url: "https://www.gravatar.com/avatar/036864f05d064202abf3a9076c8a741f?s=64&d=mp",
   };
 }
 
@@ -1033,6 +1034,7 @@ function handleMockRequest(url: URL, init?: RequestInit): Response {
       signed_in: true,
       email: account.username,
       name: account.name,
+      avatar_url: account.avatar_url,
       is_admin: true,
     });
   }

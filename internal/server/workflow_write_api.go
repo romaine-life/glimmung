@@ -34,10 +34,14 @@ const (
 
 	MaxVerificationDynamicBlockItemCount = 10
 
+	VerificationCaseJobCount             = 10
+	VerificationCaseJobPrefix            = "verify-case-"
+	MaxVerificationCaseJobTimeoutSeconds = 10 * 60
+
 	VerificationShapeSingleJob          = "single_job"
 	VerificationShapeBoundedCaseJobs    = "bounded_case_jobs"
 	VerificationShapeDynamicStepGroup   = "dynamic_step_group"
-	DefaultVerificationBoundedCaseCount = 10
+	DefaultVerificationBoundedCaseCount = VerificationCaseJobCount
 
 	// MinNativePhaseJobTimeoutSeconds is the floor for a phase job's
 	// activeDeadlineSeconds. Below this the kubelet grace period
@@ -676,11 +680,23 @@ func validateBoundedVerificationCaseJobs(workflowName string, phase PhaseSpec, m
 		)}
 	}
 	for i, job := range phase.Jobs {
-		want := fmt.Sprintf("verify-case-%02d", i+1)
+		want := verificationCaseJobID(i + 1)
 		if strings.TrimSpace(job.ID) != want {
 			return ValidationError{Message: fmt.Sprintf(
 				"workflow %s verification phase %q shape=%q job[%d] id=%q; want %q",
 				workflowName, phase.Name, VerificationShapeBoundedCaseJobs, i, job.ID, want,
+			)}
+		}
+		if job.TimeoutSeconds == nil {
+			return ValidationError{Message: fmt.Sprintf(
+				"workflow %s verification case job %q must set timeout_seconds; case execution must be bounded",
+				workflowName, job.ID,
+			)}
+		}
+		if *job.TimeoutSeconds > MaxVerificationCaseJobTimeoutSeconds {
+			return ValidationError{Message: fmt.Sprintf(
+				"workflow %s verification case job %q timeout_seconds=%d exceeds maximum %d; split or narrow the case instead of granting a monolithic verifier budget",
+				workflowName, job.ID, *job.TimeoutSeconds, MaxVerificationCaseJobTimeoutSeconds,
 			)}
 		}
 	}
@@ -727,6 +743,10 @@ func validateDynamicVerificationJob(workflowName string, phase PhaseSpec) error 
 		return ValidationError{Message: fmt.Sprintf("workflow %s verification job %q must declare a dynamic test-case block", workflowName, job.ID)}
 	}
 	return nil
+}
+
+func verificationCaseJobID(index int) string {
+	return fmt.Sprintf("%s%02d", VerificationCaseJobPrefix, index)
 }
 
 func validateNativeJobSpec(workflowName, phaseName string, jobIndex int, job NativeJobSpec) error {

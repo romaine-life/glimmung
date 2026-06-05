@@ -2989,6 +2989,10 @@ h2 .inline-action,
   width: 100vw;
   min-height: 100vh;
   overflow-x: hidden;
+  transition: grid-template-columns 140ms ease;
+}
+.app.sidebar-collapsed {
+  grid-template-columns: 64px minmax(0, 1fr);
 }
 
 /* ----- Sidebar ----- */
@@ -2997,11 +3001,15 @@ h2 .inline-action,
   border-right: 1px solid var(--border);
   display: flex; flex-direction: column;
   position: sticky; top: 0; height: 100vh;
-  overflow: hidden;
+  overflow: visible;
+  width: auto;
+  z-index: 8;
 }
 .app .brand {
   display: flex; align-items: center; gap: 10px;
   padding: 18px 18px 14px;
+  min-height: 58px;
+  position: relative;
 }
 .app .brand-mark {
   width: 26px; height: 26px; border-radius: 7px; flex: none;
@@ -3019,6 +3027,37 @@ h2 .inline-action,
   font-family: var(--font-display); font-weight: 600; font-size: 18px;
   letter-spacing: -0.02em; color: var(--fg);
 }
+.app .sidebar-toggle {
+  position: absolute;
+  top: 18px;
+  right: -14px;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  background: var(--bg-sunken);
+  border: 1px solid var(--border);
+  color: var(--fg-dim);
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  z-index: 12;
+}
+.app .sidebar-toggle:hover {
+  border-color: var(--border-strong);
+  color: var(--fg);
+  background: var(--surface);
+}
+.app .sidebar-toggle:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  color: var(--fg);
+  background: var(--surface);
+}
+.app .sidebar-toggle-icon {
+  width: 15px;
+  height: 15px;
+}
 .app .project-switch {
   margin: 2px 12px 10px;
   display: flex; align-items: center; justify-content: space-between;
@@ -3030,7 +3069,7 @@ h2 .inline-action,
 .app .project-switch .ps-label { display: flex; flex-direction: column; line-height: 1.25; }
 .app .project-switch .ps-name { font-weight: 600; font-size: var(--t-md); }
 .app .project-switch .ps-sub { font-size: var(--t-xs); color: var(--fg-dim); }
-.app .project-switch .chev { color: var(--fg-dim); }
+.app .project-switch .project-switch-go { color: var(--fg-dim); }
 
 .app .nav { padding: 6px 10px; overflow-y: auto; flex: 1; }
 .app .nav-group { margin-bottom: 14px; }
@@ -3068,10 +3107,52 @@ h2 .inline-action,
   background: var(--surface-3); border: 1px solid var(--border-strong);
   display: grid; place-items: center; font-size: var(--t-xs); font-weight: 700;
   color: var(--fg-muted);
+  overflow: hidden;
+}
+.app .avatar-image img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
 }
 .app .sidebar-foot .who { line-height: 1.2; }
 .app .sidebar-foot .who b { font-size: var(--t-sm); font-weight: 600; }
 .app .sidebar-foot .who span { display: block; font-size: var(--t-xs); color: var(--fg-dim); }
+
+.app.sidebar-collapsed .brand {
+  justify-content: center;
+  padding: 14px 10px 10px;
+}
+.app.sidebar-collapsed .wordmark,
+.app.sidebar-collapsed .project-switch,
+.app.sidebar-collapsed .nav-group > .eyebrow,
+.app.sidebar-collapsed .nav-label,
+.app.sidebar-collapsed .nav-item .count,
+.app.sidebar-collapsed .sidebar-foot .who,
+.app.sidebar-collapsed .sidebar-foot .btn {
+  display: none;
+}
+.app.sidebar-collapsed .sidebar-toggle {
+  top: 14px;
+  right: -14px;
+}
+.app.sidebar-collapsed .nav {
+  padding: 8px 10px;
+}
+.app.sidebar-collapsed .nav-group {
+  margin-bottom: 4px;
+}
+.app.sidebar-collapsed .nav-item {
+  justify-content: center;
+  padding: 9px 0;
+}
+.app.sidebar-collapsed .nav-item.active::before {
+  left: -10px;
+}
+.app.sidebar-collapsed .sidebar-foot {
+  justify-content: center;
+  padding: 12px 10px;
+}
 
 /* connection pill */
 .app .conn { display: inline-flex; align-items: center; gap: 6px; font-size: var(--t-xs); font-weight: 600; color: var(--fg-muted); }

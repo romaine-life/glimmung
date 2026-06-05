@@ -59,6 +59,9 @@ after registration changes.
   primitive, but the workflow row owns which one applies. `dynamic_step_group`
   declares exactly one sequential verification job with one dynamic test-case
   block whose `dynamic_group.max_items` is at or below 10.
+  `bounded_case_jobs` declares ten jobs named `verify-case-01` through
+  `verify-case-10`; every case job sets `timeout_seconds` at or below 600
+  seconds, and unused slots complete successfully with no-op case results.
 - Jobs inside one phase launch in parallel and complete independently.
 - A step-scoped fail-closed abort is represented by a typed `step_aborted`
   native event and a durable aborted step state. A failed or aborted job whose
@@ -79,6 +82,8 @@ after registration changes.
   and typed evidence artifacts in the phase completion. Glimmung synthesizes
   the phase output `verification` so the managed evidence gate has a stable
   JSON verdict.
+  Multi-job verification phases aggregate per-job verification data before
+  synthesizing that phase output.
 - Evidence verification gates are canonicalized into managed Glimmung runner
   jobs.
 - Runs use the workflow schema snapshot captured at run/cycle creation, not a

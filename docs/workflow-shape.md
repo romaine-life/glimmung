@@ -152,15 +152,20 @@ project, or issue defaults later does not mutate an in-flight or historical
 run. This keeps agent selection containerized: a workflow inserts an agent step
 without forking the workflow per model/provider.
 
-## Verification Case Blocks
+## Verification Case Shapes
 
-The verification phase is intentionally one job wide even though the test plan
-is runtime-defined. Jobs in one phase are parallel, so test cases must not be
-modeled as sibling jobs unless the workflow also owns separate isolated runtime
-capacity for each sibling. The workflow definition declares a placeholder block
-inside the verification job:
+The verification shape is selected by `constraints.verification.shape`.
+`single_job` preserves legacy workflows such as Ambience's monolithic
+`llm-verify` runner. `bounded_case_jobs` declares fixed case slots and keeps
+each slot independently bounded. `dynamic_step_group` declares a sequential
+runtime-defined block inside one job. Jobs in one phase are parallel, so choose
+`bounded_case_jobs` only when the workflow owns enough isolated runtime
+capacity for sibling jobs.
 
 ```yaml
+constraints:
+  verification:
+    shape: dynamic_step_group
 - name: testing
   kind: k8s_job
   purpose: verification
@@ -208,10 +213,17 @@ payload with `verification.status`, `reasons`, and evidence refs/artifacts.
 Glimmung stores the phase output `verification` for the downstream evidence
 gate.
 
-The test-plan LLM owns what cases should prove. Glimmung owns the dynamic block
-shape, maximum case count, fail-closed execution boundary, and visibility. If a
-plan needs more than ten required items, it is too broad for one run and must
-fail or narrow the plan.
+For `bounded_case_jobs`, every case job is named `verify-case-01` through
+`verify-case-10` and sets `timeout_seconds` no higher than 600 seconds. Each
+case runner selects the plan item at its 1-based index; unused slots write no-op
+case results. When the final registered case job completes, Glimmung aggregates
+case completions into the phase verdict and synthesizes the phase output
+`verification` for the downstream evidence gate.
+
+The test-plan LLM owns what cases should prove. Glimmung owns the selected
+constraint profile, maximum case count, timeout bounds, aggregation, and
+visibility. If a plan needs more than ten required items, it is too broad for
+one run and must fail or narrow the plan.
 
 ## The verify/gate boundary
 

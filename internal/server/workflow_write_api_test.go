@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -59,7 +58,7 @@ func workflowRegisterBody(t *testing.T, req WorkflowRegister) *strings.Reader {
 }
 
 func verificationCaseJobsForTest() []NativeJobSpec {
-	return []NativeJobSpec{verificationJobForTest()}
+	return boundedVerificationJobsForTest(DefaultVerificationBoundedCaseCount)
 }
 
 func singleVerificationJobForTest() NativeJobSpec {
@@ -84,11 +83,8 @@ func boundedVerificationJobsForTest(count int) []NativeJobSpec {
 	jobs := make([]NativeJobSpec, 0, count)
 	for i := 1; i <= count; i++ {
 		jobs = append(jobs, NativeJobSpec{
-			ID:      fmt.Sprintf("verify-case-%02d", i),
-			Managed: true,
-			Steps: []NativeStepSpec{
-				{Slug: "run-verification", Run: "echo verify"},
-			},
+			ID:             verificationCaseJobID(i),
+			TimeoutSeconds: intPtr(300),
 		})
 	}
 	return jobs
@@ -314,6 +310,50 @@ func TestValidateWorkflowRegisterAcceptsBoundedCaseJobsConstraint(t *testing.T) 
 	}
 }
 
+func TestValidateWorkflowRegisterRequiresVerificationCaseSlots(t *testing.T) {
+	req := workflowWithJobTimeout(nil)
+	req.Constraints.Verification.Shape = VerificationShapeBoundedCaseJobs
+	req.Phases[1].Jobs = []NativeJobSpec{{ID: "verify", TimeoutSeconds: intPtr(300)}}
+
+	err := ValidateWorkflowRegister(req)
+	if err == nil || !strings.Contains(err.Error(), "exactly 10 bounded case jobs") {
+		t.Fatalf("ValidateWorkflowRegister err=%v, want bounded case slot rejection", err)
+	}
+}
+
+func TestValidateWorkflowRegisterRequiresVerificationCaseJobIDs(t *testing.T) {
+	req := workflowWithJobTimeout(nil)
+	req.Constraints.Verification.Shape = VerificationShapeBoundedCaseJobs
+	req.Phases[1].Jobs[2].ID = "verify-extra"
+
+	err := ValidateWorkflowRegister(req)
+	if err == nil || !strings.Contains(err.Error(), `want "verify-case-03"`) {
+		t.Fatalf("ValidateWorkflowRegister err=%v, want case id rejection", err)
+	}
+}
+
+func TestValidateWorkflowRegisterRequiresVerificationCaseTimeout(t *testing.T) {
+	req := workflowWithJobTimeout(nil)
+	req.Constraints.Verification.Shape = VerificationShapeBoundedCaseJobs
+	req.Phases[1].Jobs[0].TimeoutSeconds = nil
+
+	err := ValidateWorkflowRegister(req)
+	if err == nil || !strings.Contains(err.Error(), "must set timeout_seconds") {
+		t.Fatalf("ValidateWorkflowRegister err=%v, want missing case timeout rejection", err)
+	}
+}
+
+func TestValidateWorkflowRegisterCapsVerificationCaseTimeout(t *testing.T) {
+	req := workflowWithJobTimeout(nil)
+	req.Constraints.Verification.Shape = VerificationShapeBoundedCaseJobs
+	req.Phases[1].Jobs[0].TimeoutSeconds = intPtr(MaxVerificationCaseJobTimeoutSeconds + 1)
+
+	err := ValidateWorkflowRegister(req)
+	if err == nil || !strings.Contains(err.Error(), "exceeds maximum") {
+		t.Fatalf("ValidateWorkflowRegister err=%v, want case timeout ceiling rejection", err)
+	}
+}
+
 func TestValidateWorkflowRegisterRequiresDynamicVerificationJobWhenConstrained(t *testing.T) {
 	req := workflowWithJobTimeout(nil)
 	req.Constraints.Verification.Shape = VerificationShapeDynamicStepGroup
@@ -328,6 +368,7 @@ func TestValidateWorkflowRegisterRequiresDynamicVerificationJobWhenConstrained(t
 func TestValidateWorkflowRegisterRequiresVerificationDynamicBlock(t *testing.T) {
 	req := workflowWithJobTimeout(nil)
 	req.Constraints.Verification.Shape = VerificationShapeDynamicStepGroup
+	req.Phases[1].Jobs = []NativeJobSpec{verificationJobForTest()}
 	req.Phases[1].Jobs[0].Steps[1].DynamicGroup = nil
 	req.Phases[1].Jobs[0].Steps[2].DynamicGroup = nil
 
@@ -340,6 +381,7 @@ func TestValidateWorkflowRegisterRequiresVerificationDynamicBlock(t *testing.T) 
 func TestValidateWorkflowRegisterRequiresVerificationDynamicBlockGroup(t *testing.T) {
 	req := workflowWithJobTimeout(nil)
 	req.Constraints.Verification.Shape = VerificationShapeDynamicStepGroup
+	req.Phases[1].Jobs = []NativeJobSpec{verificationJobForTest()}
 	req.Phases[1].Jobs[0].Steps[1].Group = ""
 
 	err := ValidateWorkflowRegister(req)
@@ -351,6 +393,7 @@ func TestValidateWorkflowRegisterRequiresVerificationDynamicBlockGroup(t *testin
 func TestValidateWorkflowRegisterCapsVerificationDynamicBlockItems(t *testing.T) {
 	req := workflowWithJobTimeout(nil)
 	req.Constraints.Verification.Shape = VerificationShapeDynamicStepGroup
+	req.Phases[1].Jobs = []NativeJobSpec{verificationJobForTest()}
 	req.Phases[1].Jobs[0].Steps[1].DynamicGroup.MaxItems = MaxVerificationDynamicBlockItemCount + 1
 
 	err := ValidateWorkflowRegister(req)

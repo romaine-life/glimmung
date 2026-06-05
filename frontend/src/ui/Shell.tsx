@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { NavLink, Link, useLocation } from "react-router-dom";
 import { Icon } from "./Icon";
 import { buildBreadcrumbs } from "../routes";
@@ -43,6 +43,7 @@ export type ShellAccount = {
   signedIn: boolean;
   name?: string | null;
   email?: string | null;
+  avatarUrl?: string | null;
   isAdmin?: boolean;
 } | null;
 
@@ -56,10 +57,28 @@ function initials(account: ShellAccount): string {
   return (parts[0][0] + parts[1][0]).toUpperCase();
 }
 
+function ProfileAvatar({ account }: { account: ShellAccount }) {
+  const avatarUrl = account?.avatarUrl?.trim() ?? "";
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    setFailed(false);
+  }, [avatarUrl]);
+
+  if (!avatarUrl || failed) {
+    return <div className="avatar" aria-hidden="true">{initials(account)}</div>;
+  }
+
+  return (
+    <div className="avatar avatar-image" aria-hidden="true">
+      <img src={avatarUrl} alt="" referrerPolicy="no-referrer" onError={() => setFailed(true)} />
+    </div>
+  );
+}
+
 export function Shell({
   snap,
   account,
-  connection = snap ? "live" : "connecting",
   isMock = false,
   onSignIn,
   onSignOut,
@@ -77,6 +96,7 @@ export function Shell({
 }) {
   const location = useLocation();
   const crumbs = buildBreadcrumbs(location.pathname);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
   const leaseCount = snap?.active_leases?.length ?? 0;
   const slotCount = snap?.test_environments?.length ?? 0;
@@ -94,22 +114,30 @@ export function Shell({
       ? { name: projects[0].name, sub: projects[0].github_repo ?? "" }
       : { name: "All projects", sub: projects.length ? `${projects.length} projects` : "glimmung" };
 
-  const connLabel = connection === "live" ? "live" : connection === "connecting" ? "connecting" : connection;
-  const connClass = connection === "stale" ? "conn stale" : connection === "dead" ? "conn dead" : "conn";
-
   return (
-    <div className="app">
-      <aside className="sidebar">
+    <div className={`app${sidebarCollapsed ? " sidebar-collapsed" : ""}`}>
+      <aside className="sidebar" id="app-sidebar">
         <div className="brand">
           <div className="brand-mark" />
           <div className="wordmark">glimmung</div>
+          <button
+            className="sidebar-toggle"
+            type="button"
+            title={sidebarCollapsed ? "open sidebar" : "collapse sidebar"}
+            aria-label={sidebarCollapsed ? "open sidebar" : "collapse sidebar"}
+            aria-controls="app-sidebar"
+            aria-expanded={!sidebarCollapsed}
+            onClick={() => setSidebarCollapsed((current) => !current)}
+          >
+            <Icon name={sidebarCollapsed ? "chevright" : "chevleft"} className="ic sidebar-toggle-icon" />
+          </button>
         </div>
         <Link className="project-switch" to="/projects">
           <div className="ps-label">
             <span className="ps-name">{project.name}</span>
             <span className="ps-sub">{project.sub}</span>
           </div>
-          <Icon name="chevdown" className="ic chev" />
+          <Icon name="chevright" className="ic project-switch-go" />
         </Link>
         <nav className="nav">
           {NAV.map((g) => (
@@ -125,7 +153,7 @@ export function Shell({
                     className={({ isActive }) => `nav-item${isActive ? " active" : ""}`}
                   >
                     <Icon name={it.icon} />
-                    {it.label}
+                    <span className="nav-label">{it.label}</span>
                     {c?.count != null && (
                       <span className={`count${c.alert ? " alert" : ""}`}>{c.count}</span>
                     )}
@@ -141,7 +169,7 @@ export function Shell({
         <div className="sidebar-foot">
           {account?.signedIn ? (
             <>
-              <div className="avatar">{initials(account)}</div>
+              <ProfileAvatar account={account} />
               <div className="who">
                 <b>{account.name || account.email}</b>
                 <span>{account.isAdmin ? "admin" : "member"}</span>
@@ -149,24 +177,16 @@ export function Shell({
               <button
                 className="btn btn-ghost btn-sm mla"
                 title="sign out"
+                aria-label="sign out"
                 onClick={onSignOut}
               >
-                <Icon name="x" />
+                <Icon name="logout" />
               </button>
             </>
           ) : (
-            <>
-              <div className={`${connClass}`}><span className="dot" />{connLabel}</div>
-              <button className="btn btn-sm btn-primary mla" onClick={onSignIn}>
-                Sign in
-              </button>
-            </>
-          )}
-          {account?.signedIn && (
-            <div className={`${connClass}`} style={{ marginLeft: 8 }}>
-              <span className="dot" />
-              {connLabel}
-            </div>
+            <button className="btn btn-sm btn-primary" onClick={onSignIn}>
+              Sign in
+            </button>
           )}
         </div>
       </aside>
