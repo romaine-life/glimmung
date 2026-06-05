@@ -699,6 +699,31 @@ func TestNormalizeWorkflowRegisterForProjectDefaultsToK8sJob(t *testing.T) {
 	}
 }
 
+func TestWorkflowDocPersistsCanonicalVerificationConstraints(t *testing.T) {
+	req := server.WorkflowRegister{
+		Project: "glimmung",
+		Name:    "agent-run",
+		Phases: []server.PhaseSpec{
+			{Name: "prepare", Outputs: []string{server.IssueContractOutputKey}, Jobs: []server.NativeJobSpec{{ID: server.IssueContractJobID}}},
+			{Name: "test", Verify: true, DependsOn: []string{"prepare"}, Jobs: verificationCaseJobsForStoreTest()},
+			{Name: "cleanup_early", RunOn: server.PhaseRunOnAlways, Purpose: server.PhasePurposeTeardown, SkipWhenPreserveTestEnv: true, DependsOn: []string{"test"}, Jobs: []server.NativeJobSpec{{ID: "cleanup-early"}}},
+			{Name: "touchpoint", RunOn: server.PhaseRunOnSuccess, Purpose: server.PhasePurposeReviewTouchpoint, DependsOn: []string{"cleanup_early"}, Jobs: []server.NativeJobSpec{{ID: "pr-touchpoint", Primitive: "pr_touchpoint"}}},
+			{Name: "touchpoint_gate", Kind: "k8s_job", Purpose: server.PhasePurposeReviewGate, DependsOn: []string{"touchpoint"}, Jobs: []server.NativeJobSpec{{ID: "pr-merge", Primitive: "pr_merge"}}},
+			{Name: "cleanup_final", RunOn: server.PhaseRunOnAlways, Purpose: server.PhasePurposeTeardown, DependsOn: []string{"touchpoint_gate"}, Jobs: []server.NativeJobSpec{{ID: "cleanup-final"}}},
+		},
+	}
+	normalizeWorkflowRegister(&req)
+
+	doc := workflowDocFromRegister(req, "2026-06-05T00:00:00Z")
+	if got := doc.Constraints.Verification.Shape; got != server.VerificationShapeDynamicStepGroup {
+		t.Fatalf("constraint shape=%q, want %q", got, server.VerificationShapeDynamicStepGroup)
+	}
+	roundTrip := workflowRegisterFromDoc(doc)
+	if got := roundTrip.Constraints.Verification.Shape; got != server.VerificationShapeDynamicStepGroup {
+		t.Fatalf("round trip constraint shape=%q, want %q", got, server.VerificationShapeDynamicStepGroup)
+	}
+}
+
 func TestNativeJobDocRoundTripsAgentStepConfig(t *testing.T) {
 	job := server.NativeJobSpec{
 		ID:      "implement",

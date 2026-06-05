@@ -1358,17 +1358,18 @@ func (s *Store) readLeaseDocByCallbackToken(ctx context.Context, token string) (
 }
 
 type workflowDoc struct {
-	ID                  string         `json:"id"`
-	Kind                string         `json:"kind,omitempty"`
-	Project             string         `json:"project"`
-	Name                string         `json:"name"`
-	SchemaRef           string         `json:"schema_ref,omitempty"`
-	Phases              []phaseDoc     `json:"phases"`
-	PR                  prDoc          `json:"pr"`
-	Budget              budgetDoc      `json:"budget"`
-	DefaultRequirements map[string]any `json:"defaultRequirements"`
-	Metadata            map[string]any `json:"metadata"`
-	CreatedAt           string         `json:"createdAt"`
+	ID                  string                     `json:"id"`
+	Kind                string                     `json:"kind,omitempty"`
+	Project             string                     `json:"project"`
+	Name                string                     `json:"name"`
+	SchemaRef           string                     `json:"schema_ref,omitempty"`
+	Phases              []phaseDoc                 `json:"phases"`
+	PR                  prDoc                      `json:"pr"`
+	Budget              budgetDoc                  `json:"budget"`
+	Constraints         server.WorkflowConstraints `json:"constraints,omitempty"`
+	DefaultRequirements map[string]any             `json:"defaultRequirements"`
+	Metadata            map[string]any             `json:"metadata"`
+	CreatedAt           string                     `json:"createdAt"`
 }
 
 type leaseDoc struct {
@@ -1687,6 +1688,7 @@ func workflowFromDoc(doc workflowDoc) server.Workflow {
 		Phases:              phases,
 		PR:                  prFromDoc(doc.PR),
 		Budget:              budget.Config{Total: defaultBudgetTotal(doc.Budget.Total)},
+		Constraints:         doc.Constraints,
 		DefaultRequirements: mapOrEmpty(doc.DefaultRequirements),
 		Metadata:            mapOrEmpty(doc.Metadata),
 		CreatedAt:           parseTimeOrNow(doc.CreatedAt),
@@ -2389,6 +2391,7 @@ func workflowDocFromRegister(req server.WorkflowRegister, createdAt string) work
 	for _, phase := range req.Phases {
 		phases = append(phases, phaseDocFromSpec(phase))
 	}
+	req.Constraints = server.CanonicalWorkflowConstraints(req)
 	return workflowDoc{
 		ID:                  req.Name,
 		Project:             req.Project,
@@ -2396,6 +2399,7 @@ func workflowDocFromRegister(req server.WorkflowRegister, createdAt string) work
 		Phases:              phases,
 		PR:                  prDocFromSpec(req.PR),
 		Budget:              budgetDoc{Total: defaultBudgetTotal(req.Budget.Total)},
+		Constraints:         req.Constraints,
 		DefaultRequirements: mapOrEmpty(req.DefaultRequirements),
 		Metadata:            mapOrEmpty(req.Metadata),
 		CreatedAt:           createdAt,
@@ -2413,6 +2417,7 @@ func workflowRegisterFromDoc(doc workflowDoc) server.WorkflowRegister {
 		Phases:              phases,
 		PR:                  prFromDoc(doc.PR),
 		Budget:              budget.Config{Total: defaultBudgetTotal(doc.Budget.Total)},
+		Constraints:         doc.Constraints,
 		DefaultRequirements: mapOrEmpty(doc.DefaultRequirements),
 		Metadata:            mapOrEmpty(doc.Metadata),
 	}
@@ -2420,19 +2425,21 @@ func workflowRegisterFromDoc(doc workflowDoc) server.WorkflowRegister {
 
 func workflowSchemaRef(doc workflowDoc) string {
 	canonical := struct {
-		Project             string         `json:"project"`
-		Name                string         `json:"name"`
-		Phases              []phaseDoc     `json:"phases"`
-		PR                  prDoc          `json:"pr"`
-		Budget              budgetDoc      `json:"budget"`
-		DefaultRequirements map[string]any `json:"defaultRequirements"`
-		Metadata            map[string]any `json:"metadata"`
+		Project             string                     `json:"project"`
+		Name                string                     `json:"name"`
+		Phases              []phaseDoc                 `json:"phases"`
+		PR                  prDoc                      `json:"pr"`
+		Budget              budgetDoc                  `json:"budget"`
+		Constraints         server.WorkflowConstraints `json:"constraints,omitempty"`
+		DefaultRequirements map[string]any             `json:"defaultRequirements"`
+		Metadata            map[string]any             `json:"metadata"`
 	}{
 		Project:             doc.Project,
 		Name:                doc.Name,
 		Phases:              doc.Phases,
 		PR:                  doc.PR,
 		Budget:              doc.Budget,
+		Constraints:         doc.Constraints,
 		DefaultRequirements: mapOrEmpty(doc.DefaultRequirements),
 		Metadata:            mapOrEmpty(doc.Metadata),
 	}

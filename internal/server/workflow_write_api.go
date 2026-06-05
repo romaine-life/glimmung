@@ -34,6 +34,11 @@ const (
 
 	MaxVerificationDynamicBlockItemCount = 10
 
+	VerificationShapeSingleJob          = "single_job"
+	VerificationShapeBoundedCaseJobs    = "bounded_case_jobs"
+	VerificationShapeDynamicStepGroup   = "dynamic_step_group"
+	DefaultVerificationBoundedCaseCount = 10
+
 	// MinNativePhaseJobTimeoutSeconds is the floor for a phase job's
 	// activeDeadlineSeconds. Below this the kubelet grace period
 	// (30s default) doesn't leave enough room for the runner's SIGTERM
@@ -67,13 +72,14 @@ type WorkflowDeleteStore interface {
 }
 
 type WorkflowRegister struct {
-	Project             string         `json:"project"`
-	Name                string         `json:"name"`
-	Phases              []PhaseSpec    `json:"phases"`
-	PR                  PrPrimitive    `json:"pr"`
-	Budget              budget.Config  `json:"budget"`
-	DefaultRequirements map[string]any `json:"default_requirements"`
-	Metadata            map[string]any `json:"metadata"`
+	Project             string              `json:"project"`
+	Name                string              `json:"name"`
+	Phases              []PhaseSpec         `json:"phases"`
+	PR                  PrPrimitive         `json:"pr"`
+	Budget              budget.Config       `json:"budget"`
+	Constraints         WorkflowConstraints `json:"constraints,omitempty"`
+	DefaultRequirements map[string]any      `json:"default_requirements"`
+	Metadata            map[string]any      `json:"metadata"`
 }
 
 type WorkflowPatchStore interface {
@@ -360,12 +366,46 @@ func validateWorkflowAllowedForProject(project Project, req WorkflowRegister) er
 	return nil
 }
 
+func CanonicalWorkflowConstraints(req WorkflowRegister) WorkflowConstraints {
+	constraints := req.Constraints
+	constraints.Verification.Shape = strings.TrimSpace(constraints.Verification.Shape)
+	if constraints.Verification.Shape == "" {
+		constraints.Verification.Shape = inferVerificationConstraintShape(req.Phases)
+	}
+	if constraints.Verification.Shape == VerificationShapeBoundedCaseJobs && constraints.Verification.MaxCases == 0 {
+		constraints.Verification.MaxCases = DefaultVerificationBoundedCaseCount
+	}
+	return constraints
+}
+
+func inferVerificationConstraintShape(phases []PhaseSpec) string {
+	for _, phase := range phases {
+		if !phase.Verify {
+			continue
+		}
+		if len(phase.Jobs) == 1 {
+			for _, step := range phase.Jobs[0].Steps {
+				if step.DynamicGroup != nil {
+					return VerificationShapeDynamicStepGroup
+				}
+			}
+			return VerificationShapeSingleJob
+		}
+		return VerificationShapeBoundedCaseJobs
+	}
+	return VerificationShapeSingleJob
+}
+
 // ValidateWorkflowRegister enforces the persisted workflow graph contract.
 func ValidateWorkflowRegister(req WorkflowRegister) error {
 	if len(req.Phases) == 0 {
 		return ValidationError{Message: "workflow " + req.Name + " is missing required phases: prepare, testing, cleanup"}
 	}
 	if err := validateWorkflowAllowedForProject(Project{}, req); err != nil {
+		return err
+	}
+	constraints := CanonicalWorkflowConstraints(req)
+	if err := validateWorkflowConstraints(req.Name, constraints); err != nil {
 		return err
 	}
 	phaseRefs := make([]phaserefs.Phase, 0, len(req.Phases))
@@ -400,7 +440,7 @@ func ValidateWorkflowRegister(req WorkflowRegister) error {
 			if purpose != PhasePurposeVerification {
 				return ValidationError{Message: fmt.Sprintf("workflow %s phase %q has verify=true and must set purpose=%q", req.Name, name, PhasePurposeVerification)}
 			}
-			if err := validateVerificationJob(req.Name, phase); err != nil {
+			if err := validateVerificationJob(req.Name, phase, constraints.Verification); err != nil {
 				return err
 			}
 			testingCount++
@@ -551,6 +591,33 @@ func ValidateWorkflowRegister(req WorkflowRegister) error {
 	return nil
 }
 
+func validateWorkflowConstraints(workflowName string, constraints WorkflowConstraints) error {
+	switch constraints.Verification.Shape {
+	case VerificationShapeSingleJob, VerificationShapeBoundedCaseJobs, VerificationShapeDynamicStepGroup:
+	default:
+		return ValidationError{Message: fmt.Sprintf(
+			"workflow %s constraints.verification.shape=%q is not one of [%s, %s, %s]",
+			workflowName,
+			constraints.Verification.Shape,
+			VerificationShapeSingleJob,
+			VerificationShapeBoundedCaseJobs,
+			VerificationShapeDynamicStepGroup,
+		)}
+	}
+	if constraints.Verification.MaxCases < 0 || constraints.Verification.MaxCases > DefaultVerificationBoundedCaseCount {
+		return ValidationError{Message: fmt.Sprintf(
+			"workflow %s constraints.verification.max_cases=%d is out of range [0,%d]",
+			workflowName,
+			constraints.Verification.MaxCases,
+			DefaultVerificationBoundedCaseCount,
+		)}
+	}
+	if constraints.Verification.Shape == VerificationShapeBoundedCaseJobs && constraints.Verification.MaxCases == 0 {
+		return ValidationError{Message: fmt.Sprintf("workflow %s constraints.verification.max_cases is required for shape=%q", workflowName, VerificationShapeBoundedCaseJobs)}
+	}
+	return nil
+}
+
 func validatePrepareIssueContract(workflowName string, phase PhaseSpec) error {
 	hasOutput := false
 	for _, output := range phase.Outputs {
@@ -575,7 +642,52 @@ func validatePrepareIssueContract(workflowName string, phase PhaseSpec) error {
 	return nil
 }
 
-func validateVerificationJob(workflowName string, phase PhaseSpec) error {
+func validateVerificationJob(workflowName string, phase PhaseSpec, constraints VerificationConstraints) error {
+	switch constraints.Shape {
+	case VerificationShapeSingleJob:
+		return validateSingleVerificationJob(workflowName, phase)
+	case VerificationShapeBoundedCaseJobs:
+		return validateBoundedVerificationCaseJobs(workflowName, phase, constraints.MaxCases)
+	case VerificationShapeDynamicStepGroup:
+		return validateDynamicVerificationJob(workflowName, phase)
+	default:
+		return ValidationError{Message: fmt.Sprintf("workflow %s constraints.verification.shape=%q is unsupported", workflowName, constraints.Shape)}
+	}
+}
+
+func validateSingleVerificationJob(workflowName string, phase PhaseSpec) error {
+	if len(phase.Jobs) != 1 {
+		return ValidationError{Message: fmt.Sprintf(
+			"workflow %s verification phase %q shape=%q must declare exactly one verification job",
+			workflowName, phase.Name, VerificationShapeSingleJob,
+		)}
+	}
+	if strings.TrimSpace(phase.Jobs[0].ID) == "" {
+		return ValidationError{Message: fmt.Sprintf("workflow %s verification phase %q shape=%q job is missing id", workflowName, phase.Name, VerificationShapeSingleJob)}
+	}
+	return nil
+}
+
+func validateBoundedVerificationCaseJobs(workflowName string, phase PhaseSpec, maxCases int) error {
+	if len(phase.Jobs) != maxCases {
+		return ValidationError{Message: fmt.Sprintf(
+			"workflow %s verification phase %q shape=%q must declare exactly %d bounded case jobs verify-case-01..verify-case-%02d",
+			workflowName, phase.Name, VerificationShapeBoundedCaseJobs, maxCases, maxCases,
+		)}
+	}
+	for i, job := range phase.Jobs {
+		want := fmt.Sprintf("verify-case-%02d", i+1)
+		if strings.TrimSpace(job.ID) != want {
+			return ValidationError{Message: fmt.Sprintf(
+				"workflow %s verification phase %q shape=%q job[%d] id=%q; want %q",
+				workflowName, phase.Name, VerificationShapeBoundedCaseJobs, i, job.ID, want,
+			)}
+		}
+	}
+	return nil
+}
+
+func validateDynamicVerificationJob(workflowName string, phase PhaseSpec) error {
 	if len(phase.Jobs) != 1 {
 		return ValidationError{Message: fmt.Sprintf(
 			"workflow %s verification phase %q must declare exactly one sequential verification job with a dynamic test-case block",

@@ -52,11 +52,13 @@ after registration changes.
 - Registration rejects invalid dependencies, duplicate phases, duplicate job
   IDs, invalid inputs, and unsupported executor kinds before they become a
   runtime contract.
-- A `verify=true` phase is a bounded verification-case phase: it declares
-  exactly one sequential verification job with one dynamic test-case block.
-  The block declares `dynamic_group.max_items` at or below 10. Runtime test
-  plans decide how many cases the block expands into. Cases run sequentially
-  unless a future workflow explicitly owns isolated parallel capacity.
+- A `verify=true` phase is a bounded verification phase whose concrete shape is
+  selected by the persisted workflow constraint
+  `constraints.verification.shape`. Supported shapes are `single_job`,
+  `bounded_case_jobs`, and `dynamic_step_group`; code validates the selected
+  primitive, but the workflow row owns which one applies. `dynamic_step_group`
+  declares exactly one sequential verification job with one dynamic test-case
+  block whose `dynamic_group.max_items` is at or below 10.
 - Jobs inside one phase launch in parallel and complete independently.
 - A step-scoped fail-closed abort is represented by a typed `step_aborted`
   native event and a durable aborted step state. A failed or aborted job whose

@@ -49,11 +49,13 @@ Glimmung-managed workflows must declare:
    shared issue contract that both branches may consume without seeing
    each other's output.
 2. **testing** — exactly one bounded verification phase with `verify=True`.
-   The phase declares exactly one sequential verification job. That job owns a
-   dynamic test-case block marked with `dynamic_group.max_items` no higher than
-   10. Runtime evidence requirements decide how many cases the block expands
-   into for a run. Each expanded case owns one evidence item or one small
-   coherent assertion. The phase produces one verification verdict for the
+   The workflow row declares `constraints.verification.shape`, which selects
+   the verification phase shape for that workflow. Supported profiles are
+   `single_job`, `bounded_case_jobs`, and `dynamic_step_group`. Runtime
+   evidence requirements decide what each verification run actually attempts,
+   but the persisted constraint profile owns whether the phase is a legacy
+   single verifier, a fixed set of bounded case jobs, or a sequential dynamic
+   test-case block. The phase produces one verification verdict for the
    downstream evidence gate.
 3. **cleanup** — at least one phase with `purpose: teardown` and
    `run_on: always` or `run_on: failure`. Runs on terminal cleanup paths and
@@ -69,6 +71,14 @@ teardown cleanup phase are rejected before they can become the project runtime
 contract. Registrations with multiple entry phases, fan-in/fan-out phase
 dependencies, invalid cross-phase input refs, duplicate phase names, or
 duplicate job IDs are rejected too.
+
+Verification shape is intentionally data-owned. Glimmung code owns the primitive
+validator implementations, but the workflow payload owns which primitive applies
+through `constraints.verification.shape`. When that field is absent, registration
+infers a profile from the verify phase and persists the inferred constraint on
+the next write. This keeps existing `single_job` workflows editable while
+allowing newer workflows to opt into `dynamic_step_group` without making every
+project wait on a Glimmung deploy for the shape decision.
 
 Evidence requirements are snapshotted onto the Run at dispatch time. Workflow
 `default_requirements.required_evidence` and operator labels such as
