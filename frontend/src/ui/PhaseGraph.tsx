@@ -26,6 +26,12 @@ export type Recycle = [string, string, string];
 
 const SVGNS = "http://www.w3.org/2000/svg";
 
+function displayIdentifier(value: string): string {
+  const normalized = value.trim().replace(/[_-]+/g, " ").replace(/\s+/g, " ");
+  if (!normalized) return value;
+  return normalized.charAt(0).toUpperCase() + normalized.slice(1);
+}
+
 export function PhaseGraph({
   phases,
   recycles,
@@ -150,7 +156,7 @@ export function PhaseGraph({
             >
               {p.status && <div className="phase-status">{p.status}</div>}
               <div className="phase-head">
-                <span className="pn">{p.name}</span>
+                <span className="pn" title={p.name}>{displayIdentifier(p.name)}</span>
                 <span className="pk">{p.kind}</span>
               </div>
               <div className="phase-body">

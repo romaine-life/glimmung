@@ -862,7 +862,7 @@ describe("IssueDetailView run execution graph", () => {
 
     renderIssueDetail("/projects/ambience/issues/172/runs/7/cycles/1");
 
-    const phaseTitle = await screen.findByText("env-prep", { selector: ".dag-phase-title" });
+    const phaseTitle = await screen.findByText("Env prep", { selector: ".dag-phase-title" });
     const phaseButton = phaseTitle.closest("button");
     if (!phaseButton) throw new Error("missing phase header button");
     await userEvent.click(phaseButton);

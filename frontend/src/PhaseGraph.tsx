@@ -128,7 +128,7 @@ const PHASE_Y = 12;
 const JOB_HEIGHT = 70;
 const STEP_ROW_HEIGHT = 17;
 const STEP_GROUP_HEADER_HEIGHT = 17;
-const PHASE_BASE_HEIGHT = 44;
+const PHASE_BASE_HEIGHT = 60;
 const HANDLE_SIZE = 1;
 const ADVANCE_HANDLE_WITH_RECYCLE_PERCENT = 34;
 const RECYCLE_HANDLE_START_PERCENT = 54;
@@ -177,6 +177,12 @@ function phaseMeta(phase: PhaseGraphPhase): string {
   if (phase.evidence_verification_gate) return "evidence-gate";
   if (phase.verify) return "verification";
   return phase.kind;
+}
+
+function displayIdentifier(value: string): string {
+  const normalized = value.trim().replace(/[_-]+/g, " ").replace(/\s+/g, " ");
+  if (!normalized) return value;
+  return normalized.charAt(0).toUpperCase() + normalized.slice(1);
 }
 
 type StepGroup = {
@@ -351,7 +357,7 @@ function PhaseFlowNode({ data }: NodeProps<Node<PhaseNodeData>>) {
   const primaryPhase = data.col[0] ?? null;
   const phaseHead = (
     <>
-      <span className="dag-phase-title">{data.title}</span>
+      <span className="dag-phase-title" title={data.title}>{displayIdentifier(data.title)}</span>
       <span className="dag-phase-kicker">phase</span>
     </>
   );
