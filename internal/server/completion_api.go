@@ -60,8 +60,17 @@ const (
 	// Pod hit activeDeadlineSeconds and was killed by kubelet.
 	JobTerminalReasonDeadlineExceeded = "deadline_exceeded"
 	// Job controller exceeded its backoff limit (typically pod failed
-	// fast with backoffLimit=0).
+	// fast with backoffLimit=0). When the failed pod recorded a more
+	// specific termination reason it is upgraded to one of the
+	// pod-level reasons below.
 	JobTerminalReasonBackoffExceeded = "backoff_exceeded"
+	// The pod's container was OOM-killed by the kubelet. Read from the
+	// pod's containerStatuses[].state.terminated.reason; the Job
+	// condition only ever says BackoffLimitExceeded, which hides this.
+	JobTerminalReasonOOMKilled = "oom_killed"
+	// The pod was evicted (node pressure / preemption). Read from the
+	// pod's status.reason.
+	JobTerminalReasonEvicted = "evicted"
 	// The Job no longer exists in k8s — TTL'd or externally deleted —
 	// before the runner could deliver a callback.
 	JobTerminalReasonPodGone = "pod_gone"
@@ -97,6 +106,8 @@ func IsKnownJobTerminalReason(reason string) bool {
 	case JobTerminalReasonSucceeded,
 		JobTerminalReasonDeadlineExceeded,
 		JobTerminalReasonBackoffExceeded,
+		JobTerminalReasonOOMKilled,
+		JobTerminalReasonEvicted,
 		JobTerminalReasonPodGone,
 		JobTerminalReasonCallbackLost,
 		JobTerminalReasonJobFailed,
@@ -109,6 +120,24 @@ func IsKnownJobTerminalReason(reason string) bool {
 		return true
 	}
 	return false
+}
+
+// refineTerminalReasonFromPod upgrades a generic Job-condition reason
+// (typically backoff_exceeded) to a specific pod-level reason when the
+// failed pod recorded one. The Kubernetes Job condition only ever says
+// BackoffLimitExceeded for a backoffLimit=0 pod that OOM'd or was
+// evicted, hiding why it actually died; the pod's
+// containerStatuses[].state.terminated.reason / status.reason carry the
+// truth. Returns terminalReason unchanged when podReason is empty or
+// unrecognized.
+func refineTerminalReasonFromPod(terminalReason, podReason string) string {
+	switch strings.ToLower(strings.TrimSpace(podReason)) {
+	case "oomkilled":
+		return JobTerminalReasonOOMKilled
+	case "evicted":
+		return JobTerminalReasonEvicted
+	}
+	return terminalReason
 }
 
 // NormalizeJobTerminalReason collapses an unknown reason string to

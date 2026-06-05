@@ -580,7 +580,11 @@ func evaluateActiveJobFailure(ctx context.Context, statusGetter NativeJobStatusG
 		conclusion = "timed_out"
 		terminalReason = JobTerminalReasonBackoffExceeded
 	}
+	terminalReason = refineTerminalReasonFromPod(terminalReason, status.PodTerminationReason)
 	summary := fmt.Sprintf("native job %q ended with kubernetes condition Failed=true reason=%q: %s", name, reason, strings.TrimSpace(message))
+	if status.PodTerminationReason != "" {
+		summary += fmt.Sprintf(" [pod: %s]", status.PodTerminationReason)
+	}
 	return true, conclusion, terminalReason, summary, nil
 }
 
@@ -689,7 +693,7 @@ func buildInnerJobTermination(ctx context.Context, statusGetter NativeJobStatusG
 			return NativeRunEventRequest{}, false, nil
 		}
 		state = "failed"
-		reason = mapK8sFailedReasonToInnerJobReason(status.FailureReason())
+		reason = refineTerminalReasonFromPod(mapK8sFailedReasonToInnerJobReason(status.FailureReason()), status.PodTerminationReason)
 		completedAt = formatTerminalTime(status.TerminalTime(), now)
 	default:
 		return NativeRunEventRequest{}, false, nil

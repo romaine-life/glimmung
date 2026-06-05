@@ -119,6 +119,13 @@ after registration changes.
 
 - Native event streams should identify project, issue, run, cycle, phase, job,
   step, conclusion, and relevant log tail or archive link.
+- A pod that dies for a pod-level reason (OOMKilled, Evicted) must surface that
+  reason, not just the Job condition. The Kubernetes Job condition collapses to
+  `BackoffLimitExceeded` for any `backoffLimit=0` pod failure, so Glimmung reads
+  the pod's `containerStatuses[].state.terminated.reason` / `status.reason` on
+  terminal failure and refines the terminal reason to `oom_killed` / `evicted`
+  (and keeps the raw reason in the human summary). This applies to outer Jobs
+  and inner per-case Jobs alike.
 - Registration failures should name the exact invalid phase, dependency, input,
   job, or unsupported kind.
 - Run graph projection should make schema mismatch or missing schema failures
