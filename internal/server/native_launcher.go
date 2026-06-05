@@ -67,6 +67,13 @@ type NativeJobStatus struct {
 	Conditions         []NativeJobCondition
 	CompletionTime     time.Time
 	LastTransitionTime time.Time
+	// PodTerminationReason is the pod-level termination reason read from
+	// the Job's pod when the Job condition only says
+	// BackoffLimitExceeded — the container's terminated.reason
+	// ("OOMKilled", "Error") or the pod's status.reason ("Evicted").
+	// Empty when the pod is gone or recorded no terminal reason.
+	// Populated by GetNativeJobStatus only on terminal failure.
+	PodTerminationReason string
 }
 
 // NativeJobCondition mirrors the fields of batch/v1 JobCondition the
@@ -1180,7 +1187,46 @@ func (l *KubernetesNativeLauncher) GetNativeJobStatus(ctx context.Context, names
 		}
 		return NativeJobStatus{}, err
 	}
-	return parseNativeJobStatus(job), nil
+	parsed := parseNativeJobStatus(job)
+	// The Job condition only ever says BackoffLimitExceeded for a
+	// backoffLimit=0 pod that OOM'd / was evicted / crashed. Read the
+	// pod-level reason so the operator can tell those apart. Best-effort
+	// and only on terminal failure to bound the extra API call.
+	if parsed.IsTerminallyFailed() {
+		if reason, perr := l.podTerminationReasonForJob(ctx, namespace, name); perr == nil && reason != "" {
+			parsed.PodTerminationReason = reason
+		}
+	}
+	return parsed, nil
+}
+
+// podTerminationReasonForJob returns the most specific pod-level
+// termination reason for a Job's pod: the container's
+// state.terminated.reason ("OOMKilled", "Error", "ContainerCannotRun")
+// when present, else the pod's status.reason ("Evicted"). Returns the
+// empty string when no pod exists (TTL race) or no terminal reason was
+// recorded.
+func (l *KubernetesNativeLauncher) podTerminationReasonForJob(ctx context.Context, namespace, jobName string) (string, error) {
+	listPath := "/api/v1/namespaces/" + url.PathEscape(namespace) + "/pods?labelSelector=job-name%3D" + url.QueryEscape(jobName)
+	status, decoded, err := l.request(ctx, http.MethodGet, listPath, nil)
+	if err != nil {
+		if status == http.StatusNotFound {
+			return "", nil
+		}
+		return "", err
+	}
+	items := anySlice(decoded["items"])
+	if len(items) == 0 {
+		return "", nil
+	}
+	podStatus := anyMap(anyMap(items[0])["status"])
+	for _, raw := range anySlice(podStatus["containerStatuses"]) {
+		term := anyMap(anyMap(anyMap(raw)["state"])["terminated"])
+		if r := strings.TrimSpace(mapStringValueOrEmpty(term, "reason")); r != "" {
+			return r, nil
+		}
+	}
+	return strings.TrimSpace(mapStringValueOrEmpty(podStatus, "reason")), nil
 }
 
 // GetNativeJobLogs reads a bounded slice of the named Job's pod

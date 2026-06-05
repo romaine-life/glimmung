@@ -627,7 +627,11 @@ func deriveTerminalFromStatus(status NativeJobStatus, k8sJobName string) (conclu
 		conclusion = "timed_out"
 		terminalReason = JobTerminalReasonBackoffExceeded
 	}
+	terminalReason = refineTerminalReasonFromPod(terminalReason, status.PodTerminationReason)
 	summary = fmt.Sprintf("native job %q ended with kubernetes condition Failed=true reason=%q: %s", k8sJobName, reason, strings.TrimSpace(message))
+	if status.PodTerminationReason != "" {
+		summary += fmt.Sprintf(" [pod: %s]", status.PodTerminationReason)
+	}
 	return conclusion, terminalReason, summary
 }
 

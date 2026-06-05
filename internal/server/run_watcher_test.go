@@ -106,6 +106,24 @@ func TestDeriveTerminalFromStatusMapsK8sReasonsToEnum(t *testing.T) {
 			wantConclusion: "failed",
 			wantReason:     JobTerminalReasonJobFailed,
 		},
+		{
+			name: "BackoffLimitExceeded + pod OOMKilled -> oom_killed",
+			status: NativeJobStatus{
+				Conditions:           []NativeJobCondition{{Type: "Failed", Status: "True", Reason: "BackoffLimitExceeded"}},
+				PodTerminationReason: "OOMKilled",
+			},
+			wantConclusion: "timed_out",
+			wantReason:     JobTerminalReasonOOMKilled,
+		},
+		{
+			name: "BackoffLimitExceeded + pod Evicted -> evicted",
+			status: NativeJobStatus{
+				Conditions:           []NativeJobCondition{{Type: "Failed", Status: "True", Reason: "BackoffLimitExceeded"}},
+				PodTerminationReason: "Evicted",
+			},
+			wantConclusion: "timed_out",
+			wantReason:     JobTerminalReasonEvicted,
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -117,6 +135,36 @@ func TestDeriveTerminalFromStatusMapsK8sReasonsToEnum(t *testing.T) {
 				t.Fatalf("reason=%q, want %q", reason, tc.wantReason)
 			}
 		})
+	}
+}
+
+func TestRefineTerminalReasonFromPod(t *testing.T) {
+	cases := []struct{ in, pod, want string }{
+		{JobTerminalReasonBackoffExceeded, "OOMKilled", JobTerminalReasonOOMKilled},
+		{JobTerminalReasonBackoffExceeded, "oomkilled", JobTerminalReasonOOMKilled},
+		{JobTerminalReasonBackoffExceeded, "Evicted", JobTerminalReasonEvicted},
+		{JobTerminalReasonBackoffExceeded, "", JobTerminalReasonBackoffExceeded},
+		{JobTerminalReasonBackoffExceeded, "Error", JobTerminalReasonBackoffExceeded},
+		{JobTerminalReasonJobFailed, "OOMKilled", JobTerminalReasonOOMKilled},
+	}
+	for _, tc := range cases {
+		if got := refineTerminalReasonFromPod(tc.in, tc.pod); got != tc.want {
+			t.Fatalf("refine(%q,%q)=%q, want %q", tc.in, tc.pod, got, tc.want)
+		}
+	}
+}
+
+// The pod reason must remain visible in the human summary even when the
+// reason enum maps to oom_killed, so an operator reading the run report
+// sees "OOMKilled" rather than only the bare enum.
+func TestDeriveTerminalSummaryCarriesPodReason(t *testing.T) {
+	status := NativeJobStatus{
+		Conditions:           []NativeJobCondition{{Type: "Failed", Status: "True", Reason: "BackoffLimitExceeded"}},
+		PodTerminationReason: "OOMKilled",
+	}
+	_, _, summary := deriveTerminalFromStatus(status, "glim-verify")
+	if !strings.Contains(summary, "OOMKilled") {
+		t.Fatalf("summary missing pod reason: %q", summary)
 	}
 }
 
