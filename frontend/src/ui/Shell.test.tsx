@@ -9,7 +9,6 @@ const snap: ShellSnapshot = {
   active_leases: [],
   test_environments: [],
   waiting_test_slot_requests: [],
-  projects: [{ name: "glimmung", github_repo: "romaine-life/glimmung" }],
 };
 
 function renderShell() {
@@ -46,11 +45,22 @@ describe("Shell", () => {
     expect(screen.queryByText("open")).not.toBeInTheDocument();
   });
 
-  it("uses navigation and sign-out affordances without footer status clutter", () => {
+  it("offers Projects as a Work nav option, not a standalone switcher", () => {
     const { container } = renderShell();
 
-    expect(container.querySelector(".project-switch .project-switch-go use")).toHaveAttribute("href", "#ic-chevright");
-    expect(container.querySelector(".project-switch .project-switch-go use")).not.toHaveAttribute("href", "#ic-chevdown");
+    expect(container.querySelector(".project-switch")).not.toBeInTheDocument();
+
+    const work = within(container).getByText("Work").closest(".nav-group");
+    expect(work).not.toBeNull();
+    const projectsNav = within(work as HTMLElement).getByRole("link", { name: "Projects" });
+    expect(projectsNav).toHaveAttribute("href", "/projects");
+    expect(projectsNav).toHaveClass("nav-item");
+    expect(projectsNav.querySelector("use")).toHaveAttribute("href", "#ic-folder");
+  });
+
+  it("keeps sign-out affordances without footer status clutter", () => {
+    const { container } = renderShell();
+
     expect(screen.queryByText("live")).not.toBeInTheDocument();
     expect(within(container).getByRole("button", { name: "sign out" }).querySelector("use")).toHaveAttribute("href", "#ic-logout");
   });
