@@ -2986,7 +2986,8 @@ h2 .inline-action,
 .app {
   display: grid;
   grid-template-columns: 248px minmax(0, 1fr);
-  width: 100vw;
+  width: 100%;
+  max-width: 100%;
   min-height: 100vh;
   overflow-x: hidden;
   transition: grid-template-columns 140ms ease;
@@ -3164,7 +3165,9 @@ h2 .inline-action,
 /* ----- Main column ----- */
 .app .main {
   min-width: 0;
-  max-width: calc(100vw - 248px);
+  width: 100%;
+  max-width: 100%;
+  overflow-x: hidden;
   display: flex;
   flex-direction: column;
 }
@@ -3191,7 +3194,14 @@ h2 .inline-action,
   border-radius: 4px; padding: 1px 5px; color: var(--fg-dim);
 }
 
-.app .content { min-width: 0; padding: 26px 28px 60px; }
+.app .content {
+  box-sizing: border-box;
+  min-width: 0;
+  width: 100%;
+  max-width: 100%;
+  overflow-x: hidden;
+  padding: 26px 28px 60px;
+}
 .app .page-head { display: flex; align-items: flex-start; gap: 16px; margin-bottom: 22px; }
 .app .page-head h1 { font-size: var(--t-2xl); }
 .app .page-head .sub { color: var(--fg-dim); font-size: var(--t-md); margin-top: 4px; }
@@ -3257,6 +3267,10 @@ h2 .inline-action,
 .app .card {
   background: var(--surface); border: 1px solid var(--border);
   border-radius: var(--r-md); box-shadow: var(--shadow-sm);
+  box-sizing: border-box;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
 }
 .app .card-pad { padding: 16px 18px; }
 .app .panel-head {
@@ -3313,7 +3327,14 @@ h2 .inline-action,
 /* ============================================================
    PHASE GRAPH (verify-loop DAG)
    ============================================================ */
-.app .dag { position: relative; padding: 18px 8px 8px; overflow-x: auto; }
+.app .dag {
+  box-sizing: border-box;
+  position: relative;
+  min-width: 0;
+  max-width: 100%;
+  padding: 18px 8px 8px;
+  overflow-x: auto;
+}
 .app .dag-inner {
   position: relative; width: max-content; padding-bottom: 58px;
   background-image: radial-gradient(circle, var(--hairline) 1px, transparent 1.5px);
