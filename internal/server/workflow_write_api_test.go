@@ -402,6 +402,25 @@ func TestValidateWorkflowRegisterCapsVerificationDynamicBlockItems(t *testing.T)
 	}
 }
 
+func TestValidateWorkflowRegisterRejectsSplitVerificationDynamicBlock(t *testing.T) {
+	req := workflowWithJobTimeout(nil)
+	req.Constraints.Verification.Shape = VerificationShapeDynamicStepGroup
+	req.Phases[1].Jobs = []NativeJobSpec{verificationJobForTest()}
+	job := &req.Phases[1].Jobs[0]
+	job.Steps = []NativeStepSpec{
+		job.Steps[0],
+		job.Steps[1],
+		{Slug: "between", Run: "echo between"},
+		job.Steps[2],
+		job.Steps[3],
+	}
+
+	err := ValidateWorkflowRegister(req)
+	if err == nil || !strings.Contains(err.Error(), "one contiguous step block") {
+		t.Fatalf("ValidateWorkflowRegister err=%v, want split dynamic block rejection", err)
+	}
+}
+
 func TestValidateWorkflowRegisterRejectsMultipleVerificationPhases(t *testing.T) {
 	req := workflowWithJobTimeout(nil)
 	extra := PhaseSpec{

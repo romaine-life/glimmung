@@ -2060,12 +2060,20 @@ func applyNativeEventsToProjectionRun(run *RunProjectionRun, events []NativeRunL
 				stepBySlug[job.Steps[stepIndex].Slug] = stepIndex
 			}
 			for _, event := range jobEvents {
+				if event.Event == "dynamic_group_expanded" {
+					job.Steps = applyDynamicGroupExpandedToProjectionSteps(job.Steps, event)
+					stepBySlug = map[string]int{}
+					for stepIndex := range job.Steps {
+						stepBySlug[job.Steps[stepIndex].Slug] = stepIndex
+					}
+					continue
+				}
 				if event.StepSlug == "" || event.Event == "log" {
 					continue
 				}
 				stepIndex, ok := stepBySlug[event.StepSlug]
 				if !ok {
-					job.Steps = append(job.Steps, RunProjectionStep{Slug: event.StepSlug, Title: stringPointerOrNil(event.StepSlug), State: "not_started"})
+					job.Steps = append(job.Steps, projectionStepFromNativeEvent(event))
 					stepIndex = len(job.Steps) - 1
 					stepBySlug[event.StepSlug] = stepIndex
 				}
@@ -2103,6 +2111,41 @@ func applyNativeEventsToProjectionRun(run *RunProjectionRun, events []NativeRunL
 		case phase.State == "dispatching" && phaseActive:
 			phase.State = "active"
 		}
+	}
+}
+
+func applyDynamicGroupExpandedToProjectionSteps(steps []RunProjectionStep, event NativeRunLogEvent) []RunProjectionStep {
+	group := strings.TrimSpace(stringValue(event.Metadata["group"]))
+	if group == "" {
+		return steps
+	}
+	out := make([]RunProjectionStep, 0, len(steps)+1)
+	for _, step := range steps {
+		if strings.TrimSpace(step.Group) == group && step.DynamicGroup != nil {
+			continue
+		}
+		out = append(out, step)
+	}
+	if intFromAny(event.Metadata["item_count"]) == 0 {
+		title := "no test cases generated"
+		out = append(out, RunProjectionStep{
+			Slug:       safeStepSlug(group) + "-no-cases",
+			Title:      &title,
+			State:      "skipped",
+			Group:      group,
+			GroupTitle: stringPointerOrNil(firstNonEmpty(stringValue(event.Metadata["group_title"]), group)),
+		})
+	}
+	return out
+}
+
+func projectionStepFromNativeEvent(event NativeRunLogEvent) RunProjectionStep {
+	return RunProjectionStep{
+		Slug:       firstNonEmpty(event.StepSlug, "step"),
+		Title:      stringPointerOrNil(firstNonEmpty(stringValue(event.Metadata["title"]), event.StepSlug)),
+		State:      "not_started",
+		Group:      strings.TrimSpace(stringValue(event.Metadata["group"])),
+		GroupTitle: stringPointerOrNil(strings.TrimSpace(stringValue(event.Metadata["group_title"]))),
 	}
 }
 

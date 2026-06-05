@@ -84,6 +84,11 @@ after registration changes.
   JSON verdict.
   Multi-job verification phases aggregate per-job verification data before
   synthesizing that phase output.
+- Dynamic verification groups are runtime-expanded inside one managed job from
+  bounded plan outputs (`test_cases_json` or `test_cases_count`, plus
+  group-specific aliases). Expanded case steps are emitted as durable native
+  step events with concrete slugs and group metadata; template steps must not
+  remain the only visible execution record after expansion.
 - Evidence verification gates are canonicalized into managed Glimmung runner
   jobs.
 - Runs use the workflow schema snapshot captured at run/cycle creation, not a

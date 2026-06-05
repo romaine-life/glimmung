@@ -197,8 +197,28 @@ constraints:
 ```
 
 At runtime the verification runner reads the test/evidence plan and expands the
-dynamic block into zero to ten sequential cases. Each expanded case does one
-bounded task:
+dynamic block into zero to ten sequential cases. The step immediately before the
+dynamic block usually authors the plan and must publish either:
+
+- `test_cases_json` / `<group>_json` / `<group>_cases_json`: a JSON array, or an
+  object with a `cases` array. Each item can include `label`, `title`, or `name`.
+- `test_cases_count` / `<group>_count` / `<group>_cases_count`: an integer when
+  the cases are intentionally positional and do not need per-case JSON.
+
+`<group>` is the dynamic step group normalized to output-key form; for
+`group: test-cases`, `test_cases_json` is the canonical key. The runner fails
+closed if no plan key is present or the count exceeds `dynamic_group.max_items`.
+Each expanded case runs the dynamic block's template steps sequentially with
+concrete slugs such as `gather-evidence-case-01` and `judge-evidence-case-01`.
+The concrete steps receive:
+
+- `GLIMMUNG_DYNAMIC_CASE_INDEX`
+- `GLIMMUNG_DYNAMIC_CASE_COUNT`
+- `GLIMMUNG_DYNAMIC_CASE_LABEL`
+- `GLIMMUNG_DYNAMIC_CASE_JSON`
+- `GLIMMUNG_DYNAMIC_TEMPLATE_STEP`
+
+Each expanded case does one bounded task:
 
 - no item at that index: write a no-op completion and exit success
 - video/screenshot/browser item: capture and judge that one artifact

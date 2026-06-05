@@ -61,6 +61,14 @@ type stepSpec struct {
 	Shell            string            `json:"shell"`
 	WorkingDirectory string            `json:"working_directory"`
 	Env              map[string]string `json:"env"`
+	Group            string            `json:"group"`
+	GroupTitle       string            `json:"group_title"`
+	DynamicGroup     *dynamicGroupSpec `json:"dynamic_group"`
+}
+
+type dynamicGroupSpec struct {
+	MaxItems  int    `json:"max_items"`
+	ItemLabel string `json:"item_label"`
 }
 
 type agentStepSpec struct {
@@ -232,7 +240,23 @@ func (r *nativeRunner) run(ctx context.Context) error {
 		_ = r.complete(ctx, "failure", "checkout failed: "+err.Error())
 		return err
 	}
-	for _, step := range r.cfg.Job.Steps {
+	for i := 0; i < len(r.cfg.Job.Steps); i++ {
+		step := r.cfg.Job.Steps[i]
+		if block, next, ok := dynamicStepBlock(r.cfg.Job.Steps, i); ok {
+			if err := r.runDynamicStepBlock(ctx, block); err != nil {
+				if r.shutdownRequested(ctx) {
+					return r.completeShutdown(ctx, "runner received shutdown during dynamic step block: "+err.Error())
+				}
+				_ = r.complete(ctx, "failure", err.Error())
+				return err
+			}
+			i = next - 1
+			if reason := r.requestedAbortReason(); reason != "" {
+				msg := fmt.Sprintf("dynamic step block %q requested run abort: %s", block[0].Group, reason)
+				return r.complete(ctx, decision.ConclusionAborted, msg)
+			}
+			continue
+		}
 		if strings.TrimSpace(step.Type) == "" {
 			step.Type = "run"
 		}
@@ -267,6 +291,227 @@ func (r *nativeRunner) run(ctx context.Context) error {
 		}
 	}
 	return r.complete(ctx, "success", "completed")
+}
+
+func dynamicStepBlock(steps []stepSpec, start int) ([]stepSpec, int, bool) {
+	if start < 0 || start >= len(steps) || steps[start].DynamicGroup == nil {
+		return nil, start, false
+	}
+	group := strings.TrimSpace(steps[start].Group)
+	if group == "" {
+		return nil, start, false
+	}
+	end := start
+	for end < len(steps) {
+		step := steps[end]
+		if step.DynamicGroup == nil || strings.TrimSpace(step.Group) != group {
+			break
+		}
+		end++
+	}
+	return steps[start:end], end, true
+}
+
+type dynamicCase struct {
+	Index int
+	Raw   string
+	Label string
+}
+
+func (r *nativeRunner) runDynamicStepBlock(ctx context.Context, block []stepSpec) error {
+	if len(block) == 0 {
+		return nil
+	}
+	group := strings.TrimSpace(block[0].Group)
+	groupTitle := firstNonEmpty(strings.TrimSpace(block[0].GroupTitle), group)
+	maxItems := block[0].DynamicGroup.MaxItems
+	if maxItems <= 0 {
+		return fmt.Errorf("dynamic group %q max_items must be positive", group)
+	}
+	cases, err := r.dynamicCasesForGroup(group, maxItems)
+	if err != nil {
+		return err
+	}
+	if err := r.postEvent(ctx, "dynamic_group_expanded", nil, "", nil, map[string]any{
+		"group":       group,
+		"group_title": groupTitle,
+		"item_count":  len(cases),
+		"max_items":   maxItems,
+		"item_label":  firstNonEmpty(strings.TrimSpace(block[0].DynamicGroup.ItemLabel), "item"),
+	}); err != nil {
+		return err
+	}
+	if len(cases) == 0 {
+		slug := safeStepSlug(group) + "-no-cases"
+		skipped := stepSpec{
+			Slug:       slug,
+			Group:      group,
+			GroupTitle: groupTitle,
+		}
+		if err := r.postEvent(ctx, "step_skipped", &slug, "no dynamic test cases generated", nil, stepEventMetadata(skipped)); err != nil {
+			return err
+		}
+		return nil
+	}
+	for _, tc := range cases {
+		caseGroup := fmt.Sprintf("%s/case-%02d", group, tc.Index)
+		caseTitle := firstNonEmpty(tc.Label, fmt.Sprintf("%s %02d", firstNonEmpty(strings.TrimSpace(block[0].DynamicGroup.ItemLabel), "case"), tc.Index))
+		for _, template := range block {
+			step := template
+			step.Slug = fmt.Sprintf("%s-case-%02d", template.Slug, tc.Index)
+			step.Group = caseGroup
+			step.GroupTitle = caseTitle
+			step.DynamicGroup = nil
+			step.Env = mergeStringMaps(template.Env, map[string]string{
+				"GLIMMUNG_DYNAMIC_GROUP":            group,
+				"GLIMMUNG_DYNAMIC_CASE_INDEX":       strconv.Itoa(tc.Index),
+				"GLIMMUNG_DYNAMIC_CASE_COUNT":       strconv.Itoa(len(cases)),
+				"GLIMMUNG_DYNAMIC_CASE_LABEL":       caseTitle,
+				"GLIMMUNG_DYNAMIC_CASE_JSON":        tc.Raw,
+				"GLIMMUNG_DYNAMIC_TEMPLATE_STEP":    template.Slug,
+				"GLIMMUNG_DYNAMIC_TEMPLATE_GROUP":   group,
+				"GLIMMUNG_DYNAMIC_TEMPLATE_MAX":     strconv.Itoa(maxItems),
+				"GLIMMUNG_DYNAMIC_TEMPLATE_ITEM_ID": strconv.Itoa(tc.Index),
+			})
+			if strings.TrimSpace(step.Type) == "" {
+				step.Type = "run"
+			}
+			if err := r.runStep(ctx, step); err != nil {
+				return err
+			}
+			if reason := r.requestedAbortReason(); reason != "" {
+				return nil
+			}
+		}
+	}
+	return nil
+}
+
+func (r *nativeRunner) dynamicCasesForGroup(group string, maxItems int) ([]dynamicCase, error) {
+	keys := dynamicCaseOutputKeys(group)
+	for _, key := range keys.jsonKeys {
+		raw := strings.TrimSpace(r.outputs[key])
+		if raw == "" {
+			continue
+		}
+		cases, err := parseDynamicCasesJSON(raw, maxItems)
+		if err != nil {
+			return nil, fmt.Errorf("dynamic group %q output %q is invalid: %w", group, key, err)
+		}
+		return cases, nil
+	}
+	for _, key := range keys.countKeys {
+		raw := strings.TrimSpace(r.outputs[key])
+		if raw == "" {
+			continue
+		}
+		count, err := strconv.Atoi(raw)
+		if err != nil {
+			return nil, fmt.Errorf("dynamic group %q output %q must be an integer: %w", group, key, err)
+		}
+		if count < 0 || count > maxItems {
+			return nil, fmt.Errorf("dynamic group %q output %q=%d is outside [0,%d]", group, key, count, maxItems)
+		}
+		cases := make([]dynamicCase, 0, count)
+		for i := 1; i <= count; i++ {
+			cases = append(cases, dynamicCase{Index: i, Raw: "{}", Label: fmt.Sprintf("case %02d", i)})
+		}
+		return cases, nil
+	}
+	return nil, fmt.Errorf("dynamic group %q requires an earlier step to publish one of %s or %s", group, strings.Join(keys.jsonKeys, ", "), strings.Join(keys.countKeys, ", "))
+}
+
+type dynamicCaseKeys struct {
+	jsonKeys  []string
+	countKeys []string
+}
+
+func dynamicCaseOutputKeys(group string) dynamicCaseKeys {
+	normalized := normalizeOutputKey(group)
+	keys := dynamicCaseKeys{
+		jsonKeys: []string{
+			normalized + "_json",
+			normalized + "_cases_json",
+			"glimmung_dynamic_" + normalized + "_json",
+			"glimmung_dynamic_" + normalized + "_cases_json",
+		},
+		countKeys: []string{
+			normalized + "_count",
+			normalized + "_cases_count",
+			"glimmung_dynamic_" + normalized + "_count",
+			"glimmung_dynamic_" + normalized + "_cases_count",
+		},
+	}
+	if normalized != "test_cases" {
+		keys.jsonKeys = append([]string{"test_cases_json"}, keys.jsonKeys...)
+		keys.countKeys = append([]string{"test_cases_count"}, keys.countKeys...)
+	}
+	return keys
+}
+
+func normalizeOutputKey(value string) string {
+	var b strings.Builder
+	lastUnderscore := false
+	for _, r := range strings.ToLower(strings.TrimSpace(value)) {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+			lastUnderscore = false
+			continue
+		}
+		if !lastUnderscore {
+			b.WriteByte('_')
+			lastUnderscore = true
+		}
+	}
+	return strings.Trim(b.String(), "_")
+}
+
+func parseDynamicCasesJSON(raw string, maxItems int) ([]dynamicCase, error) {
+	var decoded any
+	if err := json.Unmarshal([]byte(raw), &decoded); err != nil {
+		return nil, err
+	}
+	items, ok := decoded.([]any)
+	if !ok {
+		if obj, ok := decoded.(map[string]any); ok {
+			if nested, nestedOK := obj["cases"].([]any); nestedOK {
+				items = nested
+				ok = true
+			}
+		}
+	}
+	if !ok {
+		return nil, errors.New("expected JSON array or object with cases array")
+	}
+	if len(items) > maxItems {
+		return nil, fmt.Errorf("contains %d cases, maximum is %d", len(items), maxItems)
+	}
+	cases := make([]dynamicCase, 0, len(items))
+	for i, item := range items {
+		payload, err := json.Marshal(item)
+		if err != nil {
+			return nil, err
+		}
+		cases = append(cases, dynamicCase{
+			Index: i + 1,
+			Raw:   string(payload),
+			Label: dynamicCaseLabel(item, i+1),
+		})
+	}
+	return cases, nil
+}
+
+func dynamicCaseLabel(item any, index int) string {
+	obj, ok := item.(map[string]any)
+	if !ok {
+		return fmt.Sprintf("case %02d", index)
+	}
+	for _, key := range []string{"label", "title", "name"} {
+		if value := strings.TrimSpace(fmt.Sprint(obj[key])); value != "" && value != "<nil>" {
+			return value
+		}
+	}
+	return fmt.Sprintf("case %02d", index)
 }
 
 // requestedAbortReason returns the phase's `abort_reason` output if a step
@@ -323,7 +568,7 @@ func (r *nativeRunner) runStep(ctx context.Context, step stepSpec) error {
 	if slug == "" {
 		return errors.New("step slug required")
 	}
-	if err := r.postEvent(ctx, "step_started", &slug, "", nil, nil); err != nil {
+	if err := r.postEvent(ctx, "step_started", &slug, "", nil, stepEventMetadata(step)); err != nil {
 		return err
 	}
 	outputFile := filepath.Join(os.TempDir(), "glimmung-output-"+slug+".txt")
@@ -349,29 +594,43 @@ func (r *nativeRunner) runStep(ctx context.Context, step stepSpec) error {
 	}
 	if execErr != nil {
 		msg := fmt.Sprintf("step %s exited with code %d", slug, exitCode)
-		_ = r.postEvent(ctx, "step_failed", &slug, msg, &exitCode, nil)
+		_ = r.postEvent(ctx, "step_failed", &slug, msg, &exitCode, stepEventMetadata(step))
 		return fmt.Errorf("%s: %w", msg, execErr)
 	}
 	if outputErr != nil {
 		exit := 1
 		msg := "step " + slug + " output error: " + outputErr.Error()
-		_ = r.postEvent(ctx, "step_failed", &slug, msg, &exit, nil)
+		_ = r.postEvent(ctx, "step_failed", &slug, msg, &exit, stepEventMetadata(step))
 		return errors.New(msg)
 	}
 	if reason := r.requestedAbortReason(); reason != "" {
 		msg := fmt.Sprintf("step %q requested run abort: %s", slug, reason)
-		if err := r.postEvent(ctx, "step_aborted", &slug, msg, nil, map[string]any{
-			"abort_reason": reason,
-			"abort_scope":  "run_after_cleanup",
-		}); err != nil {
+		metadata := stepEventMetadata(step)
+		metadata["abort_reason"] = reason
+		metadata["abort_scope"] = "run_after_cleanup"
+		if err := r.postEvent(ctx, "step_aborted", &slug, msg, nil, metadata); err != nil {
 			return err
 		}
 		return nil
 	}
-	if err := r.postEvent(ctx, "step_completed", &slug, "", &exitCode, nil); err != nil {
+	if err := r.postEvent(ctx, "step_completed", &slug, "", &exitCode, stepEventMetadata(step)); err != nil {
 		return err
 	}
 	return nil
+}
+
+func stepEventMetadata(step stepSpec) map[string]any {
+	metadata := map[string]any{}
+	if group := strings.TrimSpace(step.Group); group != "" {
+		metadata["group"] = group
+	}
+	if title := strings.TrimSpace(step.GroupTitle); title != "" {
+		metadata["group_title"] = title
+	}
+	if step.DynamicGroup != nil {
+		metadata["dynamic_group"] = step.DynamicGroup
+	}
+	return metadata
 }
 
 func (r *nativeRunner) executeStep(ctx context.Context, step stepSpec, outputFile, completionFile string) (int, error) {
@@ -491,6 +750,13 @@ func (r *nativeRunner) agentPrompt(workdir string, step stepSpec, spec agentStep
 	}
 	if reqs := strings.TrimSpace(os.Getenv("GLIMMUNG_EVIDENCE_REQUIREMENTS_JSON")); reqs != "" {
 		fmt.Fprintf(&b, "## Evidence requirements\n\n```json\n%s\n```\n\n", reqs)
+	}
+	if caseJSON := strings.TrimSpace(step.Env["GLIMMUNG_DYNAMIC_CASE_JSON"]); caseJSON != "" {
+		fmt.Fprintf(&b, "## Dynamic test case\n\n")
+		fmt.Fprintf(&b, "- case index: %s of %s\n", strings.TrimSpace(step.Env["GLIMMUNG_DYNAMIC_CASE_INDEX"]), strings.TrimSpace(step.Env["GLIMMUNG_DYNAMIC_CASE_COUNT"]))
+		fmt.Fprintf(&b, "- case label: %s\n", strings.TrimSpace(step.Env["GLIMMUNG_DYNAMIC_CASE_LABEL"]))
+		fmt.Fprintf(&b, "- template step: %s\n\n", strings.TrimSpace(step.Env["GLIMMUNG_DYNAMIC_TEMPLATE_STEP"]))
+		fmt.Fprintf(&b, "```json\n%s\n```\n\n", caseJSON)
 	}
 	if file := strings.TrimSpace(spec.PromptFile); file != "" {
 		path := file
@@ -1085,6 +1351,27 @@ func mergedEnv(base []string, maps ...map[string]string) []string {
 		out = append(out, key+"="+values[key])
 	}
 	return out
+}
+
+func mergeStringMaps(base map[string]string, overlays ...map[string]string) map[string]string {
+	out := map[string]string{}
+	for key, value := range base {
+		out[key] = value
+	}
+	for _, overlay := range overlays {
+		for key, value := range overlay {
+			out[key] = value
+		}
+	}
+	return out
+}
+
+func safeStepSlug(value string) string {
+	slug := normalizeOutputKey(value)
+	if slug == "" {
+		return "dynamic-group"
+	}
+	return strings.ReplaceAll(slug, "_", "-")
 }
 
 func repoBaseName(repo string) string {

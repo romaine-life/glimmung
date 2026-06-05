@@ -452,6 +452,66 @@ func TestNativeStepAbortedMarksCausalStepAndJob(t *testing.T) {
 	}
 }
 
+func TestDynamicGroupEventsReplaceTemplatesWithConcreteSteps(t *testing.T) {
+	now := "2026-06-05T02:10:00Z"
+	raw := map[string]any{
+		"phase_executions": []any{
+			map[string]any{
+				"name":  "llm-verify",
+				"kind":  "k8s_job",
+				"state": "active",
+				"jobs": []any{map[string]any{
+					"id":    "verify",
+					"state": "active",
+					"steps": []any{
+						map[string]any{"slug": "author-test-plan", "state": "succeeded"},
+						map[string]any{"slug": "gather-evidence", "state": "not_started", "group": "test-cases", "group_title": "Test cases generated at runtime", "dynamic_group": map[string]any{"max_items": float64(10), "item_label": "test case"}},
+						map[string]any{"slug": "judge-evidence", "state": "not_started", "group": "test-cases", "group_title": "Test cases generated at runtime", "dynamic_group": map[string]any{"max_items": float64(10), "item_label": "test case"}},
+					},
+				}},
+			},
+		},
+	}
+	attempt := attemptDoc{Phase: "llm-verify"}
+
+	applyNativeEventToExecutionsRaw(raw, attempt, nativeEventDoc{
+		JobID:     "verify",
+		Event:     "dynamic_group_expanded",
+		CreatedAt: now,
+		Metadata: map[string]any{
+			"group":       "test-cases",
+			"group_title": "Test cases generated at runtime",
+			"item_count":  float64(2),
+		},
+	})
+	job := rawJob(t, rawPhase(t, raw, "llm-verify"), "verify")
+	if rawStepMaybe(job, "gather-evidence") != nil || rawStepMaybe(job, "judge-evidence") != nil {
+		t.Fatalf("dynamic template steps were not removed: %#v", job["steps"])
+	}
+
+	applyNativeEventToExecutionsRaw(raw, attempt, nativeEventDoc{
+		JobID:     "verify",
+		Event:     "step_started",
+		StepSlug:  "gather-evidence-case-01",
+		CreatedAt: now,
+		Metadata: map[string]any{
+			"group":       "test-cases/case-01",
+			"group_title": "home page",
+		},
+	})
+	job = rawJob(t, rawPhase(t, raw, "llm-verify"), "verify")
+	step := rawStep(t, job, "gather-evidence-case-01")
+	if got := stringValue(step["state"]); got != "active" {
+		t.Fatalf("concrete step state=%q", got)
+	}
+	if got := stringValue(step["group"]); got != "test-cases/case-01" {
+		t.Fatalf("concrete step group=%q", got)
+	}
+	if got := stringValue(step["group_title"]); got != "home page" {
+		t.Fatalf("concrete step group_title=%q", got)
+	}
+}
+
 func TestFinalizeExecutionFailureClassifiesForwardDispatchFailure(t *testing.T) {
 	now := "2026-05-25T07:32:14Z"
 	raw := map[string]any{
@@ -577,6 +637,16 @@ func rawStep(t *testing.T, job map[string]any, slug string) map[string]any {
 		}
 	}
 	t.Fatalf("missing step %s", slug)
+	return nil
+}
+
+func rawStepMaybe(job map[string]any, slug string) map[string]any {
+	for _, value := range job["steps"].([]any) {
+		step := value.(map[string]any)
+		if stringValue(step["slug"]) == slug {
+			return step
+		}
+	}
 	return nil
 }
 
