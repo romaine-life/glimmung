@@ -228,30 +228,51 @@ function dynamicGroupSummary(dynamicGroup: StepDynamicGroup | null | undefined):
 
 function StepGroupSummary({ steps }: { steps?: PhaseGraphStep[] }) {
   const groups = groupedSteps(steps);
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => new Set());
   if (groups.length === 0) return null;
   return (
     <div className="dag-step-groups" aria-label="job steps">
-      {groups.map((group) => (
-        <div
-          className={`dag-step-group${group.title ? "" : " ungrouped"}`}
-          key={group.key}
-        >
-          {group.title && (
-            <div className="dag-step-group-title">
-              <span>{group.title}</span>
-              {group.dynamicGroup && <small>{dynamicGroupSummary(group.dynamicGroup)}</small>}
-            </div>
-          )}
-          <div className="dag-step-group-steps">
-            {group.steps.map((step) => (
-              <div className="dag-step-item" key={step.slug}>
-                <span>{step.title || step.slug}</span>
-                <small>{step.dynamic_group ? "template" : step.type || "run"}</small>
+      {groups.map((group) => {
+        const collapsed = collapsedGroups.has(group.key);
+        const summary = group.dynamicGroup
+          ? dynamicGroupSummary(group.dynamicGroup)
+          : `${group.steps.length} step${group.steps.length === 1 ? "" : "s"}`;
+        return (
+          <div
+            className={`dag-step-group${group.title ? "" : " ungrouped"}`}
+            key={group.key}
+          >
+            {group.title && (
+              <button
+                type="button"
+                className="dag-step-group-title"
+                aria-expanded={!collapsed}
+                onClick={() => {
+                  setCollapsedGroups((current) => {
+                    const next = new Set(current);
+                    if (next.has(group.key)) next.delete(group.key);
+                    else next.add(group.key);
+                    return next;
+                  });
+                }}
+              >
+                <span>{group.title}</span>
+                <small>{summary}</small>
+              </button>
+            )}
+            {!collapsed && (
+              <div className="dag-step-group-steps">
+                {group.steps.map((step) => (
+                  <div className="dag-step-item" key={step.slug}>
+                    <span>{step.title || step.slug}</span>
+                    <small>{step.dynamic_group ? "template" : step.type || "run"}</small>
+                  </div>
+                ))}
               </div>
-            ))}
+            )}
           </div>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }

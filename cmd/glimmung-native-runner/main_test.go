@@ -188,6 +188,15 @@ func TestNativeRunnerExpandsDynamicStepGroupSequentially(t *testing.T) {
 	if !sawEvent(events, "dynamic_group_expanded") {
 		t.Fatalf("expected dynamic_group_expanded event: %#v", events)
 	}
+	expansion := eventByName(events, "dynamic_group_expanded")
+	planned, _ := expansion.Metadata["steps"].([]any)
+	if len(planned) != 4 {
+		t.Fatalf("planned dynamic steps=%#v, want 4", expansion.Metadata["steps"])
+	}
+	firstPlanned, _ := planned[0].(map[string]any)
+	if firstPlanned["slug"] != "gather-evidence-case-01" || firstPlanned["group"] != "test-cases/case-01" || firstPlanned["group_title"] != "home page" {
+		t.Fatalf("first planned step=%#v", firstPlanned)
+	}
 	assertEventStepGroup(t, events, "gather-evidence-case-01", "test-cases/case-01", "home page")
 	assertEventStepGroup(t, events, "judge-evidence-case-02", "test-cases/case-02", "settings")
 	if sawStep(events, "gather-evidence") || sawStep(events, "judge-evidence") {
@@ -356,6 +365,84 @@ func TestNativeRunnerAggregatesDynamicCaseVerification(t *testing.T) {
 	}
 }
 
+func TestNativeRunnerStopsDynamicGroupAfterCaseFailure(t *testing.T) {
+	var events []nativeEventRequest
+	var completion completedRequest
+	var mu sync.Mutex
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/events":
+			var event nativeEventRequest
+			_ = json.NewDecoder(r.Body).Decode(&event)
+			mu.Lock()
+			events = append(events, event)
+			mu.Unlock()
+			_ = json.NewEncoder(w).Encode(map[string]any{"accepted": true})
+		case "/completed":
+			mu.Lock()
+			_ = json.NewDecoder(r.Body).Decode(&completion)
+			mu.Unlock()
+			_ = json.NewEncoder(w).Encode(map[string]any{"decision": "done"})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	workspace := t.TempDir()
+	r := &nativeRunner{
+		cfg: runnerConfig{
+			JobID:        "verify",
+			EventsURL:    server.URL + "/events",
+			CompletedURL: server.URL + "/completed",
+			Workspace:    workspace,
+			Job: jobSpec{
+				WorkingDirectory: workspace,
+				Shell:            "sh",
+				Steps: []stepSpec{
+					{
+						Slug: "author-test-plan",
+						Type: "run",
+						Run:  `printf 'test_cases_json=[{"id":"one"},{"id":"two"},{"id":"three"}]\n' >> "$GLIMMUNG_OUTPUT_FILE"`,
+					},
+					{
+						Slug:       "emit",
+						Type:       "run",
+						Run:        `if [ "$GLIMMUNG_DYNAMIC_CASE_INDEX" = "1" ]; then printf '{"verification":{"status":"fail","reasons":["tool missing"]}}' > "$GLIMMUNG_COMPLETION_FILE"; else printf '{"verification":{"status":"pass"}}' > "$GLIMMUNG_COMPLETION_FILE"; fi`,
+						Group:      "test-cases",
+						GroupTitle: "Test cases generated at runtime",
+						DynamicGroup: &dynamicGroupSpec{
+							MaxItems:  10,
+							ItemLabel: "test case",
+						},
+					},
+				},
+			},
+		},
+		client:  server.Client(),
+		outputs: map[string]string{},
+	}
+
+	if err := r.run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if !sawEvent(events, "dynamic_group_stopped") {
+		t.Fatalf("expected dynamic_group_stopped event: %#v", events)
+	}
+	if sawStep(events, "emit-case-02") || sawStep(events, "emit-case-03") {
+		t.Fatalf("cases after first failure should not run: %#v", events)
+	}
+	if completion.Verification["status"] != "fail" {
+		t.Fatalf("verification=%#v, want fail", completion.Verification)
+	}
+	cases := completion.Verification["cases"].([]any)
+	if len(cases) != 1 {
+		t.Fatalf("cases=%#v, want only first failed case", cases)
+	}
+}
+
 func sawEvent(events []nativeEventRequest, event string) bool {
 	for _, candidate := range events {
 		if candidate.Event == event {
@@ -363,6 +450,15 @@ func sawEvent(events []nativeEventRequest, event string) bool {
 		}
 	}
 	return false
+}
+
+func eventByName(events []nativeEventRequest, event string) nativeEventRequest {
+	for _, candidate := range events {
+		if candidate.Event == event {
+			return candidate
+		}
+	}
+	return nativeEventRequest{}
 }
 
 func sawStep(events []nativeEventRequest, slug string) bool {

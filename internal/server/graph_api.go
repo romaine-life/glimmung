@@ -2126,6 +2126,20 @@ func applyDynamicGroupExpandedToProjectionSteps(steps []RunProjectionStep, event
 		}
 		out = append(out, step)
 	}
+	if planned := dynamicExpansionProjectionSteps(event); len(planned) > 0 {
+		seen := map[string]bool{}
+		for _, step := range out {
+			seen[step.Slug] = true
+		}
+		for _, step := range planned {
+			if seen[step.Slug] {
+				continue
+			}
+			out = append(out, step)
+			seen[step.Slug] = true
+		}
+		return out
+	}
 	if intFromAny(event.Metadata["item_count"]) == 0 {
 		title := "no test cases generated"
 		out = append(out, RunProjectionStep{
@@ -2134,6 +2148,36 @@ func applyDynamicGroupExpandedToProjectionSteps(steps []RunProjectionStep, event
 			State:      "skipped",
 			Group:      group,
 			GroupTitle: stringPointerOrNil(firstNonEmpty(stringValue(event.Metadata["group_title"]), group)),
+		})
+	}
+	return out
+}
+
+func dynamicExpansionProjectionSteps(event NativeRunLogEvent) []RunProjectionStep {
+	items, ok := event.Metadata["steps"].([]any)
+	if !ok || len(items) == 0 {
+		return nil
+	}
+	out := make([]RunProjectionStep, 0, len(items))
+	for _, item := range items {
+		raw, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		slug := strings.TrimSpace(stringValue(raw["slug"]))
+		if slug == "" {
+			continue
+		}
+		state := strings.TrimSpace(stringValue(raw["state"]))
+		if state == "" {
+			state = "not_started"
+		}
+		out = append(out, RunProjectionStep{
+			Slug:       slug,
+			Title:      stringPointerOrNil(firstNonEmpty(stringValue(raw["title"]), slug)),
+			State:      state,
+			Group:      strings.TrimSpace(stringValue(raw["group"])),
+			GroupTitle: stringPointerOrNil(strings.TrimSpace(stringValue(raw["group_title"]))),
 		})
 	}
 	return out
