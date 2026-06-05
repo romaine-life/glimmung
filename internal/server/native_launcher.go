@@ -215,7 +215,7 @@ func (l *KubernetesNativeLauncher) LaunchNativePhase(ctx context.Context, req Na
 			return nil, err
 		}
 		jobProxyRuntime := providerAPIProxyRuntime{}
-		if nativeJobRequiresProviderAPIProxy(job) {
+		if nativeJobRequiresProviderAPIProxyForPhase(req.Phase, job) {
 			jobProxyRuntime = proxyRuntime
 		}
 		if err := l.createJob(ctx, nativeJobManifest(l.Settings, req, job, jobName, secretName, attemptBase, jobProxyRuntime)); err != nil {
@@ -255,12 +255,22 @@ func derivePrimaryCheckoutRepo(phase PhaseSpec, issueRepo string) (PhaseSpec, er
 }
 
 func nativePhaseRequiresProviderAPIProxy(phase PhaseSpec) bool {
+	if phase.Verify {
+		return true
+	}
 	for _, job := range phase.Jobs {
 		if nativeJobRequiresProviderAPIProxy(job) {
 			return true
 		}
 	}
 	return false
+}
+
+func nativeJobRequiresProviderAPIProxyForPhase(phase PhaseSpec, job NativeJobSpec) bool {
+	if phase.Verify && job.Managed {
+		return true
+	}
+	return nativeJobRequiresProviderAPIProxy(job)
 }
 
 func nativeJobRequiresProviderAPIProxy(job NativeJobSpec) bool {
@@ -1518,6 +1528,10 @@ func nativeJobManifest(settings Settings, req NativeLaunchRequest, job NativeJob
 			map[string]any{"name": "SSL_CERT_FILE", "value": proxyRuntime.CABundlePath},
 			map[string]any{"name": "REQUESTS_CA_BUNDLE", "value": proxyRuntime.CABundlePath},
 			map[string]any{"name": "GIT_SSL_CAINFO", "value": proxyRuntime.CABundlePath},
+			map[string]any{"name": "GLIMMUNG_PROVIDER_API_PROXY_CLAUDE_IP", "value": proxyRuntime.ClaudeClusterIP},
+			map[string]any{"name": "GLIMMUNG_PROVIDER_API_PROXY_CODEX_IP", "value": proxyRuntime.CodexClusterIP},
+			map[string]any{"name": "GLIMMUNG_PROVIDER_API_PROXY_CA_SECRET", "value": proxyRuntime.CASecretName},
+			map[string]any{"name": "GLIMMUNG_PROVIDER_API_PROXY_CA_BUNDLE", "value": proxyRuntime.CABundlePath},
 		)
 		volumeMounts = append(volumeMounts,
 			map[string]any{"name": "provider-api-proxy-ca", "mountPath": caMountPath, "readOnly": true},
@@ -1529,7 +1543,7 @@ func nativeJobManifest(settings Settings, req NativeLaunchRequest, job NativeJob
 		)
 		podSpec["hostAliases"] = []any{
 			map[string]any{"ip": proxyRuntime.ClaudeClusterIP, "hostnames": []any{"api.anthropic.com"}},
-			map[string]any{"ip": proxyRuntime.CodexClusterIP, "hostnames": []any{"chatgpt.com"}},
+			map[string]any{"ip": proxyRuntime.CodexClusterIP, "hostnames": []any{"chatgpt.com", "api.openai.com"}},
 		}
 		podSpec["initContainers"] = []any{
 			map[string]any{

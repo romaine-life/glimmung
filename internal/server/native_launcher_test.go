@@ -302,6 +302,12 @@ func TestNativeJobManifestWiresProviderAPIProxyForAgentJob(t *testing.T) {
 	if env["SSL_CERT_FILE"] != proxyRuntime.CABundlePath {
 		t.Fatalf("SSL_CERT_FILE=%q", env["SSL_CERT_FILE"])
 	}
+	if env["GLIMMUNG_PROVIDER_API_PROXY_CLAUDE_IP"] != "172.16.1.10" {
+		t.Fatalf("GLIMMUNG_PROVIDER_API_PROXY_CLAUDE_IP=%q", env["GLIMMUNG_PROVIDER_API_PROXY_CLAUDE_IP"])
+	}
+	if env["GLIMMUNG_PROVIDER_API_PROXY_CODEX_IP"] != "172.16.1.11" {
+		t.Fatalf("GLIMMUNG_PROVIDER_API_PROXY_CODEX_IP=%q", env["GLIMMUNG_PROVIDER_API_PROXY_CODEX_IP"])
+	}
 }
 
 func TestLaunchNativePhaseResolvesProviderAPIProxyForAgentJobs(t *testing.T) {
@@ -382,8 +388,10 @@ func TestLaunchNativePhaseResolvesProviderAPIProxyForAgentJobs(t *testing.T) {
 		`"api.anthropic.com"`,
 		`"ip":"172.16.1.11"`,
 		`"chatgpt.com"`,
+		`"api.openai.com"`,
 		`"secretName":"glimmung-provider-api-proxy-ca"`,
 		`"name":"SSL_CERT_FILE"`,
+		`"name":"GLIMMUNG_PROVIDER_API_PROXY_CODEX_IP"`,
 	} {
 		if !strings.Contains(postedJob, want) {
 			t.Fatalf("posted job missing %q: %s", want, postedJob)
@@ -391,6 +399,90 @@ func TestLaunchNativePhaseResolvesProviderAPIProxyForAgentJobs(t *testing.T) {
 	}
 	if strings.Contains(postedJob, "codex-credentials") || strings.Contains(postedJob, "/etc/codex-creds") {
 		t.Fatalf("posted job kept retired provider credential mount: %s", postedJob)
+	}
+}
+
+func TestLaunchNativePhaseResolvesProviderAPIProxyForVerificationPhase(t *testing.T) {
+	tokenPath := tempTokenFile(t)
+	var paths []string
+	var postedJob string
+	launcher := &KubernetesNativeLauncher{
+		Settings: Settings{
+			K8sAPIHost:                    "https://kube.test",
+			K8sSATokenPath:                tokenPath,
+			NativeRunnerNamespace:         "glimmung-runs",
+			NativeRunnerServiceAccount:    "glimmung-native-runner",
+			NativeRunnerCallbackBaseURL:   "http://glimmung.glimmung.svc.cluster.local",
+			NativeRunnerImage:             "romainecr.azurecr.io/glimmung-native-runner:test",
+			ProviderAPIProxyNamespace:     "glimmung-runs",
+			ProviderAPIProxyCASecret:      "glimmung-provider-api-proxy-ca",
+			ProviderAPIProxyCABundlePath:  "/etc/glimmung-provider-api-proxy-bundle/ca-certificates.crt",
+			ProviderAPIProxyClaudeService: "claude-api-proxy",
+			ProviderAPIProxyCodexService:  "codex-api-proxy",
+		},
+		HTTPClient: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			paths = append(paths, req.Method+" "+req.URL.Path)
+			body := `{}`
+			switch req.Method + " " + req.URL.Path {
+			case "GET /api/v1/namespaces/glimmung-runs/services/claude-api-proxy":
+				body = `{"spec":{"clusterIP":"172.16.1.10"}}`
+			case "GET /api/v1/namespaces/glimmung-runs/services/codex-api-proxy":
+				body = `{"spec":{"clusterIP":"172.16.1.11"}}`
+			case "POST /apis/batch/v1/namespaces/glimmung-runs/jobs":
+				raw, _ := io.ReadAll(req.Body)
+				postedJob = string(raw)
+			}
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader(body)),
+			}, nil
+		})},
+	}
+	req := NativeLaunchRequest{
+		Lease:    Lease{Project: "ambience"},
+		Workflow: Workflow{Name: "default"},
+		Phase: PhaseSpec{
+			Name:   "llm-verify",
+			Verify: true,
+			Jobs: []NativeJobSpec{{
+				ID:      "llm-verify",
+				Managed: true,
+				Steps: []NativeStepSpec{{
+					Slug: "run-verification",
+					Run:  "/bin/bash /workspace/ambience/scripts/glimmung-native/verify.sh",
+				}},
+			}},
+		},
+		Run: RunReplayData{
+			ID:            "run-123",
+			Project:       "ambience",
+			IssueNumber:   42,
+			CallbackToken: stringPtr("callback-token"),
+			Attempts:      []RunAttemptData{{AttemptIndex: 1, Phase: "llm-verify"}},
+		},
+	}
+
+	if _, err := launcher.LaunchNativePhase(context.Background(), req); err != nil {
+		t.Fatalf("LaunchNativePhase: %v", err)
+	}
+	for _, want := range []string{
+		"GET /api/v1/namespaces/glimmung-runs/services/claude-api-proxy",
+		"GET /api/v1/namespaces/glimmung-runs/services/codex-api-proxy",
+	} {
+		if !containsPath(paths, want) {
+			t.Fatalf("missing %s, paths=%#v", want, paths)
+		}
+	}
+	for _, want := range []string{
+		`"api.anthropic.com"`,
+		`"api.openai.com"`,
+		`"name":"GLIMMUNG_PROVIDER_API_PROXY_CLAUDE_IP"`,
+		`"name":"GLIMMUNG_PROVIDER_API_PROXY_CODEX_IP"`,
+	} {
+		if !strings.Contains(postedJob, want) {
+			t.Fatalf("posted job missing %q: %s", want, postedJob)
+		}
 	}
 }
 
