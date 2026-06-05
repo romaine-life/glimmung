@@ -995,6 +995,7 @@ function WorkflowDefinitionGraph({ workflow }: { workflow: Workflow }) {
         <PhaseGraph
           phases={graphModel.phases}
           dagClassName="dag-definition"
+          compactJobSteps
           ariaLabel={`${workflow.name} workflow graph`}
           renderPhase={renderPhase}
           selectedPhaseName={selectedPhase?.name ?? null}
@@ -1124,36 +1125,26 @@ function groupedDefinitionSteps(steps: DefinitionInspectableStep[] | undefined):
   return out;
 }
 
-function dynamicDefinitionGroupSummary(dynamicGroup: StepDynamicGroup | null | undefined): string {
-  if (!dynamicGroup?.max_items) return "";
-  const itemLabel = dynamicGroup.item_label?.trim() || "item";
-  return `0-${dynamicGroup.max_items} ${itemLabel}${dynamicGroup.max_items === 1 ? "" : "s"} at runtime`;
-}
-
 function DefinitionDagStepGroups({ steps }: { steps?: PhaseGraphStep[] }) {
   const inspectableSteps = steps?.map(definitionStepToInspectableStep) ?? [];
-  const groups = groupedDefinitionSteps(inspectableSteps);
-  if (groups.length === 0) return null;
+  if (inspectableSteps.length === 0) return null;
+  const namedGroups = groupedDefinitionSteps(inspectableSteps).filter((group) => group.title);
+  const dynamicGroups = namedGroups.filter((group) => group.dynamicGroup);
+  const stepLabel = `${inspectableSteps.length} planned step${inspectableSteps.length === 1 ? "" : "s"}`;
+  const groupLabel = namedGroups.length > 0
+    ? `${namedGroups.length} group${namedGroups.length === 1 ? "" : "s"}`
+    : "defined";
+  const detailLabel = dynamicGroups.length > 0
+    ? `${groupLabel} · ${dynamicGroups.length} template${dynamicGroups.length === 1 ? "" : "s"}`
+    : groupLabel;
   return (
-    <div className="dag-step-groups" aria-label="job steps">
-      {groups.map((group) => (
-        <div className={`dag-step-group${group.title ? "" : " ungrouped"}`} key={group.key}>
-          {group.title && (
-            <div className="dag-step-group-title">
-              <span>{group.title}</span>
-              {group.dynamicGroup && <small>{dynamicDefinitionGroupSummary(group.dynamicGroup)}</small>}
-            </div>
-          )}
-          <div className="dag-step-group-steps">
-            {group.steps.map((step) => (
-              <div className="dag-step-item" key={step.slug}>
-                <span>{step.title}</span>
-                <small>{step.dynamic_group ? "template" : "defined"}</small>
-              </div>
-            ))}
-          </div>
+    <div className="dag-step-groups dag-step-summary" aria-label="job step summary">
+      <div className="dag-step-group ungrouped">
+        <div className="dag-step-item">
+          <span>{stepLabel}</span>
+          <small>{detailLabel}</small>
         </div>
-      ))}
+      </div>
     </div>
   );
 }
