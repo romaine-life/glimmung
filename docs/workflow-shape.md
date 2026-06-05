@@ -414,6 +414,18 @@ The cleanup-execution split:
   the validation environment, `cleanup_final` is a no-op success that still
   records the cleanup decision in the run history.
 
+Teardown phases are **verdict-neutral**. A `purpose: teardown` phase runs as
+post-verdict cleanup, so its job outcome never sets the run verdict: a failed
+teardown — e.g. a transient pod-start `BackoffLimitExceeded` — does not abort
+an otherwise-passing run and never overrides or masks the primary phase's
+failure. The decision engine advances the cleanup chain regardless of a
+teardown job's conclusion, and terminal-cause attribution skips teardown
+attempts, so the run terminates reflecting its primary verdict. The failed
+teardown stays visible on its own job/step state; a bounded `backoffLimit`
+lets the idempotent env-destroy absorb a transient blip, and the env-prep slot
+reap (ambience#224) covers any resources a still-failed teardown did not
+remove.
+
 The `pr_merge` primitive is also exposed as an admin repair/control endpoint:
 `POST /v1/projects/{project}/issues/{issue_number}/runs/{run_number}/touchpoint/merge`
 (and the cycle-addressable form). Idempotent; uses the durable Run state as

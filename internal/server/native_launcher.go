@@ -1585,7 +1585,7 @@ func nativeJobManifest(settings Settings, req NativeLaunchRequest, job NativeJob
 			"labels":    labels,
 		},
 		"spec": map[string]any{
-			"backoffLimit":            0,
+			"backoffLimit":            nativeJobBackoffLimit(req.Phase),
 			"ttlSecondsAfterFinished": settings.NativeRunnerJobTTLSeconds,
 			"template": map[string]any{
 				"metadata": map[string]any{"labels": podLabels},
@@ -1593,6 +1593,25 @@ func nativeJobManifest(settings Settings, req NativeLaunchRequest, job NativeJob
 			},
 		},
 	}
+}
+
+// nativeTeardownJobBackoffLimit lets a teardown Job absorb a transient
+// pod-start failure (image pull blip, node churn) instead of instantly
+// failing the cleanup phase. Teardown scripts (env-destroy) are idempotent,
+// so re-running a fresh pod is safe. Producer/verify jobs keep backoffLimit=0
+// (Glimmung owns their retries at the attempt level and wants fast failure
+// detection).
+const nativeTeardownJobBackoffLimit = 2
+
+// nativeJobBackoffLimit returns the Kubernetes Job backoffLimit for a phase's
+// jobs. Teardown phases are post-verdict cleanup and verdict-neutral, so a
+// bounded retry self-heals transient pod-start blips; every other phase fails
+// fast with backoffLimit=0.
+func nativeJobBackoffLimit(phase PhaseSpec) int {
+	if phase.Purpose == PhasePurposeTeardown {
+		return nativeTeardownJobBackoffLimit
+	}
+	return 0
 }
 
 func nativeJobImage(settings Settings, job NativeJobSpec) string {

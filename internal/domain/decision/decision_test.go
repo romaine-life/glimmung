@@ -89,6 +89,42 @@ func mustDecide(t *testing.T, run Run, workflow Workflow, want RunDecision, atte
 	}
 }
 
+// A teardown phase runs on the always/abort path as post-verdict cleanup. A
+// teardown job that fails — e.g. a transient pod-start BackoffLimitExceeded
+// surfacing as conclusion "timed_out" — must advance the cleanup chain, not
+// mint a producer AbortMalformed that would override the real verdict and
+// mask the primary phase's failure.
+func TestDecideTeardownFailureIsVerdictNeutral(t *testing.T) {
+	wf := Workflow{Phases: []PhaseSpec{
+		{Name: "llm-verify", Verify: true, RecyclePolicy: &RecyclePolicy{MaxAttempts: 1, On: []string{"verify_fail"}}},
+		{Name: "cleanup_early", Verify: false, Purpose: PhasePurposeTeardown},
+	}}
+	r := run([]Attempt{attempt("cleanup_early", nil, "timed_out")}, 0, 10)
+	mustDecide(t, r, wf, Advance)
+}
+
+// A teardown phase whose job actually succeeds also advances — unchanged from
+// the generic non-verify advance path, asserted here so the teardown branch
+// stays correct on the success path too.
+func TestDecideTeardownSuccessAdvances(t *testing.T) {
+	wf := Workflow{Phases: []PhaseSpec{
+		{Name: "cleanup_final", Verify: false, Purpose: PhasePurposeTeardown},
+	}}
+	r := run([]Attempt{attempt("cleanup_final", nil, "succeeded")}, 0, 10)
+	mustDecide(t, r, wf, Advance)
+}
+
+// Guard: teardown neutrality must not leak to ordinary producer phases. A
+// non-verify, non-teardown phase that ends on a non-advance conclusion still
+// aborts as malformed.
+func TestDecideNonTeardownProducerFailureStillAborts(t *testing.T) {
+	wf := Workflow{Phases: []PhaseSpec{
+		{Name: "prepare", Verify: false},
+	}}
+	r := run([]Attempt{attempt("prepare", nil, "timed_out")}, 0, 10)
+	mustDecide(t, r, wf, AbortMalformed)
+}
+
 func TestPassOnFirstAttemptAdvances(t *testing.T) {
 	mustDecide(t,
 		run([]Attempt{attempt("agent", status(VerificationPass), "success")}, 2.5, 25.0),

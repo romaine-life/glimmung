@@ -98,6 +98,14 @@ after registration changes.
 
 - A failed native Job produces durable job/phase failure state through the
   completion callback path, not a retired failure route.
+- Teardown phases (`purpose: teardown`) are verdict-neutral. A teardown job's
+  outcome never sets the run verdict: a failed teardown must not abort an
+  otherwise-passing run, and must not override or mask the primary phase's
+  verdict. The decision engine advances the cleanup chain regardless of a
+  teardown conclusion, and terminal-cause attribution skips teardown attempts.
+  The failed teardown remains visible on its own job/step state. Teardown jobs
+  carry a bounded `backoffLimit` so a transient pod-start failure self-heals;
+  producer/verify jobs keep `backoffLimit=0` (fail fast).
 - A failed dispatch produces durable phase/job/step failure state through run
   terminal finalization and run graph projection, including historical rows
   whose child jobs or steps were previously stamped `skipped`.
@@ -124,5 +132,8 @@ after registration changes.
 - Verification-case shape changes include tests for required case IDs, bounded
   timeouts, and synthesized aggregate verification output.
 - Gate changes prove managed gate canonicalization and terminal behavior.
+- Teardown-routing changes prove a failed teardown stays verdict-neutral: it
+  does not abort a passing run and does not become the run's terminal cause
+  over a failed primary phase.
 - Sync-helper changes prove they do not bypass registration validation.
 - Historical run projection still works when the logical workflow changes.

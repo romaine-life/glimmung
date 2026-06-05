@@ -115,6 +115,40 @@ func TestNativeJobManifestIncludesRunnerCallbackEnv(t *testing.T) {
 	}
 }
 
+// Teardown jobs (idempotent env-destroy) get a bounded backoffLimit so a
+// transient pod-start blip self-heals instead of instantly failing the
+// cleanup phase. Producer/verify jobs keep backoffLimit=0 (fail fast;
+// Glimmung owns their retries at the attempt level).
+func TestNativeJobBackoffLimitTeardownAbsorbsTransientFailure(t *testing.T) {
+	if got := nativeJobBackoffLimit(PhaseSpec{Name: "cleanup_early", Purpose: PhasePurposeTeardown}); got != nativeTeardownJobBackoffLimit {
+		t.Fatalf("teardown backoffLimit=%d, want %d", got, nativeTeardownJobBackoffLimit)
+	}
+	if got := nativeJobBackoffLimit(PhaseSpec{Name: "llm-verify", Purpose: PhasePurposeVerification}); got != 0 {
+		t.Fatalf("verify backoffLimit=%d, want 0 (fail fast)", got)
+	}
+	if got := nativeJobBackoffLimit(PhaseSpec{Name: "llm-work", Purpose: PhasePurposeWork}); got != 0 {
+		t.Fatalf("producer backoffLimit=%d, want 0 (fail fast)", got)
+	}
+}
+
+func TestNativeJobManifestTeardownPhaseUsesBoundedBackoffLimit(t *testing.T) {
+	runNumber := 13
+	req := NativeLaunchRequest{
+		Lease:    Lease{Project: "ambience", State: "claimed"},
+		Workflow: Workflow{Name: "agent-run"},
+		Phase:    PhaseSpec{Name: "cleanup_early", Purpose: PhasePurposeTeardown, Jobs: []NativeJobSpec{{ID: "env-destroy"}}},
+		Run:      RunReplayData{ID: "run-1", Project: "ambience", IssueNumber: 168, RunNumber: &runNumber, Attempts: []RunAttemptData{{AttemptIndex: 1, Phase: "cleanup_early"}}},
+	}
+	manifest := nativeJobManifest(Settings{NativeRunnerNamespace: "glimmung-runs"}, req, NativeJobSpec{ID: "env-destroy"}, "job", "secret", "attempt")
+	spec, ok := manifest["spec"].(map[string]any)
+	if !ok {
+		t.Fatalf("manifest spec missing: %#v", manifest)
+	}
+	if spec["backoffLimit"] != nativeTeardownJobBackoffLimit {
+		t.Fatalf("teardown manifest backoffLimit=%v, want %d", spec["backoffLimit"], nativeTeardownJobBackoffLimit)
+	}
+}
+
 func TestNativeJobManifestIncludesStringMapPhaseInputs(t *testing.T) {
 	req := NativeLaunchRequest{
 		Lease: Lease{
