@@ -11,6 +11,7 @@ type NavGroup = { group: string; items: NavItem[] };
 const NAV: NavGroup[] = [
   { group: "Work", items: [
     { key: "overview", label: "Overview", icon: "dashboard", to: "/", end: true },
+    { key: "projects", label: "Projects", icon: "folder", to: "/projects" },
     { key: "attention", label: "Needs attention", icon: "alert", to: "/needs-attention" },
     { key: "issues", label: "Issues", icon: "issue", to: "/issues" },
     { key: "runs", label: "Runs", icon: "runs", to: "/runs" },
@@ -35,7 +36,6 @@ export type ShellSnapshot = {
   active_leases?: unknown[];
   test_environments?: unknown[];
   waiting_test_slot_requests?: unknown[];
-  projects?: { name: string; github_repo?: string }[];
   inflight_locks?: { issues?: boolean; prs?: boolean };
 } | null;
 
@@ -108,12 +108,6 @@ export function Shell({
     slots: { count: slotCount || undefined, alert: waiting > 0 },
   };
 
-  const projects = snap?.projects ?? [];
-  const project =
-    projects.length === 1
-      ? { name: projects[0].name, sub: projects[0].github_repo ?? "" }
-      : { name: "All projects", sub: projects.length ? `${projects.length} projects` : "glimmung" };
-
   return (
     <div className={`app${sidebarCollapsed ? " sidebar-collapsed" : ""}`}>
       <aside className="sidebar" id="app-sidebar">
@@ -132,13 +126,6 @@ export function Shell({
             <Icon name={sidebarCollapsed ? "chevright" : "chevleft"} className="ic sidebar-toggle-icon" />
           </button>
         </div>
-        <Link className="project-switch" to="/projects">
-          <div className="ps-label">
-            <span className="ps-name">{project.name}</span>
-            <span className="ps-sub">{project.sub}</span>
-          </div>
-          <Icon name="chevright" className="ic project-switch-go" />
-        </Link>
         <nav className="nav">
           {NAV.map((g) => (
             <div className="nav-group" key={g.group}>
