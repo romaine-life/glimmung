@@ -2682,6 +2682,38 @@ function nativeStepGroupCount(stepRefs: NativeStepRef[], index: number): number 
   return count;
 }
 
+// Aggregate state for a step group's header rail: red if any step failed,
+// blue while any step is active, green once every step has finished
+// successfully, grey otherwise (not yet run). Mirrors nativeStepRowClass so
+// group headers read at a glance the same way their rows do.
+function nativeStepGroupRowClass(stepRefs: NativeStepRef[], index: number): string {
+  const current = stepRefs[index];
+  const group = nativeStepGroupKey(current.step);
+  if (!group) return "";
+  let sawSucceeded = false;
+  let sawUnfinished = false;
+  for (const ref of stepRefs) {
+    if (ref.job.job_id !== current.job.job_id) continue;
+    if (nativeStepGroupKey(ref.step) !== group) continue;
+    const state = ref.step.state ?? "";
+    if (state === "failed" || state === "aborted") return "failed";
+    if (state === "active") return "active";
+    if (state === "succeeded") sawSucceeded = true;
+    else if (state !== "skipped" && state !== "supplied") sawUnfinished = true;
+  }
+  return sawSucceeded && !sawUnfinished ? "done" : "pending";
+}
+
+// Scoped keys (job:group) of every collapsible step group, for collapse-all.
+function nativeAllStepGroupKeys(stepRefs: NativeStepRef[]): string[] {
+  const keys = new Set<string>();
+  for (const ref of stepRefs) {
+    const groupKey = nativeStepGroupKey(ref.step);
+    if (groupKey) keys.add(`${ref.job.job_id}:${groupKey}`);
+  }
+  return [...keys];
+}
+
 function IssueSettingsPane({
   issue,
   workflow,
@@ -3616,6 +3648,9 @@ function NativeJobInspector({
     ? transcriptEntries.filter((entry) => entry.kind === "assistant")
     : transcriptEntries;
   const activeViewMode: NativeLogViewMode = transcriptAvailable ? viewMode : "raw";
+  const stepGroupKeys = nativeAllStepGroupKeys(stepRefs);
+  const allGroupsCollapsed =
+    stepGroupKeys.length > 0 && stepGroupKeys.every((key) => collapsedStepGroups.has(key));
   return (
     <div className="native-inspector" ref={inspectorElementRef}>
       <div className="native-inspector-head">
@@ -3628,6 +3663,19 @@ function NativeJobInspector({
           </span>
         </div>
         <div className="native-inspector-actions">
+          {stepGroupKeys.length > 0 && (
+            <div className="native-page-controls">
+              <button
+                type="button"
+                aria-pressed={allGroupsCollapsed}
+                onClick={() =>
+                  setCollapsedStepGroups(allGroupsCollapsed ? new Set() : new Set(stepGroupKeys))
+                }
+              >
+                {allGroupsCollapsed ? "expand all" : "collapse all"}
+              </button>
+            </div>
+          )}
           <div className="native-page-controls" role="group" aria-label="native event batches">
             <button
               type="button"
@@ -3724,7 +3772,7 @@ function NativeJobInspector({
                   {groupTitle && (
                     <button
                       type="button"
-                      className="step-group-label"
+                      className={`step-group-label ${nativeStepGroupRowClass(stepRefs, index)}`}
                       aria-expanded={!groupCollapsed}
                       onClick={() => {
                         if (!scopedGroupKey) return;
@@ -3879,6 +3927,9 @@ function PlannedNativeJobInspector({
     setSelectedKey(defaultSelection);
   }, [defaultSelection]);
 
+  const stepGroupKeys = nativeAllStepGroupKeys(stepRefs);
+  const allGroupsCollapsed =
+    stepGroupKeys.length > 0 && stepGroupKeys.every((key) => collapsedStepGroups.has(key));
   return (
     <div className="native-inspector">
       <div className="native-inspector-head">
@@ -3886,6 +3937,21 @@ function PlannedNativeJobInspector({
           <span className="key">native job inspector</span>
           <span className="mono dim">planned</span>
         </div>
+        {stepGroupKeys.length > 0 && (
+          <div className="native-inspector-actions">
+            <div className="native-page-controls">
+              <button
+                type="button"
+                aria-pressed={allGroupsCollapsed}
+                onClick={() =>
+                  setCollapsedStepGroups(allGroupsCollapsed ? new Set() : new Set(stepGroupKeys))
+                }
+              >
+                {allGroupsCollapsed ? "expand all" : "collapse all"}
+              </button>
+            </div>
+          </div>
+        )}
       </div>
       <div className="step-log-layout native-step-log-layout">
         <aside className="step-list" aria-label="native job steps">
@@ -3915,7 +3981,7 @@ function PlannedNativeJobInspector({
                   {groupTitle && (
                     <button
                       type="button"
-                      className="step-group-label"
+                      className={`step-group-label ${nativeStepGroupRowClass(stepRefs, index)}`}
                       aria-expanded={!groupCollapsed}
                       onClick={() => {
                         if (!scopedGroupKey) return;
