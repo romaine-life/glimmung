@@ -3258,6 +3258,7 @@ h2 .inline-action,
 
 /* ----- Main column ----- */
 .app .main {
+  --topbar-height: 55px;
   min-width: 0;
   width: calc(100% - var(--shell-sidebar-width));
   max-width: calc(100% - var(--shell-sidebar-width));
@@ -3272,7 +3273,14 @@ h2 .inline-action,
   display: flex; align-items: center; gap: 16px;
   padding: 14px 28px; border-bottom: 1px solid var(--border);
   background: linear-gradient(180deg, var(--bg) 0%, var(--bg) 100%);
-  position: sticky; top: 0; z-index: 5;
+  position: fixed;
+  top: 0;
+  right: 0;
+  left: var(--shell-sidebar-width);
+  height: var(--topbar-height);
+  z-index: 7;
+  box-sizing: border-box;
+  transition: left 140ms ease;
 }
 .app .crumbs { display: flex; align-items: center; gap: 8px; font-size: var(--t-sm); color: var(--fg-dim); }
 .app .crumbs a:hover { color: var(--fg-muted); }
@@ -3297,7 +3305,7 @@ h2 .inline-action,
   width: 100%;
   max-width: 100%;
   overflow-x: hidden;
-  padding: 26px 28px 60px;
+  padding: calc(var(--topbar-height) + 26px) 28px 60px;
 }
 .app .page-head { display: flex; align-items: flex-start; gap: 16px; margin-bottom: 22px; }
 .app .page-head h1 { font-size: var(--t-2xl); }
