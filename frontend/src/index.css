@@ -3262,9 +3262,10 @@ h2 .inline-action,
   min-width: 0;
   width: calc(100% - var(--shell-sidebar-width));
   max-width: calc(100% - var(--shell-sidebar-width));
-  min-height: 100vh;
+  height: 100vh;
+  height: 100dvh;
   margin-left: var(--shell-sidebar-width);
-  overflow-x: hidden;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
   transition: margin-left 140ms ease;
@@ -3301,11 +3302,15 @@ h2 .inline-action,
 
 .app .content {
   box-sizing: border-box;
+  flex: 1;
   min-width: 0;
+  min-height: 0;
   width: 100%;
   max-width: 100%;
   overflow-x: hidden;
-  padding: calc(var(--topbar-height) + 26px) 28px 60px;
+  overflow-y: auto;
+  margin-top: var(--topbar-height);
+  padding: 26px 28px 60px;
 }
 .app .page-head { display: flex; align-items: flex-start; gap: 16px; margin-bottom: 22px; }
 .app .page-head h1 { font-size: var(--t-2xl); }
