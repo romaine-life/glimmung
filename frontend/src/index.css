@@ -2258,10 +2258,10 @@ h2 .inline-action,
 }
 .dag-phase-head {
   display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 10px;
-  min-height: 18px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  min-height: 34px;
 }
 .dag-phase-head-button {
   width: 100%;
@@ -2286,7 +2286,8 @@ h2 .inline-action,
 .dag-phase-title {
   color: var(--fg);
   font-family: var(--font-mono);
-  font-size: 0.76rem;
+  font-size: 0.78rem;
+  line-height: 1.2;
   text-align: left;
   overflow-wrap: anywhere;
 }
@@ -3346,8 +3347,23 @@ h2 .inline-action,
   background: var(--surface); border: 1px solid var(--border);
   border-radius: var(--r-md); padding: 0; box-shadow: var(--shadow-sm);
 }
-.app .phase-head { padding: 9px 12px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; }
-.app .phase-head .pn { font-family: var(--font-display); font-weight: 600; font-size: var(--t-md); color: var(--fg); }
+.app .phase-head {
+  padding: 10px 12px 9px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  min-height: 46px;
+}
+.app .phase-head .pn {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: var(--t-md);
+  line-height: 1.18;
+  color: var(--fg);
+  overflow-wrap: anywhere;
+}
 .app .phase-head .pk { font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--fg-faint); font-weight: 600; }
 .app .phase-body { padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; }
 .app .job-box {

@@ -125,7 +125,7 @@ describe("PhaseGraph", () => {
     expect(pathEnd(touchpointRecyclePath).y).toBeLessThan(pathEnd(evidenceRecyclePath).y);
     expect(container.querySelector(".dag-rf-surface")).toHaveStyle({
       width: "1508px",
-      height: "286px",
+      height: "302px",
     });
   });
 
