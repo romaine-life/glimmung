@@ -150,6 +150,9 @@ describe("project workflow definitions", () => {
     );
 
     const jobLabel = await screen.findByText("PR touchpoint", { selector: ".dag-job-title" });
+    expect(screen.queryByText("Ensure PR touchpoint")).not.toBeInTheDocument();
+    expect(screen.getAllByText("1 planned step").length).toBeGreaterThan(0);
+
     const jobButton = jobLabel.closest("button");
     if (!jobButton) throw new Error("missing workflow job button");
     await userEvent.click(jobButton);

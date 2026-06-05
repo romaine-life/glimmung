@@ -76,6 +76,7 @@ export type PhaseGraphProps = {
   renderPhase?: (phase: PhaseGraphPhase) => ReactNode;
   phaseRef?: (phase: PhaseGraphPhase, el: HTMLDivElement | null) => void;
   dagClassName?: string;
+  compactJobSteps?: boolean;
   ariaLabel?: string;
   selectedPhaseName?: string | null;
   onSelectPhase?: (phase: PhaseGraphPhase) => void;
@@ -145,13 +146,13 @@ type NodeSize = {
   height: number;
 };
 
-function estimatedPhaseHeight(col: PhaseGraphPhase[]): number {
+function estimatedPhaseHeight(col: PhaseGraphPhase[], compactJobSteps = false): number {
   const phase = col[0];
   const jobs = phase?.jobs && phase.jobs.length > 0
     ? phase.jobs
     : [{ id: phase?.name ?? "" }];
   return PHASE_BASE_HEIGHT + jobs.reduce((height, job) => (
-    height + estimatedJobHeight(job)
+    height + estimatedJobHeight(job, compactJobSteps)
   ), 0);
 }
 
@@ -159,9 +160,9 @@ function estimatedPhaseWidth(_col: PhaseGraphPhase[]): number {
   return PHASE_WIDTH;
 }
 
-function estimatedJobHeight(job: PhaseGraphJob): number {
+function estimatedJobHeight(job: PhaseGraphJob, compactJobSteps = false): number {
+  if (compactJobSteps || !job.steps || job.steps.length === 0) return JOB_HEIGHT;
   const groups = groupedSteps(job.steps);
-  if (groups.length === 0) return JOB_HEIGHT;
   const groupHeaderHeight = groups.filter((group) => group.title).length * STEP_GROUP_HEADER_HEIGHT;
   const stepRows = groups.reduce((count, group) => count + group.steps.length, 0);
   return JOB_HEIGHT + groupHeaderHeight + stepRows * STEP_ROW_HEIGHT;
@@ -535,6 +536,7 @@ export function PhaseGraph({
   renderPhase = defaultPhaseNode,
   phaseRef,
   dagClassName,
+  compactJobSteps = false,
   ariaLabel,
   selectedPhaseName = null,
   onSelectPhase,
@@ -579,12 +581,12 @@ export function PhaseGraph({
   const leftGutter = Math.max(recycleLeftGutter, entryLeftGutter);
 
   const nodes = useMemo<Node[]>(() => {
-    const phaseHeight = (idx: number, col: PhaseGraphPhase[]) => nodeSizes[`phase:${idx}`]?.height ?? estimatedPhaseHeight(col);
+    const phaseHeight = (idx: number, col: PhaseGraphPhase[]) => nodeSizes[`phase:${idx}`]?.height ?? estimatedPhaseHeight(col, compactJobSteps);
     const phaseWidth = (idx: number, col: PhaseGraphPhase[]) => nodeSizes[`phase:${idx}`]?.width ?? estimatedPhaseWidth(col);
     const measuredPhaseHeights = columns.map((col, idx) => phaseHeight(idx, col));
     const measuredPhaseWidths = columns.map((col, idx) => phaseWidth(idx, col));
     const phaseXs = phaseXPositions(measuredPhaseWidths, leftGutter);
-    const maxPhaseHeight = Math.max(...measuredPhaseHeights, estimatedPhaseHeight([]));
+    const maxPhaseHeight = Math.max(...measuredPhaseHeights, estimatedPhaseHeight([], compactJobSteps));
     const entryNodes: Node<EntrySourceNodeData>[] = visibleEntryArrows.map((arrow, idx) => {
       const targetCol = phaseToColumn.get(arrow.target) ?? 0;
       const col = columns[targetCol] ?? [];
@@ -638,13 +640,13 @@ export function PhaseGraph({
       };
     });
     return [...entryNodes, ...phaseNodes];
-  }, [columns, leftGutter, nodeSizes, onSelectPhase, phaseRef, phaseToColumn, recycleTargetCounts, renderPhase, selectedPhaseName, visibleEntryArrows]);
+  }, [columns, compactJobSteps, leftGutter, nodeSizes, onSelectPhase, phaseRef, phaseToColumn, recycleTargetCounts, renderPhase, selectedPhaseName, visibleEntryArrows]);
 
   const edges = useMemo<GraphEdge[]>(() => {
     const out: GraphEdge[] = [];
     const maxPhaseHeight = Math.max(
-      ...columns.map((col, idx) => nodeSizes[`phase:${idx}`]?.height ?? estimatedPhaseHeight(col)),
-      estimatedPhaseHeight([]),
+      ...columns.map((col, idx) => nodeSizes[`phase:${idx}`]?.height ?? estimatedPhaseHeight(col, compactJobSteps)),
+      estimatedPhaseHeight([], compactJobSteps),
     );
     const recycleLaneBaseY = PHASE_Y + maxPhaseHeight + RECYCLE_LANE_TOP_OFFSET;
     visibleEntryArrows.forEach((arrow, idx) => {
@@ -707,7 +709,7 @@ export function PhaseGraph({
       });
     });
     return out;
-  }, [columns, nodeSizes, phaseToColumn, visibleEntryArrows, visibleRecycleArrows]);
+  }, [columns, compactJobSteps, nodeSizes, phaseToColumn, visibleEntryArrows, visibleRecycleArrows]);
 
   useLayoutEffect(() => {
     const root = graphRef.current;
@@ -723,7 +725,7 @@ export function PhaseGraph({
           const col = columns[idx] ?? [];
           next[`phase:${idx}`] = {
             width: Math.max(estimatedPhaseWidth(col), rect.width),
-            height: Math.max(estimatedPhaseHeight(col), rect.height),
+            height: Math.max(estimatedPhaseHeight(col, compactJobSteps), rect.height),
           };
         }
       }
@@ -752,11 +754,11 @@ export function PhaseGraph({
       window.cancelAnimationFrame(raf);
       observer.disconnect();
     };
-  }, [columns.length]);
+  }, [columns, compactJobSteps]);
 
   const maxPhaseHeight = Math.max(
-    ...columns.map((col, idx) => nodeSizes[`phase:${idx}`]?.height ?? estimatedPhaseHeight(col)),
-    estimatedPhaseHeight([]),
+    ...columns.map((col, idx) => nodeSizes[`phase:${idx}`]?.height ?? estimatedPhaseHeight(col, compactJobSteps)),
+    estimatedPhaseHeight([], compactJobSteps),
   );
   const phaseWidths = columns.map((col, idx) => nodeSizes[`phase:${idx}`]?.width ?? estimatedPhaseWidth(col));
   const phaseXs = phaseXPositions(phaseWidths, leftGutter);
