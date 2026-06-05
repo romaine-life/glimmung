@@ -1358,17 +1358,18 @@ func (s *Store) readLeaseDocByCallbackToken(ctx context.Context, token string) (
 }
 
 type workflowDoc struct {
-	ID                  string         `json:"id"`
-	Kind                string         `json:"kind,omitempty"`
-	Project             string         `json:"project"`
-	Name                string         `json:"name"`
-	SchemaRef           string         `json:"schema_ref,omitempty"`
-	Phases              []phaseDoc     `json:"phases"`
-	PR                  prDoc          `json:"pr"`
-	Budget              budgetDoc      `json:"budget"`
-	DefaultRequirements map[string]any `json:"defaultRequirements"`
-	Metadata            map[string]any `json:"metadata"`
-	CreatedAt           string         `json:"createdAt"`
+	ID                  string                     `json:"id"`
+	Kind                string                     `json:"kind,omitempty"`
+	Project             string                     `json:"project"`
+	Name                string                     `json:"name"`
+	SchemaRef           string                     `json:"schema_ref,omitempty"`
+	Phases              []phaseDoc                 `json:"phases"`
+	PR                  prDoc                      `json:"pr"`
+	Budget              budgetDoc                  `json:"budget"`
+	Constraints         server.WorkflowConstraints `json:"constraints,omitempty"`
+	DefaultRequirements map[string]any             `json:"defaultRequirements"`
+	Metadata            map[string]any             `json:"metadata"`
+	CreatedAt           string                     `json:"createdAt"`
 }
 
 type leaseDoc struct {
@@ -1482,14 +1483,17 @@ type jobExecutionDoc struct {
 }
 
 type stepExecutionDoc struct {
-	Slug        string  `json:"slug"`
-	Title       *string `json:"title,omitempty"`
-	State       string  `json:"state"`
-	Reason      *string `json:"reason,omitempty"`
-	ExitCode    *int    `json:"exit_code,omitempty"`
-	CreatedAt   string  `json:"created_at"`
-	StartedAt   *string `json:"started_at,omitempty"`
-	CompletedAt *string `json:"completed_at,omitempty"`
+	Slug         string                   `json:"slug"`
+	Title        *string                  `json:"title,omitempty"`
+	State        string                   `json:"state"`
+	Reason       *string                  `json:"reason,omitempty"`
+	ExitCode     *int                     `json:"exit_code,omitempty"`
+	Group        string                   `json:"group,omitempty"`
+	GroupTitle   *string                  `json:"group_title,omitempty"`
+	DynamicGroup *server.StepDynamicGroup `json:"dynamic_group,omitempty"`
+	CreatedAt    string                   `json:"created_at"`
+	StartedAt    *string                  `json:"started_at,omitempty"`
+	CompletedAt  *string                  `json:"completed_at,omitempty"`
 }
 
 type issueDoc struct {
@@ -1636,14 +1640,17 @@ type nativeJobDoc struct {
 }
 
 type nativeStepDoc struct {
-	Slug             string            `json:"slug"`
-	Title            *string           `json:"title"`
-	Type             string            `json:"type,omitempty"`
-	Run              string            `json:"run,omitempty"`
-	Agent            *agentStepDoc     `json:"agent,omitempty"`
-	Shell            string            `json:"shell,omitempty"`
-	WorkingDirectory string            `json:"workingDirectory,omitempty"`
-	Env              map[string]string `json:"env,omitempty"`
+	Slug             string                   `json:"slug"`
+	Title            *string                  `json:"title"`
+	Type             string                   `json:"type,omitempty"`
+	Run              string                   `json:"run,omitempty"`
+	Agent            *agentStepDoc            `json:"agent,omitempty"`
+	Shell            string                   `json:"shell,omitempty"`
+	WorkingDirectory string                   `json:"workingDirectory,omitempty"`
+	Env              map[string]string        `json:"env,omitempty"`
+	Group            string                   `json:"group,omitempty"`
+	GroupTitle       *string                  `json:"groupTitle,omitempty"`
+	DynamicGroup     *server.StepDynamicGroup `json:"dynamicGroup,omitempty"`
 }
 
 type agentStepDoc struct {
@@ -1681,6 +1688,7 @@ func workflowFromDoc(doc workflowDoc) server.Workflow {
 		Phases:              phases,
 		PR:                  prFromDoc(doc.PR),
 		Budget:              budget.Config{Total: defaultBudgetTotal(doc.Budget.Total)},
+		Constraints:         doc.Constraints,
 		DefaultRequirements: mapOrEmpty(doc.DefaultRequirements),
 		Metadata:            mapOrEmpty(doc.Metadata),
 		CreatedAt:           parseTimeOrNow(doc.CreatedAt),
@@ -2026,14 +2034,17 @@ func runPhaseExecutionsFromDocs(docs []phaseExecutionDoc) []server.RunPhaseExecu
 			steps := make([]server.RunStepExecution, 0, len(job.Steps))
 			for _, step := range job.Steps {
 				steps = append(steps, server.RunStepExecution{
-					Slug:        step.Slug,
-					Title:       emptyStringNil(step.Title),
-					State:       firstNonEmpty(step.State, "not_started"),
-					Reason:      emptyStringNil(step.Reason),
-					ExitCode:    step.ExitCode,
-					CreatedAt:   step.CreatedAt,
-					StartedAt:   emptyStringNil(step.StartedAt),
-					CompletedAt: emptyStringNil(step.CompletedAt),
+					Slug:         step.Slug,
+					Title:        emptyStringNil(step.Title),
+					State:        firstNonEmpty(step.State, "not_started"),
+					Reason:       emptyStringNil(step.Reason),
+					ExitCode:     step.ExitCode,
+					Group:        step.Group,
+					GroupTitle:   emptyStringNil(step.GroupTitle),
+					DynamicGroup: step.DynamicGroup,
+					CreatedAt:    step.CreatedAt,
+					StartedAt:    emptyStringNil(step.StartedAt),
+					CompletedAt:  emptyStringNil(step.CompletedAt),
 				})
 			}
 			jobs = append(jobs, server.RunJobExecution{
@@ -2268,10 +2279,13 @@ func phaseExecutionDocsFromWorkflow(wf server.Workflow, createdAt string, entryp
 					continue
 				}
 				steps = append(steps, stepExecutionDoc{
-					Slug:      slug,
-					Title:     emptyStringNil(step.Title),
-					State:     state,
-					CreatedAt: createdAt,
+					Slug:         slug,
+					Title:        emptyStringNil(step.Title),
+					State:        state,
+					Group:        step.Group,
+					GroupTitle:   emptyStringNil(step.GroupTitle),
+					DynamicGroup: step.DynamicGroup,
+					CreatedAt:    createdAt,
 				})
 			}
 			if len(steps) == 0 {
@@ -2377,6 +2391,7 @@ func workflowDocFromRegister(req server.WorkflowRegister, createdAt string) work
 	for _, phase := range req.Phases {
 		phases = append(phases, phaseDocFromSpec(phase))
 	}
+	req.Constraints = server.CanonicalWorkflowConstraints(req)
 	return workflowDoc{
 		ID:                  req.Name,
 		Project:             req.Project,
@@ -2384,6 +2399,7 @@ func workflowDocFromRegister(req server.WorkflowRegister, createdAt string) work
 		Phases:              phases,
 		PR:                  prDocFromSpec(req.PR),
 		Budget:              budgetDoc{Total: defaultBudgetTotal(req.Budget.Total)},
+		Constraints:         req.Constraints,
 		DefaultRequirements: mapOrEmpty(req.DefaultRequirements),
 		Metadata:            mapOrEmpty(req.Metadata),
 		CreatedAt:           createdAt,
@@ -2401,6 +2417,7 @@ func workflowRegisterFromDoc(doc workflowDoc) server.WorkflowRegister {
 		Phases:              phases,
 		PR:                  prFromDoc(doc.PR),
 		Budget:              budget.Config{Total: defaultBudgetTotal(doc.Budget.Total)},
+		Constraints:         doc.Constraints,
 		DefaultRequirements: mapOrEmpty(doc.DefaultRequirements),
 		Metadata:            mapOrEmpty(doc.Metadata),
 	}
@@ -2408,19 +2425,21 @@ func workflowRegisterFromDoc(doc workflowDoc) server.WorkflowRegister {
 
 func workflowSchemaRef(doc workflowDoc) string {
 	canonical := struct {
-		Project             string         `json:"project"`
-		Name                string         `json:"name"`
-		Phases              []phaseDoc     `json:"phases"`
-		PR                  prDoc          `json:"pr"`
-		Budget              budgetDoc      `json:"budget"`
-		DefaultRequirements map[string]any `json:"defaultRequirements"`
-		Metadata            map[string]any `json:"metadata"`
+		Project             string                     `json:"project"`
+		Name                string                     `json:"name"`
+		Phases              []phaseDoc                 `json:"phases"`
+		PR                  prDoc                      `json:"pr"`
+		Budget              budgetDoc                  `json:"budget"`
+		Constraints         server.WorkflowConstraints `json:"constraints,omitempty"`
+		DefaultRequirements map[string]any             `json:"defaultRequirements"`
+		Metadata            map[string]any             `json:"metadata"`
 	}{
 		Project:             doc.Project,
 		Name:                doc.Name,
 		Phases:              doc.Phases,
 		PR:                  doc.PR,
 		Budget:              doc.Budget,
+		Constraints:         doc.Constraints,
 		DefaultRequirements: mapOrEmpty(doc.DefaultRequirements),
 		Metadata:            mapOrEmpty(doc.Metadata),
 	}
@@ -2480,6 +2499,9 @@ func nativeJobDocFromSpec(job server.NativeJobSpec) nativeJobDoc {
 			Shell:            step.Shell,
 			WorkingDirectory: step.WorkingDirectory,
 			Env:              stringMapOrEmpty(step.Env),
+			Group:            step.Group,
+			GroupTitle:       step.GroupTitle,
+			DynamicGroup:     step.DynamicGroup,
 		})
 	}
 	extraCheckouts := make([]nativeCheckoutDoc, 0, len(job.ExtraCheckouts))
@@ -2701,6 +2723,9 @@ func jobFromDoc(doc nativeJobDoc) server.NativeJobSpec {
 			Shell:            step.Shell,
 			WorkingDirectory: step.WorkingDirectory,
 			Env:              stringMapOrEmpty(step.Env),
+			Group:            step.Group,
+			GroupTitle:       step.GroupTitle,
+			DynamicGroup:     step.DynamicGroup,
 		})
 	}
 	extraCheckouts := make([]server.NativeCheckoutSpec, 0, len(doc.ExtraCheckouts))

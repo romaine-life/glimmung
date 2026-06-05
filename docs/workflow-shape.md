@@ -49,12 +49,14 @@ Glimmung-managed workflows must declare:
    shared issue contract that both branches may consume without seeing
    each other's output.
 2. **testing** — exactly one bounded verification phase with `verify=True`.
-   The phase declares ten fixed jobs named `verify-case-01` through
-   `verify-case-10`. Runtime evidence requirements decide which slots do real
-   work and which slots complete as successful no-ops. Each case job owns one
-   evidence item or one small coherent assertion and must set
-   `timeout_seconds` no higher than 600 seconds. The phase produces the
-   verification verdict by aggregating the case-job completion payloads.
+   The workflow row declares `constraints.verification.shape`, which selects
+   the verification phase shape for that workflow. Supported profiles are
+   `single_job`, `bounded_case_jobs`, and `dynamic_step_group`. Runtime
+   evidence requirements decide what each verification run actually attempts,
+   but the persisted constraint profile owns whether the phase is a legacy
+   single verifier, a fixed set of bounded case jobs, or a sequential dynamic
+   test-case block. The phase produces one verification verdict for the
+   downstream evidence gate.
 3. **cleanup** — at least one phase with `purpose: teardown` and
    `run_on: always` or `run_on: failure`. Runs on terminal cleanup paths and
    tears down the validation environment.
@@ -69,6 +71,14 @@ teardown cleanup phase are rejected before they can become the project runtime
 contract. Registrations with multiple entry phases, fan-in/fan-out phase
 dependencies, invalid cross-phase input refs, duplicate phase names, or
 duplicate job IDs are rejected too.
+
+Verification shape is intentionally data-owned. Glimmung code owns the primitive
+validator implementations, but the workflow payload owns which primitive applies
+through `constraints.verification.shape`. When that field is absent, registration
+infers a profile from the verify phase and persists the inferred constraint on
+the next write. This keeps existing `single_job` workflows editable while
+allowing newer workflows to opt into `dynamic_step_group` without making every
+project wait on a Glimmung deploy for the shape decision.
 
 Evidence requirements are snapshotted onto the Run at dispatch time. Workflow
 `default_requirements.required_evidence` and operator labels such as
@@ -142,35 +152,53 @@ project, or issue defaults later does not mutate an in-flight or historical
 run. This keeps agent selection containerized: a workflow inserts an agent step
 without forking the workflow per model/provider.
 
-## Verification Case Slots
+## Verification Case Shapes
 
-The verification phase is intentionally static even though the test plan is
-runtime-defined. Every workflow declares the same ten job slots:
+The verification shape is selected by `constraints.verification.shape`.
+`single_job` preserves legacy workflows such as Ambience's monolithic
+`llm-verify` runner. `bounded_case_jobs` declares fixed case slots and keeps
+each slot independently bounded. `dynamic_step_group` declares a sequential
+runtime-defined block inside one job. Jobs in one phase are parallel, so choose
+`bounded_case_jobs` only when the workflow owns enough isolated runtime
+capacity for sibling jobs.
 
 ```yaml
+constraints:
+  verification:
+    shape: dynamic_step_group
 - name: testing
   kind: k8s_job
   purpose: verification
   verify: true
   outputs: [verification]
   jobs:
-    - id: verify-case-01
-      timeout_seconds: 300
+    - id: verify
+      timeout_seconds: 1800
       managed: true
-      steps: [...]
-    - id: verify-case-02
-      timeout_seconds: 300
-      managed: true
-      steps: [...]
-    # ...
-    - id: verify-case-10
-      timeout_seconds: 300
-      managed: true
-      steps: [...]
+      steps:
+        - slug: author-test-plan
+          type: agent
+        - slug: gather-evidence
+          type: agent
+          group: test-cases
+          group_title: Test cases generated at runtime
+          dynamic_group:
+            max_items: 10
+            item_label: test case
+        - slug: judge-evidence
+          type: agent
+          group: test-cases
+          group_title: Test cases generated at runtime
+          dynamic_group:
+            max_items: 10
+            item_label: test case
+        - slug: aggregate-verification
+          type: run
 ```
 
-Each case runner reads the runtime test/evidence plan, selects the item at its
-1-based index, and then does one bounded task:
+At runtime the verification runner reads the test/evidence plan and expands the
+dynamic block into zero to ten sequential cases. Each expanded case does one
+bounded task:
 
 - no item at that index: write a no-op completion and exit success
 - video/screenshot/browser item: capture and judge that one artifact
@@ -179,15 +207,23 @@ Each case runner reads the runtime test/evidence plan, selects the item at its
 
 A case must not debug unrelated tooling, recapture other cases, or consume a
 suite-level retry budget. A Playwright timeout, trigger failure, MCP/tool
-failure, missing artifact, or command timeout fails that case. The case writes
-its own completion payload with `verification.status`, `reasons`, and evidence
-refs/artifacts. When the final registered case job completes, Glimmung
-aggregates the case completions into the phase verdict and synthesizes the
-phase output `verification` for the downstream evidence gate.
+failure, missing artifact, or command timeout fails that case and should stop
+the sequential verifier promptly. The verification job writes the completion
+payload with `verification.status`, `reasons`, and evidence refs/artifacts.
+Glimmung stores the phase output `verification` for the downstream evidence
+gate.
 
-The test-plan LLM owns what cases should prove. Glimmung owns the case slots,
-timeouts, aggregation, and visibility. If a plan needs more than ten required
-items, it is too broad for one run and must fail or narrow the plan.
+For `bounded_case_jobs`, every case job is named `verify-case-01` through
+`verify-case-10` and sets `timeout_seconds` no higher than 600 seconds. Each
+case runner selects the plan item at its 1-based index; unused slots write no-op
+case results. When the final registered case job completes, Glimmung aggregates
+case completions into the phase verdict and synthesizes the phase output
+`verification` for the downstream evidence gate.
+
+The test-plan LLM owns what cases should prove. Glimmung owns the selected
+constraint profile, maximum case count, timeout bounds, aggregation, and
+visibility. If a plan needs more than ten required items, it is too broad for
+one run and must fail or narrow the plan.
 
 ## The verify/gate boundary
 
@@ -201,11 +237,15 @@ verification cases followed by a Glimmung-owned evidence gate:
   verify: true
   outputs: [verification]
   jobs:
-    - id: verify-case-01
-      timeout_seconds: 300
-    # ...
-    - id: verify-case-10
-      timeout_seconds: 300
+    - id: verify
+      timeout_seconds: 1800
+      steps:
+        - slug: gather-evidence
+          group: test-cases
+          dynamic_group: {max_items: 10, item_label: test case}
+        - slug: judge-evidence
+          group: test-cases
+          dynamic_group: {max_items: 10, item_label: test case}
 
 - name: gate
   kind: k8s_job

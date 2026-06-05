@@ -185,7 +185,16 @@ type RunProjectionPhase = {
     conclusion?: string | null;
     completed_at?: string | null;
     cost_usd?: number | null;
-    steps: Array<{ slug: string; title?: string | null; state: string; reason?: string | null; exit_code?: number | null }>;
+    steps: Array<{
+      slug: string;
+      title?: string | null;
+      state: string;
+      reason?: string | null;
+      exit_code?: number | null;
+      group?: string | null;
+      group_title?: string | null;
+      dynamic_group?: StepDynamicGroup | null;
+    }>;
   }>;
   attempts: Array<{
     attempt_index: number;
@@ -356,6 +365,14 @@ type WorkflowStep = {
     prompt?: string;
     prompt_file?: string;
   } | null;
+  group?: string;
+  group_title?: string | null;
+  dynamic_group?: StepDynamicGroup | null;
+};
+
+type StepDynamicGroup = {
+  max_items?: number;
+  item_label?: string;
 };
 
 type WorkflowRecyclePolicy = {
@@ -380,6 +397,15 @@ type NativeAttemptStep = {
   reason?: string | null;
   message?: string | null;
   exit_code?: number | null;
+  group?: string | null;
+  group_title?: string | null;
+  dynamic_group?: StepDynamicGroup | null;
+};
+
+type NativeStepRef = {
+  key: string;
+  job: NativeAttemptJob;
+  step: NativeAttemptStep;
 };
 
 export type DispatchState =
@@ -2236,6 +2262,7 @@ function ProjectionPipelineDag({
           name: job.name ?? job.id,
           state: job.state,
           reason: job.reason,
+          steps: job.steps,
           selection: { phase: phase.name, job: job.id },
         }))
       : (graphPhase.jobs && graphPhase.jobs.length > 0
@@ -2246,6 +2273,7 @@ function ProjectionPipelineDag({
           name: job.name ?? job.id,
           state: phase?.state ?? "not_started",
           reason: phase?.reason ?? null,
+          steps: job.steps ?? [],
           selection: { phase: graphPhase.name, job: job.id },
         }));
     return (
@@ -2268,6 +2296,7 @@ function ProjectionPipelineDag({
                 <span className={`pill ${graphStatePill(job.state)}`}>{formatGraphState(job.state)}</span>
               </div>
               {job.reason && <div className="dag-node-meta dim mono">{job.reason}</div>}
+              <RunDagStepGroups steps={job.steps} />
             </button>
           );
         })}
@@ -2285,6 +2314,84 @@ function ProjectionPipelineDag({
         entryArrows={graphModel.entryArrows}
         recycleArrows={graphModel.recycleArrows}
       />
+    </div>
+  );
+}
+
+type GroupedDisplayStep = {
+  slug: string;
+  title?: string | null;
+  state?: string | null;
+  type?: string | null;
+  group?: string | null;
+  group_title?: string | null;
+  dynamic_group?: StepDynamicGroup | null;
+};
+
+type DisplayStepGroup = {
+  key: string;
+  title: string;
+  steps: GroupedDisplayStep[];
+  dynamicGroup?: StepDynamicGroup | null;
+};
+
+function displayStepGroupKey(step: GroupedDisplayStep): string {
+  return step.group?.trim() || "";
+}
+
+function displayStepGroupTitle(step: GroupedDisplayStep): string {
+  return step.group_title?.trim() || step.group?.trim() || "steps";
+}
+
+function groupedDisplaySteps(steps: GroupedDisplayStep[] | undefined): DisplayStepGroup[] {
+  const out: DisplayStepGroup[] = [];
+  for (const step of steps ?? []) {
+    const groupKey = displayStepGroupKey(step);
+    const key = groupKey || `__step:${step.slug}`;
+    const last = out[out.length - 1];
+    if (last && last.key === key) {
+      last.steps.push(step);
+      continue;
+    }
+    out.push({
+      key,
+      title: groupKey ? displayStepGroupTitle(step) : "",
+      steps: [step],
+      dynamicGroup: step.dynamic_group ?? null,
+    });
+  }
+  return out;
+}
+
+function dynamicDisplayGroupSummary(dynamicGroup: StepDynamicGroup | null | undefined): string {
+  if (!dynamicGroup?.max_items) return "";
+  const itemLabel = dynamicGroup.item_label?.trim() || "item";
+  return `0-${dynamicGroup.max_items} ${itemLabel}${dynamicGroup.max_items === 1 ? "" : "s"} at runtime`;
+}
+
+function RunDagStepGroups({ steps }: { steps?: GroupedDisplayStep[] }) {
+  const groups = groupedDisplaySteps(steps);
+  if (groups.length === 0) return null;
+  return (
+    <div className="dag-step-groups run-dag-step-groups" aria-label="job steps">
+      {groups.map((group) => (
+        <div className={`dag-step-group${group.title ? "" : " ungrouped"}`} key={group.key}>
+          {group.title && (
+            <div className="dag-step-group-title">
+              <span>{group.title}</span>
+              {group.dynamicGroup && <small>{dynamicDisplayGroupSummary(group.dynamicGroup)}</small>}
+            </div>
+          )}
+          <div className="dag-step-group-steps">
+            {group.steps.map((step) => (
+              <div className="dag-step-item" key={step.slug}>
+                <span>{step.title || step.slug}</span>
+                <small>{step.dynamic_group ? "template" : formatGraphState(step.state || "not_started")}</small>
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
     </div>
   );
 }
@@ -2610,8 +2717,37 @@ function projectionJobToNativeJob(job: RunProjectionPhase["jobs"][number]): Nati
       state: step.state,
       reason: step.reason ?? null,
       exit_code: step.exit_code ?? null,
+      group: step.group ?? null,
+      group_title: step.group_title ?? null,
+      dynamic_group: step.dynamic_group ?? null,
     })),
   };
+}
+
+function nativeStepGroupKey(step: NativeAttemptStep): string {
+  return step.group?.trim() || "";
+}
+
+function nativeStepGroupTitle(step: NativeAttemptStep): string {
+  return step.group_title?.trim() || step.group?.trim() || "steps";
+}
+
+function renderNativeStepGroupHeader(
+  stepRefs: NativeStepRef[],
+  index: number,
+): string | null {
+  const current = stepRefs[index];
+  const group = nativeStepGroupKey(current.step);
+  if (!group) return null;
+  const previous = stepRefs[index - 1];
+  if (
+    previous
+    && previous.job.job_id === current.job.job_id
+    && nativeStepGroupKey(previous.step) === group
+  ) {
+    return null;
+  }
+  return nativeStepGroupTitle(current.step);
 }
 
 function IssueSettingsPane({
@@ -3631,39 +3767,48 @@ function NativeJobInspector({
           {stepRefs.length === 0 ? (
             <div className="native-step-empty mono dim">no native steps declared</div>
           ) : (
-            stepRefs.map(({ key, job, step }, index) => (
-              <Fragment key={key}>
-                {(index === 0 || stepRefs[index - 1]?.job.job_id !== job.job_id) && (
-                  <div className="native-job-label">
-                    <span className="mono">{job.name || job.job_id}</span>
-                    <span className={`pill ${nativeStatePill(job.state ?? "")}`}>
-                      {job.state || "not run"}
-                    </span>
-                    {job.cost_usd !== null && job.cost_usd !== undefined && (
-                      <span className="mono dim">{formatUsd4(job.cost_usd)}</span>
-                    )}
-                  </div>
-                )}
-                <button
-                  type="button"
-                  className={`step-row ${nativeStepRowClass(step.state ?? "")}${key === selected?.key ? " selected" : ""}`}
-                  onClick={() => {
-                    setSelectedKey(key);
-                    onSelectStep?.(job.job_id, step.slug);
-                  }}
-                >
-                  <span>{nativeStepGlyph(step.state ?? "")}</span>
-                  <strong>
-                    {step.title || step.slug}
-                  </strong>
-                  <small>
-                    {step.exit_code !== null && step.exit_code !== undefined
-                      ? `exit ${step.exit_code}`
-                      : step.state ? formatGraphState(step.state) : "not run"}
-                  </small>
-                </button>
-              </Fragment>
-            ))
+            stepRefs.map(({ key, job, step }, index) => {
+              const groupTitle = renderNativeStepGroupHeader(stepRefs, index);
+              const groupedClass = nativeStepGroupKey(step) ? " grouped" : "";
+              return (
+                <Fragment key={key}>
+                  {(index === 0 || stepRefs[index - 1]?.job.job_id !== job.job_id) && (
+                    <div className="native-job-label">
+                      <span className="mono">{job.name || job.job_id}</span>
+                      <span className={`pill ${nativeStatePill(job.state ?? "")}`}>
+                        {job.state || "not run"}
+                      </span>
+                      {job.cost_usd !== null && job.cost_usd !== undefined && (
+                        <span className="mono dim">{formatUsd4(job.cost_usd)}</span>
+                      )}
+                    </div>
+                  )}
+                  {groupTitle && (
+                    <div className="step-group-label">
+                      <span>{groupTitle}</span>
+                    </div>
+                  )}
+                  <button
+                    type="button"
+                    className={`step-row ${nativeStepRowClass(step.state ?? "")}${groupedClass}${key === selected?.key ? " selected" : ""}`}
+                    onClick={() => {
+                      setSelectedKey(key);
+                      onSelectStep?.(job.job_id, step.slug);
+                    }}
+                  >
+                    <span>{nativeStepGlyph(step.state ?? "")}</span>
+                    <strong>
+                      {step.title || step.slug}
+                    </strong>
+                    <small>
+                      {step.exit_code !== null && step.exit_code !== undefined
+                        ? `exit ${step.exit_code}`
+                        : step.state ? formatGraphState(step.state) : "not run"}
+                    </small>
+                  </button>
+                </Fragment>
+              );
+            })
           )}
         </aside>
         {activeViewMode === "transcript" ? (
@@ -3792,39 +3937,48 @@ function PlannedNativeJobInspector({
           {stepRefs.length === 0 ? (
             <div className="native-step-empty mono dim">no native steps declared</div>
           ) : (
-            stepRefs.map(({ key, job: refJob, step }, index) => (
-              <Fragment key={key}>
-                {(index === 0 || stepRefs[index - 1]?.job.job_id !== refJob.job_id) && (
-                  <div className="native-job-label">
-                    <span className="mono">{refJob.name || refJob.job_id}</span>
-                    <span className={`pill ${nativeStatePill(refJob.state ?? "")}`}>
-                      {refJob.state || "not run"}
-                    </span>
-                    {refJob.cost_usd !== null && refJob.cost_usd !== undefined && (
-                      <span className="mono dim">{formatUsd4(refJob.cost_usd)}</span>
-                    )}
-                  </div>
-                )}
-                <button
-                  type="button"
-                  className={`step-row ${nativeStepRowClass(step.state ?? "")}${key === selected?.key ? " selected" : ""}`}
-                  onClick={() => {
-                    setSelectedKey(key);
-                    onSelectStep?.(refJob.job_id, step.slug);
-                  }}
-                >
-                  <span>{nativeStepGlyph(step.state ?? "")}</span>
-                  <strong>
-                    {step.title || step.slug}
-                  </strong>
-                  <small>
-                    {step.exit_code !== null && step.exit_code !== undefined
-                      ? `exit ${step.exit_code}`
-                      : step.state ? formatGraphState(step.state) : "not run"}
-                  </small>
-                </button>
-              </Fragment>
-            ))
+            stepRefs.map(({ key, job: refJob, step }, index) => {
+              const groupTitle = renderNativeStepGroupHeader(stepRefs, index);
+              const groupedClass = nativeStepGroupKey(step) ? " grouped" : "";
+              return (
+                <Fragment key={key}>
+                  {(index === 0 || stepRefs[index - 1]?.job.job_id !== refJob.job_id) && (
+                    <div className="native-job-label">
+                      <span className="mono">{refJob.name || refJob.job_id}</span>
+                      <span className={`pill ${nativeStatePill(refJob.state ?? "")}`}>
+                        {refJob.state || "not run"}
+                      </span>
+                      {refJob.cost_usd !== null && refJob.cost_usd !== undefined && (
+                        <span className="mono dim">{formatUsd4(refJob.cost_usd)}</span>
+                      )}
+                    </div>
+                  )}
+                  {groupTitle && (
+                    <div className="step-group-label">
+                      <span>{groupTitle}</span>
+                    </div>
+                  )}
+                  <button
+                    type="button"
+                    className={`step-row ${nativeStepRowClass(step.state ?? "")}${groupedClass}${key === selected?.key ? " selected" : ""}`}
+                    onClick={() => {
+                      setSelectedKey(key);
+                      onSelectStep?.(refJob.job_id, step.slug);
+                    }}
+                  >
+                    <span>{nativeStepGlyph(step.state ?? "")}</span>
+                    <strong>
+                      {step.title || step.slug}
+                    </strong>
+                    <small>
+                      {step.exit_code !== null && step.exit_code !== undefined
+                        ? `exit ${step.exit_code}`
+                        : step.state ? formatGraphState(step.state) : "not run"}
+                    </small>
+                  </button>
+                </Fragment>
+              );
+            })
           )}
         </aside>
         <pre className="step-terminal native-step-terminal">
@@ -3853,11 +4007,7 @@ function nativeRunApiBaseForNumber(project: string, issueNumber: number, runNumb
     `/runs/${encodeURIComponent(runNumber)}/native`;
 }
 
-function nativeStepRefs(jobs: NativeAttemptJob[]): Array<{
-  key: string;
-  job: NativeAttemptJob;
-  step: NativeAttemptStep;
-}> {
+function nativeStepRefs(jobs: NativeAttemptJob[]): NativeStepRef[] {
   return jobs.flatMap((job) => (
     job.steps.length > 0
       ? job.steps.map((step) => ({

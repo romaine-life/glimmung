@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
+import { Fragment, useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
 import { Link, Navigate, Outlet, Route, Routes, useLocation, useNavigate, useOutletContext, useParams } from "react-router-dom";
 import { IssueDetailView } from "./IssueDetailView";
 import { IssuesView } from "./IssuesView";
@@ -11,6 +11,7 @@ import { workflowToPhaseGraphModel } from "./workflowGraphModel";
 import { authedFetch, currentAccount, initAuth, signIn, signOut, type Account } from "./auth";
 import { isMockMode, mockRuns, mockSnapshot } from "./mockApi";
 import { ISSUE_DETAIL_CHILD_ROUTES } from "./routes";
+import { useHorizontalDragScroll } from "./useHorizontalDragScroll";
 import { IconSprite } from "./ui/Icon";
 import { Shell, type ShellAccount } from "./ui/Shell";
 import { Overview } from "./views/Overview";
@@ -174,11 +175,19 @@ type NativeStepSpec = {
   title?: string | null;
   type?: string;
   run?: string;
+  group?: string;
+  group_title?: string | null;
+  dynamic_group?: StepDynamicGroup | null;
   agent?: {
     slot?: string;
     prompt?: string;
     prompt_file?: string;
   } | null;
+};
+
+type StepDynamicGroup = {
+  max_items?: number;
+  item_label?: string;
 };
 
 type PrPrimitiveSpec = {
@@ -938,6 +947,7 @@ function RequirementPills({ requirements }: { requirements: Record<string, unkno
 
 function WorkflowDefinitionGraph({ workflow }: { workflow: Workflow }) {
   const graphModel = workflowToPhaseGraphModel(workflow);
+  const { ref: panRef, onClickCapture: onPanClickCapture } = useHorizontalDragScroll<HTMLDivElement>();
   const [selection, setSelection] = useState<{ phaseName: string; jobId: string; stepSlug?: string | null } | null>(null);
   const selectedPhase = graphModel.phases.find((phase) => phase.name === selection?.phaseName) ?? null;
   const selectedJob = selectedPhase?.jobs?.find((job) => job.id === selection?.jobId) ?? null;
@@ -970,6 +980,7 @@ function WorkflowDefinitionGraph({ workflow }: { workflow: Workflow }) {
                 <span className="dag-job-kicker">job</span>
               </div>
               <div className="dag-node-meta dim mono">{job.id === phase.name ? meta : job.id}</div>
+              <DefinitionDagStepGroups steps={job.steps} />
             </button>
           );
         })}
@@ -980,7 +991,7 @@ function WorkflowDefinitionGraph({ workflow }: { workflow: Workflow }) {
   return (
     <section>
       <h2>Workflow graph</h2>
-      <div className="dag-wrap">
+      <div className="dag-wrap dag-pan" ref={panRef} onClickCapture={onPanClickCapture}>
         <PhaseGraph
           phases={graphModel.phases}
           dagClassName="dag-definition"
@@ -1040,6 +1051,16 @@ type DefinitionInspectableJob = {
 type DefinitionInspectableStep = {
   slug: string;
   title: string;
+  group?: string;
+  group_title?: string | null;
+  dynamic_group?: StepDynamicGroup | null;
+};
+
+type DefinitionStepGroup = {
+  key: string;
+  title: string;
+  steps: DefinitionInspectableStep[];
+  dynamicGroup?: StepDynamicGroup | null;
 };
 
 function definitionPhaseMeta(phase: PhaseGraphPhase): string {
@@ -1063,6 +1084,9 @@ function definitionStepToInspectableStep(step: PhaseGraphStep): DefinitionInspec
   return {
     slug: step.slug,
     title: definitionStepTitle(step),
+    group: step.group,
+    group_title: step.group_title,
+    dynamic_group: step.dynamic_group,
   };
 }
 
@@ -1070,6 +1094,77 @@ function definitionStepTitle(step: PhaseGraphStep): string {
   if (step.title) return step.title;
   if (step.type === "agent" && step.agent?.slot) return `${step.slug} (${step.agent.slot})`;
   return step.slug;
+}
+
+function definitionGroupKey(step: Pick<DefinitionInspectableStep, "slug" | "group">): string {
+  return step.group?.trim() || "";
+}
+
+function definitionGroupTitle(step: DefinitionInspectableStep): string {
+  return step.group_title?.trim() || step.group?.trim() || "steps";
+}
+
+function groupedDefinitionSteps(steps: DefinitionInspectableStep[] | undefined): DefinitionStepGroup[] {
+  const out: DefinitionStepGroup[] = [];
+  for (const step of steps ?? []) {
+    const groupKey = definitionGroupKey(step);
+    const key = groupKey || `__step:${step.slug}`;
+    const last = out[out.length - 1];
+    if (last && last.key === key) {
+      last.steps.push(step);
+      continue;
+    }
+    out.push({
+      key,
+      title: groupKey ? definitionGroupTitle(step) : "",
+      steps: [step],
+      dynamicGroup: step.dynamic_group ?? null,
+    });
+  }
+  return out;
+}
+
+function dynamicDefinitionGroupSummary(dynamicGroup: StepDynamicGroup | null | undefined): string {
+  if (!dynamicGroup?.max_items) return "";
+  const itemLabel = dynamicGroup.item_label?.trim() || "item";
+  return `0-${dynamicGroup.max_items} ${itemLabel}${dynamicGroup.max_items === 1 ? "" : "s"} at runtime`;
+}
+
+function DefinitionDagStepGroups({ steps }: { steps?: PhaseGraphStep[] }) {
+  const inspectableSteps = steps?.map(definitionStepToInspectableStep) ?? [];
+  const groups = groupedDefinitionSteps(inspectableSteps);
+  if (groups.length === 0) return null;
+  return (
+    <div className="dag-step-groups" aria-label="job steps">
+      {groups.map((group) => (
+        <div className={`dag-step-group${group.title ? "" : " ungrouped"}`} key={group.key}>
+          {group.title && (
+            <div className="dag-step-group-title">
+              <span>{group.title}</span>
+              {group.dynamicGroup && <small>{dynamicDefinitionGroupSummary(group.dynamicGroup)}</small>}
+            </div>
+          )}
+          <div className="dag-step-group-steps">
+            {group.steps.map((step) => (
+              <div className="dag-step-item" key={step.slug}>
+                <span>{step.title}</span>
+                <small>{step.dynamic_group ? "template" : "defined"}</small>
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function definitionStepGroupHeader(steps: DefinitionInspectableStep[], index: number): string | null {
+  const current = steps[index];
+  const group = definitionGroupKey(current);
+  if (!group) return null;
+  const previous = steps[index - 1];
+  if (previous && definitionGroupKey(previous) === group) return null;
+  return definitionGroupTitle(current);
 }
 
 function DefinitionJobInspector({
@@ -1096,18 +1191,28 @@ function DefinitionJobInspector({
             <span className="mono">{job.name}</span>
             <span className="pill pending">not_started</span>
           </div>
-          {job.steps.map((step) => (
-            <button
-              type="button"
-              className={`step-row pending${step.slug === selectedStep?.slug ? " selected" : ""}`}
-              key={step.slug}
-              onClick={() => onSelectStep(step.slug)}
-            >
-              <span>·</span>
-              <strong>{step.title}</strong>
-              <small>not started</small>
-            </button>
-          ))}
+          {job.steps.map((step, index) => {
+            const groupTitle = definitionStepGroupHeader(job.steps, index);
+            const groupedClass = definitionGroupKey(step) ? " grouped" : "";
+            return (
+              <Fragment key={step.slug}>
+                {groupTitle && (
+                  <div className="step-group-label">
+                    <span>{groupTitle}</span>
+                  </div>
+                )}
+                <button
+                  type="button"
+                  className={`step-row pending${groupedClass}${step.slug === selectedStep?.slug ? " selected" : ""}`}
+                  onClick={() => onSelectStep(step.slug)}
+                >
+                  <span>·</span>
+                  <strong>{step.title}</strong>
+                  <small>not started</small>
+                </button>
+              </Fragment>
+            );
+          })}
         </aside>
         <pre className="step-terminal native-step-terminal">
           {selectedStep

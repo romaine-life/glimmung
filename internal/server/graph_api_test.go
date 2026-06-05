@@ -742,8 +742,10 @@ func TestRunCycleGraphProjectionKeepsPendingWorkflowJobsWithDurableExecutions(t 
 						ID:   "agent",
 						Name: stringPtr("Run agent"),
 						Steps: []NativeStepSpec{{
-							Slug:  "run-agent",
-							Title: stringPtr("Run agent"),
+							Slug:       "run-agent",
+							Title:      stringPtr("Run agent"),
+							Group:      "sweep-01",
+							GroupTitle: stringPtr("sweep 01"),
 						}},
 					}},
 				},
@@ -781,10 +783,12 @@ func TestRunCycleGraphProjectionKeepsPendingWorkflowJobsWithDurableExecutions(t 
 					State:     "active",
 					CreatedAt: now.Format(time.RFC3339Nano),
 					Steps: []RunStepExecution{{
-						Slug:      "checkout",
-						Title:     stringPtr("Checkout"),
-						State:     "active",
-						CreatedAt: now.Format(time.RFC3339Nano),
+						Slug:       "checkout",
+						Title:      stringPtr("Checkout"),
+						State:      "active",
+						Group:      "setup",
+						GroupTitle: stringPtr("setup"),
+						CreatedAt:  now.Format(time.RFC3339Nano),
 					}},
 				}},
 			}},
@@ -799,13 +803,19 @@ func TestRunCycleGraphProjectionKeepsPendingWorkflowJobsWithDurableExecutions(t 
 	if envPhase.State != "active" || envPhase.Jobs[0].Steps[0].State != "active" {
 		t.Fatalf("env-prep projection=%#v", envPhase)
 	}
+	if envPhase.Jobs[0].Steps[0].Group != "setup" || envPhase.Jobs[0].Steps[0].GroupTitle == nil || *envPhase.Jobs[0].Steps[0].GroupTitle != "setup" {
+		t.Fatalf("env-prep step group=%#v", envPhase.Jobs[0].Steps[0])
+	}
 	executePhase := assertProjectionPhase(t, projection.Runs[0], "agent-execute")
 	if executePhase.State != "not_started" || len(executePhase.Jobs) != 1 || executePhase.Jobs[0].State != "not_started" {
 		t.Fatalf("agent-execute projection=%#v", executePhase)
 	}
 	if len(executePhase.Jobs[0].Steps) != 1 ||
 		executePhase.Jobs[0].Steps[0].Slug != "run-agent" ||
-		executePhase.Jobs[0].Steps[0].State != "not_started" {
+		executePhase.Jobs[0].Steps[0].State != "not_started" ||
+		executePhase.Jobs[0].Steps[0].Group != "sweep-01" ||
+		executePhase.Jobs[0].Steps[0].GroupTitle == nil ||
+		*executePhase.Jobs[0].Steps[0].GroupTitle != "sweep 01" {
 		t.Fatalf("agent-execute steps=%#v", executePhase.Jobs[0].Steps)
 	}
 }

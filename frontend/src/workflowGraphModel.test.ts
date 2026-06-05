@@ -141,6 +141,32 @@ describe("workflowToPhaseGraphModel", () => {
       },
     ]);
   });
+
+  it("keeps workflow step group metadata in graph jobs", () => {
+    const workflow: WorkflowGraphSource = {
+      name: "default",
+      phases: [{
+        name: "verify",
+        kind: "k8s_job",
+        jobs: [{
+          id: "verify-ui",
+          steps: [{
+            slug: "capture-screenshot",
+            title: "capture screenshot",
+            group: "sweep-01",
+            group_title: "sweep 01",
+          }],
+        }],
+      }],
+      pr: { recycle_policy: null },
+    };
+
+    expect(workflowToPhaseGraphModel(workflow).phases[0].jobs?.[0].steps?.[0]).toMatchObject({
+      slug: "capture-screenshot",
+      group: "sweep-01",
+      group_title: "sweep 01",
+    });
+  });
 });
 
 describe("runTopologyToPhaseGraphModel", () => {
@@ -209,6 +235,32 @@ describe("runTopologyToPhaseGraphModel", () => {
         active: false,
         kind: "touchpoint_recycle",
       }],
+    });
+  });
+
+  it("keeps run topology step group metadata in graph jobs", () => {
+    const model = runTopologyToPhaseGraphModel({
+      phases: [{
+        name: "verify",
+        kind: "k8s_job",
+        jobs: [{
+          id: "verify-ui",
+          steps: [{
+            slug: "judge-evidence",
+            title: "judge evidence",
+            group: "sweep-01",
+            group_title: "sweep 01",
+          }],
+        }],
+      }],
+      default_entry: { target: "verify", active: true, kind: "default" },
+      recycle_arrows: [],
+    });
+
+    expect(model.phases[0].jobs?.[0].steps?.[0]).toMatchObject({
+      slug: "judge-evidence",
+      group: "sweep-01",
+      group_title: "sweep 01",
     });
   });
 });

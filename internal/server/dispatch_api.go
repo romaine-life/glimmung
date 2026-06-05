@@ -229,6 +229,7 @@ func dispatchRunWithAgentRuntime(ctx context.Context, dispatchStore RunDispatchS
 		Phases:              wf.Phases,
 		PR:                  wf.PR,
 		Budget:              wf.Budget,
+		Constraints:         wf.Constraints,
 		DefaultRequirements: wf.DefaultRequirements,
 		Metadata:            wf.Metadata,
 	}); err != nil {

@@ -52,11 +52,16 @@ after registration changes.
 - Registration rejects invalid dependencies, duplicate phases, duplicate job
   IDs, invalid inputs, and unsupported executor kinds before they become a
   runtime contract.
-- A `verify=true` phase is a bounded verification-case phase: it declares
-  exactly ten jobs named `verify-case-01` through `verify-case-10`, and every
-  case job sets `timeout_seconds` at or below 600 seconds. Runtime test plans
-  decide which slots are active; unused slots complete successfully with no-op
-  case results.
+- A `verify=true` phase is a bounded verification phase whose concrete shape is
+  selected by the persisted workflow constraint
+  `constraints.verification.shape`. Supported shapes are `single_job`,
+  `bounded_case_jobs`, and `dynamic_step_group`; code validates the selected
+  primitive, but the workflow row owns which one applies. `dynamic_step_group`
+  declares exactly one sequential verification job with one dynamic test-case
+  block whose `dynamic_group.max_items` is at or below 10.
+  `bounded_case_jobs` declares ten jobs named `verify-case-01` through
+  `verify-case-10`; every case job sets `timeout_seconds` at or below 600
+  seconds, and unused slots complete successfully with no-op case results.
 - Jobs inside one phase launch in parallel and complete independently.
 - A step-scoped fail-closed abort is represented by a typed `step_aborted`
   native event and a durable aborted step state. A failed or aborted job whose
@@ -73,11 +78,12 @@ after registration changes.
   completion, watcher, and recovery paths.
 - Phase advancement happens only after all registered jobs in the phase reach
   terminal callback state.
-- Multi-job verification phases aggregate per-job verification statuses,
-  reasons, evidence refs, and typed evidence artifacts into the phase
-  completion. When case jobs report verification data, Glimmung synthesizes the
-  phase output `verification` so the managed evidence gate has a stable JSON
-  verdict even though no monolithic verifier job ran.
+- Verification phases preserve verification statuses, reasons, evidence refs,
+  and typed evidence artifacts in the phase completion. Glimmung synthesizes
+  the phase output `verification` so the managed evidence gate has a stable
+  JSON verdict.
+  Multi-job verification phases aggregate per-job verification data before
+  synthesizing that phase output.
 - Evidence verification gates are canonicalized into managed Glimmung runner
   jobs.
 - Runs use the workflow schema snapshot captured at run/cycle creation, not a

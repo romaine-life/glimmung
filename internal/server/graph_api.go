@@ -184,11 +184,14 @@ type RunProjectionJob struct {
 }
 
 type RunProjectionStep struct {
-	Slug     string  `json:"slug"`
-	Title    *string `json:"title,omitempty"`
-	State    string  `json:"state"`
-	Reason   *string `json:"reason,omitempty"`
-	ExitCode *int    `json:"exit_code,omitempty"`
+	Slug         string            `json:"slug"`
+	Title        *string           `json:"title,omitempty"`
+	State        string            `json:"state"`
+	Reason       *string           `json:"reason,omitempty"`
+	ExitCode     *int              `json:"exit_code,omitempty"`
+	Group        string            `json:"group,omitempty"`
+	GroupTitle   *string           `json:"group_title,omitempty"`
+	DynamicGroup *StepDynamicGroup `json:"dynamic_group,omitempty"`
 }
 
 type RunProjectionAttempt struct {
@@ -1448,11 +1451,14 @@ func runProjectionJobsFromExecutions(executions []RunJobExecution, completions m
 		steps := make([]RunProjectionStep, 0, len(execution.Steps))
 		for _, step := range execution.Steps {
 			steps = append(steps, RunProjectionStep{
-				Slug:     firstNonEmpty(step.Slug, "step"),
-				Title:    step.Title,
-				State:    projectionExecutionState(step.State),
-				Reason:   step.Reason,
-				ExitCode: step.ExitCode,
+				Slug:         firstNonEmpty(step.Slug, "step"),
+				Title:        step.Title,
+				State:        projectionExecutionState(step.State),
+				Reason:       step.Reason,
+				ExitCode:     step.ExitCode,
+				Group:        step.Group,
+				GroupTitle:   step.GroupTitle,
+				DynamicGroup: step.DynamicGroup,
 			})
 		}
 		jobs = append(jobs, RunProjectionJob{
@@ -1701,9 +1707,12 @@ func runProjectionJobs(phase PhaseSpec, phaseState string, phaseReason *string, 
 		for _, step := range job.Steps {
 			slug := firstNonEmpty(step.Slug, "step")
 			steps = append(steps, RunProjectionStep{
-				Slug:  slug,
-				Title: step.Title,
-				State: stepState,
+				Slug:         slug,
+				Title:        step.Title,
+				State:        stepState,
+				Group:        step.Group,
+				GroupTitle:   step.GroupTitle,
+				DynamicGroup: step.DynamicGroup,
 			})
 		}
 		if len(steps) == 0 {

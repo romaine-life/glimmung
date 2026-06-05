@@ -168,6 +168,7 @@ func AdmitQueuedRunCycle(ctx context.Context, store RunQueueStore, nativeLaunche
 		Phases:              wf.Phases,
 		PR:                  wf.PR,
 		Budget:              wf.Budget,
+		Constraints:         wf.Constraints,
 		DefaultRequirements: wf.DefaultRequirements,
 		Metadata:            wf.Metadata,
 	}); err != nil {

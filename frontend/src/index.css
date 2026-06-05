@@ -702,6 +702,22 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.step-group-label {
+  display: flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 7px 12px 5px 34px;
+  border-bottom: 1px solid var(--border);
+  border-left: 2px solid var(--state-info-fg);
+  background: color-mix(in srgb, var(--state-info-bg) 20%, transparent);
+  color: var(--state-info-fg);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  overflow-wrap: anywhere;
+}
+.step-row.grouped {
+  padding-left: 26px;
+}
 .step-terminal {
   min-height: 100%;
   margin: 0;
@@ -2116,16 +2132,31 @@ h2 .inline-action,
    each phase and run as parallel siblings. */
 .dag-wrap {
   margin: 12px 0;
+  min-width: 0;
+  max-width: 100%;
 }
 /* Run-detail DAG: left-click-drag horizontal panning (see
    useHorizontalDragScroll). Wide run graphs overflow the viewport; grabbing
    the surface and dragging is the expected way to move it. Horizontal only —
    the vertical axis stays put. */
 .dag-pan {
+  position: relative;
+  display: block;
+  width: 100%;
+  max-width: 100%;
   overflow-x: auto;
   overflow-y: hidden;
   cursor: grab;
   overscroll-behavior-x: contain;
+  padding-bottom: 8px;
+  scrollbar-color: color-mix(in srgb, var(--fg-dimmer) 55%, transparent) transparent;
+  scrollbar-width: thin;
+  box-shadow:
+    inset -18px 0 18px -20px color-mix(in srgb, var(--fg-muted) 60%, transparent),
+    inset 18px 0 18px -20px color-mix(in srgb, var(--fg-muted) 60%, transparent);
+}
+.app .dag-pan {
+  width: min(100%, calc(100vw - 248px - 56px));
 }
 .dag-pan.dragging {
   cursor: grabbing;
@@ -2280,6 +2311,66 @@ h2 .inline-action,
   font-size: 0.76rem;
   text-align: left;
   overflow-wrap: anywhere;
+}
+.dag-step-groups {
+  width: 100%;
+  margin-top: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.dag-step-group {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding-left: 7px;
+  border-left: 2px solid color-mix(in srgb, var(--state-info-fg) 50%, transparent);
+}
+.dag-step-group.ungrouped {
+  padding-left: 0;
+  border-left-color: transparent;
+}
+.dag-step-group-title {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--state-info-fg);
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+  overflow-wrap: anywhere;
+}
+.dag-step-group-title span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.dag-step-group-title small {
+  flex: 0 0 auto;
+  color: var(--fg-dimmer);
+  font-size: 0.58rem;
+  font-weight: 500;
+  text-transform: uppercase;
+}
+.dag-step-group-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.dag-step-item {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--fg-muted);
+  font-size: 0.68rem;
+}
+.dag-step-item span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.dag-step-item small {
+  flex: 0 0 auto;
+  color: var(--fg-dimmer);
+  font-family: var(--font-mono);
 }
 .dag-phase-body {
   display: flex;
@@ -2894,12 +2985,14 @@ h2 .inline-action,
    ============================================================ */
 .app {
   display: grid;
-  grid-template-columns: 248px 1fr;
+  grid-template-columns: 248px minmax(0, 1fr);
+  width: 100vw;
   min-height: 100vh;
+  overflow-x: hidden;
   transition: grid-template-columns 140ms ease;
 }
 .app.sidebar-collapsed {
-  grid-template-columns: 64px 1fr;
+  grid-template-columns: 64px minmax(0, 1fr);
 }
 
 /* ----- Sidebar ----- */
@@ -3069,7 +3162,12 @@ h2 .inline-action,
 @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
 
 /* ----- Main column ----- */
-.app .main { min-width: 0; display: flex; flex-direction: column; }
+.app .main {
+  min-width: 0;
+  max-width: calc(100vw - 248px);
+  display: flex;
+  flex-direction: column;
+}
 .app .topbar {
   display: flex; align-items: center; gap: 16px;
   padding: 14px 28px; border-bottom: 1px solid var(--border);
@@ -3093,7 +3191,7 @@ h2 .inline-action,
   border-radius: 4px; padding: 1px 5px; color: var(--fg-dim);
 }
 
-.app .content { padding: 26px 28px 60px; }
+.app .content { min-width: 0; padding: 26px 28px 60px; }
 .app .page-head { display: flex; align-items: flex-start; gap: 16px; margin-bottom: 22px; }
 .app .page-head h1 { font-size: var(--t-2xl); }
 .app .page-head .sub { color: var(--fg-dim); font-size: var(--t-md); margin-top: 4px; }

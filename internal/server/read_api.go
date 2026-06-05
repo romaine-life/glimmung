@@ -39,16 +39,26 @@ func (p Project) ETag() string { return p.etag }
 func (p Project) WithETag(tag string) Project { p.etag = tag; return p }
 
 type Workflow struct {
-	ID                  string         `json:"id"`
-	Project             string         `json:"project"`
-	Name                string         `json:"name"`
-	SchemaRef           string         `json:"schema_ref"`
-	Phases              []PhaseSpec    `json:"phases"`
-	PR                  PrPrimitive    `json:"pr"`
-	Budget              budget.Config  `json:"budget"`
-	DefaultRequirements map[string]any `json:"default_requirements"`
-	Metadata            map[string]any `json:"metadata"`
-	CreatedAt           time.Time      `json:"created_at"`
+	ID                  string              `json:"id"`
+	Project             string              `json:"project"`
+	Name                string              `json:"name"`
+	SchemaRef           string              `json:"schema_ref"`
+	Phases              []PhaseSpec         `json:"phases"`
+	PR                  PrPrimitive         `json:"pr"`
+	Budget              budget.Config       `json:"budget"`
+	Constraints         WorkflowConstraints `json:"constraints,omitempty"`
+	DefaultRequirements map[string]any      `json:"default_requirements"`
+	Metadata            map[string]any      `json:"metadata"`
+	CreatedAt           time.Time           `json:"created_at"`
+}
+
+type WorkflowConstraints struct {
+	Verification VerificationConstraints `json:"verification,omitempty"`
+}
+
+type VerificationConstraints struct {
+	Shape    string `json:"shape,omitempty"`
+	MaxCases int    `json:"max_cases,omitempty"`
 }
 
 type PhaseSpec struct {
@@ -112,6 +122,14 @@ type NativeStepSpec struct {
 	Shell            string            `json:"shell,omitempty"`
 	WorkingDirectory string            `json:"working_directory,omitempty"`
 	Env              map[string]string `json:"env,omitempty"`
+	Group            string            `json:"group,omitempty"`
+	GroupTitle       *string           `json:"group_title,omitempty"`
+	DynamicGroup     *StepDynamicGroup `json:"dynamic_group,omitempty"`
+}
+
+type StepDynamicGroup struct {
+	MaxItems  int    `json:"max_items,omitempty"`
+	ItemLabel string `json:"item_label,omitempty"`
 }
 
 type NativeCheckoutSpec struct {

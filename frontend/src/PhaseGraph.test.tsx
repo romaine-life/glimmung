@@ -1,11 +1,76 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { render, screen, waitFor } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, describe, expect, it } from "vitest";
 
 import { PhaseGraph } from "./PhaseGraph";
 
+afterEach(() => {
+  cleanup();
+});
+
 describe("PhaseGraph", () => {
+  it("renders grouped job steps under their parent label", () => {
+    render(
+      <PhaseGraph
+        ariaLabel="workflow graph"
+        phases={[{
+          name: "verify",
+          kind: "k8s_job",
+          jobs: [{
+            id: "verify-ui",
+            name: "verify ui",
+            steps: [
+              { slug: "capture-screenshot", title: "capture screenshot", type: "agent", group: "sweep-01", group_title: "sweep 01" },
+              { slug: "judge-evidence", title: "judge evidence", type: "agent", group: "sweep-01", group_title: "sweep 01" },
+            ],
+          }],
+        }]}
+      />,
+    );
+
+    expect(screen.getByText("sweep 01")).toBeInTheDocument();
+    expect(screen.getByText("capture screenshot")).toBeInTheDocument();
+    expect(screen.getByText("judge evidence")).toBeInTheDocument();
+  });
+
+  it("marks dynamic grouped steps as runtime templates", () => {
+    render(
+      <PhaseGraph
+        ariaLabel="workflow graph"
+        phases={[{
+          name: "verify",
+          kind: "k8s_job",
+          jobs: [{
+            id: "verify",
+            steps: [
+              {
+                slug: "gather-evidence",
+                title: "Gather evidence",
+                type: "agent",
+                group: "test-cases",
+                group_title: "Test cases generated at runtime",
+                dynamic_group: { max_items: 10, item_label: "test case" },
+              },
+              {
+                slug: "judge-evidence",
+                title: "Judge evidence",
+                type: "agent",
+                group: "test-cases",
+                group_title: "Test cases generated at runtime",
+                dynamic_group: { max_items: 10, item_label: "test case" },
+              },
+            ],
+          }],
+        }]}
+      />,
+    );
+
+    expect(screen.getByText("Test cases generated at runtime")).toBeInTheDocument();
+    expect(screen.getByText("0-10 test cases at runtime")).toBeInTheDocument();
+    expect(screen.getAllByText("template")).toHaveLength(2);
+  });
+
   it("reserves routing space for recycle arrows that return to the first phase", async () => {
     const { container } = render(
       <PhaseGraph
@@ -59,7 +124,7 @@ describe("PhaseGraph", () => {
     expect(lastSegment(touchpointRecyclePath)).toMatchObject({ from: { y: pathEnd(touchpointRecyclePath).y } });
     expect(pathEnd(touchpointRecyclePath).y).toBeLessThan(pathEnd(evidenceRecyclePath).y);
     expect(container.querySelector(".dag-rf-surface")).toHaveStyle({
-      width: "1768px",
+      width: "1508px",
       height: "286px",
     });
   });

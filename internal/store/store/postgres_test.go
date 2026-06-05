@@ -2,7 +2,6 @@ package store
 
 import (
 	"encoding/json"
-	"fmt"
 	"strings"
 	"testing"
 
@@ -11,15 +10,20 @@ import (
 )
 
 func verificationCaseJobsForStoreTest() []server.NativeJobSpec {
-	jobs := make([]server.NativeJobSpec, 0, server.VerificationCaseJobCount)
-	for i := 1; i <= server.VerificationCaseJobCount; i++ {
-		timeout := 300
-		jobs = append(jobs, server.NativeJobSpec{
-			ID:             fmt.Sprintf("%s%02d", server.VerificationCaseJobPrefix, i),
-			TimeoutSeconds: &timeout,
-		})
-	}
-	return jobs
+	timeout := 1800
+	groupTitle := "Test cases generated at runtime"
+	dynamicGroup := &server.StepDynamicGroup{MaxItems: 10, ItemLabel: "test case"}
+	return []server.NativeJobSpec{{
+		ID:             "verify",
+		Managed:        true,
+		TimeoutSeconds: &timeout,
+		Steps: []server.NativeStepSpec{
+			{Slug: "author-test-plan", Run: "echo plan"},
+			{Slug: "gather-evidence", Run: "echo gather", Group: "test-cases", GroupTitle: &groupTitle, DynamicGroup: dynamicGroup},
+			{Slug: "judge-evidence", Run: "echo judge", Group: "test-cases", GroupTitle: &groupTitle, DynamicGroup: dynamicGroup},
+			{Slug: "aggregate-verification", Run: "echo aggregate"},
+		},
+	}}
 }
 
 func TestNativeEventAttemptIndexAcceptsExplicitOrMetadataValue(t *testing.T) {
@@ -695,6 +699,31 @@ func TestNormalizeWorkflowRegisterForProjectDefaultsToK8sJob(t *testing.T) {
 	}
 }
 
+func TestWorkflowDocPersistsCanonicalVerificationConstraints(t *testing.T) {
+	req := server.WorkflowRegister{
+		Project: "glimmung",
+		Name:    "agent-run",
+		Phases: []server.PhaseSpec{
+			{Name: "prepare", Outputs: []string{server.IssueContractOutputKey}, Jobs: []server.NativeJobSpec{{ID: server.IssueContractJobID}}},
+			{Name: "test", Verify: true, DependsOn: []string{"prepare"}, Jobs: verificationCaseJobsForStoreTest()},
+			{Name: "cleanup_early", RunOn: server.PhaseRunOnAlways, Purpose: server.PhasePurposeTeardown, SkipWhenPreserveTestEnv: true, DependsOn: []string{"test"}, Jobs: []server.NativeJobSpec{{ID: "cleanup-early"}}},
+			{Name: "touchpoint", RunOn: server.PhaseRunOnSuccess, Purpose: server.PhasePurposeReviewTouchpoint, DependsOn: []string{"cleanup_early"}, Jobs: []server.NativeJobSpec{{ID: "pr-touchpoint", Primitive: "pr_touchpoint"}}},
+			{Name: "touchpoint_gate", Kind: "k8s_job", Purpose: server.PhasePurposeReviewGate, DependsOn: []string{"touchpoint"}, Jobs: []server.NativeJobSpec{{ID: "pr-merge", Primitive: "pr_merge"}}},
+			{Name: "cleanup_final", RunOn: server.PhaseRunOnAlways, Purpose: server.PhasePurposeTeardown, DependsOn: []string{"touchpoint_gate"}, Jobs: []server.NativeJobSpec{{ID: "cleanup-final"}}},
+		},
+	}
+	normalizeWorkflowRegister(&req)
+
+	doc := workflowDocFromRegister(req, "2026-06-05T00:00:00Z")
+	if got := doc.Constraints.Verification.Shape; got != server.VerificationShapeDynamicStepGroup {
+		t.Fatalf("constraint shape=%q, want %q", got, server.VerificationShapeDynamicStepGroup)
+	}
+	roundTrip := workflowRegisterFromDoc(doc)
+	if got := roundTrip.Constraints.Verification.Shape; got != server.VerificationShapeDynamicStepGroup {
+		t.Fatalf("round trip constraint shape=%q, want %q", got, server.VerificationShapeDynamicStepGroup)
+	}
+}
+
 func TestNativeJobDocRoundTripsAgentStepConfig(t *testing.T) {
 	job := server.NativeJobSpec{
 		ID:      "implement",
@@ -713,6 +742,27 @@ func TestNativeJobDocRoundTripsAgentStepConfig(t *testing.T) {
 	got := roundTrip.Steps[0].Agent
 	if got.Slot != "implementation" || got.Prompt != "ship it" || got.PromptFile != ".glimmung/prompts/implement.md" {
 		t.Fatalf("agent step=%#v", got)
+	}
+}
+
+func TestNativeJobDocRoundTripsStepGroupMetadata(t *testing.T) {
+	job := server.NativeJobSpec{
+		ID: "verify-ui",
+		Steps: []server.NativeStepSpec{{
+			Slug:       "capture-screenshot",
+			Title:      stringPtr("Capture screenshot"),
+			Group:      "sweep-01",
+			GroupTitle: stringPtr("sweep 01"),
+		}},
+	}
+
+	roundTrip := jobFromDoc(nativeJobDocFromSpec(job))
+	if len(roundTrip.Steps) != 1 {
+		t.Fatalf("round trip step=%#v", roundTrip.Steps)
+	}
+	got := roundTrip.Steps[0]
+	if got.Group != "sweep-01" || got.GroupTitle == nil || *got.GroupTitle != "sweep 01" {
+		t.Fatalf("step group metadata=%#v", got)
 	}
 }
 
