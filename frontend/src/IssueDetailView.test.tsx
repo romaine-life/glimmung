@@ -789,6 +789,7 @@ describe("IssueDetailView run execution graph", () => {
     const jobLabel = await screen.findByText("Environment prep");
     const jobButton = jobLabel.closest("button");
     if (!jobButton) throw new Error("missing graph job button");
+    expect(within(jobButton).queryByText("Build validation image")).not.toBeInTheDocument();
     await userEvent.click(jobButton);
 
     await waitFor(() => {
@@ -801,6 +802,7 @@ describe("IssueDetailView run execution graph", () => {
     expect(runPanelMeta).not.toBeNull();
     expect(within(runPanelMeta as HTMLElement).queryByText(/^attempt$/)).not.toBeInTheDocument();
     expect(await screen.findByText(/cloning repo/)).toBeInTheDocument();
+    expect(within(screen.getByLabelText("native job steps")).getByRole("button", { name: /Build validation image/ })).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("button", { name: /Build validation image/ }));
     await waitFor(() => {

@@ -2262,7 +2262,6 @@ function ProjectionPipelineDag({
           name: job.name ?? job.id,
           state: job.state,
           reason: job.reason,
-          steps: job.steps,
           selection: { phase: phase.name, job: job.id },
         }))
       : (graphPhase.jobs && graphPhase.jobs.length > 0
@@ -2273,7 +2272,6 @@ function ProjectionPipelineDag({
           name: job.name ?? job.id,
           state: phase?.state ?? "not_started",
           reason: phase?.reason ?? null,
-          steps: job.steps ?? [],
           selection: { phase: graphPhase.name, job: job.id },
         }));
     return (
@@ -2296,7 +2294,6 @@ function ProjectionPipelineDag({
                 <span className={`pill ${graphStatePill(job.state)}`}>{formatGraphState(job.state)}</span>
               </div>
               {job.reason && <div className="dag-node-meta dim mono">{job.reason}</div>}
-              <RunDagStepGroups steps={job.steps} />
             </button>
           );
         })}
@@ -2314,84 +2311,6 @@ function ProjectionPipelineDag({
         entryArrows={graphModel.entryArrows}
         recycleArrows={graphModel.recycleArrows}
       />
-    </div>
-  );
-}
-
-type GroupedDisplayStep = {
-  slug: string;
-  title?: string | null;
-  state?: string | null;
-  type?: string | null;
-  group?: string | null;
-  group_title?: string | null;
-  dynamic_group?: StepDynamicGroup | null;
-};
-
-type DisplayStepGroup = {
-  key: string;
-  title: string;
-  steps: GroupedDisplayStep[];
-  dynamicGroup?: StepDynamicGroup | null;
-};
-
-function displayStepGroupKey(step: GroupedDisplayStep): string {
-  return step.group?.trim() || "";
-}
-
-function displayStepGroupTitle(step: GroupedDisplayStep): string {
-  return step.group_title?.trim() || step.group?.trim() || "steps";
-}
-
-function groupedDisplaySteps(steps: GroupedDisplayStep[] | undefined): DisplayStepGroup[] {
-  const out: DisplayStepGroup[] = [];
-  for (const step of steps ?? []) {
-    const groupKey = displayStepGroupKey(step);
-    const key = groupKey || `__step:${step.slug}`;
-    const last = out[out.length - 1];
-    if (last && last.key === key) {
-      last.steps.push(step);
-      continue;
-    }
-    out.push({
-      key,
-      title: groupKey ? displayStepGroupTitle(step) : "",
-      steps: [step],
-      dynamicGroup: step.dynamic_group ?? null,
-    });
-  }
-  return out;
-}
-
-function dynamicDisplayGroupSummary(dynamicGroup: StepDynamicGroup | null | undefined): string {
-  if (!dynamicGroup?.max_items) return "";
-  const itemLabel = dynamicGroup.item_label?.trim() || "item";
-  return `0-${dynamicGroup.max_items} ${itemLabel}${dynamicGroup.max_items === 1 ? "" : "s"} at runtime`;
-}
-
-function RunDagStepGroups({ steps }: { steps?: GroupedDisplayStep[] }) {
-  const groups = groupedDisplaySteps(steps);
-  if (groups.length === 0) return null;
-  return (
-    <div className="dag-step-groups run-dag-step-groups" aria-label="job steps">
-      {groups.map((group) => (
-        <div className={`dag-step-group${group.title ? "" : " ungrouped"}`} key={group.key}>
-          {group.title && (
-            <div className="dag-step-group-title">
-              <span>{group.title}</span>
-              {group.dynamicGroup && <small>{dynamicDisplayGroupSummary(group.dynamicGroup)}</small>}
-            </div>
-          )}
-          <div className="dag-step-group-steps">
-            {group.steps.map((step) => (
-              <div className="dag-step-item" key={step.slug}>
-                <span>{step.title || step.slug}</span>
-                <small>{step.dynamic_group ? "template" : formatGraphState(step.state || "not_started")}</small>
-              </div>
-            ))}
-          </div>
-        </div>
-      ))}
     </div>
   );
 }
