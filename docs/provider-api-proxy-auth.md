@@ -6,7 +6,9 @@ The durable shape is one Glimmung-owned proxy deployment per provider in the
 native runner namespace:
 
 - `claude-api-proxy` fronts `api.anthropic.com`.
-- `codex-api-proxy` fronts `chatgpt.com`.
+- `codex-api-proxy` fronts `api.openai.com` for current Codex Responses API
+  traffic and still accepts `chatgpt.com` for older Codex ChatGPT-backed
+  calls.
 - Native jobs write placeholder provider credentials with
   `managed-by-glimmung`.
 - Native jobs route provider hostnames to the proxy Service ClusterIPs through
