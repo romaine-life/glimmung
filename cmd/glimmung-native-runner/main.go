@@ -101,6 +101,7 @@ type nativeRunner struct {
 	seq              int
 	outputs          map[string]string
 	completion       completionMetadata
+	caseCompletions  []dynamicCaseCompletion
 	githubTokenCache *githubTokenResult
 	mu               sync.Mutex
 	costUSD          float64
@@ -145,6 +146,13 @@ type evidenceArtifact struct {
 	ContentType  string `json:"content_type,omitempty"`
 	SizeBytes    int64  `json:"size_bytes,omitempty"`
 	DurationMS   int    `json:"duration_ms,omitempty"`
+}
+
+type dynamicCaseCompletion struct {
+	Index        int
+	Label        string
+	Verification map[string]any
+	Evidence     []evidenceArtifact
 }
 
 type githubTokenResult struct {
@@ -589,7 +597,7 @@ func (r *nativeRunner) runStep(ctx context.Context, step stepSpec) error {
 	if outputErr == nil {
 		outputErr = r.publishOutputs(ctx, slug, outputs)
 	}
-	if completionErr := r.collectCompletionMetadata(completionFile); outputErr == nil && completionErr != nil {
+	if completionErr := r.collectCompletionMetadata(completionFile, step); outputErr == nil && completionErr != nil {
 		outputErr = completionErr
 	}
 	if execErr != nil {
@@ -1108,6 +1116,12 @@ func (r *nativeRunner) complete(ctx context.Context, conclusion, summary string)
 	if r.cfg.CompletedURL == "" {
 		return nil
 	}
+	verification := r.completion.Verification
+	evidence := r.completion.Evidence
+	if len(r.caseCompletions) > 0 {
+		verification = aggregateDynamicCaseVerification(r.caseCompletions)
+		evidence = aggregateDynamicCaseEvidence(r.caseCompletions, evidence)
+	}
 	req := completedRequest{
 		JobID:        r.cfg.JobID,
 		Conclusion:   conclusion,
@@ -1115,11 +1129,11 @@ func (r *nativeRunner) complete(ctx context.Context, conclusion, summary string)
 		CostUSD:      r.observedCostUSD(),
 		Outputs:      r.outputs,
 	}
-	if len(r.completion.Verification) > 0 {
-		req.Verification = r.completion.Verification
+	if len(verification) > 0 {
+		req.Verification = verification
 	}
-	if len(r.completion.Evidence) > 0 {
-		req.Evidence = r.completion.Evidence
+	if len(evidence) > 0 {
+		req.Evidence = evidence
 	}
 	if strings.TrimSpace(r.completion.ScreenshotsMarkdown) != "" {
 		req.ScreenshotsMarkdown = &r.completion.ScreenshotsMarkdown
@@ -1174,7 +1188,7 @@ func (r *nativeRunner) observedCostUSD() float64 {
 	return r.costUSD
 }
 
-func (r *nativeRunner) collectCompletionMetadata(path string) error {
+func (r *nativeRunner) collectCompletionMetadata(path string, step stepSpec) error {
 	raw, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
@@ -1190,6 +1204,16 @@ func (r *nativeRunner) collectCompletionMetadata(path string) error {
 	if err := json.Unmarshal(raw, &metadata); err != nil {
 		return err
 	}
+	if len(metadata.Verification) > 0 && strings.TrimSpace(step.Env["GLIMMUNG_DYNAMIC_CASE_INDEX"]) != "" {
+		index, _ := strconv.Atoi(strings.TrimSpace(step.Env["GLIMMUNG_DYNAMIC_CASE_INDEX"]))
+		r.caseCompletions = append(r.caseCompletions, dynamicCaseCompletion{
+			Index:        index,
+			Label:        strings.TrimSpace(step.Env["GLIMMUNG_DYNAMIC_CASE_LABEL"]),
+			Verification: metadata.Verification,
+			Evidence:     metadata.Evidence,
+		})
+		return nil
+	}
 	if len(metadata.Verification) > 0 {
 		r.completion.Verification = metadata.Verification
 	}
@@ -1203,6 +1227,157 @@ func (r *nativeRunner) collectCompletionMetadata(path string) error {
 		r.completion.SummaryMarkdown = metadata.SummaryMarkdown
 	}
 	return nil
+}
+
+func aggregateDynamicCaseVerification(cases []dynamicCaseCompletion) map[string]any {
+	status := "pass"
+	reasons := []string{}
+	evidenceRefs := []string{}
+	evidence := []evidenceArtifact{}
+	for _, tc := range cases {
+		caseStatus := strings.TrimSpace(fmt.Sprint(tc.Verification["status"]))
+		switch caseStatus {
+		case "error":
+			status = "error"
+		case "fail":
+			if status != "error" {
+				status = "fail"
+			}
+		case "", "pass":
+		default:
+			if status == "pass" {
+				status = "error"
+			}
+			reasons = append(reasons, fmt.Sprintf("%s: unknown verification status %q", dynamicCaseCompletionLabel(tc), caseStatus))
+		}
+		for _, reason := range stringSliceFromAny(tc.Verification["reasons"]) {
+			if strings.TrimSpace(reason) == "" {
+				continue
+			}
+			reasons = append(reasons, fmt.Sprintf("%s: %s", dynamicCaseCompletionLabel(tc), strings.TrimSpace(reason)))
+		}
+		evidenceRefs = appendMissingStrings(evidenceRefs, stringSliceFromAny(tc.Verification["evidence_refs"])...)
+		evidence = appendEvidenceArtifacts(evidence, evidenceArtifactsFromAny(tc.Verification["evidence"])...)
+		evidence = appendEvidenceArtifacts(evidence, tc.Evidence...)
+	}
+	out := map[string]any{
+		"status": status,
+		"cases":  dynamicCaseVerificationSummaries(cases),
+	}
+	if len(reasons) > 0 {
+		out["reasons"] = reasons
+	}
+	if len(evidenceRefs) > 0 {
+		out["evidence_refs"] = evidenceRefs
+	}
+	if len(evidence) > 0 {
+		out["evidence"] = evidence
+	}
+	return out
+}
+
+func aggregateDynamicCaseEvidence(cases []dynamicCaseCompletion, existing []evidenceArtifact) []evidenceArtifact {
+	out := appendEvidenceArtifacts(nil, existing...)
+	for _, tc := range cases {
+		out = appendEvidenceArtifacts(out, tc.Evidence...)
+		out = appendEvidenceArtifacts(out, evidenceArtifactsFromAny(tc.Verification["evidence"])...)
+	}
+	return out
+}
+
+func dynamicCaseVerificationSummaries(cases []dynamicCaseCompletion) []map[string]any {
+	out := make([]map[string]any, 0, len(cases))
+	for _, tc := range cases {
+		item := map[string]any{
+			"index":  tc.Index,
+			"label":  dynamicCaseCompletionLabel(tc),
+			"status": strings.TrimSpace(fmt.Sprint(tc.Verification["status"])),
+		}
+		out = append(out, item)
+	}
+	return out
+}
+
+func dynamicCaseCompletionLabel(tc dynamicCaseCompletion) string {
+	if strings.TrimSpace(tc.Label) != "" {
+		return strings.TrimSpace(tc.Label)
+	}
+	if tc.Index > 0 {
+		return fmt.Sprintf("case %02d", tc.Index)
+	}
+	return "case"
+}
+
+func stringSliceFromAny(value any) []string {
+	switch typed := value.(type) {
+	case []string:
+		return typed
+	case []any:
+		out := make([]string, 0, len(typed))
+		for _, item := range typed {
+			if s := strings.TrimSpace(fmt.Sprint(item)); s != "" && s != "<nil>" {
+				out = append(out, s)
+			}
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
+func evidenceArtifactsFromAny(value any) []evidenceArtifact {
+	raw, err := json.Marshal(value)
+	if err != nil || len(raw) == 0 || string(raw) == "null" {
+		return nil
+	}
+	var out []evidenceArtifact
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil
+	}
+	return out
+}
+
+func appendMissingStrings(out []string, values ...string) []string {
+	seen := map[string]bool{}
+	for _, value := range out {
+		seen[value] = true
+	}
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		out = append(out, value)
+	}
+	return out
+}
+
+func appendEvidenceArtifacts(out []evidenceArtifact, values ...evidenceArtifact) []evidenceArtifact {
+	seen := map[string]bool{}
+	for _, item := range out {
+		key := evidenceArtifactKey(item)
+		if key != "" {
+			seen[key] = true
+		}
+	}
+	for _, item := range values {
+		key := evidenceArtifactKey(item)
+		if key == "" || seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, item)
+	}
+	return out
+}
+
+func evidenceArtifactKey(item evidenceArtifact) string {
+	ref := firstNonEmpty(strings.TrimSpace(item.Ref), strings.TrimSpace(item.ArtifactPath), strings.TrimSpace(item.URL))
+	if ref == "" {
+		return ""
+	}
+	return strings.TrimSpace(item.Kind) + "\x00" + ref
 }
 
 func (r *nativeRunner) postJSON(ctx context.Context, url string, body any, out any) error {

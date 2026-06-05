@@ -281,6 +281,81 @@ func TestNativeRunnerHaltsRemainingStepsOnAbortReason(t *testing.T) {
 	}
 }
 
+func TestNativeRunnerAggregatesDynamicCaseVerification(t *testing.T) {
+	var completion completedRequest
+	var mu sync.Mutex
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/events":
+			_ = json.NewEncoder(w).Encode(map[string]any{"accepted": true})
+		case "/completed":
+			mu.Lock()
+			_ = json.NewDecoder(r.Body).Decode(&completion)
+			mu.Unlock()
+			_ = json.NewEncoder(w).Encode(map[string]any{"decision": "done"})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	workspace := t.TempDir()
+	r := &nativeRunner{
+		cfg: runnerConfig{
+			JobID:        "verify",
+			EventsURL:    server.URL + "/events",
+			CompletedURL: server.URL + "/completed",
+			Workspace:    workspace,
+			Job: jobSpec{
+				WorkingDirectory: workspace,
+				Shell:            "sh",
+				Steps: []stepSpec{
+					{
+						Slug: "author-test-plan",
+						Type: "run",
+						Run:  `printf 'test_cases_json=[{"label":"case one"},{"label":"case two"}]\n' >> "$GLIMMUNG_OUTPUT_FILE"`,
+					},
+					{
+						Slug:       "emit",
+						Type:       "run",
+						Run:        `if [ "$GLIMMUNG_DYNAMIC_CASE_INDEX" = "1" ]; then printf '{"verification":{"status":"pass","evidence_refs":["blob://artifacts/one.png"]}}' > "$GLIMMUNG_COMPLETION_FILE"; else printf '{"verification":{"status":"fail","reasons":["missing video"],"evidence_refs":["blob://artifacts/two.webm"]}}' > "$GLIMMUNG_COMPLETION_FILE"; fi`,
+						Group:      "test-cases",
+						GroupTitle: "Test cases generated at runtime",
+						DynamicGroup: &dynamicGroupSpec{
+							MaxItems:  10,
+							ItemLabel: "test case",
+						},
+					},
+				},
+			},
+		},
+		client:  server.Client(),
+		outputs: map[string]string{},
+	}
+
+	if err := r.run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	mu.Lock()
+	got := completion
+	mu.Unlock()
+	if got.Verification["status"] != "fail" {
+		t.Fatalf("verification=%#v, want aggregate fail", got.Verification)
+	}
+	reasons := got.Verification["reasons"].([]any)
+	if len(reasons) != 1 || !strings.Contains(reasons[0].(string), "case two: missing video") {
+		t.Fatalf("reasons=%#v", reasons)
+	}
+	refs := got.Verification["evidence_refs"].([]any)
+	if len(refs) != 2 || refs[0] != "blob://artifacts/one.png" || refs[1] != "blob://artifacts/two.webm" {
+		t.Fatalf("evidence_refs=%#v", refs)
+	}
+	cases := got.Verification["cases"].([]any)
+	if len(cases) != 2 {
+		t.Fatalf("cases=%#v", cases)
+	}
+}
+
 func sawEvent(events []nativeEventRequest, event string) bool {
 	for _, candidate := range events {
 		if candidate.Event == event {
