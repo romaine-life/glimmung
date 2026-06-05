@@ -230,6 +230,7 @@ lifecycle transition responds to an explicit event:
 | TTL changed | `PATCH /v1/leases/ttl` | updates the claimed lease document and re-arms this replica's timer from the durable deadline |
 | extend | `POST /v1/test-slots/extend` | validates Tank-session ownership, adds `extend_seconds` to the claimed lease TTL, and uses the durable TTL update path |
 | return / callback release / admin cancel | `POST /v1/test-slots/return`, `POST /v1/lease-callbacks/.../release`, `POST /v1/leases/cancel` | stops the lease's TTL timer, starts cleanup goroutine |
+| orphaned error-slot cleanup retry | `POST /v1/test-slots/return` addressed by `slot_name`/`slot_index` for a slot in `error`+`cleanup_error` with **no** live lease | synthesizes a warmup lease, claims `error→cleaning`, starts cleanup goroutine with `releaseLease=false`; the request-time counterpart of the startup sweep's orphan arm. Ineligible slots (unknown, healthy, stale `cleaning`, or activation-only `error`) keep the existing `404` |
 | TTL deadline | per-lease `time.AfterFunc` fires | starts cleanup goroutine with source `lease.ttl_expiry` |
 | activation finished | inline at end of activation goroutine | one-shot installer cleanup, mark slot `running` |
 | cleanup finished | inline at end of cleanup goroutine | release lease, mark slot `provisioned` |
@@ -309,7 +310,23 @@ The cancel-from-cleanup path is observable via
 the dead-end sense. A slot whose previous cleanup attempt landed it in
 error with `cleanup_error` set converges to `provisioned` when a new
 cleanup trigger fires: a follow-up `returnTestSlot`, callback release,
-TTL timer, or the startup recovery sweep. K8s deletes underneath are
+TTL timer, or the startup recovery sweep.
+
+`returnTestSlot` re-drives cleanup for an error+`cleanup_error` slot in
+two addressing modes. When a live (`claimed`) lease still holds the slot,
+the lease-addressed return retries cleanup with `releaseLease=true`. When
+the slot is **orphaned** — `error`+`cleanup_error` with no live lease, the
+shape a transient cleanup-dependency outage leaves behind (for example the
+`auth.romaine.life` token exchange being briefly unreachable during a node
+upgrade) — a return addressed by `slot_name`/`slot_index` synthesizes a
+warmup lease and retries with `releaseLease=false`, identical to the
+startup sweep's orphan arm. This is the request-time counterpart of that
+sweep: without it, an orphaned error slot has no request-addressable
+trigger and stays wedged until the next process restart. Scope is
+deliberately narrow — only `error`+`cleanup_error`. A stale `cleaning`
+orphan stays a startup-sweep responsibility (it *resumes* an in-flight
+cleanup rather than re-claiming it), and an activation-only `error` without
+`cleanup_error` stays on the preliminary repair path. K8s deletes underneath are
 idempotent, so the retry either succeeds or re-errors with new
 diagnostic context appended to `slot_history`.
 
@@ -330,7 +347,10 @@ replica/caller won the race), not when it's in `error`.
 - **No claimed lease + slot in error + `cleanup_error` set.** The slot
   is orphaned (lease released or never recovered). Recovery re-fires
   cleanup with `releaseLease=false` via a synthetic warmup lease so the
-  cleanup pathway is uniform.
+  cleanup pathway is uniform. This same case is reachable at runtime
+  (without a process restart) via `returnTestSlot` addressed by
+  `slot_name`/`slot_index`; the startup sweep is the cold-start backstop,
+  not the only trigger.
 
 Activation-error slots without a `cleanup_error` are intentionally not
 re-fired automatically: the activation-error path already runs inline
@@ -535,7 +555,12 @@ The slot system is not complete until all of these are true:
   retry via a follow-up `returnTestSlot` against an error slot is also
   supported and goes through the same `error → cleaning` state-machine
   transition; the API-level retry exists so a flaky cleanup doesn't
-  require a process restart. Preliminary-resource errors without
+  require a process restart. This holds whether the slot still has a live
+  lease (lease-addressed return) or is orphaned with no lease (return
+  addressed by `slot_name`/`slot_index`, which synthesizes a warmup lease
+  and retries with `releaseLease=false`), so a transient cleanup-dependency
+  outage that orphans a slot does not strand capacity until the next
+  process restart. Preliminary-resource errors without
   `cleanup_error` may be retried through the admin repair endpoint, which
   goes through `error → provisioning`. The last-resort capacity-removal
   path for a genuinely stuck cleanup-error slot remains decreasing queue size.

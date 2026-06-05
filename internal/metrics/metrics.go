@@ -344,7 +344,7 @@ func RecordTestSlotActivationCancelled(cause string) {
 var testSlotCleanupClaimTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "glimmung_test_slot_cleanup_claim_total",
-		Help: "Outcomes of the etag-CAS that transitions a slot to `cleaning`, labelled by source (return, callback_release, ttl_expiry, recovery) and outcome (granted, lost_race, error). Granted means this caller won the claim and is running cleanup; lost_race means another replica got there first (multi-replica safety); error is a real store failure.",
+		Help: "Outcomes of the etag-CAS that transitions a slot to `cleaning`, labelled by source (return, callback_release, ttl_expiry, recovery, orphan_return) and outcome (granted, lost_race, error). orphan_return is the request-time cleanup retry for a slot orphaned in error+cleanup_error with no live lease. Granted means this caller won the claim and is running cleanup; lost_race means another replica got there first (multi-replica safety); error is a real store failure.",
 	},
 	[]string{"source", "outcome"},
 )

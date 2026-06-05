@@ -190,7 +190,7 @@ func claimSlotPreliminaryRepair(ctx context.Context, store ReadStore, project st
 			return repairProvisioning(slot, now)
 		case SlotStateError:
 			if slot.CleanupError != nil && strings.TrimSpace(*slot.CleanupError) != "" {
-				return slot, fmt.Errorf("%w: slot %s has a cleanup error; retry return or cleanup first", ErrConflict, slotName)
+				return slot, fmt.Errorf("%w: slot %s has a pending cleanup error; repair is preliminary-only — re-drive runtime cleanup by calling return for this slot name", ErrConflict, slotName)
 			}
 			return repairProvisioning(slot, now)
 		case SlotStateActivating, SlotStateRunning, SlotStateCleaning:
