@@ -37,9 +37,8 @@ export function Overview() {
       <div className="page-head">
         <div>
           <h1 className="display">Overview</h1>
-          <div className="sub">What needs you across {projects.map((p) => p.name).join(" · ") || "your projects"}.</div>
+          <div className="sub">From a thousand worlds they came, each with a craft to contribute.</div>
         </div>
-        <div className="epigraph">“From a thousand worlds they came, each with a craft to contribute.”</div>
       </div>
 
       <div className="kpis">
