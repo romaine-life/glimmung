@@ -714,10 +714,19 @@ func validateDynamicVerificationJob(workflowName string, phase PhaseSpec) error 
 	blockGroup := ""
 	blockMaxItems := 0
 	blockCount := 0
+	blockStarted := false
+	blockClosed := false
 	for _, step := range job.Steps {
 		if step.DynamicGroup == nil {
+			if blockStarted {
+				blockClosed = true
+			}
 			continue
 		}
+		if blockClosed {
+			return ValidationError{Message: fmt.Sprintf("workflow %s verification job %q dynamic test-case group %q must be one contiguous step block", workflowName, job.ID, blockGroup)}
+		}
+		blockStarted = true
 		blockCount++
 		group := strings.TrimSpace(step.Group)
 		if group == "" {

@@ -2845,6 +2845,46 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
+func intFromAny(value any) int {
+	switch v := value.(type) {
+	case int:
+		return v
+	case int64:
+		return int(v)
+	case float64:
+		return int(v)
+	case json.Number:
+		parsed, _ := v.Int64()
+		return int(parsed)
+	case string:
+		parsed, _ := strconv.Atoi(strings.TrimSpace(v))
+		return parsed
+	default:
+		return 0
+	}
+}
+
+func safeStepSlug(value string) string {
+	var b strings.Builder
+	lastDash := false
+	for _, r := range strings.ToLower(strings.TrimSpace(value)) {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+			lastDash = false
+			continue
+		}
+		if !lastDash {
+			b.WriteByte('-')
+			lastDash = true
+		}
+	}
+	slug := strings.Trim(b.String(), "-")
+	if slug == "" {
+		return "dynamic-group"
+	}
+	return slug
+}
+
 func mapOrEmpty(values map[string]any) map[string]any {
 	if values == nil {
 		return map[string]any{}
@@ -6705,6 +6745,15 @@ func applyNativeEventToExecutionsRaw(raw map[string]any, attempt attemptDoc, eve
 				delete(job, "reason")
 			}
 			steps, _ := job["steps"].([]any)
+			if event.Event == "dynamic_group_expanded" {
+				steps = applyDynamicGroupExpandedToSteps(steps, event, now)
+				job["steps"] = steps
+				jobs[j] = job
+				break
+			}
+			if event.StepSlug != "" && event.Event != "log" {
+				steps = ensureNativeEventStep(steps, event, now)
+			}
 			for k, stepValue := range steps {
 				step, ok := stepValue.(map[string]any)
 				if !ok || event.StepSlug == "" || stringValue(step["slug"]) != event.StepSlug {
@@ -6763,6 +6812,62 @@ func applyNativeEventToExecutionsRaw(raw map[string]any, attempt attemptDoc, eve
 		break
 	}
 	raw["phase_executions"] = phases
+}
+
+func applyDynamicGroupExpandedToSteps(steps []any, event nativeEventDoc, now string) []any {
+	group := strings.TrimSpace(stringValue(event.Metadata["group"]))
+	if group == "" {
+		return steps
+	}
+	out := make([]any, 0, len(steps)+1)
+	for _, stepValue := range steps {
+		step, ok := stepValue.(map[string]any)
+		if !ok {
+			out = append(out, stepValue)
+			continue
+		}
+		if strings.TrimSpace(stringValue(step["group"])) == group && step["dynamic_group"] != nil {
+			continue
+		}
+		out = append(out, step)
+	}
+	if intFromAny(event.Metadata["item_count"]) == 0 {
+		out = append(out, map[string]any{
+			"slug":         safeStepSlug(group) + "-no-cases",
+			"title":        "no test cases generated",
+			"state":        "skipped",
+			"group":        group,
+			"group_title":  firstNonEmpty(stringValue(event.Metadata["group_title"]), group),
+			"created_at":   now,
+			"completed_at": now,
+		})
+	}
+	return out
+}
+
+func ensureNativeEventStep(steps []any, event nativeEventDoc, now string) []any {
+	for _, stepValue := range steps {
+		step, ok := stepValue.(map[string]any)
+		if ok && stringValue(step["slug"]) == event.StepSlug {
+			return steps
+		}
+	}
+	step := map[string]any{
+		"slug":       event.StepSlug,
+		"title":      firstNonEmpty(stringValue(event.Metadata["title"]), event.StepSlug),
+		"state":      "not_started",
+		"created_at": now,
+	}
+	if group := strings.TrimSpace(stringValue(event.Metadata["group"])); group != "" {
+		step["group"] = group
+	}
+	if title := strings.TrimSpace(stringValue(event.Metadata["group_title"])); title != "" {
+		step["group_title"] = title
+	}
+	if dynamicGroup, ok := event.Metadata["dynamic_group"]; ok && dynamicGroup != nil {
+		step["dynamic_group"] = dynamicGroup
+	}
+	return append(steps, step)
 }
 
 func nativeAbortReason(event nativeEventDoc) string {

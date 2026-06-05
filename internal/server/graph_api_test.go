@@ -866,6 +866,65 @@ func TestApplyNativeEventsResetsUnobservedFailedSteps(t *testing.T) {
 	}
 }
 
+func TestApplyNativeEventsProjectsDynamicGroupConcreteSteps(t *testing.T) {
+	run := RunProjectionRun{
+		Phases: []RunProjectionPhase{{
+			Name: "llm-verify",
+			Kind: "k8s_job",
+			Attempts: []RunProjectionAttempt{{
+				AttemptIndex: 0,
+				Phase:        "llm-verify",
+				PhaseKind:    "k8s_job",
+			}},
+			Jobs: []RunProjectionJob{{
+				ID:    "verify",
+				State: "active",
+				Steps: []RunProjectionStep{
+					{Slug: "author-test-plan", State: "succeeded"},
+					{Slug: "gather-evidence", State: "not_started", Group: "test-cases", GroupTitle: stringPtr("Test cases generated at runtime"), DynamicGroup: &StepDynamicGroup{MaxItems: 10, ItemLabel: "test case"}},
+					{Slug: "judge-evidence", State: "not_started", Group: "test-cases", GroupTitle: stringPtr("Test cases generated at runtime"), DynamicGroup: &StepDynamicGroup{MaxItems: 10, ItemLabel: "test case"}},
+				},
+			}},
+		}},
+	}
+	events := []NativeRunLogEvent{
+		{
+			AttemptIndex: 0,
+			Phase:        "llm-verify",
+			JobID:        "verify",
+			Seq:          10,
+			Event:        "dynamic_group_expanded",
+			Metadata: map[string]any{
+				"group":       "test-cases",
+				"group_title": "Test cases generated at runtime",
+				"item_count":  float64(1),
+			},
+		},
+		{
+			AttemptIndex: 0,
+			Phase:        "llm-verify",
+			JobID:        "verify",
+			Seq:          11,
+			Event:        "step_started",
+			StepSlug:     "gather-evidence-case-01",
+			Metadata: map[string]any{
+				"group":       "test-cases/case-01",
+				"group_title": "home page",
+			},
+		},
+	}
+
+	applyNativeEventsToProjectionRun(&run, events)
+
+	steps := run.Phases[0].Jobs[0].Steps
+	if len(steps) != 2 || steps[1].Slug != "gather-evidence-case-01" {
+		t.Fatalf("steps=%#v", steps)
+	}
+	if steps[1].State != "active" || steps[1].Group != "test-cases/case-01" || steps[1].GroupTitle == nil || *steps[1].GroupTitle != "home page" {
+		t.Fatalf("concrete step=%#v", steps[1])
+	}
+}
+
 func TestRunCycleGraphProjectionShowsLegacyAbortedDispatchTimeout(t *testing.T) {
 	issueNumber := 17
 	runNumber := 1
