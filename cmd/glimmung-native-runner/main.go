@@ -130,6 +130,20 @@ type completedRequest struct {
 	Outputs             map[string]string  `json:"outputs"`
 }
 
+type dynamicVerificationFailure struct {
+	Status string
+	Reason string
+}
+
+func (e dynamicVerificationFailure) Error() string {
+	status := firstNonEmpty(strings.TrimSpace(e.Status), "fail")
+	reason := strings.TrimSpace(e.Reason)
+	if reason == "" {
+		return "dynamic verification case reported status=" + status
+	}
+	return "dynamic verification case reported status=" + status + ": " + reason
+}
+
 type completionMetadata struct {
 	Verification        map[string]any     `json:"verification"`
 	Evidence            []evidenceArtifact `json:"evidence"`
@@ -383,6 +397,18 @@ func (r *nativeRunner) runDynamicStepBlock(ctx context.Context, block []stepSpec
 			step.Type = "run"
 		}
 		if err := r.runStep(ctx, step); err != nil {
+			var verificationFailure dynamicVerificationFailure
+			if errors.As(err, &verificationFailure) {
+				msg := fmt.Sprintf("dynamic group %q stopped after case %02d failed", group, caseIndex)
+				if postErr := r.postEvent(ctx, "dynamic_group_stopped", nil, msg, nil, map[string]any{
+					"group":             group,
+					"group_title":       groupTitle,
+					"failed_case_index": caseIndex,
+					"reason":            "case_failed",
+				}); postErr != nil {
+					return postErr
+				}
+			}
 			return err
 		}
 		if reason := r.requestedAbortReason(); reason != "" {
@@ -661,6 +687,20 @@ func (r *nativeRunner) runStep(ctx context.Context, step stepSpec) error {
 		msg := "step " + slug + " output error: " + outputErr.Error()
 		_ = r.postEvent(ctx, "step_failed", &slug, msg, &exit, stepEventMetadata(step))
 		return errors.New(msg)
+	}
+	if status, reason, failed := r.dynamicCaseFailureForStep(step); failed {
+		exit := 1
+		msg := fmt.Sprintf("verification case %s reported status=%s", dynamicCaseStepLabel(step), status)
+		if strings.TrimSpace(reason) != "" {
+			msg += ": " + strings.TrimSpace(reason)
+		}
+		metadata := stepEventMetadata(step)
+		metadata["verification_status"] = status
+		if strings.TrimSpace(reason) != "" {
+			metadata["verification_reason"] = strings.TrimSpace(reason)
+		}
+		_ = r.postEvent(ctx, "step_failed", &slug, msg, &exit, metadata)
+		return dynamicVerificationFailure{Status: status, Reason: reason}
 	}
 	if reason := r.requestedAbortReason(); reason != "" {
 		msg := fmt.Sprintf("step %q requested run abort: %s", slug, reason)
@@ -1281,8 +1321,21 @@ func (r *nativeRunner) collectCompletionMetadata(path string, step stepSpec) err
 }
 
 func (r *nativeRunner) dynamicCaseFailed(index int) bool {
+	_, _, failed := r.dynamicCaseFailure(index)
+	return failed
+}
+
+func (r *nativeRunner) dynamicCaseFailureForStep(step stepSpec) (string, string, bool) {
+	index, err := strconv.Atoi(strings.TrimSpace(step.Env["GLIMMUNG_DYNAMIC_CASE_INDEX"]))
+	if err != nil || index <= 0 {
+		return "", "", false
+	}
+	return r.dynamicCaseFailure(index)
+}
+
+func (r *nativeRunner) dynamicCaseFailure(index int) (string, string, bool) {
 	if index <= 0 {
-		return false
+		return "", "", false
 	}
 	for i := len(r.caseCompletions) - 1; i >= 0; i-- {
 		tc := r.caseCompletions[i]
@@ -1290,9 +1343,28 @@ func (r *nativeRunner) dynamicCaseFailed(index int) bool {
 			continue
 		}
 		status := strings.TrimSpace(fmt.Sprint(tc.Verification["status"]))
-		return status == "fail" || status == "error"
+		if status != "fail" && status != "error" {
+			return status, "", false
+		}
+		reasons := stringSliceFromAny(tc.Verification["reasons"])
+		reason := ""
+		for _, candidate := range reasons {
+			if strings.TrimSpace(candidate) != "" {
+				reason = strings.TrimSpace(candidate)
+				break
+			}
+		}
+		return status, reason, true
 	}
-	return false
+	return "", "", false
+}
+
+func dynamicCaseStepLabel(step stepSpec) string {
+	return firstNonEmpty(
+		strings.TrimSpace(step.Env["GLIMMUNG_DYNAMIC_CASE_LABEL"]),
+		strings.TrimSpace(step.Env["GLIMMUNG_DYNAMIC_CASE_INDEX"]),
+		"unknown",
+	)
 }
 
 func aggregateDynamicCaseVerification(cases []dynamicCaseCompletion) map[string]any {

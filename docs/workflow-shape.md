@@ -55,8 +55,7 @@ Glimmung-managed workflows must declare:
    evidence requirements decide what each verification run actually attempts,
    but the persisted constraint profile owns whether the phase is a legacy
    single verifier, a fixed set of bounded case jobs, or a sequential dynamic
-   test-case block. The phase produces one verification verdict for the
-   downstream evidence gate.
+   test-case block. The phase owns and produces one verification verdict.
 3. **cleanup** — at least one phase with `purpose: teardown` and
    `run_on: always` or `run_on: failure`. Runs on terminal cleanup paths and
    tears down the validation environment.
@@ -230,25 +229,25 @@ suite-level retry budget. A Playwright timeout, trigger failure, MCP/tool
 failure, missing artifact, or command timeout fails that case and should stop
 the sequential verifier promptly. The verification job writes the completion
 payload with `verification.status`, `reasons`, and evidence refs/artifacts.
-Glimmung stores the phase output `verification` for the downstream evidence
-gate.
+Glimmung stores the phase output `verification` for reports, terminal
+observations, and any later phase that needs to read the verdict.
 
 For `bounded_case_jobs`, every case job is named `verify-case-01` through
 `verify-case-10` and sets `timeout_seconds` no higher than 600 seconds. Each
 case runner selects the plan item at its 1-based index; unused slots write no-op
 case results. When the final registered case job completes, Glimmung aggregates
 case completions into the phase verdict and synthesizes the phase output
-`verification` for the downstream evidence gate.
+`verification`.
 
 The test-plan LLM owns what cases should prove. Glimmung owns the selected
 constraint profile, maximum case count, timeout bounds, aggregation, and
 visibility. If a plan needs more than ten required items, it is too broad for
 one run and must fail or narrow the plan.
 
-## The verify/gate boundary
+## Verification Boundary
 
-The valid shape for emitting a verdict at the testing boundary is bounded
-verification cases followed by a Glimmung-owned evidence gate:
+The valid shape for emitting a verdict at the testing boundary is a
+verification phase whose cases own their evidence verdicts directly:
 
 ```yaml
 - name: testing
@@ -266,34 +265,21 @@ verification cases followed by a Glimmung-owned evidence gate:
         - slug: judge-evidence
           group: test-cases
           dynamic_group: {max_items: 10, item_label: test case}
-
-- name: gate
-  kind: k8s_job
-  evidence_verification_gate: true
-  inputs:
-    verification: ${{ phases.testing.outputs.verification }}
-  recycle_policy:
-    max_attempts: 2
-    on: [verify_fail]
-    lands_at: testing
 ```
 
-The gate primitive is Glimmung-supplied: no project jobs, no consumer
-repository runner script. Glimmung owns the native gate image and command that
-reads the substituted verification input and exits by status. Workflow
-registration canonicalizes an evidence gate into the managed Glimmung runner
-job, so a project cannot accidentally make the gate an uninstrumented arbitrary
-container. Use the gate when you want enforcement to be its own visible box, its
-own recycle policy, or its own budget separately from the verifier.
+If a dynamic case emits `verification.status=fail` or `error`, Glimmung fails
+the owning case and the verification job; downstream phases depend on
+verification success rather than on a separate evidence-verification gate. The
+old `evidence_verification_gate` primitive remains readable for historical
+runs, but new workflow registrations reject it.
 
 ## PR touchpoint primitive
 
 Every Glimmung workflow ends in a human-reviewed PR — there is no opt-out.
 Workflows must declare exactly one native job with `primitive: pr_touchpoint`,
 and that job must live in a `purpose: review_touchpoint`, `run_on: success`
-phase. Review touchpoints are not teardown; when verification or an evidence
-gate aborts the run, Glimmung runs only teardown phases and then terminates the
-run as aborted.
+phase. Review touchpoints are not teardown; when verification aborts the run,
+Glimmung runs only teardown phases and then terminates the run as aborted.
 
 ```yaml
 phases:

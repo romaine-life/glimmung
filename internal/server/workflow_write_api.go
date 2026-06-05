@@ -440,6 +440,9 @@ func ValidateWorkflowRegister(req WorkflowRegister) error {
 		}
 		runOn := phaseRunOn(phase)
 		purpose := phasePurpose(phase)
+		if phase.EvidenceVerificationGate || purpose == PhasePurposeEvidenceGate {
+			return ValidationError{Message: fmt.Sprintf("workflow %s phase %q uses the retired evidence_verification_gate shape; verification phases must own evidence verdicts directly", req.Name, name)}
+		}
 		if phase.Verify {
 			if purpose != PhasePurposeVerification {
 				return ValidationError{Message: fmt.Sprintf("workflow %s phase %q has verify=true and must set purpose=%q", req.Name, name, PhasePurposeVerification)}
@@ -490,13 +493,6 @@ func ValidateWorkflowRegister(req WorkflowRegister) error {
 			if len(phase.Jobs) != 1 || strings.TrimSpace(phase.Jobs[0].Primitive) != JobPrimitivePRMerge {
 				return ValidationError{Message: fmt.Sprintf("workflow %s phase %q has purpose=%q and must declare exactly one job with primitive %q", req.Name, name, PhasePurposeReviewGate, JobPrimitivePRMerge)}
 			}
-		}
-		if phase.EvidenceVerificationGate {
-			if purpose != PhasePurposeEvidenceGate {
-				return ValidationError{Message: fmt.Sprintf("workflow %s phase %q is an evidence_verification_gate and must set purpose=%q", req.Name, name, PhasePurposeEvidenceGate)}
-			}
-		} else if purpose == PhasePurposeEvidenceGate {
-			return ValidationError{Message: fmt.Sprintf("workflow %s phase %q purpose=%q must set evidence_verification_gate=true", req.Name, name, PhasePurposeEvidenceGate)}
 		}
 		for _, job := range phase.Jobs {
 			if job.Checkout != nil && strings.TrimSpace(job.Checkout.Repo) != "" {

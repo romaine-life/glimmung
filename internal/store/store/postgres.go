@@ -5685,7 +5685,7 @@ func firstFailedJobCompletion(completions map[string]nativeJobCompletionDoc) (na
 	ids := sortedJobCompletionIDs(completions)
 	for _, id := range ids {
 		completion := completions[id]
-		if completion.Conclusion != "" && !decision.IsAdvanceConclusion(completion.Conclusion) {
+		if nativeJobCompletionFailed(completion) {
 			return completion, true
 		}
 	}
@@ -6283,7 +6283,7 @@ func (s *Store) RecordNativeJobCompletion(ctx context.Context, project, runID st
 		attempts[idx] = attemptMap
 		raw["attempts"] = attempts
 		raw["updated_at"] = newCompletion.CompletedAt
-		executionState, executionReason := nativeJobExecutionStateAndReason(newCompletion, !phaseFollowedByEvidenceGate(wf.Phases, attempt.Phase))
+		executionState, executionReason := nativeJobExecutionStateAndReason(newCompletion, true)
 		markJobCompletionInExecutionsRaw(raw, attempt.Phase, jobID, executionState, executionReason, newCompletion.CompletedAt)
 		writtenCompletions = completions
 		writtenExpectedJobIDs = expectedJobIDs
@@ -6376,16 +6376,6 @@ func expectedNativeJobIDsFromWorkflow(wf *server.Workflow, phaseName string) ([]
 		return ids, nil
 	}
 	return nil, server.ValidationError{Message: fmt.Sprintf("phase %q is not registered on workflow %q", phaseName, wf.Name)}
-}
-
-func phaseFollowedByEvidenceGate(phases []server.PhaseSpec, phaseName string) bool {
-	for i, phase := range phases {
-		if phase.Name != phaseName {
-			continue
-		}
-		return i+1 < len(phases) && phases[i+1].EvidenceVerificationGate
-	}
-	return false
 }
 
 func nativeJobCompletionDocFromPayload(jobID string, p server.CompletionPayload, completedAt string) nativeJobCompletionDoc {
@@ -7414,7 +7404,7 @@ func nativeJobCompletionLists(expected []string, completions map[string]nativeJo
 			continue
 		}
 		completed = append(completed, id)
-		if completion.Conclusion != "" && completion.Conclusion != "success" {
+		if nativeJobCompletionFailed(completion) {
 			failed = append(failed, id)
 		}
 	}
@@ -7427,11 +7417,24 @@ func nativeJobCompletionLists(expected []string, completions map[string]nativeJo
 	sort.Strings(extras)
 	for _, id := range extras {
 		completed = append(completed, id)
-		if completions[id].Conclusion != "" && completions[id].Conclusion != "success" {
+		if nativeJobCompletionFailed(completions[id]) {
 			failed = append(failed, id)
 		}
 	}
 	return completed, pending, failed
+}
+
+func nativeJobCompletionFailed(completion nativeJobCompletionDoc) bool {
+	if completion.Conclusion != "" && !decision.IsAdvanceConclusion(completion.Conclusion) {
+		return true
+	}
+	if completion.Verification != nil {
+		switch completion.Verification.Status {
+		case "fail", "error":
+			return true
+		}
+	}
+	return false
 }
 
 func sortedJobCompletionIDs(completions map[string]nativeJobCompletionDoc) []string {
@@ -7502,6 +7505,12 @@ func aggregateNativePhaseCompletion(expected []string, completions map[string]na
 	if verificationStatus != "" {
 		if _, exists := phaseOutputs["verification"]; !exists {
 			phaseOutputs["verification"] = synthesizedVerificationOutput(verificationStatus, reasons, evidenceRefs, evidenceArtifacts)
+		}
+		if conclusion == "success" {
+			switch verificationStatus {
+			case "fail", "error":
+				conclusion = "failure"
+			}
 		}
 	}
 	payload := server.CompletionPayload{

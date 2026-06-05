@@ -439,8 +439,8 @@ func TestValidateWorkflowRegisterRejectsMultipleVerificationPhases(t *testing.T)
 	}
 }
 
-func TestNormalizeWorkflowRegisterCanonicalizesEvidenceGate(t *testing.T) {
-	req := WorkflowRegister{
+func TestCanonicalWorkflowCanonicalizesLegacyEvidenceGate(t *testing.T) {
+	wf := Workflow{
 		Project: "ambience",
 		Name:    "agent-run",
 		Phases: []PhaseSpec{
@@ -463,12 +463,8 @@ func TestNormalizeWorkflowRegisterCanonicalizesEvidenceGate(t *testing.T) {
 			{Name: "cleanup_final", RunOn: PhaseRunOnAlways, Purpose: PhasePurposeTeardown, DependsOn: []string{"touchpoint_gate"}, Jobs: []NativeJobSpec{{ID: "cleanup-final"}}},
 		},
 	}
-	normalizeWorkflowRegister(&req)
-
-	if err := ValidateWorkflowRegister(req); err != nil {
-		t.Fatalf("ValidateWorkflowRegister: %v", err)
-	}
-	gate := req.Phases[2]
+	wf = CanonicalWorkflow(wf)
+	gate := wf.Phases[2]
 	if len(gate.Jobs) != 1 {
 		t.Fatalf("gate jobs=%#v", gate.Jobs)
 	}
@@ -862,7 +858,7 @@ func TestRegisterWorkflowRejectsMultipleEntryPhases(t *testing.T) {
 	}
 }
 
-func TestRegisterWorkflowRejectsEvidenceGateWithoutVerifyProducer(t *testing.T) {
+func TestRegisterWorkflowRejectsRetiredEvidenceGate(t *testing.T) {
 	store := &fakeWorkflowWriteStore{fakeReadStore: fakeReadStore{projects: []Project{{ID: "ambience", Name: "ambience"}}}}
 	handler := NewWithDependencies(Settings{}, store, fakeAdminAuthenticator{})
 
@@ -874,7 +870,7 @@ func TestRegisterWorkflowRejectsEvidenceGateWithoutVerifyProducer(t *testing.T) 
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "verify") {
+	if !strings.Contains(rec.Body.String(), "retired evidence_verification_gate") {
 		t.Fatalf("body=%s", rec.Body.String())
 	}
 }
