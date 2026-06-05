@@ -2509,10 +2509,18 @@ function InnerJobsRow({
   run: RunProjectionRun;
 }) {
   if (!innerJobs.length) return null;
+  // These are backed by k8s Jobs, but "job" is already a first-class
+  // workflow construct — surfacing the cluster primitive as a second kind
+  // of "job" is a leak. The human concept is the agent each step hands off
+  // to, which the data already names via `intent` (e.g. verification_agent).
+  const intents = Array.from(
+    new Set(innerJobs.map((ij) => (ij.intent ?? "").trim()).filter(Boolean)),
+  );
+  const heading = intents.length === 1 ? `${intents[0].replace(/_/g, " ")}s` : "agents";
   return (
     <div style={{ width: "100%" }}>
       <div>
-        <span className="key">inner jobs</span>
+        <span className="key">{heading}</span>
       </div>
       <ul style={{ listStyle: "none", margin: "0.25rem 0 0", padding: "0 0 0 0.5rem" }}>
         {innerJobs.map((ij) => {
@@ -2535,16 +2543,7 @@ function InnerJobsRow({
             <li key={`${ij.namespace}/${ij.job_name}`} className="run-panel-meta" style={{ padding: "0.15rem 0" }}>
               <div>
                 <span className={`pill ${pill}`}>{state}</span>{" "}
-                <span className="mono">{ij.namespace}/{ij.job_name}</span>
-              </div>
-              <div>
-                <span className="key">intent</span> <span className="mono">{ij.intent || "unknown"}</span>
-                {ij.label && (
-                  <>
-                    {" "}
-                    <span className="key">label</span> <span className="mono">{ij.label}</span>
-                  </>
-                )}
+                <span>{(ij.intent ?? "").trim().replace(/_/g, " ") || "agent"}</span>
                 {ij.reason && (
                   <>
                     {" "}
@@ -2564,6 +2563,7 @@ function InnerJobsRow({
                   </a>
                 )}
               </div>
+              <div className="mono dim" style={{ fontSize: "0.72rem" }}>{ij.namespace}/{ij.job_name}</div>
             </li>
           );
         })}
