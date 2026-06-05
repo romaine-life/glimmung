@@ -269,6 +269,16 @@ func returnTestSlot(store ReadStore, preparer TestSlotPreparer, minter NativeGit
 		lease, err := resolveTestSlotLease(r, stateStore, req)
 		if err != nil {
 			if errors.Is(err, ErrNotFound) {
+				// No live (claimed/pending) test-slot lease resolves for this
+				// selector. If the selector names a slot that is orphaned in
+				// error+cleanup_error (or stale cleaning) with no lease, the
+				// only request-addressable recovery is to re-drive runtime
+				// cleanup here; otherwise short of a process restart the slot
+				// stays wedged. This is the lease-less arm of the contract's
+				// "returnTestSlot against an error slot" cleanup retry.
+				if tryReturnOrphanedErrorSlot(w, r, store, preparer, minter, req) {
+					return
+				}
 				writeProblem(w, http.StatusNotFound, "test slot lease not found")
 				return
 			}
@@ -340,6 +350,112 @@ func returnTestSlot(store ReadStore, preparer TestSlotPreparer, minter NativeGit
 		}
 		writeJSON(w, http.StatusOK, resp)
 	}
+}
+
+// orphanCleanupRetryEligible reports whether a slot with no live lease is in a
+// state the operator-driven return cleanup-retry can re-drive: an `error` that
+// carries a `cleanup_error` (a prior cleanup attempt failed). This is the
+// lease-less arm of the contract's "returnTestSlot against an error slot"
+// retry, gated on the same error→cleaning transition.
+//
+// Deliberately narrow, matching the contract's settled split:
+//   - Activation-only `error` slots without a `cleanup_error` belong to the
+//     preliminary repair path (error→provisioning), not runtime cleanup.
+//   - Stale `cleaning` orphans (a cleanup goroutine that died mid-flight) are a
+//     startup-sweep responsibility: that path *resumes* an in-flight cleanup
+//     rather than re-claiming it, and carries multi-replica resume semantics
+//     that the request path intentionally does not reach into.
+func orphanCleanupRetryEligible(slot Slot) bool {
+	return slot.State == SlotStateError &&
+		slot.CleanupError != nil &&
+		strings.TrimSpace(*slot.CleanupError) != ""
+}
+
+// tryReturnOrphanedErrorSlot re-drives runtime cleanup for a slot that is
+// orphaned (no live test-slot lease resolved) and wedged in error+cleanup_error
+// or stale cleaning. It is the request-time counterpart of the orphan-slot pass
+// in RecoverInFlightTestSlots: a transient cleanup failure (for example the
+// auth.romaine.life token exchange being briefly unreachable during a node
+// upgrade) leaves the slot in error with cleanup_error set, and with the lease
+// already gone there is otherwise no request-addressable trigger short of a
+// process restart.
+//
+// It returns true when it has produced a response — a 202 on a re-driven
+// cleanup, or an error response. It returns false when the named slot is not an
+// eligible orphan (unknown, or healthy / wrong state), so the caller falls back
+// to the existing 404. A non-existent or healthy slot must never answer 202.
+//
+// The re-drive reuses the proven recovery primitives: a synthetic warmup lease
+// (testEnvironmentWarmupLease), the error→cleaning etag-CAS (claimTestSlotCleanup),
+// and beginTestSlotCleanupWithContext with releaseLease=false — identical to
+// the startup sweep's orphan arm, just triggered by a request.
+func tryReturnOrphanedErrorSlot(w http.ResponseWriter, r *http.Request, store ReadStore, preparer TestSlotPreparer, minter NativeGitHubTokenMinter, req TestSlotReturnRequest) bool {
+	if preparer == nil {
+		return false
+	}
+	slotStore := slotStoreFromReadStore(store)
+	if slotStore == nil {
+		return false
+	}
+	targetName := ""
+	if req.SlotName != nil {
+		targetName = strings.TrimSpace(*req.SlotName)
+	}
+	slots, err := slotStore.ListSlotsByProject(r.Context(), req.Project)
+	if err != nil {
+		writeInternalError(w, r, err, "list slots failed")
+		return true
+	}
+	slot, found := Slot{}, false
+	for _, candidate := range slots {
+		if targetName != "" && candidate.SlotName == targetName {
+			slot, found = candidate, true
+			break
+		}
+		if req.SlotIndex != nil && candidate.SlotIndex == *req.SlotIndex {
+			slot, found = candidate, true
+			break
+		}
+	}
+	if !found || !orphanCleanupRetryEligible(slot) {
+		return false
+	}
+	project, ok := findProjectForTestSlot(r, w, store, req.Project)
+	if !ok {
+		return true
+	}
+	slotName := strings.TrimSpace(slot.SlotName)
+	if slotName == "" {
+		slotName = testEnvironmentName(req.Project, slot.SlotIndex, project, Lease{})
+	}
+	lease := testEnvironmentWarmupLease(project, slot.SlotIndex, slotName)
+	audit := testSlotReturnAudit{
+		Source:          stringPointerOrDefault(req.Source, "api.test_slots.return.orphan_recovery"),
+		Reason:          trimmedOptionalString(req.Reason),
+		CallerPodIP:     trimmedOptionalString(req.CallerPodIP),
+		CallerSessionID: trimmedOptionalString(req.CallerSessionID),
+		CleanupStarted:  true,
+	}
+	if _, err := claimTestSlotCleanup(r.Context(), store, project, lease, audit); err != nil {
+		if errors.Is(err, ErrPreconditionFailed) {
+			// Another replica/caller already moved this slot to `cleaning`
+			// (startup sweep, or a concurrent orphan return). Respond with the
+			// same 202 the granted path returns; the caller polls /v1/state.
+			metrics.RecordTestSlotCleanupClaim(activationCancelOrphanReturn, metrics.CleanupClaimOutcomeLostRace)
+			writeJSON(w, http.StatusAccepted, testSlotReturnResponse(project, req.Project, lease, testSlotStateCleaning, true))
+			return true
+		}
+		metrics.RecordTestSlotCleanupClaim(activationCancelOrphanReturn, metrics.CleanupClaimOutcomeError)
+		writeInternalError(w, r, err, "claim test-slot cleanup failed")
+		return true
+	}
+	metrics.RecordTestSlotCleanupClaim(activationCancelOrphanReturn, metrics.CleanupClaimOutcomeGranted)
+	// releaseLease=false: there is no live lease to release; the synthetic
+	// warmup lease only carries slot identity into the uniform cleanup path.
+	cleanupCtx := contextWithTankSessionScopeRetireAuth(context.Background(), r.Header.Get("Authorization"))
+	beginTestSlotCleanupWithContext(cleanupCtx, store, preparer, minter, project, lease, false, activationCancelOrphanReturn, nil)
+	writeJSON(w, http.StatusAccepted, testSlotReturnResponse(project, req.Project, lease, testSlotStateCleaning, true))
+	return true
 }
 
 func extendTestSlotLease(store ReadStore, preparer TestSlotPreparer, minter NativeGitHubTokenMinter) http.HandlerFunc {
@@ -793,6 +909,13 @@ const (
 	activationCancelCallbackRelease = "callback_release"
 	activationCancelTTLExpiry       = "ttl_expiry"
 	activationCancelRecovery        = "recovery"
+	// activationCancelOrphanReturn is the request-time cleanup-retry trigger
+	// for a slot orphaned in error+cleanup_error (or stale cleaning) with no
+	// live lease. It is the lease-less arm of the contract's "returnTestSlot
+	// against an error slot" retry — the counterpart of the orphan-slot pass
+	// in RecoverInFlightTestSlots, but driven by an HTTP request instead of a
+	// process restart.
+	activationCancelOrphanReturn = "orphan_return"
 )
 
 type tankSessionScopeRetireAuthContextKey struct{}

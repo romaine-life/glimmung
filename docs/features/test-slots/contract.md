@@ -109,6 +109,15 @@ running, cleaning, and available explicit.
   (`released`/`expired`) lease is an orphaned reservation: repair clears the
   stale ref as it walks the slot back to `provisioned`, returning the slot to
   the available pool.
+- An `error`+`cleanup_error` slot orphaned with no live lease is recoverable at
+  runtime via `returnTestSlot` addressed by `slot_name`/`slot_index`: it
+  synthesizes a warmup lease, claims `error→cleaning`, and re-drives cleanup
+  with `releaseLease=false`. This is the request-time counterpart of the
+  startup recovery sweep's orphan arm, so a transient cleanup-dependency outage
+  (e.g. the auth token exchange briefly unreachable) does not strand the slot
+  until a process restart. It adds no background reconciler or sweep — only a
+  request handler. Ineligible slots (unknown, healthy, stale `cleaning`, or
+  activation-only `error`) keep the existing `404`.
 - Activation failure records error state and releases or cleans up the lease
   through the lifecycle path.
 - Cleanup failure leaves the slot unavailable with visible error state rather
