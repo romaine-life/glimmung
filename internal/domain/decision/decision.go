@@ -41,6 +41,16 @@ const AbortReasonOutputKey = "abort_reason"
 // AbortReason (sourced from the AbortReasonOutputKey phase output).
 const ConclusionAborted = "aborted"
 
+// Phase purposes that change how a phase outcome routes the run. A phase's
+// purpose decides whether its outcome can set the run verdict. Teardown
+// phases run on the always/abort path as post-verdict cleanup and are
+// verdict-neutral; review phases are non-primary for cause attribution.
+const (
+	PhasePurposeTeardown         = "teardown"
+	PhasePurposeReviewTouchpoint = "review_touchpoint"
+	PhasePurposeReviewGate       = "review_gate"
+)
+
 type VerificationStatus string
 
 const (
@@ -148,6 +158,18 @@ func Decide(run Run, workflow Workflow, attemptIndex ...int) (decision RunDecisi
 
 	if !phaseSpec.Verify {
 		if IsAdvanceConclusion(last.Conclusion) {
+			return Advance, nil
+		}
+		// Teardown phases are verdict-neutral. They run on the
+		// always/abort path as post-verdict cleanup, so a teardown job
+		// that fails — e.g. a transient pod-start BackoffLimitExceeded —
+		// must not mint a producer abort that overrides the real verdict
+		// or masks the primary phase's failure. Advance the cleanup chain
+		// and let the run settle to the primary phase's outcome; the
+		// failed teardown stays visible on its own job/step state. A
+		// belt-and-suspenders slot reap (ambience#224) covers any
+		// resources the teardown did not remove.
+		if phaseIsTeardown(phaseSpec) {
 			return Advance, nil
 		}
 		return AbortMalformed, nil
@@ -286,11 +308,18 @@ func primaryAttemptForExplanation(run Run, workflow Workflow) *Attempt {
 
 func phaseIsPrimary(phase PhaseSpec) bool {
 	switch phase.Purpose {
-	case "teardown", "review_touchpoint", "review_gate":
+	case PhasePurposeTeardown, PhasePurposeReviewTouchpoint, PhasePurposeReviewGate:
 		return false
 	default:
 		return true
 	}
+}
+
+// phaseIsTeardown reports whether a phase is post-verdict cleanup. Teardown
+// completions are verdict-neutral: they advance the cleanup chain and never
+// abort the run, regardless of conclusion.
+func phaseIsTeardown(phase PhaseSpec) bool {
+	return phase.Purpose == PhasePurposeTeardown
 }
 
 func phaseByName(workflow Workflow, name string) (PhaseSpec, bool) {

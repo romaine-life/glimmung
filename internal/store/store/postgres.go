@@ -5577,7 +5577,7 @@ func terminalObservationForRun(doc runDoc, wf *server.Workflow, state string, ab
 	if state != "aborted" {
 		return nil
 	}
-	attempt := terminalCauseAttempt(doc)
+	attempt := terminalCauseAttempt(doc, wf)
 	if attempt == nil {
 		reason := strings.TrimSpace(stringOrEmpty(abortReason))
 		if reason == "" {
@@ -5662,20 +5662,35 @@ func terminalObservationForRun(doc runDoc, wf *server.Workflow, state string, ab
 	return obs
 }
 
-func terminalCauseAttempt(doc runDoc) *attemptDoc {
+func terminalCauseAttempt(doc runDoc, wf *server.Workflow) *attemptDoc {
 	for i := len(doc.Attempts) - 1; i >= 0; i-- {
 		attempt := &doc.Attempts[i]
+		if attemptPhaseIsTeardown(wf, attempt.Phase) {
+			continue
+		}
 		if attempt.Decision != nil && isTerminalAbortDecision(*attempt.Decision) {
 			return attempt
 		}
 	}
 	for i := len(doc.Attempts) - 1; i >= 0; i-- {
 		attempt := &doc.Attempts[i]
+		if attemptPhaseIsTeardown(wf, attempt.Phase) {
+			continue
+		}
 		if attempt.Conclusion != nil && !decision.IsAdvanceConclusion(*attempt.Conclusion) {
 			return attempt
 		}
 	}
 	return nil
+}
+
+// attemptPhaseIsTeardown reports whether an attempt's phase is post-verdict
+// cleanup. Teardown phases are verdict-neutral (see decision.decide), so a
+// failed teardown must never be attributed as the run's terminal cause —
+// that would mask the primary phase's real failure.
+func attemptPhaseIsTeardown(wf *server.Workflow, phaseName string) bool {
+	phase := workflowPhaseByName(wf, phaseName)
+	return phase != nil && phase.Purpose == server.PhasePurposeTeardown
 }
 
 func isTerminalAbortDecision(value string) bool {
