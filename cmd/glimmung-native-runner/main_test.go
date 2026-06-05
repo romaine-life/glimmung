@@ -342,12 +342,15 @@ func TestNativeRunnerAggregatesDynamicCaseVerification(t *testing.T) {
 		outputs: map[string]string{},
 	}
 
-	if err := r.run(context.Background()); err != nil {
-		t.Fatalf("run: %v", err)
+	if err := r.run(context.Background()); err == nil || !strings.Contains(err.Error(), "missing video") {
+		t.Fatalf("run err=%v, want dynamic verification failure", err)
 	}
 	mu.Lock()
 	got := completion
 	mu.Unlock()
+	if got.Conclusion != "failure" {
+		t.Fatalf("conclusion=%q, want failure", got.Conclusion)
+	}
 	if got.Verification["status"] != "fail" {
 		t.Fatalf("verification=%#v, want aggregate fail", got.Verification)
 	}
@@ -423,8 +426,8 @@ func TestNativeRunnerStopsDynamicGroupAfterCaseFailure(t *testing.T) {
 		outputs: map[string]string{},
 	}
 
-	if err := r.run(context.Background()); err != nil {
-		t.Fatalf("run: %v", err)
+	if err := r.run(context.Background()); err == nil || !strings.Contains(err.Error(), "tool missing") {
+		t.Fatalf("run err=%v, want dynamic verification failure", err)
 	}
 	mu.Lock()
 	defer mu.Unlock()
