@@ -89,5 +89,11 @@ describe("Shell", () => {
     expect(shellCss).toMatch(/\.app \.sidebar\s*\{[^}]*inset:\s*0 auto 0 0/s);
     expect(shellCss).toMatch(/\.app \.main\s*\{[^}]*width:\s*calc\(100% - var\(--shell-sidebar-width\)\)/s);
     expect(shellCss).toMatch(/\.app \.main\s*\{[^}]*margin-left:\s*var\(--shell-sidebar-width\)/s);
+    expect(shellCss).toMatch(/\.app \.main\s*\{[^}]*overflow:\s*hidden/s);
+    expect(shellCss).toMatch(/\.app \.topbar\s*\{[^}]*position:\s*fixed/s);
+    expect(shellCss).toMatch(/\.app \.topbar\s*\{[^}]*left:\s*var\(--shell-sidebar-width\)/s);
+    expect(shellCss).toMatch(/\.app \.content\s*\{[^}]*overflow-y:\s*auto/s);
+    expect(shellCss).toMatch(/\.app \.content\s*\{[^}]*margin-top:\s*var\(--topbar-height\)/s);
+    expect(shellCss).toMatch(/\.app \.content\s*\{[^}]*padding:\s*26px 28px 60px/s);
   });
 });
