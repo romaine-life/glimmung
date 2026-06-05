@@ -711,16 +711,32 @@
   min-height: 28px;
   padding: 7px 12px 5px 34px;
   border-bottom: 1px solid var(--border);
-  border-left: 2px solid var(--state-info-fg);
+  border-left: 2px solid var(--border);
   border-top: 0;
   border-right: 0;
-  background: color-mix(in srgb, var(--state-info-bg) 20%, transparent);
-  color: var(--state-info-fg);
+  background: transparent;
+  color: var(--fg-muted);
   font-family: var(--font-mono);
   font-size: 0.72rem;
   overflow-wrap: anywhere;
   text-align: left;
   cursor: pointer;
+}
+/* Group header rail mirrors its steps: grey before run, blue while active,
+   green when every step succeeded, red if any failed. */
+.step-group-label.done {
+  border-left-color: var(--state-success-fg);
+  background: color-mix(in srgb, var(--state-success-bg) 14%, transparent);
+}
+.step-group-label.active {
+  border-left-color: var(--state-busy-fg);
+  background: color-mix(in srgb, var(--state-busy-bg) 16%, transparent);
+  color: var(--fg);
+}
+.step-group-label.failed {
+  border-left-color: var(--state-danger-fg);
+  background: color-mix(in srgb, var(--state-danger-bg) 16%, transparent);
+  color: var(--fg);
 }
 .step-group-label small {
   flex: 0 0 auto;
@@ -730,7 +746,7 @@
 }
 .step-group-label:hover,
 .step-group-label:focus-visible {
-  background: color-mix(in srgb, var(--state-info-bg) 32%, transparent);
+  background: var(--surface-hover);
 }
 .step-row.grouped {
   padding-left: 26px;
