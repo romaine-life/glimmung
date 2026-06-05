@@ -898,6 +898,10 @@ func TestApplyNativeEventsProjectsDynamicGroupConcreteSteps(t *testing.T) {
 				"group":       "test-cases",
 				"group_title": "Test cases generated at runtime",
 				"item_count":  float64(1),
+				"steps": []any{
+					map[string]any{"slug": "gather-evidence-case-01", "title": "gather-evidence-case-01", "group": "test-cases/case-01", "group_title": "home page"},
+					map[string]any{"slug": "judge-evidence-case-01", "title": "judge-evidence-case-01", "group": "test-cases/case-01", "group_title": "home page"},
+				},
 			},
 		},
 		{
@@ -917,11 +921,14 @@ func TestApplyNativeEventsProjectsDynamicGroupConcreteSteps(t *testing.T) {
 	applyNativeEventsToProjectionRun(&run, events)
 
 	steps := run.Phases[0].Jobs[0].Steps
-	if len(steps) != 2 || steps[1].Slug != "gather-evidence-case-01" {
+	if len(steps) != 3 || steps[1].Slug != "gather-evidence-case-01" || steps[2].Slug != "judge-evidence-case-01" {
 		t.Fatalf("steps=%#v", steps)
 	}
 	if steps[1].State != "active" || steps[1].Group != "test-cases/case-01" || steps[1].GroupTitle == nil || *steps[1].GroupTitle != "home page" {
 		t.Fatalf("concrete step=%#v", steps[1])
+	}
+	if steps[2].State != "not_started" || steps[2].Group != "test-cases/case-01" || steps[2].GroupTitle == nil || *steps[2].GroupTitle != "home page" {
+		t.Fatalf("planned concrete step=%#v", steps[2])
 	}
 }
 

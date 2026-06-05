@@ -340,12 +340,14 @@ func (r *nativeRunner) runDynamicStepBlock(ctx context.Context, block []stepSpec
 	if err != nil {
 		return err
 	}
+	plannedSteps := concreteDynamicSteps(block, cases, group, maxItems)
 	if err := r.postEvent(ctx, "dynamic_group_expanded", nil, "", nil, map[string]any{
 		"group":       group,
 		"group_title": groupTitle,
 		"item_count":  len(cases),
 		"max_items":   maxItems,
 		"item_label":  firstNonEmpty(strings.TrimSpace(block[0].DynamicGroup.ItemLabel), "item"),
+		"steps":       dynamicPlannedStepMetadata(plannedSteps),
 	}); err != nil {
 		return err
 	}
@@ -361,9 +363,44 @@ func (r *nativeRunner) runDynamicStepBlock(ctx context.Context, block []stepSpec
 		}
 		return nil
 	}
+	lastCaseIndex := 0
+	for _, step := range plannedSteps {
+		caseIndex, _ := strconv.Atoi(strings.TrimSpace(step.Env["GLIMMUNG_DYNAMIC_CASE_INDEX"]))
+		if caseIndex != lastCaseIndex && lastCaseIndex > 0 && r.dynamicCaseFailed(lastCaseIndex) {
+			msg := fmt.Sprintf("dynamic group %q stopped after case %02d failed", group, lastCaseIndex)
+			if err := r.postEvent(ctx, "dynamic_group_stopped", nil, msg, nil, map[string]any{
+				"group":             group,
+				"group_title":       groupTitle,
+				"failed_case_index": lastCaseIndex,
+				"reason":            "case_failed",
+			}); err != nil {
+				return err
+			}
+			return nil
+		}
+		lastCaseIndex = caseIndex
+		if strings.TrimSpace(step.Type) == "" {
+			step.Type = "run"
+		}
+		if err := r.runStep(ctx, step); err != nil {
+			return err
+		}
+		if reason := r.requestedAbortReason(); reason != "" {
+			return nil
+		}
+	}
+	return nil
+}
+
+func concreteDynamicSteps(block []stepSpec, cases []dynamicCase, group string, maxItems int) []stepSpec {
+	if len(block) == 0 || len(cases) == 0 {
+		return nil
+	}
+	itemLabel := firstNonEmpty(strings.TrimSpace(block[0].DynamicGroup.ItemLabel), "case")
+	steps := make([]stepSpec, 0, len(block)*len(cases))
 	for _, tc := range cases {
 		caseGroup := fmt.Sprintf("%s/case-%02d", group, tc.Index)
-		caseTitle := firstNonEmpty(tc.Label, fmt.Sprintf("%s %02d", firstNonEmpty(strings.TrimSpace(block[0].DynamicGroup.ItemLabel), "case"), tc.Index))
+		caseTitle := firstNonEmpty(tc.Label, fmt.Sprintf("%s %02d", itemLabel, tc.Index))
 		for _, template := range block {
 			step := template
 			step.Slug = fmt.Sprintf("%s-case-%02d", template.Slug, tc.Index)
@@ -384,15 +421,29 @@ func (r *nativeRunner) runDynamicStepBlock(ctx context.Context, block []stepSpec
 			if strings.TrimSpace(step.Type) == "" {
 				step.Type = "run"
 			}
-			if err := r.runStep(ctx, step); err != nil {
-				return err
-			}
-			if reason := r.requestedAbortReason(); reason != "" {
-				return nil
-			}
+			steps = append(steps, step)
 		}
 	}
-	return nil
+	return steps
+}
+
+func dynamicPlannedStepMetadata(steps []stepSpec) []map[string]any {
+	out := make([]map[string]any, 0, len(steps))
+	for _, step := range steps {
+		item := map[string]any{
+			"slug":  step.Slug,
+			"title": step.Slug,
+			"type":  firstNonEmpty(strings.TrimSpace(step.Type), "run"),
+		}
+		if group := strings.TrimSpace(step.Group); group != "" {
+			item["group"] = group
+		}
+		if groupTitle := strings.TrimSpace(step.GroupTitle); groupTitle != "" {
+			item["group_title"] = groupTitle
+		}
+		out = append(out, item)
+	}
+	return out
 }
 
 func (r *nativeRunner) dynamicCasesForGroup(group string, maxItems int) ([]dynamicCase, error) {
@@ -514,7 +565,7 @@ func dynamicCaseLabel(item any, index int) string {
 	if !ok {
 		return fmt.Sprintf("case %02d", index)
 	}
-	for _, key := range []string{"label", "title", "name"} {
+	for _, key := range []string{"label", "title", "name", "id"} {
 		if value := strings.TrimSpace(fmt.Sprint(obj[key])); value != "" && value != "<nil>" {
 			return value
 		}
@@ -1227,6 +1278,21 @@ func (r *nativeRunner) collectCompletionMetadata(path string, step stepSpec) err
 		r.completion.SummaryMarkdown = metadata.SummaryMarkdown
 	}
 	return nil
+}
+
+func (r *nativeRunner) dynamicCaseFailed(index int) bool {
+	if index <= 0 {
+		return false
+	}
+	for i := len(r.caseCompletions) - 1; i >= 0; i-- {
+		tc := r.caseCompletions[i]
+		if tc.Index != index {
+			continue
+		}
+		status := strings.TrimSpace(fmt.Sprint(tc.Verification["status"]))
+		return status == "fail" || status == "error"
+	}
+	return false
 }
 
 func aggregateDynamicCaseVerification(cases []dynamicCaseCompletion) map[string]any {

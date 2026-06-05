@@ -482,11 +482,20 @@ func TestDynamicGroupEventsReplaceTemplatesWithConcreteSteps(t *testing.T) {
 			"group":       "test-cases",
 			"group_title": "Test cases generated at runtime",
 			"item_count":  float64(2),
+			"steps": []any{
+				map[string]any{"slug": "gather-evidence-case-01", "title": "gather-evidence-case-01", "group": "test-cases/case-01", "group_title": "home page"},
+				map[string]any{"slug": "judge-evidence-case-01", "title": "judge-evidence-case-01", "group": "test-cases/case-01", "group_title": "home page"},
+				map[string]any{"slug": "gather-evidence-case-02", "title": "gather-evidence-case-02", "group": "test-cases/case-02", "group_title": "settings"},
+				map[string]any{"slug": "judge-evidence-case-02", "title": "judge-evidence-case-02", "group": "test-cases/case-02", "group_title": "settings"},
+			},
 		},
 	})
 	job := rawJob(t, rawPhase(t, raw, "llm-verify"), "verify")
 	if rawStepMaybe(job, "gather-evidence") != nil || rawStepMaybe(job, "judge-evidence") != nil {
 		t.Fatalf("dynamic template steps were not removed: %#v", job["steps"])
+	}
+	if rawStepMaybe(job, "judge-evidence-case-02") == nil {
+		t.Fatalf("planned concrete steps were not inserted: %#v", job["steps"])
 	}
 
 	applyNativeEventToExecutionsRaw(raw, attempt, nativeEventDoc{

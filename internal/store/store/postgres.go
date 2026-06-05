@@ -6831,6 +6831,31 @@ func applyDynamicGroupExpandedToSteps(steps []any, event nativeEventDoc, now str
 		}
 		out = append(out, step)
 	}
+	if planned := dynamicExpansionRawSteps(event, now); len(planned) > 0 {
+		seen := map[string]bool{}
+		for _, stepValue := range out {
+			step, ok := stepValue.(map[string]any)
+			if !ok {
+				continue
+			}
+			if slug := strings.TrimSpace(stringValue(step["slug"])); slug != "" {
+				seen[slug] = true
+			}
+		}
+		for _, stepValue := range planned {
+			step, ok := stepValue.(map[string]any)
+			if !ok {
+				continue
+			}
+			slug := strings.TrimSpace(stringValue(step["slug"]))
+			if slug == "" || seen[slug] {
+				continue
+			}
+			out = append(out, step)
+			seen[slug] = true
+		}
+		return out
+	}
 	if intFromAny(event.Metadata["item_count"]) == 0 {
 		out = append(out, map[string]any{
 			"slug":         safeStepSlug(group) + "-no-cases",
@@ -6841,6 +6866,42 @@ func applyDynamicGroupExpandedToSteps(steps []any, event nativeEventDoc, now str
 			"created_at":   now,
 			"completed_at": now,
 		})
+	}
+	return out
+}
+
+func dynamicExpansionRawSteps(event nativeEventDoc, now string) []any {
+	items, ok := event.Metadata["steps"].([]any)
+	if !ok || len(items) == 0 {
+		return nil
+	}
+	out := make([]any, 0, len(items))
+	for _, item := range items {
+		raw, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		slug := strings.TrimSpace(stringValue(raw["slug"]))
+		if slug == "" {
+			continue
+		}
+		state := strings.TrimSpace(stringValue(raw["state"]))
+		if state == "" {
+			state = "not_started"
+		}
+		step := map[string]any{
+			"slug":       slug,
+			"title":      firstNonEmpty(stringValue(raw["title"]), slug),
+			"state":      state,
+			"created_at": now,
+		}
+		if group := strings.TrimSpace(stringValue(raw["group"])); group != "" {
+			step["group"] = group
+		}
+		if groupTitle := strings.TrimSpace(stringValue(raw["group_title"])); groupTitle != "" {
+			step["group_title"] = groupTitle
+		}
+		out = append(out, step)
 	}
 	return out
 }

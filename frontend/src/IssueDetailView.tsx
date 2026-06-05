@@ -2669,6 +2669,19 @@ function renderNativeStepGroupHeader(
   return nativeStepGroupTitle(current.step);
 }
 
+function nativeStepGroupCount(stepRefs: NativeStepRef[], index: number): number {
+  const current = stepRefs[index];
+  const group = nativeStepGroupKey(current.step);
+  if (!group) return 1;
+  let count = 0;
+  for (const ref of stepRefs) {
+    if (ref.job.job_id === current.job.job_id && nativeStepGroupKey(ref.step) === group) {
+      count++;
+    }
+  }
+  return count;
+}
+
 function IssueSettingsPane({
   issue,
   workflow,
@@ -3498,6 +3511,7 @@ function NativeJobInspector({
     [selectedStepSlug, stepRefs],
   );
   const [selectedKey, setSelectedKey] = useState<string | null>(defaultSelection);
+  const [collapsedStepGroups, setCollapsedStepGroups] = useState<Set<string>>(() => new Set());
   const [viewMode, setViewMode] = useState<NativeLogViewMode>("transcript");
   const [transcriptFilter, setTranscriptFilter] = useState<AgentTranscriptFilter>("all");
   const [pageCursors, setPageCursors] = useState<number[]>([]);
@@ -3688,7 +3702,11 @@ function NativeJobInspector({
           ) : (
             stepRefs.map(({ key, job, step }, index) => {
               const groupTitle = renderNativeStepGroupHeader(stepRefs, index);
-              const groupedClass = nativeStepGroupKey(step) ? " grouped" : "";
+              const groupKey = nativeStepGroupKey(step);
+              const scopedGroupKey = groupKey ? `${job.job_id}:${groupKey}` : "";
+              const groupCollapsed = scopedGroupKey ? collapsedStepGroups.has(scopedGroupKey) : false;
+              const groupStepCount = groupTitle ? nativeStepGroupCount(stepRefs, index) : 0;
+              const groupedClass = groupKey ? " grouped" : "";
               return (
                 <Fragment key={key}>
                   {(index === 0 || stepRefs[index - 1]?.job.job_id !== job.job_id) && (
@@ -3703,28 +3721,44 @@ function NativeJobInspector({
                     </div>
                   )}
                   {groupTitle && (
-                    <div className="step-group-label">
+                    <button
+                      type="button"
+                      className="step-group-label"
+                      aria-expanded={!groupCollapsed}
+                      onClick={() => {
+                        if (!scopedGroupKey) return;
+                        setCollapsedStepGroups((current) => {
+                          const next = new Set(current);
+                          if (next.has(scopedGroupKey)) next.delete(scopedGroupKey);
+                          else next.add(scopedGroupKey);
+                          return next;
+                        });
+                      }}
+                    >
                       <span>{groupTitle}</span>
-                    </div>
+                      <small>{groupStepCount} step{groupStepCount === 1 ? "" : "s"}</small>
+                    </button>
                   )}
-                  <button
-                    type="button"
-                    className={`step-row ${nativeStepRowClass(step.state ?? "")}${groupedClass}${key === selected?.key ? " selected" : ""}`}
-                    onClick={() => {
-                      setSelectedKey(key);
-                      onSelectStep?.(job.job_id, step.slug);
-                    }}
-                  >
-                    <span>{nativeStepGlyph(step.state ?? "")}</span>
-                    <strong>
-                      {step.title || step.slug}
-                    </strong>
-                    <small>
-                      {step.exit_code !== null && step.exit_code !== undefined
-                        ? `exit ${step.exit_code}`
-                        : step.state ? formatGraphState(step.state) : "not run"}
-                    </small>
-                  </button>
+                  {!groupCollapsed && (
+                    <button
+                      type="button"
+                      className={`step-row ${nativeStepRowClass(step.state ?? "")}${groupedClass}${key === selected?.key ? " selected" : ""}`}
+                      onClick={() => {
+                        setSelectedKey(key);
+                        onSelectStep?.(job.job_id, step.slug);
+                      }}
+                    >
+                      <span>{nativeStepGlyph(step.state ?? "")}</span>
+                      <strong>
+                        {step.title || step.slug}
+                      </strong>
+                      <small>
+                        {step.exit_code !== null && step.exit_code !== undefined
+                          ? `exit ${step.exit_code}`
+                          : step.state ? formatGraphState(step.state) : "not run"}
+                      </small>
+                    </button>
+                  )}
                 </Fragment>
               );
             })
@@ -3837,6 +3871,7 @@ function PlannedNativeJobInspector({
     [selectedStepSlug, stepRefs],
   );
   const [selectedKey, setSelectedKey] = useState<string | null>(defaultSelection);
+  const [collapsedStepGroups, setCollapsedStepGroups] = useState<Set<string>>(() => new Set());
   const selected = stepRefs.find((step) => step.key === selectedKey) ?? stepRefs[0] ?? null;
 
   useEffect(() => {
@@ -3858,7 +3893,11 @@ function PlannedNativeJobInspector({
           ) : (
             stepRefs.map(({ key, job: refJob, step }, index) => {
               const groupTitle = renderNativeStepGroupHeader(stepRefs, index);
-              const groupedClass = nativeStepGroupKey(step) ? " grouped" : "";
+              const groupKey = nativeStepGroupKey(step);
+              const scopedGroupKey = groupKey ? `${refJob.job_id}:${groupKey}` : "";
+              const groupCollapsed = scopedGroupKey ? collapsedStepGroups.has(scopedGroupKey) : false;
+              const groupStepCount = groupTitle ? nativeStepGroupCount(stepRefs, index) : 0;
+              const groupedClass = groupKey ? " grouped" : "";
               return (
                 <Fragment key={key}>
                   {(index === 0 || stepRefs[index - 1]?.job.job_id !== refJob.job_id) && (
@@ -3873,28 +3912,44 @@ function PlannedNativeJobInspector({
                     </div>
                   )}
                   {groupTitle && (
-                    <div className="step-group-label">
+                    <button
+                      type="button"
+                      className="step-group-label"
+                      aria-expanded={!groupCollapsed}
+                      onClick={() => {
+                        if (!scopedGroupKey) return;
+                        setCollapsedStepGroups((current) => {
+                          const next = new Set(current);
+                          if (next.has(scopedGroupKey)) next.delete(scopedGroupKey);
+                          else next.add(scopedGroupKey);
+                          return next;
+                        });
+                      }}
+                    >
                       <span>{groupTitle}</span>
-                    </div>
+                      <small>{groupStepCount} step{groupStepCount === 1 ? "" : "s"}</small>
+                    </button>
                   )}
-                  <button
-                    type="button"
-                    className={`step-row ${nativeStepRowClass(step.state ?? "")}${groupedClass}${key === selected?.key ? " selected" : ""}`}
-                    onClick={() => {
-                      setSelectedKey(key);
-                      onSelectStep?.(refJob.job_id, step.slug);
-                    }}
-                  >
-                    <span>{nativeStepGlyph(step.state ?? "")}</span>
-                    <strong>
-                      {step.title || step.slug}
-                    </strong>
-                    <small>
-                      {step.exit_code !== null && step.exit_code !== undefined
-                        ? `exit ${step.exit_code}`
-                        : step.state ? formatGraphState(step.state) : "not run"}
-                    </small>
-                  </button>
+                  {!groupCollapsed && (
+                    <button
+                      type="button"
+                      className={`step-row ${nativeStepRowClass(step.state ?? "")}${groupedClass}${key === selected?.key ? " selected" : ""}`}
+                      onClick={() => {
+                        setSelectedKey(key);
+                        onSelectStep?.(refJob.job_id, step.slug);
+                      }}
+                    >
+                      <span>{nativeStepGlyph(step.state ?? "")}</span>
+                      <strong>
+                        {step.title || step.slug}
+                      </strong>
+                      <small>
+                        {step.exit_code !== null && step.exit_code !== undefined
+                          ? `exit ${step.exit_code}`
+                          : step.state ? formatGraphState(step.state) : "not run"}
+                      </small>
+                    </button>
+                  )}
                 </Fragment>
               );
             })
