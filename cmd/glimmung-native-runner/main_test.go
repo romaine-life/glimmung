@@ -107,6 +107,94 @@ func TestNativeRunnerExecutesStepsAndPublishesOutputs(t *testing.T) {
 	}
 }
 
+func TestNativeRunnerExpandsDynamicStepGroupSequentially(t *testing.T) {
+	var events []nativeEventRequest
+	var completion completedRequest
+	var mu sync.Mutex
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/events":
+			var event nativeEventRequest
+			_ = json.NewDecoder(r.Body).Decode(&event)
+			mu.Lock()
+			events = append(events, event)
+			mu.Unlock()
+			_ = json.NewEncoder(w).Encode(map[string]any{"accepted": true})
+		case "/completed":
+			mu.Lock()
+			_ = json.NewDecoder(r.Body).Decode(&completion)
+			mu.Unlock()
+			_ = json.NewEncoder(w).Encode(map[string]any{"decision": "done"})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	workspace := t.TempDir()
+	r := &nativeRunner{
+		cfg: runnerConfig{
+			JobID:        "verify",
+			EventsURL:    server.URL + "/events",
+			CompletedURL: server.URL + "/completed",
+			Workspace:    workspace,
+			Job: jobSpec{
+				WorkingDirectory: workspace,
+				Shell:            "sh",
+				Steps: []stepSpec{
+					{
+						Slug: "author-test-plan",
+						Type: "run",
+						Run:  `printf 'test_cases_json=[{"label":"home page"},{"label":"settings"}]\n' >> "$GLIMMUNG_OUTPUT_FILE"`,
+					},
+					{
+						Slug:         "gather-evidence",
+						Type:         "run",
+						Run:          `printf '%s\n' "$GLIMMUNG_DYNAMIC_CASE_LABEL" >> cases.txt`,
+						Group:        "test-cases",
+						GroupTitle:   "Test cases generated at runtime",
+						DynamicGroup: &dynamicGroupSpec{MaxItems: 10, ItemLabel: "test case"},
+					},
+					{
+						Slug:         "judge-evidence",
+						Type:         "run",
+						Run:          `printf 'judge:%s\n' "$GLIMMUNG_DYNAMIC_CASE_INDEX" >> cases.txt`,
+						Group:        "test-cases",
+						GroupTitle:   "Test cases generated at runtime",
+						DynamicGroup: &dynamicGroupSpec{MaxItems: 10, ItemLabel: "test case"},
+					},
+				},
+			},
+		},
+		client:  server.Client(),
+		outputs: map[string]string{},
+	}
+
+	if err := r.run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if completion.Conclusion != "success" {
+		t.Fatalf("completion=%#v", completion)
+	}
+	body, err := os.ReadFile(filepath.Join(workspace, "cases.txt"))
+	if err != nil {
+		t.Fatalf("read cases: %v", err)
+	}
+	if got := strings.TrimSpace(string(body)); got != "home page\njudge:1\nsettings\njudge:2" {
+		t.Fatalf("cases.txt=%q", got)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if !sawEvent(events, "dynamic_group_expanded") {
+		t.Fatalf("expected dynamic_group_expanded event: %#v", events)
+	}
+	assertEventStepGroup(t, events, "gather-evidence-case-01", "test-cases/case-01", "home page")
+	assertEventStepGroup(t, events, "judge-evidence-case-02", "test-cases/case-02", "settings")
+	if sawStep(events, "gather-evidence") || sawStep(events, "judge-evidence") {
+		t.Fatalf("template slugs should not execute directly: %#v", events)
+	}
+}
+
 // TestNativeRunnerHaltsRemainingStepsOnAbortReason pins the fail-closed
 // abort short-circuit: when a step emits a non-empty abort_reason phase
 // output, the runner must stop and NOT run later steps in the phase, and
@@ -200,6 +288,32 @@ func sawEvent(events []nativeEventRequest, event string) bool {
 		}
 	}
 	return false
+}
+
+func sawStep(events []nativeEventRequest, slug string) bool {
+	for _, candidate := range events {
+		if candidate.StepSlug != nil && *candidate.StepSlug == slug {
+			return true
+		}
+	}
+	return false
+}
+
+func assertEventStepGroup(t *testing.T, events []nativeEventRequest, slug, group, groupTitle string) {
+	t.Helper()
+	for _, event := range events {
+		if event.StepSlug == nil || *event.StepSlug != slug || event.Event != "step_started" {
+			continue
+		}
+		if event.Metadata["group"] != group {
+			t.Fatalf("%s group=%v, want %s", slug, event.Metadata["group"], group)
+		}
+		if event.Metadata["group_title"] != groupTitle {
+			t.Fatalf("%s group_title=%v, want %s", slug, event.Metadata["group_title"], groupTitle)
+		}
+		return
+	}
+	t.Fatalf("missing step_started for %s in %#v", slug, events)
 }
 
 // TestNativeRunnerPostsTimedOutOnContextCancel pins the SIGTERM-handler
