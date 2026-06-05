@@ -3012,16 +3012,15 @@ h2 .inline-action,
    APP SHELL
    ============================================================ */
 .app {
-  display: grid;
-  grid-template-columns: 248px minmax(0, 1fr);
+  --shell-sidebar-width: 248px;
+  display: block;
   width: 100%;
   max-width: 100%;
   min-height: 100vh;
   overflow-x: hidden;
-  transition: grid-template-columns 140ms ease;
 }
 .app.sidebar-collapsed {
-  grid-template-columns: 64px minmax(0, 1fr);
+  --shell-sidebar-width: 64px;
 }
 
 /* ----- Sidebar ----- */
@@ -3029,10 +3028,15 @@ h2 .inline-action,
   background: var(--bg-sunken);
   border-right: 1px solid var(--border);
   display: flex; flex-direction: column;
-  position: sticky; top: 0; height: 100vh;
+  position: fixed;
+  inset: 0 auto 0 0;
+  width: var(--shell-sidebar-width);
+  height: 100vh;
+  height: 100dvh;
   overflow: visible;
-  width: auto;
   z-index: 8;
+  box-sizing: border-box;
+  transition: width 140ms ease;
 }
 .app .brand {
   display: flex; align-items: center; gap: 10px;
@@ -3179,11 +3183,14 @@ h2 .inline-action,
 /* ----- Main column ----- */
 .app .main {
   min-width: 0;
-  width: 100%;
-  max-width: 100%;
+  width: calc(100% - var(--shell-sidebar-width));
+  max-width: calc(100% - var(--shell-sidebar-width));
+  min-height: 100vh;
+  margin-left: var(--shell-sidebar-width);
   overflow-x: hidden;
   display: flex;
   flex-direction: column;
+  transition: margin-left 140ms ease;
 }
 .app .topbar {
   display: flex; align-items: center; gap: 16px;
