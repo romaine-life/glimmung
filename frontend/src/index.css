@@ -2997,70 +2997,80 @@ h2 .inline-action,
 .app .muted { color: var(--fg-muted); }
 .app .tnum { font-variant-numeric: tabular-nums; }
 
-:root,
-:where(.app, .app *) {
-  scrollbar-color: color-mix(in srgb, var(--fg-dimmer) 60%, transparent) transparent;
-  scrollbar-width: thin;
+@supports selector(::-webkit-scrollbar) {
+  :root,
+  html,
+  body,
+  :where(.app, .app *) {
+    scrollbar-color: auto;
+    scrollbar-width: auto;
+  }
+
+  :root::-webkit-scrollbar,
+  html::-webkit-scrollbar,
+  body::-webkit-scrollbar,
+  :where(.app, .app *)::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  :root::-webkit-scrollbar-track,
+  html::-webkit-scrollbar-track,
+  body::-webkit-scrollbar-track,
+  :where(.app, .app *)::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  :root::-webkit-scrollbar-thumb,
+  html::-webkit-scrollbar-thumb,
+  body::-webkit-scrollbar-thumb,
+  :where(.app, .app *)::-webkit-scrollbar-thumb {
+    min-width: 44px;
+    min-height: 44px;
+    border: 3px solid transparent;
+    border-radius: 999px;
+    background-clip: content-box;
+    background-color: color-mix(in srgb, var(--fg-dimmer) 55%, transparent);
+  }
+
+  :root:hover::-webkit-scrollbar-thumb,
+  html:hover::-webkit-scrollbar-thumb,
+  body:hover::-webkit-scrollbar-thumb,
+  :where(.app, .app *):hover::-webkit-scrollbar-thumb {
+    background-color: color-mix(in srgb, var(--fg-muted) 68%, transparent);
+  }
+
+  :root::-webkit-scrollbar-thumb:active,
+  html::-webkit-scrollbar-thumb:active,
+  body::-webkit-scrollbar-thumb:active,
+  :where(.app, .app *)::-webkit-scrollbar-thumb:active {
+    background-color: color-mix(in srgb, var(--fg-muted) 84%, transparent);
+  }
+
+  :root::-webkit-scrollbar-button,
+  html::-webkit-scrollbar-button,
+  body::-webkit-scrollbar-button,
+  :where(.app, .app *)::-webkit-scrollbar-button {
+    display: none;
+    width: 0;
+    height: 0;
+    background: transparent;
+  }
+
+  :root::-webkit-scrollbar-corner,
+  html::-webkit-scrollbar-corner,
+  body::-webkit-scrollbar-corner,
+  :where(.app, .app *)::-webkit-scrollbar-corner {
+    background: transparent;
+  }
 }
 
-:root::-webkit-scrollbar,
-:where(.app, .app *)::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
-}
-
-:root::-webkit-scrollbar-track,
-:where(.app, .app *)::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-:root::-webkit-scrollbar-thumb,
-:where(.app, .app *)::-webkit-scrollbar-thumb {
-  min-width: 44px;
-  min-height: 44px;
-  border: 3px solid transparent;
-  border-radius: 999px;
-  background-clip: content-box;
-  background-color: color-mix(in srgb, var(--fg-dimmer) 55%, transparent);
-}
-
-:root:hover::-webkit-scrollbar-thumb,
-:where(.app, .app *):hover::-webkit-scrollbar-thumb {
-  background-color: color-mix(in srgb, var(--fg-muted) 68%, transparent);
-}
-
-:root::-webkit-scrollbar-thumb:active,
-:where(.app, .app *)::-webkit-scrollbar-thumb:active {
-  background-color: color-mix(in srgb, var(--fg-muted) 84%, transparent);
-}
-
-*::-webkit-scrollbar-button,
-*::-webkit-scrollbar-button:single-button,
-*::-webkit-scrollbar-button:vertical,
-*::-webkit-scrollbar-button:vertical:start,
-*::-webkit-scrollbar-button:vertical:end,
-*::-webkit-scrollbar-button:vertical:decrement,
-*::-webkit-scrollbar-button:vertical:increment,
-*::-webkit-scrollbar-button:horizontal,
-*::-webkit-scrollbar-button:horizontal:start,
-*::-webkit-scrollbar-button:horizontal:end,
-*::-webkit-scrollbar-button:horizontal:decrement,
-*::-webkit-scrollbar-button:horizontal:increment {
-  -webkit-appearance: none !important;
-  appearance: none !important;
-  display: none !important;
-  width: 0 !important;
-  height: 0 !important;
-  margin: 0 !important;
-  padding: 0 !important;
-  border: 0 !important;
-  background: transparent !important;
-  background-image: none !important;
-}
-
-:root::-webkit-scrollbar-corner,
-:where(.app, .app *)::-webkit-scrollbar-corner {
-  background: transparent;
+@-moz-document url-prefix() {
+  :root,
+  :where(.app, .app *) {
+    scrollbar-color: color-mix(in srgb, var(--fg-dimmer) 60%, transparent) transparent;
+    scrollbar-width: thin;
+  }
 }
 
 /* ============================================================
