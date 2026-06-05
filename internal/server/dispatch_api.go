@@ -64,6 +64,9 @@ type CreateRunRequest struct {
 	InitialWorkflowFilename string
 	IssueLockHolderID       string
 	SlotLeaseRef            string
+	EntrypointPhase         string
+	SuppliedAttempts        []RunAttemptData
+	ValidationURL           string
 	TriggerSource           map[string]any
 	EvidenceRequirements    []EvidenceRequirement
 	AgentRuntime            agentruntime.Snapshot

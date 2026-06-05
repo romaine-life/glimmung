@@ -2254,12 +2254,18 @@ func appendMissingStrings(values []string, additions ...string) []string {
 }
 
 func phaseExecutionDocsFromWorkflow(wf server.Workflow, createdAt string, entrypointPhase *string) []phaseExecutionDoc {
+	return phaseExecutionDocsFromWorkflowWithSupplied(wf, createdAt, entrypointPhase, nil)
+}
+
+func phaseExecutionDocsFromWorkflowWithSupplied(wf server.Workflow, createdAt string, entrypointPhase *string, suppliedPhases map[string]bool) []phaseExecutionDoc {
 	wf = server.CanonicalWorkflow(wf)
 	out := make([]phaseExecutionDoc, 0, len(wf.Phases))
 	beforeEntrypoint := strings.TrimSpace(stringOrEmpty(entrypointPhase)) != ""
 	for _, phase := range wf.Phases {
 		state := "not_started"
-		if beforeEntrypoint {
+		if suppliedPhases[phase.Name] {
+			state = "supplied"
+		} else if beforeEntrypoint {
 			if phase.Name == strings.TrimSpace(stringOrEmpty(entrypointPhase)) {
 				beforeEntrypoint = false
 			} else {
@@ -8121,9 +8127,11 @@ func (s *Store) CreateRun(ctx context.Context, req server.CreateRunRequest) (ser
 		State:                "queued",
 		QueueState:           &queueState,
 		SlotLeaseRef:         optionalNonEmptyStringPtr(req.SlotLeaseRef),
-		PhaseExecutions:      phaseExecutionDocsFromWorkflow(*wf, now, nil),
+		EntrypointPhase:      optionalNonEmptyStringPtr(req.EntrypointPhase),
+		ValidationURL:        optionalNonEmptyStringPtr(req.ValidationURL),
+		PhaseExecutions:      phaseExecutionDocsFromWorkflowWithSupplied(*wf, now, optionalNonEmptyStringPtr(req.EntrypointPhase), suppliedPhaseSet(req.SuppliedAttempts)),
 		Budget:               budgetDoc,
-		Attempts:             []attemptDoc{},
+		Attempts:             carryForwardAttemptDocs(req.SuppliedAttempts, *wf, now),
 		CumulativeCostUSD:    0.0,
 		EvidenceRequirements: sliceOrEmpty(req.EvidenceRequirements),
 		AgentRuntime:         req.AgentRuntime,
@@ -8188,6 +8196,20 @@ func carryForwardAttemptDocs(attempts []server.RunAttemptData, wf server.Workflo
 			PhaseOutputs:     stringMapOrEmpty(attempt.PhaseOutputs),
 			CarryForward:     true,
 		})
+	}
+	return out
+}
+
+func suppliedPhaseSet(attempts []server.RunAttemptData) map[string]bool {
+	if len(attempts) == 0 {
+		return nil
+	}
+	out := map[string]bool{}
+	for _, attempt := range attempts {
+		phase := strings.TrimSpace(attempt.Phase)
+		if phase != "" {
+			out[phase] = true
+		}
 	}
 	return out
 }

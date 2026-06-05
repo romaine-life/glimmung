@@ -481,6 +481,7 @@ func newHandlerWithReconcilers(settings Settings, store ReadStore, authResolver 
 	mux.Handle("POST /v1/test-slots/apply-hot-swap", requireAdmin(adminAuthenticator, http.HandlerFunc(applyTestSlotHotSwap(store, testSlotPreparer, nativeTokenMinter, applyPerformer))))
 	mux.Handle("POST /v1/projects/{project}/issues/{issue_number}/runs/{run_number}/replay", requireAdmin(adminAuthenticator, http.HandlerFunc(replayRunDecisionByNumber(store))))
 	mux.Handle("POST /v1/runs/dispatch", requireAdmin(adminAuthenticator, http.HandlerFunc(dispatchRunHandler(settings, store, nativeLauncher))))
+	mux.Handle("POST /v1/runs/synthetic-dispatch", requireAdmin(adminAuthenticator, http.HandlerFunc(syntheticDispatchRunHandler(settings, store, nativeLauncher))))
 	mux.HandleFunc("POST /v1/webhook/github", githubWebhook(settings))
 	// Per-run OpenGraph image: public, unauthenticated PNG card matching
 	// the SPA's run-URL shape so unfurlers (Discord, Slack, etc.) get a

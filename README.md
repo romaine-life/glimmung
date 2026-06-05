@@ -364,6 +364,17 @@ the Postgres store in [`internal/store/store`](internal/store/store) and
 Issue-lock TTL is 4h. Terminal Run transitions release issue/PR locks through
 the Go store; leases still have their own TTL/callback lifecycle.
 
+### Synthetic dispatch
+
+`POST /v1/runs/synthetic-dispatch` is the break-glass companion to normal
+dispatch. It creates a new Run from caller-supplied facts, records the requested
+`start_at_phase`, stamps earlier caller-supplied phases as `supplied`, and
+launches only the entrypoint phase. It does not inspect prior runs, infer
+missing outputs, provision a slot, or repair the workflow. The caller must
+provide a claimed `execution_context.slot_lease_ref` and every skipped phase
+output required by the entrypoint phase inputs. The MCP wrapper is
+`synthetic_dispatch_run` in `romaine-life/mcp-glimmung`.
+
 Runner clients that open or update a GitHub PR should use the dispatch inputs
 and lease metadata as the PR body source of truth: include `issue_ref`,
 `run_ref`, the Touchpoint/PR URL when known, the validation URL, and evidence

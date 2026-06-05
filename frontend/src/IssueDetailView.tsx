@@ -3269,7 +3269,7 @@ function countProjectionPhases(run: RunProjectionRun) {
     (acc, phase) => {
       if (phase.state === "active" || phase.state === "dispatching") acc.active += 1;
       else if (phase.state === "succeeded") acc.succeeded += 1;
-      else if (phase.state === "skipped") acc.skipped += 1;
+      else if (phase.state === "skipped" || phase.state === "supplied") acc.skipped += 1;
       else if (phase.state === "failed") acc.failed += 1;
       else acc.pending += 1;
       return acc;
@@ -3305,6 +3305,7 @@ function graphStatePill(state: string): string {
   if (state === "active") return "busy";
   if (state === "failed" || state === "aborted") return "drain";
   if (state === "dispatching") return "pending";
+  if (state === "supplied") return "info";
   return "";
 }
 
@@ -4016,7 +4017,7 @@ function preferredNativeStepKey(
 
 function nativeStepRowClass(state: string): string {
   if (state === "succeeded") return "done";
-  if (state === "skipped") return "skipped";
+  if (state === "skipped" || state === "supplied") return "skipped";
   if (state === "active") return "active";
   if (state === "aborted") return "failed";
   if (state === "failed") return "failed";
@@ -4028,6 +4029,7 @@ function nativeStepGlyph(state: string): string {
   if (state === "active") return "▶";
   if (state === "aborted") return "!";
   if (state === "failed") return "!";
+  if (state === "supplied") return "↷";
   if (state === "skipped") return "↷";
   return "·";
 }

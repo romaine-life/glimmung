@@ -515,6 +515,13 @@ returns `no_capacity` and does not create a run or cycle. Queueing remains an
 issue-level product workflow; queued cycles that already exist are admitted by
 the run-queue reconciler when capacity appears.
 
+Synthetic dispatch is deliberately stricter and less helpful than normal
+dispatch. It is an operator escape hatch for creating a new Run at an explicit
+`start_at_phase` with caller-supplied completed outputs for earlier phases. It
+must not scrape prior runs, decide which outputs matter, or allocate a test
+slot. Supplied phases render as `supplied`, not `passed`; the caller owns the
+truthfulness and completeness of the provided outputs.
+
 Never store paths as canonical identifiers — compute at render
 time from the entity's slug + parent context. This avoids
 renumbering churn when phases are added/removed and naturally

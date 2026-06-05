@@ -1515,7 +1515,7 @@ func applyDispatchFailureOwnership(jobs []RunProjectionJob, phaseState string, p
 
 func projectionExecutionState(state string) string {
 	switch state {
-	case "not_started", "skipped", "dispatching", "active", "succeeded", "failed", "aborted":
+	case "not_started", "skipped", "supplied", "dispatching", "active", "succeeded", "failed", "aborted":
 		return state
 	default:
 		return "not_started"
@@ -1565,6 +1565,8 @@ func projectionPhaseState(run RunReport, phaseName string, attempts []RunReportA
 		switch *latest.Conclusion {
 		case "success":
 			return "succeeded"
+		case "supplied":
+			return "supplied"
 		case "skipped":
 			return "skipped"
 		case "cancelled", "failure", "timed_out", "aborted":
@@ -1819,6 +1821,8 @@ func projectionJobCompletionAttrs(completion RunAttemptJobCompletion, phaseState
 		return "failed", conclusion, completedAt
 	case "skipped":
 		return "skipped", conclusion, completedAt
+	case "supplied":
+		return "supplied", conclusion, completedAt
 	default:
 		return "failed", conclusion, completedAt
 	}
@@ -1836,6 +1840,8 @@ func projectionJobState(phaseState string) string {
 		return "dispatching"
 	case "skipped":
 		return "skipped"
+	case "supplied":
+		return "supplied"
 	case "not_started":
 		return "not_started"
 	default:
@@ -1845,7 +1851,7 @@ func projectionJobState(phaseState string) string {
 
 func projectionStepState(jobState string) string {
 	switch jobState {
-	case "succeeded", "failed", "skipped", "aborted":
+	case "succeeded", "failed", "skipped", "supplied", "aborted":
 		return jobState
 	default:
 		return "not_started"
@@ -1931,6 +1937,8 @@ func projectionAttemptState(attempt RunReportAttempt) string {
 		switch *attempt.Conclusion {
 		case "success":
 			return "succeeded"
+		case "supplied":
+			return "supplied"
 		case "skipped":
 			return "skipped"
 		case "cancelled", "failure", "timed_out", "aborted":
@@ -2468,6 +2476,8 @@ func workflowRunStepState(attempt RunReportAttempt) string {
 			switch *attempt.Conclusion {
 			case "success":
 				return "succeeded"
+			case "supplied":
+				return "supplied"
 			case "skipped":
 				return "skipped"
 			case "cancelled", "failure", "timed_out":
