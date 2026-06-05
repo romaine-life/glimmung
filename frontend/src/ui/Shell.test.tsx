@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
@@ -10,6 +12,7 @@ const snap: ShellSnapshot = {
   test_environments: [],
   waiting_test_slot_requests: [],
 };
+const shellCss = readFileSync("src/index.css", "utf8");
 
 function renderShell() {
   return render(
@@ -77,5 +80,14 @@ describe("Shell", () => {
     fireEvent.error(avatar!);
 
     expect(screen.getByText("CU")).toBeInTheDocument();
+  });
+
+  it("locks the left sidebar to the viewport while page content scrolls", () => {
+    expect(shellCss).toMatch(/\.app\s*\{[^}]*--shell-sidebar-width:\s*248px/s);
+    expect(shellCss).toMatch(/\.app\.sidebar-collapsed\s*\{[^}]*--shell-sidebar-width:\s*64px/s);
+    expect(shellCss).toMatch(/\.app \.sidebar\s*\{[^}]*position:\s*fixed/s);
+    expect(shellCss).toMatch(/\.app \.sidebar\s*\{[^}]*inset:\s*0 auto 0 0/s);
+    expect(shellCss).toMatch(/\.app \.main\s*\{[^}]*width:\s*calc\(100% - var\(--shell-sidebar-width\)\)/s);
+    expect(shellCss).toMatch(/\.app \.main\s*\{[^}]*margin-left:\s*var\(--shell-sidebar-width\)/s);
   });
 });
