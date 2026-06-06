@@ -68,6 +68,7 @@ type CreateRunRequest struct {
 	SuppliedAttempts        []RunAttemptData
 	ValidationURL           string
 	TriggerSource           map[string]any
+	RunInputs               map[string]string
 	EvidenceRequirements    []EvidenceRequirement
 	AgentRuntime            agentruntime.Snapshot
 	PreserveTestEnv         bool
@@ -121,11 +122,12 @@ type RunDispatchStore interface {
 
 // DispatchRunRequest is the body for POST /v1/runs/dispatch.
 type DispatchRunRequest struct {
-	Project       string         `json:"project"`
-	IssueNumber   int            `json:"issue_number"`
-	WorkflowName  string         `json:"workflow_name"`
-	Workflow      string         `json:"workflow"`
-	TriggerSource map[string]any `json:"trigger_source"`
+	Project       string            `json:"project"`
+	IssueNumber   int               `json:"issue_number"`
+	WorkflowName  string            `json:"workflow_name"`
+	Workflow      string            `json:"workflow"`
+	Inputs        map[string]string `json:"inputs"`
+	TriggerSource map[string]any    `json:"trigger_source"`
 }
 
 // PublicDispatchResult is the response for POST /v1/runs/dispatch.
@@ -187,6 +189,10 @@ func dispatchRunWithAgentRuntime(ctx context.Context, dispatchStore RunDispatchS
 	}
 	if req.IssueNumber <= 0 {
 		return PublicDispatchResult{}, &dispatchProblem{status: http.StatusBadRequest, message: "issue_number required"}
+	}
+	runInputs, err := normalizeRunInputs(req.Inputs)
+	if err != nil {
+		return PublicDispatchResult{}, &dispatchProblem{status: http.StatusBadRequest, message: err.Error()}
 	}
 
 	project, err := dispatchStore.ReadProjectForDispatch(ctx, req.Project)
@@ -314,6 +320,7 @@ func dispatchRunWithAgentRuntime(ctx context.Context, dispatchStore RunDispatchS
 			IssueNumber:          req.IssueNumber,
 			IssueRepo:            issueRepo,
 			TriggerSource:        triggerSource,
+			RunInputs:            runInputs,
 			EvidenceRequirements: evidenceRequirements,
 			AgentRuntime:         agentRuntime,
 		}, issue, issueRepo, initPhase.Name, 0, nil),
@@ -360,6 +367,7 @@ func dispatchRunWithAgentRuntime(ctx context.Context, dispatchStore RunDispatchS
 		IssueLockHolderID:       holderID,
 		SlotLeaseRef:            initialLeaseRef,
 		TriggerSource:           triggerSource,
+		RunInputs:               runInputs,
 		EvidenceRequirements:    evidenceRequirements,
 		AgentRuntime:            agentRuntime,
 		PreserveTestEnv:         issue.PreserveTestEnv,
@@ -387,6 +395,7 @@ func dispatchRunWithAgentRuntime(ctx context.Context, dispatchStore RunDispatchS
 		IssueLockHolderID:    &holderID,
 		SlotLeaseRef:         &initialLeaseRef,
 		TriggerSource:        triggerSource,
+		RunInputs:            runInputs,
 		EvidenceRequirements: evidenceRequirements,
 		AgentRuntime:         agentRuntime,
 	}

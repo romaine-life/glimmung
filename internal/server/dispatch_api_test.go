@@ -364,6 +364,54 @@ func TestDispatchRunDispatchedNativeK8sJob(t *testing.T) {
 	}
 }
 
+func TestDispatchRunPersistsRunInputs(t *testing.T) {
+	store := minimalDispatchStore()
+	launcher := &fakeNativeLauncher{}
+	body, _ := json.Marshal(DispatchRunRequest{
+		Project:     "proj",
+		IssueNumber: 1,
+		Inputs:      map[string]string{"git_ref": "codex/lifecycle-observe"},
+	})
+	rec := httptest.NewRecorder()
+	newDispatchTestHandler(store, launcher).ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/runs/dispatch", bytes.NewReader(body)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if store.runReq == nil {
+		t.Fatal("run was not created")
+	}
+	if got, want := store.runReq.RunInputs["git_ref"], "codex/lifecycle-observe"; got != want {
+		t.Fatalf("run input git_ref=%q, want %q", got, want)
+	}
+	metadataInputs, ok := store.leaseReq.Metadata["run_inputs"].(map[string]string)
+	if !ok {
+		t.Fatalf("lease run_inputs=%T %#v", store.leaseReq.Metadata["run_inputs"], store.leaseReq.Metadata["run_inputs"])
+	}
+	if got, want := metadataInputs["git_ref"], "codex/lifecycle-observe"; got != want {
+		t.Fatalf("lease run input git_ref=%q, want %q", got, want)
+	}
+	if got, want := launcher.req.Run.RunInputs["git_ref"], "codex/lifecycle-observe"; got != want {
+		t.Fatalf("launch run input git_ref=%q, want %q", got, want)
+	}
+}
+
+func TestDispatchRunRejectsInvalidRunInputs(t *testing.T) {
+	store := minimalDispatchStore()
+	body, _ := json.Marshal(DispatchRunRequest{
+		Project:     "proj",
+		IssueNumber: 1,
+		Inputs:      map[string]string{"bad key": "main"},
+	})
+	rec := httptest.NewRecorder()
+	newDispatchTestHandler(store, &fakeNativeLauncher{}).ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/runs/dispatch", bytes.NewReader(body)))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if store.runReq != nil || store.leaseReq != nil {
+		t.Fatalf("invalid inputs should fail before creating run or lease: run=%#v lease=%#v", store.runReq, store.leaseReq)
+	}
+}
+
 func TestDispatchRunPersistsPostRunWorkContextOnPreclaimedLease(t *testing.T) {
 	base := minimalDispatchStore()
 	base.leaseResult.Metadata["work_context_branch"] = "issue-168-run-unknown"

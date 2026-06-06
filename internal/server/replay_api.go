@@ -52,6 +52,7 @@ type RunReplayData struct {
 	SlotLeaseRef         *string
 	EntrypointPhase      *string
 	TriggerSource        map[string]any
+	RunInputs            map[string]string
 	AgentRuntime         agentruntime.Snapshot
 	PreserveTestEnv      bool
 	State                string

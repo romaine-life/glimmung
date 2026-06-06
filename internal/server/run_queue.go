@@ -414,6 +414,9 @@ func runCycleLeaseMetadata(run RunReplayData, issue IssueDispatchData, issueRepo
 			metadata["feedback"] = feedback
 		}
 	}
+	if runInputs := runInputsForMetadata(run.RunInputs); len(runInputs) > 0 {
+		metadata["run_inputs"] = runInputs
+	}
 	applyWorkContextMetadata(run, metadata)
 	if branch := workContextBranch(run, metadata); branch != "" {
 		metadata["work_context_branch"] = branch

@@ -1063,6 +1063,9 @@ func leaseForRunPhase(ctx context.Context, store RunCompletionStore, run RunRepl
 	metadata["phase_inputs"] = phaseInputs
 	metadata["issue_ref"] = publicids.IssueRef(run.Project, &run.IssueNumber)
 	metadata["issue_number"] = strconv.Itoa(run.IssueNumber)
+	if runInputs := runInputsForMetadata(run.RunInputs); len(runInputs) > 0 {
+		metadata["run_inputs"] = runInputs
+	}
 	applyWorkContextMetadata(run, metadata)
 	if branch := workContextBranch(run, metadata); branch != "" {
 		metadata["work_context_branch"] = branch
@@ -1180,6 +1183,8 @@ func dispatchRetry(
 		IssueLockHolderID:    run.IssueLockHolderID,
 		SlotLeaseRef:         &leaseRef,
 		EntrypointPhase:      &targetPhase.Name,
+		TriggerSource:        map[string]any{"kind": "recycle_policy", "recycled_from_run_id": run.ID, "failing_phase": failingPhase},
+		RunInputs:            run.RunInputs,
 		EvidenceRequirements: run.EvidenceRequirements,
 		Attempts: append(append([]RunAttemptData{}, recycle.CarryForwardAttempts...), RunAttemptData{
 			AttemptIndex: newAttemptIdx,

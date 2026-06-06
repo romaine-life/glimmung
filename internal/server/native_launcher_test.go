@@ -56,6 +56,7 @@ func TestNativeJobManifestIncludesRunnerCallbackEnv(t *testing.T) {
 			RunNumber:        &runNumber,
 			RunDisplayNumber: &runDisplay,
 			CallbackToken:    &callback,
+			RunInputs:        map[string]string{"git_ref": "codex/lifecycle-observe"},
 			Attempts:         []RunAttemptData{{AttemptIndex: 1, Phase: "verify"}},
 		},
 	}
@@ -92,6 +93,9 @@ func TestNativeJobManifestIncludesRunnerCallbackEnv(t *testing.T) {
 	if env["GLIMMUNG_INPUT_TARGET"] != "provision" {
 		t.Fatalf("phase input env=%q", env["GLIMMUNG_INPUT_TARGET"])
 	}
+	if env["GLIMMUNG_RUN_INPUT_GIT_REF"] != "codex/lifecycle-observe" {
+		t.Fatalf("run input env=%q", env["GLIMMUNG_RUN_INPUT_GIT_REF"])
+	}
 	if env["GLIMMUNG_VALIDATION_NAMESPACE"] != "tank-operator-slot-1" {
 		t.Fatalf("validation namespace=%q", env["GLIMMUNG_VALIDATION_NAMESPACE"])
 	}
@@ -112,6 +116,50 @@ func TestNativeJobManifestIncludesRunnerCallbackEnv(t *testing.T) {
 	}
 	if env["PLAYWRIGHT_WS_ENDPOINT"] != "ws://slot-playwright.tank-operator-slot-1.svc.cluster.local:3000" {
 		t.Fatalf("Playwright endpoint=%q", env["PLAYWRIGHT_WS_ENDPOINT"])
+	}
+}
+
+func TestResolveNativeCheckoutRunInputs(t *testing.T) {
+	phase := PhaseSpec{
+		Name: "prepare",
+		Jobs: []NativeJobSpec{{
+			ID:       "env-prep",
+			Checkout: &NativeCheckoutSpec{Repo: "owner/repo", Ref: "${{ inputs.git_ref }}", Path: "/workspace/repo"},
+			ExtraCheckouts: []NativeCheckoutSpec{{
+				Repo: "owner/extra",
+				Ref:  "${{ inputs.branch }}",
+				Path: "/workspace/extra",
+			}},
+		}},
+	}
+	got, err := resolveNativeCheckoutRunInputs(phase, map[string]string{
+		"git_ref": "codex/lifecycle-observe",
+		"branch":  "support-branch",
+	})
+	if err != nil {
+		t.Fatalf("resolve checkout refs: %v", err)
+	}
+	if got.Jobs[0].Checkout.Ref != "codex/lifecycle-observe" {
+		t.Fatalf("checkout ref=%q", got.Jobs[0].Checkout.Ref)
+	}
+	if got.Jobs[0].ExtraCheckouts[0].Ref != "support-branch" {
+		t.Fatalf("extra checkout ref=%q", got.Jobs[0].ExtraCheckouts[0].Ref)
+	}
+	if phase.Jobs[0].Checkout.Ref != "${{ inputs.git_ref }}" {
+		t.Fatalf("input phase mutated: %#v", phase.Jobs[0].Checkout)
+	}
+}
+
+func TestResolveNativeCheckoutRunInputsRequiresProvidedInput(t *testing.T) {
+	phase := PhaseSpec{
+		Name: "prepare",
+		Jobs: []NativeJobSpec{{
+			ID:       "env-prep",
+			Checkout: &NativeCheckoutSpec{Ref: "${{ inputs.git_ref }}"},
+		}},
+	}
+	if _, err := resolveNativeCheckoutRunInputs(phase, nil); err == nil {
+		t.Fatal("expected missing input error")
 	}
 }
 

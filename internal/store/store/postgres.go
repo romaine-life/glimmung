@@ -1424,6 +1424,7 @@ type runDoc struct {
 	TerminalObservation  *server.RunTerminalObservation `json:"terminal_observation,omitempty"`
 	EntrypointPhase      *string                        `json:"entrypoint_phase,omitempty"`
 	TriggerSource        map[string]any                 `json:"trigger_source"`
+	RunInputs            map[string]string              `json:"run_inputs,omitempty"`
 	CreatedAt            string                         `json:"created_at"`
 	UpdatedAt            string                         `json:"updated_at"`
 	// Fields used by mutation operations.
@@ -5163,6 +5164,7 @@ func runReplayDataFromDoc(doc runDoc) server.RunReplayData {
 		SlotLeaseRef:         doc.SlotLeaseRef,
 		EntrypointPhase:      doc.EntrypointPhase,
 		TriggerSource:        mapOrEmpty(doc.TriggerSource),
+		RunInputs:            stringMapOrEmpty(doc.RunInputs),
 		AgentRuntime:         doc.AgentRuntime,
 		PreserveTestEnv:      doc.PreserveTestEnv,
 		State:                doc.State,
@@ -8151,6 +8153,7 @@ func (s *Store) CreateRun(ctx context.Context, req server.CreateRunRequest) (ser
 		EvidenceRequirements: sliceOrEmpty(req.EvidenceRequirements),
 		AgentRuntime:         req.AgentRuntime,
 		TriggerSource:        req.TriggerSource,
+		RunInputs:            stringMapOrEmpty(req.RunInputs),
 		CallbackToken:        &callbackToken,
 		IssueLockHolderID:    &req.IssueLockHolderID,
 		PreserveTestEnv:      req.PreserveTestEnv,
@@ -8358,6 +8361,7 @@ func (s *Store) CreateRecycleCycle(ctx context.Context, req server.CreateRecycle
 		EvidenceRequirements: sliceOrEmpty(firstEvidenceRequirements(req.EvidenceRequirements, parent.EvidenceRequirements)),
 		AgentRuntime:         parent.AgentRuntime,
 		TriggerSource:        req.TriggerSource,
+		RunInputs:            stringMapOrEmpty(parent.RunInputs),
 		CallbackToken:        &callbackToken,
 		IssueLockHolderID:    parent.IssueLockHolderID,
 		PRLockHolderID:       parent.PRLockHolderID,
