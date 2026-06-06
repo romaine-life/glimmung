@@ -139,8 +139,8 @@ jobs:
 Agent runtime policy resolves in this order:
 
 1. Global config chooses the fleet default and profile catalog.
-2. Project config in `.glimmung/project.yaml` may inherit or override the
-   default and named slots.
+2. Project config (the durable `projects` row, written via `register_project`)
+   may inherit or override the default and named slots.
 3. Issue metadata may inherit or override the default and named slots.
 
 Each decision is explicit: `mode: inherit` keeps the current value from the

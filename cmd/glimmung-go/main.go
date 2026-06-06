@@ -306,19 +306,6 @@ type gitHubClientAdapter struct {
 	client *githubclient.Client
 }
 
-// FetchProjectFile reads the declarative project-config document
-// `.glimmung/project.yaml` from a project's own repo.
-func (a *gitHubClientAdapter) FetchProjectFile(ctx context.Context, repo, ref string) ([]byte, int, error) {
-	data, err := a.client.FetchFileContents(ctx, repo, ".glimmung/project.yaml", ref)
-	if errors.Is(err, githubclient.ErrNotFound) {
-		return nil, 404, err
-	}
-	if err != nil {
-		return nil, 502, err
-	}
-	return data, 200, nil
-}
-
 func (a *gitHubClientAdapter) InstallationToken(ctx context.Context) (string, error) {
 	return a.client.InstallationToken(ctx)
 }

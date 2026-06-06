@@ -248,7 +248,7 @@ func NewWithStore(settings Settings, store ReadStore) http.Handler {
 }
 
 // NewWithGitHubClient extends NewWithDependencies with an optional GitHub client
-// for project config sync, native token minting, and PR operations.
+// for native token minting and PR operations.
 func NewWithGitHubClient(settings Settings, store ReadStore, authResolver AuthResolver, ghClient any, artifactStores ...ArtifactStore) http.Handler {
 	return newHandler(settings, store, authResolver, ghClient, nil, artifactStores...)
 }
@@ -416,8 +416,6 @@ func newHandlerWithReconcilers(settings Settings, store ReadStore, authResolver 
 	mux.Handle("PATCH /v1/leases/ttl", requireAdmin(adminAuthenticator, http.HandlerFunc(updateLeaseTTLByRef(store, testSlotPreparer, nativeTokenMinter))))
 	mux.Handle("PATCH /v1/test-slots/default-ttl", requireAdmin(adminAuthenticator, http.HandlerFunc(updateTestLeaseDefaultTTL(store))))
 	mux.Handle("PATCH /v1/test-slots/hot-swap-min-ttl", requireAdmin(adminAuthenticator, http.HandlerFunc(updateTestLeaseHotSwapMinTTL(store))))
-	mux.HandleFunc("GET /v1/projects/{project}/upstream", getProjectUpstream(store, ghClient))
-	mux.Handle("POST /v1/projects/{project}/sync", requireAdmin(adminAuthenticator, http.HandlerFunc(syncProject(store, ghClient))))
 	mux.Handle("POST /v1/projects/{project}/issues/{issue_number}/runs/{run_number}/abort", requireAdmin(adminAuthenticator, http.HandlerFunc(abortRunByNumber(store))))
 	mux.Handle("POST /v1/projects/{project}/issues/{issue_number}/runs/{run_number}/touchpoint/finalize", requireAdmin(adminAuthenticator, http.HandlerFunc(finalizeRunTouchpointByNumber(store, prClient, artifactStore))))
 	mux.Handle("POST /v1/projects/{project}/issues/{issue_number}/runs/{run_number}/cycles/{cycle_number}/touchpoint/finalize", requireAdmin(adminAuthenticator, http.HandlerFunc(finalizeRunCycleTouchpointByNumber(store, prClient, artifactStore))))
