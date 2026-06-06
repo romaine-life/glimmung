@@ -194,6 +194,10 @@ func (l *KubernetesNativeLauncher) LaunchNativePhase(ctx context.Context, req Na
 	if err != nil {
 		return nil, err
 	}
+	derivedPhase, err = resolveNativeCheckoutRunInputs(derivedPhase, launchRunInputs(req))
+	if err != nil {
+		return nil, err
+	}
 	req.Phase = derivedPhase
 	if len(req.Phase.Jobs) == 0 {
 		return nil, fmt.Errorf("native phase %q has no jobs", req.Phase.Name)
@@ -259,6 +263,53 @@ func derivePrimaryCheckoutRepo(phase PhaseSpec, issueRepo string) (PhaseSpec, er
 	}
 	phase.Jobs = jobs
 	return phase, nil
+}
+
+func resolveNativeCheckoutRunInputs(phase PhaseSpec, inputs map[string]string) (PhaseSpec, error) {
+	if len(phase.Jobs) == 0 {
+		return phase, nil
+	}
+	jobs := make([]NativeJobSpec, len(phase.Jobs))
+	copy(jobs, phase.Jobs)
+	for i := range jobs {
+		if jobs[i].Checkout != nil {
+			checkout := *jobs[i].Checkout
+			ref, err := resolveRunInputTemplate(checkout.Ref, inputs)
+			if err != nil {
+				return PhaseSpec{}, fmt.Errorf("native phase %q job %q checkout.ref: %w", phase.Name, jobs[i].ID, err)
+			}
+			checkout.Ref = ref
+			jobs[i].Checkout = &checkout
+		}
+		if len(jobs[i].ExtraCheckouts) > 0 {
+			extra := make([]NativeCheckoutSpec, len(jobs[i].ExtraCheckouts))
+			copy(extra, jobs[i].ExtraCheckouts)
+			for j := range extra {
+				ref, err := resolveRunInputTemplate(extra[j].Ref, inputs)
+				if err != nil {
+					return PhaseSpec{}, fmt.Errorf("native phase %q job %q extra_checkouts[%d].ref: %w", phase.Name, jobs[i].ID, j, err)
+				}
+				extra[j].Ref = ref
+			}
+			jobs[i].ExtraCheckouts = extra
+		}
+	}
+	phase.Jobs = jobs
+	return phase, nil
+}
+
+func launchRunInputs(req NativeLaunchRequest) map[string]string {
+	out := runInputsForMetadata(req.Run.RunInputs)
+	for key, raw := range anyMap(req.Lease.Metadata["run_inputs"]) {
+		if strings.TrimSpace(key) == "" {
+			continue
+		}
+		if _, exists := out[key]; exists {
+			continue
+		}
+		out[key] = strings.TrimSpace(fmt.Sprint(raw))
+	}
+	return out
 }
 
 func nativePhaseRequiresProviderAPIProxy(phase PhaseSpec) bool {
@@ -1718,6 +1769,11 @@ func nativeJobEnv(settings Settings, req NativeLaunchRequest, job NativeJobSpec,
 		sort.Strings(keys)
 		for _, key := range keys {
 			env = appendLiteralEnv(env, seen, "GLIMMUNG_INPUT_"+envName(key), fmt.Sprint(phaseInputs[key]))
+		}
+	}
+	if runInputs := launchRunInputs(req); len(runInputs) > 0 {
+		for _, key := range sortedRunInputKeys(runInputs) {
+			env = appendLiteralEnv(env, seen, "GLIMMUNG_RUN_INPUT_"+envName(key), runInputs[key])
 		}
 	}
 	if rawRequirements := metadata["evidence_requirements"]; rawRequirements != nil {

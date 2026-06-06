@@ -364,6 +364,18 @@ the Postgres store in [`internal/store/store`](internal/store/store) and
 Issue-lock TTL is 4h. Terminal Run transitions release issue/PR locks through
 the Go store; leases still have their own TTL/callback lifecycle.
 
+### Dispatch inputs
+
+`POST /v1/runs/dispatch` accepts an optional string map `inputs`. These values
+are durable run facts, persisted as `run_inputs` on the Run and copied into
+native lease metadata for every phase and recycle attempt. Native pods receive
+them as `GLIMMUNG_RUN_INPUT_*` environment variables.
+
+Native workflow checkouts may set `checkout.ref` or `extra_checkouts[].ref` to
+an exact run-input template such as `${{ inputs.git_ref }}`. The launcher
+resolves the template before emitting the runner job spec, so the native runner
+checks out the requested ref instead of a literal template string.
+
 ### Synthetic dispatch
 
 `POST /v1/runs/synthetic-dispatch` is the break-glass companion to normal
@@ -624,6 +636,7 @@ When glimmung launches a recycled native phase, the job environment includes:
 | `GLIMMUNG_RUN_REF`                    | Public run ref. |
 | `GLIMMUNG_ATTEMPT_INDEX`              | 0-based attempt index (initial=0, first recycle=1, ...). |
 | `GLIMMUNG_INPUT_*`                    | Resolved phase inputs, including prior phase outputs where the workflow declares them. |
+| `GLIMMUNG_RUN_INPUT_*`                | Durable dispatch inputs from the Run, such as a branch or git ref. |
 
 ### Decision engine
 
