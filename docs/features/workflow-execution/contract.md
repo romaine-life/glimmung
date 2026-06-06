@@ -91,6 +91,13 @@ after registration changes.
   remain the only visible execution record after expansion.
 - Evidence verification gates are canonicalized into managed Glimmung runner
   jobs.
+- Dispatch may include bounded string `inputs`. These are durable run facts,
+  persisted on the Run as `run_inputs`, copied into every native lease's
+  metadata, exposed to native pods as `GLIMMUNG_RUN_INPUT_*`, and preserved
+  across recycle attempts. Native `checkout.ref` and `extra_checkouts[].ref`
+  may use exact run-input templates such as `${{ inputs.git_ref }}`; the
+  launcher resolves them before emitting the native runner job spec so the
+  runner receives a concrete ref.
 - Runs use the workflow schema snapshot captured at run/cycle creation, not a
   later logical workflow update.
 
@@ -136,6 +143,9 @@ after registration changes.
 - Workflow shape changes include registration validation tests.
 - Native launcher/callback changes include multi-job phase behavior when the
   change can affect phase completion.
+- Dispatch-input changes include tests for run persistence, native lease/env
+  propagation, checkout-ref resolution, missing-input failure, and recycle
+  preservation when applicable.
 - Verification-case shape changes include tests for required case IDs, bounded
   timeouts, and synthesized aggregate verification output.
 - Gate changes prove managed gate canonicalization and terminal behavior.
