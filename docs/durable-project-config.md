@@ -1,251 +1,66 @@
 # Durable Project Configuration
 
-Status: design + staged implementation. Stage 1 shipped (merged, migrated on
-prod). Stage 2 (declarative import/sync surface) shipped (merged, live on prod).
-Stage 3 (glimmung's own `.glimmung/project.yaml` + CI reconcile) in progress.
+Project configuration is **durable state in Postgres** — the `projects` row is
+the single source of truth at runtime. Authored config is versioned immutably;
+server-reconciled status is a separate, reconciler-owned column.
 
-Owner surface: `internal/store/pg/projects.go`, `internal/store/store/postgres.go`,
-`internal/server/project_write_api.go`, and `internal/server/project_sync_api.go`.
+## Source of truth
 
-## Problem
+- Postgres `projects` owns project/slot configuration: count, DNS, Helm,
+  workload identity, hot-swap metadata, and per-project agent-runtime policy.
+- A config write replaces *authored* config and mints a new immutable version
+  in `project_config_schemas` (content-hash `config_schema_ref`),
+  transactionally, **without touching the reconciler-owned `status` column**.
+- Server-reconciled status (`managed_auth_origin_status`,
+  `native_standby_workload_identity_status`) lives in `projects.status`, never
+  in authored config. Reads merge it back under `Metadata` so the API/frontend
+  shape is unchanged.
 
-Project rows are durable Postgres state, but the only write path is the
-imperative `register_project` upsert (`POST /v1/projects` →
-`ProjectWriter.UpsertProject` → `pg.ProjectsStore.Upsert`). That upsert does a
-**wholesale payload replace**:
+## Authoring — how config gets written
 
-```sql
-ON CONFLICT (name) DO UPDATE
-  SET payload = EXCLUDED.payload, github_repo = EXCLUDED.github_repo
-```
+Project config is written through the Glimmung control plane (Postgres is the
+source of truth; there is no repo-file source):
 
-and the payload is rebuilt from only `{name, github_repo, metadata}` taken from
-the request body. Two structural defects fall out of this:
+- `register_project` (`POST /v1/projects`) — upserts authored config. It
+  **replaces authored config wholesale**, so always send the *complete* authored
+  metadata; it never touches the status column. A caller/agent reconstructs the
+  full payload before writing.
+- Dedicated authored-config setters (`SetTestEnvironmentCount`, the TTL setters,
+  …) mutate a single field and re-version.
 
-1. **Authored config has no complete source.** Callers hand-assemble a partial
-   `metadata` map. Any field a caller omits is silently destroyed on the next
-   register. This is how the live `glimmung` project lost its
-   `test_slot_hot_swap` block — a later partial re-register dropped it — which
-   forced a manual `kubectl cp` instead of the documented
-   `glimmung-agent test-slot-hot-swap` path (`docs/test-slot-hot-swap.md`).
-
-2. **Server-reconciled status is interleaved with authored config.** Reconciler
-   outputs (`managed_auth_origin_status`,
-   `native_standby_workload_identity_status`) live *inside* the same `metadata`
-   blob that a human/agent overwrites on register. So a config write clobbers
-   status, and a status write has to read-modify-write the whole authored blob
-   (`mutateProject`). The two concerns are tangled and neither is safe to write
-   independently.
-
-There is no version history, no drift detection, and no declarative source —
-project config is process-memory that any partial write corrupts invisibly.
-
-This violates `docs/quality-timeframes.md` ("prefer durable state over process
-memory", "settled contracts over compatibility layers", "the durable data model
-is explicit") and leaves a class of silent-corruption bugs live.
-
-## The model already exists for workflows
-
-Glimmung solved the identical problem for **workflows** and codified the stance
-in `docs/workflow-inspiration.md`: Postgres registrations remain the runtime
-contract. Workflow definitions are registered through the Glimmung control
-plane, not imported from project repositories.
-
-Workflows have, and projects lack:
-
-| Concern | Workflows | Projects (today) |
-| --- | --- | --- |
-| Durable runtime row | `workflows (project, name)` | `projects (name)` |
-| Immutable version history | `workflow_schemas (project, schema_ref)`, content-hash `schema_ref` | none |
-| Transactional versioned write | `WorkflowsStore.Upsert` mints schema + moves pointer | `Upsert` blind replace |
-| Config vs status separation | status lives in `runs`, never in the workflow payload | status tangled into `metadata` |
-| Import artifact | none; durable registration is the source | none |
-| Drift detection | schema/version comparison inside durable state | none |
-| Apply route | `POST /v1/workflows` registration | none |
-
-The fix is to bring projects up to the workflow object's durability bar. The
-end state: **authored project config is a complete declarative document
-(`.glimmung/project.yaml`), versioned immutably, reconciled into Postgres;
-server-reconciled status is a separate, reconciler-owned column.** A full
-config write then replaces authored config cleanly — exactly like a workflow
-registration — without ever touching status.
-
-## Target data model
-
-`projects` table gains:
-
-- `config_schema_ref text NOT NULL DEFAULT ''` — pointer to the current
-  authored-config version (content hash).
-- `status jsonb NOT NULL DEFAULT '{}'` — reconciler-owned. Holds the
-  `*_status` blobs that used to live in `payload.metadata`.
-
-New table, mirroring `workflow_schemas`:
-
-```
-project_config_schemas (
-  name        text NOT NULL,
-  schema_ref  text NOT NULL,           -- "pcs_<sha256[:8]>" of canonical authored config
-  payload     jsonb NOT NULL,          -- the full authored-config document at this version
-  created_at  timestamptz NOT NULL,
-  PRIMARY KEY (name, schema_ref)
-)
-```
-
-Authored config = `{name, githubRepo, metadata}` with the server-managed
+Authored config = `{name, github_repo, metadata}` with the server-managed
 `*_status` keys removed. The content hash is computed over a canonicalized form
-of that document (stable key order), identical in spirit to
-`workflowSchemaRef`.
+of that document (stable key order).
 
-### Config vs status split
+## Removed: file-based config sync
 
-Server-managed (reconciler-owned, lives in `status` column, never in an
-authored register/file):
+An earlier iteration reconciled a repo-committed `.glimmung/project.yaml` into
+the durable row — `POST /v1/projects/{project}/sync` + `GET …/upstream`, the
+`sync_project` / `check_project_updates` MCP tools, and a per-repo
+`project-config-reconcile` workflow.
 
-- `managed_auth_origin_status` (written by `SetManagedAuthOriginStatus`)
-- `native_standby_workload_identity_status` (written by
-  `SetNativeWorkloadIdentityStatus`)
+That path is **removed**. A config file in git plus a config row in Postgres are
+two sources of truth that **drift**, and the durable row is already the
+authority. Edit project config directly through the control plane (above) — not
+a committed repo file. Do not reintroduce a repo-file source or a sync/upstream
+reconcile path.
 
-Everything else in `metadata` is authored config — including
-`native_standby_dns` (count + config), `native_standby_workload_identity`
-(config), `test_slot_helm`, `test_slot_hot_swap`, and the per-project TTL
-fields. Operator actions that set authored config through dedicated APIs
-(`SetTestEnvironmentCount`, `SetTestLeaseDefaultTTL`, …) mutate authored config
-and mint a new config version; they never write the `status` column.
+## The durable substrate (kept)
 
-### Read compatibility
+`projects` carries `config_schema_ref` (pointer to the current authored-config
+version) and `status` (reconciler-owned). `project_config_schemas` holds every
+authored-config version immutably, keyed `(name, schema_ref)`. `UpsertProject`
+mints the version row, moves the pointer, and replaces the authored payload in
+one transaction, leaving `status` untouched. This is what makes the Postgres row
+a trustworthy single source of truth.
 
-`projectFromRecord` / `scanProjectRow` merge the `status` column back under
-`Metadata` before returning, so the `server.Project` shape and every API
-response (and the frontend, which renders `managed_auth_origin_status`) are
-**unchanged**. The split is a storage-layer concern; the read contract is
-stable. This is a clean migration, not a compatibility shim: nothing reads the
-old interleaved layout after the backfill.
-
-## Stages
-
-Each stage leaves the system coherent on its own.
-
-### Stage 1 — Durable substrate (this PR)
-
-1. Migration (idempotent, `IF NOT EXISTS`, non-destructive to the existing row):
-   - add `projects.config_schema_ref`, `projects.status`;
-   - create `project_config_schemas`;
-   - one-time backfill: move `payload.metadata.managed_auth_origin_status` and
-     `payload.metadata.native_standby_workload_identity_status` into `status`,
-     delete them from `metadata`, and seed `config_schema_ref` +
-     `project_config_schemas` from the current authored config.
-2. `projectConfigSchemaRef(payload)` content hash.
-3. Rework `ProjectsStore.Upsert`: transactional — mint the immutable
-   `project_config_schemas` row (`ON CONFLICT DO NOTHING`), move the
-   `config_schema_ref` pointer, replace authored `payload`, and **leave the
-   `status` column untouched**.
-4. Reconciler status setters write the `status` column only. Authored-config
-   setters (`SetTestEnvironmentCount`, TTL setters, slot-array strip) mutate
-   `payload` and re-version.
-5. Read merge in `scanProjectRow` so API/Frontend shape is unchanged.
-6. Observability: structured log + counter on each config-version transition
-   (`project`, prev→new `config_schema_ref`), per `docs/observability.md`.
-7. Guard tests: a register that omits status preserves status; a full register
-   replaces authored config and mints exactly one new version; re-registering
-   identical config is a no-op version (same `schema_ref`).
-
-After Stage 1 a config write can no longer destroy reconciled status, every
-config write is recoverable/auditable, and the substrate for declarative sync
-exists. It does **not** yet prevent an authored-config field (like
-`test_slot_hot_swap`) from being dropped by a partial register — that requires a
-complete authored source, which is Stage 2.
-
-### Stage 2 — Declarative project config as import/sync input
-
-1. `.glimmung/project.yaml` in each project's own repo (for glimmung, the
-   glimmung repo). The complete authored-config document; the README "dogfood
-   metadata" becomes real and checked-in.
-2. `GET /v1/projects/{project}/upstream` (drift) and
-   `POST /v1/projects/{project}/sync` (apply). Sync replaces authored config
-   from the file (safe — status is a separate column) and mints a version.
-3. The repo file becomes the reviewable source of truth; Postgres stays the
-   runtime contract. A partial register can no longer be the source of authored
-   config drift because the file is complete by construction.
-
-Delivered by the glimmung-side surface (this PR):
-
-- `GET /v1/projects/{project}/upstream` (drift) and
-  `POST /v1/projects/{project}/sync` (admin-gated apply), in
-  `internal/server/project_sync_api.go`.
-- `ProjectSyncClient.FetchProjectFile` reads `.glimmung/project.yaml`.
-- `parseProjectYAML` runs the same authored-config validators as
-  `register_project` (`hotswap.FromMetadata`, `validateTestSlotHelmMetadata`)
-  and strips any server-managed status key that leaked into the file.
-- `projectsInSync` compares the canonical authored document
-  (`{name, github_repo, metadata}` minus status keys) so a reconciler status
-  write never registers as authored drift. Sync uses the Stage-1
-  `UpsertProject` path, so it versions authored config and never touches the
-  `status` column.
-
-Still pending for full parity: the actual `.glimmung/project.yaml` file for
-glimmung carrying `test_slot_hot_swap` (Stage 3), and the matching
-`*_project` sync/upstream MCP wrappers in tank-operator (cross-repo).
-
-### Stage 3 — Reconcile + restore (this PR)
-
-1. `.glimmung/project.yaml` added to the glimmung repo. It carries the
-   **complete** authored config (`native_standby_dns`,
-   `native_standby_workload_identity`, `test_slot_helm`) plus the restored
-   `test_slot_hot_swap` block (static `frontend/dist →
-   /var/run/glimmung-static-override`; backend supervisor `go build … →
-   /var/run/glimmung-hot/glimmung`, health `/healthz`). Completeness is
-   load-bearing: sync replaces authored config wholesale, so a partial file
-   would drop the other fields. A guard test
-   (`TestCommittedProjectYAMLParsesAndCarriesHotSwap`) parses the checked-in
-   file through the exact register-path validators and asserts every authored
-   key — including `test_slot_hot_swap` — is present and no status key is
-   authored.
-2. `.github/workflows/project-config-reconcile.yaml` reconciles the file into
-   the durable row on merge to main (path-filtered on `.glimmung/project.yaml`).
-   It mints an admin token for the allowlisted `mcp-glimmung/mcp-glimmung`
-   service account (same Azure-OIDC → AKS-admin → `kubectl create token`
-   pattern as `test-slot-smoke.yaml`), POSTs `/v1/projects/glimmung/sync`, and
-   then asserts `/v1/projects/glimmung/upstream` reports `in_sync` — failing
-   the job on any residual drift. The file is the reviewable source of truth;
-   Postgres stays the runtime contract; the two cannot silently diverge.
-
-## Cross-repo note
-
-The agent-facing MCP tools for workflow registration live in `mcp-glimmung`.
-Workflow file sync tools are retired: workflow shape changes go through durable
-Glimmung registration. Project config sync remains separate and applies only to
-`.glimmung/project.yaml`.
-
-## Migration safety
-
-`project_config_schemas`, the new columns, and the backfill are additive and
-idempotent. The existing `projects` row is never dropped or replaced by the
-migration — it is read, split, and rewritten in place under the same advisory
-lock the rest of `RunMigrations` uses. No old interleaved-layout read path
-survives the backfill (migration-policy compliant).
-
-### Who runs the migration: only the prod control plane
+### Who runs migrations: only the prod control plane
 
 Glimmung test slots run a hot-swappable copy of the binary against the **same
-Postgres database** as prod (see `Settings.ControlPlaneLoopsEnabled`). Anything
-that mutates that shared schema or data must therefore be owned by exactly one
-process — the prod control plane. Before this work, `RunMigrations`, the
-slot-storage one-shot, and (newly) `BackfillConfigSchemas` ran unconditionally,
-so every slot re-applied migrations against the prod database on boot. That was
-harmless only because those migrations were already applied and idempotent; a
-slot hot-swapped with a binary carrying an *unshipped* migration would apply it
-to prod early — and, while the still-old prod reader was live, prod would lose
-visibility of any column the migration moved data into.
-
-So all three startup DB mutators (`RunMigrations`, `BackfillConfigSchemas`, and
-the slot-storage `MigrateProjectSlotsIntoCollection`) are gated behind
-`ControlPlaneLoopsEnabled`. Prod (loops enabled, the default) owns schema
-changes; slots (loops disabled) skip them and serve HTTP against the
-prod-owned schema.
-
-A direct consequence: **a new migration cannot be validated in a slot.** A slot
-running new code that needs new columns will not have them until prod migrates,
-and it no longer applies them itself. New-migration changes are validated by
-unit tests + CI and land atomically at prod rollout, where the same process
-both migrates and reads the new shape under the advisory lock. This is an
-accepted property of the shared-database slot model, not a gap to paper over.
+Postgres database** as prod. The startup DB mutators (`RunMigrations`,
+`BackfillConfigSchemas`, and the slot-storage migration) are gated behind
+`Settings.ControlPlaneLoopsEnabled`, so only the prod control plane mutates the
+shared schema; slots serve HTTP against the prod-owned schema. A consequence: a
+new migration cannot be validated in a slot — new-migration changes are
+validated by unit tests + CI and land atomically at prod rollout, where the same
+process both migrates and reads the new shape under the advisory lock.
