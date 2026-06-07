@@ -103,6 +103,15 @@ jobs:
       - name: Guard against prod/issue chart image.tag drift
         run: node scripts/check-chart-image-tag-sync.mjs
 
+  check-provider-api-proxy-envoy-sds:
+    name: Provider API proxy Envoy SDS contract
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+      - name: Guard provider proxy TLS leaf hot reload
+        run: bash scripts/check-provider-api-proxy-envoy-sds.sh
+
   check-removed-og-svg:
     name: Removed OG SVG renderer surface
     runs-on: ubuntu-latest

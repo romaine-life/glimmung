@@ -32,6 +32,14 @@ the proxy CA, then points `SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE`, and
 `GIT_SSL_CAINFO` at that bundle. `NODE_EXTRA_CA_CERTS` points at the proxy CA
 directly for Node-based CLIs.
 
+The proxy Envoy listeners load their downstream leaf certificates through
+file-based SDS with `watched_directory: /etc/envoy/tls`. cert-manager still
+owns and renews the Kubernetes TLS Secrets, and kubelet projects the updated
+Secret files into the pod; Envoy watches the directory and updates the active
+TLS context without waiting for a Deployment rollout. Static downstream
+`tls_certificates` file references are retired for these proxies because they
+can keep serving the old leaf until the pod is restarted.
+
 ## Operational Contract
 
 - Exactly one authoritative proxy Deployment per provider writes the Glimmung
@@ -52,3 +60,7 @@ and copying them into `$HOME/.codex` or `$HOME/.claude`. Tests pin that native
 Job manifests do not contain the old `codex-credentials` volume or
 `/etc/codex-creds` mount, and the native runner writes placeholder Codex auth
 instead of copying a mounted secret.
+
+`scripts/check-provider-api-proxy-envoy-sds.sh` renders the production Helm
+chart and fails if `claude-api-proxy-envoy` or `codex-api-proxy-envoy` loses the
+file-based SDS Secret or reintroduces static downstream `tls_certificates`.
