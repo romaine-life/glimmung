@@ -1756,6 +1756,7 @@ func nativeJobEnv(settings Settings, req NativeLaunchRequest, job NativeJobSpec,
 		{"name": "GLIMMUNG_STATUS_URL", "value": baseURL + nativePath + "/status"},
 		{"name": "GLIMMUNG_COMPLETED_URL", "value": baseURL + nativePath + "/completed"},
 		{"name": "GLIMMUNG_GITHUB_TOKEN_URL", "value": baseURL + nativePath + "/github-token"},
+		{"name": "GLIMMUNG_GITHUB_PUSH_POLICY_TOKEN_URL", "value": baseURL + nativePath + "/github-push-policy-token"},
 		{"name": "GLIMMUNG_PR_TOUCHPOINT_URL", "value": baseURL + nativePath + "/pr-touchpoint"},
 		{"name": "GLIMMUNG_PR_MERGE_URL", "value": baseURL + nativePath + "/pr-merge"},
 		// Remote-host execution primitives (docs/remote-host-execution.md).

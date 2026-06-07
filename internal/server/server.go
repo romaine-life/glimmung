@@ -433,6 +433,7 @@ func newHandlerWithReconcilers(settings Settings, store ReadStore, authResolver 
 	mux.HandleFunc("GET /v1/run-callbacks/{callback_token}/native/status", nativeRunStatusByCallbackToken(store))
 	mux.HandleFunc("POST /v1/projects/{project}/issues/{issue_number}/runs/{run_number}/native/github-token", nativeGitHubTokenByNumber(store, nativeTokenMinter))
 	mux.HandleFunc("POST /v1/run-callbacks/{callback_token}/native/github-token", nativeGitHubTokenByCallbackToken(store, nativeTokenMinter))
+	mux.HandleFunc("POST /v1/run-callbacks/{callback_token}/native/github-push-policy-token", nativeGitHubPushPolicyTokenByCallbackToken(store, settings.GitHubAppPrivateKey))
 	mux.HandleFunc("POST /v1/run-callbacks/{callback_token}/native/pr-touchpoint", nativePRTouchpointByCallbackToken(store, prClient, artifactStore))
 	mux.HandleFunc("POST /v1/run-callbacks/{callback_token}/native/pr-merge", nativePRMergeByCallbackToken(store, prClient))
 	mux.HandleFunc("POST /v1/run-callbacks/{callback_token}/native/ssh-cert", mintRunCallbackSSHCert(store, sshCertExchanger))
