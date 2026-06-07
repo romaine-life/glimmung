@@ -705,11 +705,10 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
   name: glimmung-provider-api-proxy-pod-reader
-spec:
-  rules:
-    - apiGroups: [""]
-      resources: ["pods"]
-      verbs: ["get", "list"]
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
