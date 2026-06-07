@@ -84,15 +84,16 @@ type checkoutSpec struct {
 }
 
 type runnerConfig struct {
-	Job            jobSpec
-	JobID          string
-	AttemptIndex   *int
-	EventsURL      string
-	CompletedURL   string
-	GitHubTokenURL string
-	AttemptToken   string
-	Workspace      string
-	AgentRuntime   agentruntime.Snapshot
+	Job             jobSpec
+	JobID           string
+	AttemptIndex    *int
+	EventsURL       string
+	CompletedURL    string
+	GitHubTokenURL  string
+	GitHubPushToken string
+	AttemptToken    string
+	Workspace       string
+	AgentRuntime    agentruntime.Snapshot
 }
 
 type nativeRunner struct {
@@ -237,15 +238,16 @@ func runnerConfigFromEnv() (runnerConfig, error) {
 		}
 	}
 	return runnerConfig{
-		Job:            job,
-		JobID:          jobID,
-		AttemptIndex:   attemptIndex,
-		EventsURL:      strings.TrimSpace(os.Getenv("GLIMMUNG_EVENTS_URL")),
-		CompletedURL:   strings.TrimSpace(os.Getenv("GLIMMUNG_COMPLETED_URL")),
-		GitHubTokenURL: strings.TrimSpace(os.Getenv("GLIMMUNG_GITHUB_TOKEN_URL")),
-		AttemptToken:   token,
-		Workspace:      firstNonEmpty(os.Getenv("GLIMMUNG_WORKSPACE"), defaultWorkspace),
-		AgentRuntime:   runtime,
+		Job:             job,
+		JobID:           jobID,
+		AttemptIndex:    attemptIndex,
+		EventsURL:       strings.TrimSpace(os.Getenv("GLIMMUNG_EVENTS_URL")),
+		CompletedURL:    strings.TrimSpace(os.Getenv("GLIMMUNG_COMPLETED_URL")),
+		GitHubTokenURL:  strings.TrimSpace(os.Getenv("GLIMMUNG_GITHUB_TOKEN_URL")),
+		GitHubPushToken: strings.TrimSpace(os.Getenv("GLIMMUNG_GITHUB_PUSH_POLICY_TOKEN")),
+		AttemptToken:    token,
+		Workspace:       firstNonEmpty(os.Getenv("GLIMMUNG_WORKSPACE"), defaultWorkspace),
+		AgentRuntime:    runtime,
 	}, nil
 }
 
@@ -824,6 +826,9 @@ func (r *nativeRunner) executeAgentStep(ctx context.Context, step stepSpec, outp
 	if err := installAgentPostCommitReminder(ctx, workdir); err != nil {
 		return 1, err
 	}
+	if err := installAgentGitHubCredential(ctx, workdir, r.cfg.GitHubPushToken); err != nil {
+		return 1, err
+	}
 	runStep := step
 	runStep.Type = "run"
 	runStep.Run, err = agentRunScript(profile, workdir, promptFile, completionFile)
@@ -867,6 +872,29 @@ func installAgentPostCommitReminder(ctx context.Context, workdir string) error {
 	return nil
 }
 
+func installAgentGitHubCredential(ctx context.Context, workdir, token string) error {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return nil
+	}
+	repoRoot, err := runOutput(ctx, workdir, "git", "rev-parse", "--show-toplevel")
+	if err != nil {
+		return nil
+	}
+	repoRoot = strings.TrimSpace(repoRoot)
+	if repoRoot == "" {
+		return nil
+	}
+	helper := "!f() { if [ \"$1\" = get ]; then echo username=glimmung-policy; echo password=" + shellSingleQuote(token) + "; fi; }; f"
+	if err := runCapture(ctx, repoRoot, "git", "config", "--local", "credential.https://github.com.username", "glimmung-policy"); err != nil {
+		return fmt.Errorf("configure github credential username: %w", err)
+	}
+	if err := runCapture(ctx, repoRoot, "git", "config", "--local", "credential.https://github.com.helper", helper); err != nil {
+		return fmt.Errorf("configure github credential helper: %w", err)
+	}
+	return nil
+}
+
 func agentPostCommitReminderHook(marker string) string {
 	return "#!/bin/sh\n" +
 		"# " + marker + "\n" +
@@ -884,17 +912,18 @@ func agentPostCommitReminderHook(marker string) string {
 
 func agentStepBaseEnv(base []string) []string {
 	blocked := map[string]bool{
-		"GLIMMUNG_ATTEMPT_TOKEN":         true,
-		"GLIMMUNG_EVENTS_URL":            true,
-		"GLIMMUNG_STATUS_URL":            true,
-		"GLIMMUNG_COMPLETED_URL":         true,
-		"GLIMMUNG_GITHUB_TOKEN_URL":      true,
-		"GLIMMUNG_PR_TOUCHPOINT_URL":     true,
-		"GLIMMUNG_PR_MERGE_URL":          true,
-		"GLIMMUNG_SSH_CERT_URL":          true,
-		"GLIMMUNG_TAILSCALE_AUTHKEY_URL": true,
-		"GITHUB_TOKEN":                   true,
-		"GH_TOKEN":                       true,
+		"GLIMMUNG_ATTEMPT_TOKEN":            true,
+		"GLIMMUNG_EVENTS_URL":               true,
+		"GLIMMUNG_STATUS_URL":               true,
+		"GLIMMUNG_COMPLETED_URL":            true,
+		"GLIMMUNG_GITHUB_TOKEN_URL":         true,
+		"GLIMMUNG_GITHUB_PUSH_POLICY_TOKEN": true,
+		"GLIMMUNG_PR_TOUCHPOINT_URL":        true,
+		"GLIMMUNG_PR_MERGE_URL":             true,
+		"GLIMMUNG_SSH_CERT_URL":             true,
+		"GLIMMUNG_TAILSCALE_AUTHKEY_URL":    true,
+		"GITHUB_TOKEN":                      true,
+		"GH_TOKEN":                          true,
 	}
 	filtered := make([]string, 0, len(base))
 	for _, row := range base {
@@ -1272,6 +1301,10 @@ func runOutput(ctx context.Context, dir, name string, args ...string) (string, e
 		return "", err
 	}
 	return string(out), nil
+}
+
+func shellSingleQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", `'\''`) + "'"
 }
 
 func (r *nativeRunner) postEvent(ctx context.Context, event string, stepSlug *string, message string, exitCode *int, metadata map[string]any) error {

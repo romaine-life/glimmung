@@ -30,8 +30,8 @@ For native jobs with managed `type: agent` steps:
    proxy with the same transparent host-alias + CA-bundle pattern used for
    `api.anthropic.com`, `api.openai.com`, and `chatgpt.com`.
 6. The agent receives only a branch-scoped Git credential. That credential is
-   not a GitHub token. It is a Glimmung push-policy token containing at least:
-   repo, allowed branch ref, run id, issue number, expiry, and key id.
+   not a GitHub token. It is a Glimmung push-policy token containing repo,
+   allowed branch ref, run id, issue number, and expiry.
 7. The GitHub policy proxy validates the policy token, injects the server-held
    GitHub App installation token upstream, and enforces the policy on
    `git-receive-pack` before forwarding to GitHub.
@@ -65,10 +65,11 @@ The proxy must parse the command prelude before packfile bytes:
 - Treat parse errors and oversized unparsed preludes as policy failures, not
   pass-through cases.
 
-The proxy may buffer the command prelude, but it should not require loading an
-unbounded packfile into memory. A streaming implementation should read enough
-pkt-lines to make the policy decision, then forward the complete request body
-to GitHub after approval.
+The current proxy buffers the request body behind an explicit aiohttp
+`client_max_size` cap before forwarding. That is acceptable for the first
+production path because failed oversize pushes fail closed. A future streaming
+optimization may read only enough pkt-lines to make the policy decision, then
+forward the complete request body to GitHub after approval.
 
 ## Non-Goals
 
@@ -78,9 +79,19 @@ to GitHub after approval.
 - Do not make Ambience own the enforcement. Ambience can pre-create branches,
   open draft PRs, and wait for CI, but Glimmung owns native-runner security.
 
-## Current Staging
+## Implementation
 
-This branch implements the native-runner side of the contract: managed
-post-commit hook installation and agent subprocess environment filtering. The
-remaining work is the GitHub policy token minting and the `github.com` policy
-proxy that validates that token and parses receive-pack.
+The implemented path has four pieces:
+
+- `nativeJobEnv` mints `GLIMMUNG_GITHUB_PUSH_POLICY_TOKEN` for managed
+  `type: agent` jobs with a project repo and GitHub App private key.
+- `glimmung-native-runner` installs that token as a local Git credential for
+  `https://github.com`, then strips the token from the agent subprocess
+  environment.
+- Native agent jobs route `github.com` to `github-git-policy-proxy` through
+  `hostAliases` and the provider-proxy CA bundle. Verification wrapper jobs do
+  not get the `github.com` host alias, so their existing GitHub API/token flows
+  are not intercepted.
+- `glimmung_api_proxy.github_proxy` validates the token, rejects disallowed
+  receive-pack ref updates, mints a server-side GitHub App installation token,
+  and forwards allowed Git traffic to real GitHub.

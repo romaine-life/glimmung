@@ -62,6 +62,7 @@ type Settings struct {
 	ProviderAPIProxyCABundlePath       string
 	ProviderAPIProxyClaudeService      string
 	ProviderAPIProxyCodexService       string
+	ProviderAPIProxyGitHubService      string
 	NativeRunnerPlaywrightEnabled      bool
 	NativeRunnerPlaywrightImage        string
 	NativeRunnerPlaywrightPort         string
@@ -195,6 +196,10 @@ func SettingsFromEnv() Settings {
 		ProviderAPIProxyCodexService: envOrDefault(
 			"PROVIDER_API_PROXY_CODEX_SERVICE",
 			"codex-api-proxy",
+		),
+		ProviderAPIProxyGitHubService: envOrDefault(
+			"PROVIDER_API_PROXY_GITHUB_SERVICE",
+			"github-git-policy-proxy",
 		),
 		NativeRunnerPlaywrightEnabled: envBoolOrDefault(
 			"NATIVE_RUNNER_PLAYWRIGHT_ENABLED",

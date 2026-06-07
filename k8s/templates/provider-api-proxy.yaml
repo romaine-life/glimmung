@@ -118,6 +118,43 @@ spec:
         nullBytePolicy: Ignore
 ---
 {{- end }}
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: {{ .Values.providerApiProxy.github.secretName }}
+  namespace: {{ $ns }}
+spec:
+  refreshInterval: {{ .Values.providerApiProxy.credentials.refreshInterval }}
+  secretStoreRef:
+    name: {{ .Values.providerApiProxy.credentials.storeName }}
+    kind: {{ .Values.providerApiProxy.credentials.storeKind }}
+  target:
+    name: {{ .Values.providerApiProxy.github.secretName }}
+    creationPolicy: Owner
+    deletionPolicy: Retain
+  data:
+    - secretKey: GITHUB_APP_ID
+      remoteRef:
+        key: {{ .Values.providerApiProxy.github.appIdKvKey }}
+        conversionStrategy: Default
+        decodingStrategy: None
+        metadataPolicy: None
+        nullBytePolicy: Ignore
+    - secretKey: GITHUB_APP_INSTALLATION_ID
+      remoteRef:
+        key: {{ .Values.providerApiProxy.github.installationIdKvKey }}
+        conversionStrategy: Default
+        decodingStrategy: None
+        metadataPolicy: None
+        nullBytePolicy: Ignore
+    - secretKey: GITHUB_APP_PRIVATE_KEY
+      remoteRef:
+        key: {{ .Values.providerApiProxy.github.privateKeyKvKey }}
+        conversionStrategy: Default
+        decodingStrategy: None
+        metadataPolicy: None
+        nullBytePolicy: Ignore
+---
 {{- range $provider, $cfg := dict "claude" .Values.providerApiProxy.claude "codex" .Values.providerApiProxy.codex }}
 apiVersion: cert-manager.io/v1
 kind: Certificate
@@ -156,7 +193,7 @@ spec:
       targetPort: https
     - name: metrics
       port: 9100
-      targetPort: metrics
+      targetPort: http
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -469,6 +506,175 @@ spec:
             secretName: {{ $cfg.secretName }}
 ---
 {{- end }}
+{{- $github := .Values.providerApiProxy.github }}
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ $github.serviceName }}-leaf
+  namespace: {{ $ns }}
+spec:
+  secretName: {{ $github.serviceName }}-leaf
+  duration: 2160h
+  renewBefore: 360h
+  dnsNames:
+    - github.com
+  issuerRef:
+    name: glimmung-provider-api-proxy-ca
+    kind: Issuer
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $github.serviceName }}
+  namespace: {{ $ns }}
+  labels:
+    app.kubernetes.io/name: {{ $github.serviceName }}
+    app.kubernetes.io/component: provider-api-proxy
+spec:
+  selector:
+    app.kubernetes.io/name: {{ $github.serviceName }}
+  ports:
+    - name: https
+      port: 443
+      targetPort: https
+    - name: metrics
+      port: 9100
+      targetPort: metrics
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $github.serviceName }}-envoy
+  namespace: {{ $ns }}
+data:
+  envoy.yaml: |
+    admin:
+      address:
+        socket_address: { address: 127.0.0.1, port_value: 9901 }
+    static_resources:
+{{ include "glimmung.providerApiProxyLeafSdsSecret" . | nindent 6 }}
+      listeners:
+        - name: github_git_listener
+          address:
+            socket_address: { address: 0.0.0.0, port_value: 8443 }
+          per_connection_buffer_limit_bytes: 1048576
+          filter_chains:
+            - transport_socket:
+                name: envoy.transport_sockets.tls
+                typed_config:
+                  "@type": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.DownstreamTlsContext
+{{ include "glimmung.providerApiProxyDownstreamTlsContext" . | nindent 18 }}
+              filters:
+                - name: envoy.filters.network.http_connection_manager
+                  typed_config:
+                    "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+                    stat_prefix: github_git_policy_proxy
+                    codec_type: AUTO
+                    stream_idle_timeout: 600s
+                    request_timeout: 600s
+                    common_http_protocol_options:
+                      idle_timeout: 600s
+                    access_log:
+                      - name: envoy.access_loggers.stdout
+                        typed_config:
+                          "@type": type.googleapis.com/envoy.extensions.access_loggers.stream.v3.StdoutAccessLog
+                          log_format:
+                            text_format_source:
+                              inline_string: "[%START_TIME%] github %REQ(:METHOD)% %REQ(:PATH)% -> %RESPONSE_CODE% %RESPONSE_FLAGS% rx=%BYTES_RECEIVED% tx=%BYTES_SENT% dur_ms=%DURATION% req_id=%REQ(x-request-id)%\n"
+                    http_filters:
+                      - name: envoy.filters.http.router
+                        typed_config:
+                          "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+                    route_config:
+                      name: github_git_policy
+                      virtual_hosts:
+                        - name: github
+                          domains: ["github.com"]
+                          routes:
+                            - match: { prefix: "/" }
+                              route:
+                                cluster: github_policy_local
+                                timeout: 600s
+      clusters:
+        - name: github_policy_local
+          type: STATIC
+          connect_timeout: 1s
+          lb_policy: ROUND_ROBIN
+          load_assignment:
+            cluster_name: github_policy_local
+            endpoints:
+              - lb_endpoints:
+                  - endpoint:
+                      address:
+                        socket_address: { address: 127.0.0.1, port_value: 8080 }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $github.serviceName }}
+  namespace: {{ $ns }}
+  labels:
+    app.kubernetes.io/name: {{ $github.serviceName }}
+    app.kubernetes.io/component: provider-api-proxy
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ $github.serviceName }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ $github.serviceName }}
+        app.kubernetes.io/component: provider-api-proxy
+        azure.workload.identity/use: "true"
+    spec:
+      serviceAccountName: {{ $sa }}
+      containers:
+        - name: envoy
+          image: {{ .Values.providerApiProxy.envoyImage | quote }}
+          args:
+            - "-c"
+            - "/etc/envoy/envoy.yaml"
+            - "--service-cluster"
+            - {{ $github.serviceName | quote }}
+          ports:
+            - name: https
+              containerPort: 8443
+            - name: admin
+              containerPort: 9901
+          volumeMounts:
+            - name: envoy-config
+              mountPath: /etc/envoy
+              readOnly: true
+            - name: leaf-tls
+              mountPath: /etc/envoy/tls
+              readOnly: true
+          readinessProbe:
+            tcpSocket:
+              port: https
+            initialDelaySeconds: 3
+            periodSeconds: 10
+        - name: github-policy
+          image: "{{ .Values.providerApiProxy.image.repository }}:{{ .Values.providerApiProxy.image.tag }}"
+          imagePullPolicy: {{ .Values.providerApiProxy.image.pullPolicy }}
+          command: ["python", "-m", "glimmung_api_proxy.github_proxy"]
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: GITHUB_POLICY_PROXY_PORT
+              value: "8080"
+          envFrom:
+            - secretRef:
+                name: {{ $github.secretName }}
+      volumes:
+        - name: envoy-config
+          configMap:
+            name: {{ $github.serviceName }}-envoy
+        - name: leaf-tls
+          secret:
+            secretName: {{ $github.serviceName }}-leaf
+---
 {{- if .Values.observability.serviceMonitor.enabled }}
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor

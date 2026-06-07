@@ -78,6 +78,8 @@ spec:
               value: {{ .Values.providerApiProxy.claude.serviceName | quote }}
             - name: PROVIDER_API_PROXY_CODEX_SERVICE
               value: {{ .Values.providerApiProxy.codex.serviceName | quote }}
+            - name: PROVIDER_API_PROXY_GITHUB_SERVICE
+              value: {{ .Values.providerApiProxy.github.serviceName | quote }}
             - name: NATIVE_RUNNER_PLAYWRIGHT_ENABLED
               value: {{ .Values.nativeRunner.playwright.enabled | quote }}
             - name: NATIVE_RUNNER_PLAYWRIGHT_IMAGE
