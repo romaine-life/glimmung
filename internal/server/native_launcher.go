@@ -3,11 +3,9 @@ package server
 import (
 	"bytes"
 	"context"
-	"crypto/hmac"
 	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
-	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -1689,20 +1687,31 @@ func nativeJobManifest(settings Settings, req NativeLaunchRequest, job NativeJob
 	if job.TimeoutSeconds != nil && *job.TimeoutSeconds > 0 {
 		podSpec["activeDeadlineSeconds"] = *job.TimeoutSeconds
 	}
+	annotations := map[string]string{}
+	if req.Run.IssueRepo != "" {
+		annotations["glimmung.romaine.life/github-policy-repo"] = req.Run.IssueRepo
+	}
+	if branch := nativePolicyBranchName(req); branch != "" {
+		annotations["glimmung.romaine.life/github-policy-ref"] = "refs/heads/" + branch
+	}
 	return map[string]any{
 		"apiVersion": "batch/v1",
 		"kind":       "Job",
 		"metadata": map[string]any{
-			"name":      jobName,
-			"namespace": settings.NativeRunnerNamespace,
-			"labels":    labels,
+			"name":        jobName,
+			"namespace":   settings.NativeRunnerNamespace,
+			"labels":      labels,
+			"annotations": annotations,
 		},
 		"spec": map[string]any{
 			"backoffLimit":            nativeJobBackoffLimit(req.Phase),
 			"ttlSecondsAfterFinished": settings.NativeRunnerJobTTLSeconds,
 			"template": map[string]any{
-				"metadata": map[string]any{"labels": podLabels},
-				"spec":     podSpec,
+				"metadata": map[string]any{
+					"labels":      podLabels,
+					"annotations": annotations,
+				},
+				"spec":        podSpec,
 			},
 		},
 	}
@@ -1756,7 +1765,7 @@ func nativeJobEnv(settings Settings, req NativeLaunchRequest, job NativeJobSpec,
 		{"name": "GLIMMUNG_STATUS_URL", "value": baseURL + nativePath + "/status"},
 		{"name": "GLIMMUNG_COMPLETED_URL", "value": baseURL + nativePath + "/completed"},
 		{"name": "GLIMMUNG_GITHUB_TOKEN_URL", "value": baseURL + nativePath + "/github-token"},
-		{"name": "GLIMMUNG_GITHUB_PUSH_POLICY_TOKEN_URL", "value": baseURL + nativePath + "/github-push-policy-token"},
+		{"name": "GLIMMUNG_GITHUB_AGENT_TOKEN_URL", "value": baseURL + nativePath + "/github-agent-token"},
 		{"name": "GLIMMUNG_PR_TOUCHPOINT_URL", "value": baseURL + nativePath + "/pr-touchpoint"},
 		{"name": "GLIMMUNG_PR_MERGE_URL", "value": baseURL + nativePath + "/pr-merge"},
 		// Remote-host execution primitives (docs/remote-host-execution.md).
@@ -1770,9 +1779,6 @@ func nativeJobEnv(settings Settings, req NativeLaunchRequest, job NativeJobSpec,
 		{"name": "GLIMMUNG_ATTEMPT_TOKEN", "valueFrom": map[string]any{"secretKeyRef": map[string]any{"name": secretName, "key": "attempt-token"}}},
 	}
 	seen := envNameSet(env)
-	if token := githubPushPolicyTokenForJob(settings, req, job); token != "" {
-		env = appendLiteralEnv(env, seen, "GLIMMUNG_GITHUB_PUSH_POLICY_TOKEN", token)
-	}
 	for _, key := range []string{"issue_repo", "issue_number", "issue_title", "issue_body", "native_slot_index", "native_slot_name", "entrypoint_job_id", "entrypoint_step_slug", "work_context_id", "work_context_branch", "work_context_base_ref", "work_context_state"} {
 		if value, ok := metadata[key]; ok {
 			env = appendLiteralEnv(env, seen, "GLIMMUNG_"+envName(key), fmt.Sprint(value))
@@ -1828,30 +1834,6 @@ func nativeJobEnv(settings Settings, req NativeLaunchRequest, job NativeJobSpec,
 	return env
 }
 
-func githubPushPolicyTokenForJob(settings Settings, req NativeLaunchRequest, job NativeJobSpec) string {
-	if !nativeJobRequiresProviderAPIProxy(job) {
-		return ""
-	}
-	signingKey := strings.TrimSpace(settings.GitHubAppPrivateKey)
-	repo := strings.TrimSpace(req.Run.IssueRepo)
-	branch := nativePolicyBranchName(req)
-	if signingKey == "" || repo == "" || branch == "" {
-		return ""
-	}
-	payload := map[string]any{
-		"version":      1,
-		"repo":         repo,
-		"branch":       branch,
-		"ref":          "refs/heads/" + branch,
-		"run_id":       req.Run.ID,
-		"run_ref":      runRefFromData(req.Run),
-		"project":      req.Run.Project,
-		"issue_number": req.Run.IssueNumber,
-		"expires_at":   time.Now().Add(12 * time.Hour).Unix(),
-	}
-	return signedGitHubPolicyToken(signingKey, payload)
-}
-
 func nativePolicyBranchName(req NativeLaunchRequest) string {
 	metadata := req.Lease.Metadata
 	if branch := strings.TrimSpace(fmt.Sprint(firstAny(metadata["implementation_branch"], metadata["implementationBranch"]))); branch != "" && branch != "<nil>" {
@@ -1895,18 +1877,6 @@ func nativePolicyRefSegment(value string) string {
 		return "unknown"
 	}
 	return out
-}
-
-func signedGitHubPolicyToken(signingKey string, payload map[string]any) string {
-	raw, err := json.Marshal(payload)
-	if err != nil {
-		return ""
-	}
-	body := base64.RawURLEncoding.EncodeToString(raw)
-	mac := hmac.New(sha256.New, []byte(signingKey))
-	_, _ = mac.Write([]byte(body))
-	sig := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
-	return body + "." + sig
 }
 
 func nativeRunnerEntrypoint(settings Settings) string {

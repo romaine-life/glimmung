@@ -29,6 +29,62 @@ type Client struct {
 	expiresAt      time.Time
 }
 
+// RepositoryInstallationToken creates a repository-scoped installation token, narrowing permissions to those requested.
+func (c *Client) RepositoryInstallationToken(ctx context.Context, repo string, permissions map[string]string) (string, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	parts := strings.Split(repo, "/")
+	repoName := parts[len(parts)-1]
+
+	appJWT, err := c.mintJWT()
+	if err != nil {
+		return "", fmt.Errorf("mint app JWT: %w", err)
+	}
+
+	url := fmt.Sprintf("https://api.github.com/app/installations/%s/access_tokens", c.installationID)
+
+	type requestBody struct {
+		Repositories []string          `json:"repositories"`
+		Permissions  map[string]string `json:"permissions"`
+	}
+	bodyData, err := json.Marshal(requestBody{
+		Repositories: []string{repoName},
+		Permissions:  permissions,
+	})
+	if err != nil {
+		return "", fmt.Errorf("marshal access token request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(bodyData))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+appJWT)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("GitHub access_tokens returned %d: %s", resp.StatusCode, body)
+	}
+
+	var payload struct {
+		Token string `json:"token"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return "", fmt.Errorf("decode access_tokens response: %w", err)
+	}
+	return payload.Token, nil
+}
+
 // New parses the RSA private key (PEM) and returns a ready Client.
 func New(appID, installationID, privateKey string) (*Client, error) {
 	key, err := jwt.ParseRSAPrivateKeyFromPEM([]byte(privateKey))

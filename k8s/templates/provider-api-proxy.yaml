@@ -595,6 +595,11 @@ data:
                               route:
                                 cluster: github_policy_local
                                 timeout: 600s
+                              request_headers_to_add:
+                                - header:
+                                    key: "x-glimmung-source-ip"
+                                    value: "%DOWNSTREAM_REMOTE_ADDRESS_WITHOUT_PORT%"
+                                  append: false
       clusters:
         - name: github_policy_local
           type: STATIC
@@ -664,9 +669,6 @@ spec:
           env:
             - name: GITHUB_POLICY_PROXY_PORT
               value: "8080"
-          envFrom:
-            - secretRef:
-                name: {{ $github.secretName }}
       volumes:
         - name: envoy-config
           configMap:
@@ -698,4 +700,27 @@ spec:
       interval: {{ .Values.observability.serviceMonitor.interval }}
       scrapeTimeout: {{ .Values.observability.serviceMonitor.scrapeTimeout }}
 {{- end }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: glimmung-provider-api-proxy-pod-reader
+spec:
+  rules:
+    - apiGroups: [""]
+      resources: ["pods"]
+      verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: glimmung-provider-api-proxy-pod-reader-binding
+subjects:
+  - kind: ServiceAccount
+    name: {{ $sa }}
+    namespace: {{ $ns }}
+roleRef:
+  kind: ClusterRole
+  name: glimmung-provider-api-proxy-pod-reader
+  apiGroup: rbac.authorization.k8s.io
 {{- end }}

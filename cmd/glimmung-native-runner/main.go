@@ -90,7 +90,7 @@ type runnerConfig struct {
 	EventsURL       string
 	CompletedURL    string
 	GitHubTokenURL  string
-	GitHubPushToken string
+	GitHubAgentTokenURL string
 	AttemptToken    string
 	Workspace       string
 	AgentRuntime    agentruntime.Snapshot
@@ -244,7 +244,7 @@ func runnerConfigFromEnv() (runnerConfig, error) {
 		EventsURL:       strings.TrimSpace(os.Getenv("GLIMMUNG_EVENTS_URL")),
 		CompletedURL:    strings.TrimSpace(os.Getenv("GLIMMUNG_COMPLETED_URL")),
 		GitHubTokenURL:  strings.TrimSpace(os.Getenv("GLIMMUNG_GITHUB_TOKEN_URL")),
-		GitHubPushToken: strings.TrimSpace(os.Getenv("GLIMMUNG_GITHUB_PUSH_POLICY_TOKEN")),
+		GitHubAgentTokenURL: strings.TrimSpace(os.Getenv("GLIMMUNG_GITHUB_AGENT_TOKEN_URL")),
 		AttemptToken:    token,
 		Workspace:       firstNonEmpty(os.Getenv("GLIMMUNG_WORKSPACE"), defaultWorkspace),
 		AgentRuntime:    runtime,
@@ -826,9 +826,6 @@ func (r *nativeRunner) executeAgentStep(ctx context.Context, step stepSpec, outp
 	if err := installAgentPostCommitReminder(ctx, workdir); err != nil {
 		return 1, err
 	}
-	if err := installAgentGitHubCredential(ctx, workdir, r.cfg.GitHubPushToken); err != nil {
-		return 1, err
-	}
 	runStep := step
 	runStep.Type = "run"
 	runStep.Run, err = agentRunScript(profile, workdir, promptFile, completionFile)
@@ -872,29 +869,6 @@ func installAgentPostCommitReminder(ctx context.Context, workdir string) error {
 	return nil
 }
 
-func installAgentGitHubCredential(ctx context.Context, workdir, token string) error {
-	token = strings.TrimSpace(token)
-	if token == "" {
-		return nil
-	}
-	repoRoot, err := runOutput(ctx, workdir, "git", "rev-parse", "--show-toplevel")
-	if err != nil {
-		return nil
-	}
-	repoRoot = strings.TrimSpace(repoRoot)
-	if repoRoot == "" {
-		return nil
-	}
-	helper := "!f() { if [ \"$1\" = get ]; then echo username=glimmung-policy; echo password=" + shellSingleQuote(token) + "; fi; }; f"
-	if err := runCapture(ctx, repoRoot, "git", "config", "--local", "credential.https://github.com.username", "glimmung-policy"); err != nil {
-		return fmt.Errorf("configure github credential username: %w", err)
-	}
-	if err := runCapture(ctx, repoRoot, "git", "config", "--local", "credential.https://github.com.helper", helper); err != nil {
-		return fmt.Errorf("configure github credential helper: %w", err)
-	}
-	return nil
-}
-
 func agentPostCommitReminderHook(marker string) string {
 	return "#!/bin/sh\n" +
 		"# " + marker + "\n" +
@@ -917,7 +891,9 @@ func agentStepBaseEnv(base []string) []string {
 		"GLIMMUNG_STATUS_URL":               true,
 		"GLIMMUNG_COMPLETED_URL":            true,
 		"GLIMMUNG_GITHUB_TOKEN_URL":         true,
+		"GLIMMUNG_GITHUB_AGENT_TOKEN_URL":    true,
 		"GLIMMUNG_GITHUB_PUSH_POLICY_TOKEN": true,
+		"GLIMMUNG_GITHUB_PUSH_POLICY_TOKEN_URL": true,
 		"GLIMMUNG_PR_TOUCHPOINT_URL":        true,
 		"GLIMMUNG_PR_MERGE_URL":             true,
 		"GLIMMUNG_SSH_CERT_URL":             true,

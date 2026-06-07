@@ -6,11 +6,11 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"time"
 )
 
 type NativeGitHubTokenMinter interface {
 	InstallationToken(ctx context.Context) (string, error)
+	RepositoryInstallationToken(ctx context.Context, repo string, permissions map[string]string) (string, error)
 }
 
 func positivePathInt(w http.ResponseWriter, r *http.Request, name string) (int, bool) {
@@ -26,11 +26,9 @@ type NativeGitHubTokenResult struct {
 	Token string `json:"token"`
 }
 
-type NativeGitHubPushPolicyTokenResult struct {
-	Token  string `json:"token"`
-	Repo   string `json:"repo"`
-	Branch string `json:"branch"`
-	Ref    string `json:"ref"`
+type NativeGitHubAgentTokenResult struct {
+	Token string `json:"token"`
+	Repo  string `json:"repo"`
 }
 
 type runNumberResolver interface {
@@ -61,8 +59,12 @@ func nativeGitHubTokenByCallbackToken(store ReadStore, minter NativeGitHubTokenM
 	}
 }
 
-func nativeGitHubPushPolicyTokenByCallbackToken(store ReadStore, signingKey string) http.HandlerFunc {
+func nativeGitHubAgentTokenByCallbackToken(store ReadStore, minter NativeGitHubTokenMinter) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if minter == nil {
+			writeProblem(w, http.StatusServiceUnavailable, "GitHub token minter not configured")
+			return
+		}
 		completionStore, ok := store.(RunCompletionStore)
 		if !ok || completionStore == nil {
 			writeProblem(w, http.StatusServiceUnavailable, "run store not configured")
@@ -77,7 +79,7 @@ func nativeGitHubPushPolicyTokenByCallbackToken(store ReadStore, signingKey stri
 			writeInternalError(w, r, err, "read run by callback token failed")
 			return
 		}
-		writeNativeGitHubPushPolicyToken(w, r, completionStore, signingKey, project, runID)
+		writeNativeGitHubAgentToken(w, r, completionStore, minter, project, runID)
 	}
 }
 
@@ -136,12 +138,7 @@ func writeNativeGitHubToken(w http.ResponseWriter, r *http.Request, store RunCom
 	writeJSON(w, http.StatusOK, NativeGitHubTokenResult{Token: token})
 }
 
-func writeNativeGitHubPushPolicyToken(w http.ResponseWriter, r *http.Request, store RunCompletionStore, signingKey, project, runID string) {
-	signingKey = strings.TrimSpace(signingKey)
-	if signingKey == "" {
-		writeProblem(w, http.StatusServiceUnavailable, "GitHub push policy signing key not configured")
-		return
-	}
+func writeNativeGitHubAgentToken(w http.ResponseWriter, r *http.Request, store RunCompletionStore, minter NativeGitHubTokenMinter, project, runID string) {
 	run, err := store.ReadRunForReplay(r.Context(), project, runID)
 	if errors.Is(err, ErrNotFound) {
 		writeProblem(w, http.StatusNotFound, "run not found")
@@ -156,42 +153,17 @@ func writeNativeGitHubPushPolicyToken(w http.ResponseWriter, r *http.Request, st
 		writeProblem(w, http.StatusConflict, "run has no issue repo")
 		return
 	}
-	branch := nativePushPolicyBranchNameForRun(run)
-	if branch == "" {
-		writeProblem(w, http.StatusConflict, "run cannot derive implementation branch")
+	permissions := map[string]string{
+		"contents": "write",
+		"metadata": "read",
+	}
+	token, err := minter.RepositoryInstallationToken(r.Context(), repo, permissions)
+	if err != nil {
+		writeProblem(w, http.StatusBadGateway, "mint repo-scoped GitHub token failed")
 		return
 	}
-	ref := "refs/heads/" + branch
-	payload := map[string]any{
-		"version":      1,
-		"repo":         repo,
-		"branch":       branch,
-		"ref":          ref,
-		"run_id":       run.ID,
-		"run_ref":      runRefFromData(run),
-		"project":      run.Project,
-		"issue_number": run.IssueNumber,
-		"expires_at":   time.Now().Add(12 * time.Hour).Unix(),
-	}
-	token := signedGitHubPolicyToken(signingKey, payload)
-	if token == "" {
-		writeInternalError(w, r, errors.New("signed GitHub policy token was empty"), "mint GitHub push policy token failed")
-		return
-	}
-	writeJSON(w, http.StatusOK, NativeGitHubPushPolicyTokenResult{
-		Token:  token,
-		Repo:   repo,
-		Branch: branch,
-		Ref:    ref,
+	writeJSON(w, http.StatusOK, NativeGitHubAgentTokenResult{
+		Token: token,
+		Repo:  repo,
 	})
-}
-
-func nativePushPolicyBranchNameForRun(run RunReplayData) string {
-	if run.IssueNumber > 0 && strings.TrimSpace(run.ID) != "" {
-		return "glimmung/issue-" + nativePolicyRefSegment(strconv.Itoa(run.IssueNumber)) + "/" + nativePolicyRefSegment(run.ID)
-	}
-	if strings.TrimSpace(run.ID) != "" {
-		return "glimmung/" + nativePolicyRefSegment(run.ID)
-	}
-	return ""
 }
