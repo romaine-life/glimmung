@@ -381,11 +381,32 @@ checks out the requested ref instead of a literal template string.
 `POST /v1/runs/synthetic-dispatch` is the break-glass companion to normal
 dispatch. It creates a new Run from caller-supplied facts, records the requested
 `start_at_phase`, stamps earlier caller-supplied phases as `supplied`, and
-launches only the entrypoint phase. It does not inspect prior runs, infer
-missing outputs, provision a slot, or repair the workflow. The caller must
-provide a claimed `execution_context.slot_lease_ref` and every skipped phase
-output required by the entrypoint phase inputs. The MCP wrapper is
-`synthetic_dispatch_run` in `romaine-life/mcp-glimmung`.
+launches only the entrypoint phase. It does not infer missing outputs, provision
+a slot, or repair the workflow. The caller must provide a claimed
+`execution_context.slot_lease_ref` and every skipped phase output required by
+the entrypoint phase inputs. The MCP wrapper is `synthetic_dispatch_run` in
+`romaine-life/mcp-glimmung`.
+
+For downstream process failures, callers may ask the synthetic endpoint to copy
+selected phase outputs from an earlier run on the same issue before applying
+their explicit `supplied_phase_outputs`:
+
+```json
+{
+  "copy_phase_outputs_from": {
+    "run": "17.1",
+    "phases": {
+      "llm-verify": ["verification"]
+    }
+  }
+}
+```
+
+Copied phases must be earlier than `start_at_phase`. Explicit supplied outputs
+may add missing keys for the same phase, but conflicting values for a copied key
+are rejected. Copy provenance is recorded in the new run's `trigger_source`
+under `copied_phase_outputs`, so the run remains auditable without adding a UI
+surface.
 
 Runner clients that open or update a GitHub PR should use the dispatch inputs
 and lease metadata as the PR body source of truth: include `issue_ref`,

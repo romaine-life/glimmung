@@ -20,10 +20,16 @@ type SyntheticDispatchRequest struct {
 	WorkflowName         string                         `json:"workflow_name"`
 	Workflow             string                         `json:"workflow"`
 	StartAtPhase         string                         `json:"start_at_phase"`
+	CopyPhaseOutputsFrom *SyntheticCopyPhaseOutputsFrom `json:"copy_phase_outputs_from,omitempty"`
 	SuppliedPhaseOutputs []SyntheticSuppliedPhaseOutput `json:"supplied_phase_outputs"`
 	ExecutionContext     SyntheticExecutionContext      `json:"execution_context"`
 	Reason               string                         `json:"reason"`
 	TriggerSource        map[string]any                 `json:"trigger_source"`
+}
+
+type SyntheticCopyPhaseOutputsFrom struct {
+	Run    string              `json:"run"`
+	Phases map[string][]string `json:"phases"`
 }
 
 type SyntheticSuppliedPhaseOutput struct {
@@ -35,6 +41,11 @@ type SyntheticExecutionContext struct {
 	SlotLeaseRef  string `json:"slot_lease_ref"`
 	Namespace     string `json:"namespace"`
 	ValidationURL string `json:"validation_url"`
+}
+
+type SyntheticDispatchCopyStore interface {
+	ReadRunIDForNumber(ctx context.Context, project string, issueNumber int, runNumber string) (string, string, error)
+	ReadRunForReplay(ctx context.Context, project, runID string) (RunReplayData, error)
 }
 
 func syntheticDispatchRunHandler(settings Settings, store ReadStore, nativeLauncher NativeLauncher) http.HandlerFunc {
@@ -133,7 +144,15 @@ func syntheticDispatchRunWithAgentRuntime(ctx context.Context, store RunDispatch
 	if err := validateNativeWorkflowKind(phaseKind); err != nil {
 		return PublicDispatchResult{}, &dispatchProblem{status: http.StatusUnprocessableEntity, message: err.Error()}
 	}
-	suppliedAttempts, problem := syntheticSuppliedAttempts(req.SuppliedPhaseOutputs, wf, startIndex)
+	copied, copyProvenance, problem := syntheticCopiedPhaseOutputs(ctx, store, req, wf, startIndex)
+	if problem != nil {
+		return PublicDispatchResult{}, problem
+	}
+	suppliedInputs, problem := mergeSyntheticSuppliedPhaseOutputs(copied, req.SuppliedPhaseOutputs)
+	if problem != nil {
+		return PublicDispatchResult{}, problem
+	}
+	suppliedAttempts, problem := syntheticSuppliedAttempts(suppliedInputs, wf, startIndex)
 	if problem != nil {
 		return PublicDispatchResult{}, problem
 	}
@@ -175,7 +194,7 @@ func syntheticDispatchRunWithAgentRuntime(ctx context.Context, store RunDispatch
 		wfBudget = &c
 	}
 	resolvedBudget := budget.ResolveBudget(issue.Labels, wfBudget)
-	triggerSource := syntheticTriggerSource(req)
+	triggerSource := syntheticTriggerSource(req, copyProvenance)
 	evidenceRequirements := dispatchEvidenceRequirements(wf, issue)
 	workflowFilename := firstNonEmpty(startPhase.WorkflowFilename, fmt.Sprintf("%s:%s", phaseKind, startPhase.Name))
 	run, err := store.CreateRun(ctx, CreateRunRequest{
@@ -274,6 +293,149 @@ func syntheticDispatchRunWithAgentRuntime(ctx context.Context, store RunDispatch
 	}, nil
 }
 
+func syntheticCopiedPhaseOutputs(ctx context.Context, store RunDispatchStore, req SyntheticDispatchRequest, wf *Workflow, startIndex int) ([]SyntheticSuppliedPhaseOutput, []map[string]any, *dispatchProblem) {
+	if req.CopyPhaseOutputsFrom == nil {
+		return nil, nil, nil
+	}
+	copyReq := *req.CopyPhaseOutputsFrom
+	copyReq.Run = strings.TrimSpace(copyReq.Run)
+	if copyReq.Run == "" {
+		return nil, nil, &dispatchProblem{status: http.StatusBadRequest, message: "copy_phase_outputs_from.run required"}
+	}
+	if len(copyReq.Phases) == 0 {
+		return nil, nil, &dispatchProblem{status: http.StatusBadRequest, message: "copy_phase_outputs_from.phases required"}
+	}
+	copyStore, ok := store.(SyntheticDispatchCopyStore)
+	if !ok || copyStore == nil {
+		return nil, nil, &dispatchProblem{status: http.StatusServiceUnavailable, message: "synthetic phase-output copy store not configured"}
+	}
+	runID, sourceRunRef, err := copyStore.ReadRunIDForNumber(ctx, req.Project, req.IssueNumber, copyReq.Run)
+	if errors.Is(err, ErrNotFound) {
+		return nil, nil, &dispatchProblem{status: http.StatusUnprocessableEntity, message: "copy_phase_outputs_from.run not found"}
+	}
+	if err != nil {
+		return nil, nil, &dispatchProblem{status: http.StatusInternalServerError, message: "read copy source run failed"}
+	}
+	sourceRun, err := copyStore.ReadRunForReplay(ctx, req.Project, runID)
+	if errors.Is(err, ErrNotFound) {
+		return nil, nil, &dispatchProblem{status: http.StatusUnprocessableEntity, message: "copy_phase_outputs_from.run not found"}
+	}
+	if err != nil {
+		return nil, nil, &dispatchProblem{status: http.StatusInternalServerError, message: "read copy source run failed"}
+	}
+
+	phaseIndex := map[string]int{}
+	for i, phase := range wf.Phases {
+		phaseIndex[phase.Name] = i
+	}
+	out := make([]SyntheticSuppliedPhaseOutput, 0, len(copyReq.Phases))
+	provenance := make([]map[string]any, 0)
+	seenPhase := map[string]bool{}
+	for rawPhase, rawKeys := range copyReq.Phases {
+		phase := strings.TrimSpace(rawPhase)
+		if phase == "" {
+			return nil, nil, &dispatchProblem{status: http.StatusUnprocessableEntity, message: "copy_phase_outputs_from.phases contains an empty phase"}
+		}
+		idx, ok := phaseIndex[phase]
+		if !ok {
+			return nil, nil, &dispatchProblem{status: http.StatusUnprocessableEntity, message: fmt.Sprintf("copy source phase %q is not registered on workflow %q", phase, wf.Name)}
+		}
+		if idx >= startIndex {
+			return nil, nil, &dispatchProblem{status: http.StatusUnprocessableEntity, message: fmt.Sprintf("copy source phase %q must be before start_at_phase", phase)}
+		}
+		if seenPhase[phase] {
+			return nil, nil, &dispatchProblem{status: http.StatusUnprocessableEntity, message: fmt.Sprintf("copy source phase %q is repeated", phase)}
+		}
+		seenPhase[phase] = true
+		keys := cleanCopyOutputKeys(rawKeys)
+		if len(keys) == 0 {
+			return nil, nil, &dispatchProblem{status: http.StatusUnprocessableEntity, message: fmt.Sprintf("copy source phase %q has no output keys", phase)}
+		}
+		attempt := latestCompletedAttemptForPhase(sourceRun.Attempts, phase)
+		if attempt == nil {
+			return nil, nil, &dispatchProblem{status: http.StatusUnprocessableEntity, message: fmt.Sprintf("copy source run has no completed attempt for phase %q", phase)}
+		}
+		outputs := map[string]string{}
+		for _, key := range keys {
+			value, ok := attempt.PhaseOutputs[key]
+			if !ok {
+				return nil, nil, &dispatchProblem{status: http.StatusUnprocessableEntity, message: fmt.Sprintf("copy source phase %q is missing output %q", phase, key)}
+			}
+			outputs[key] = value
+		}
+		out = append(out, SyntheticSuppliedPhaseOutput{Phase: phase, PhaseOutputs: outputs})
+		provenance = append(provenance, map[string]any{
+			"source_run":           sourceRunRef,
+			"source_run_id":        sourceRun.ID,
+			"source_phase":         phase,
+			"source_attempt_index": attempt.AttemptIndex,
+			"target_phase":         phase,
+			"keys":                 keys,
+		})
+	}
+	return out, provenance, nil
+}
+
+func cleanCopyOutputKeys(values []string) []string {
+	out := make([]string, 0, len(values))
+	seen := map[string]bool{}
+	for _, value := range values {
+		key := strings.TrimSpace(value)
+		if key == "" || seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, key)
+	}
+	return out
+}
+
+func latestCompletedAttemptForPhase(attempts []RunAttemptData, phase string) *RunAttemptData {
+	for i := len(attempts) - 1; i >= 0; i-- {
+		if attempts[i].Phase == phase && attempts[i].Completed {
+			return &attempts[i]
+		}
+	}
+	return nil
+}
+
+func mergeSyntheticSuppliedPhaseOutputs(copied []SyntheticSuppliedPhaseOutput, supplied []SyntheticSuppliedPhaseOutput) ([]SyntheticSuppliedPhaseOutput, *dispatchProblem) {
+	if len(copied) == 0 {
+		return supplied, nil
+	}
+	merged := make([]SyntheticSuppliedPhaseOutput, 0, len(copied)+len(supplied))
+	byPhase := map[string]int{}
+	for _, input := range copied {
+		phase := strings.TrimSpace(input.Phase)
+		outputs := map[string]string{}
+		for key, value := range input.PhaseOutputs {
+			outputs[key] = value
+		}
+		byPhase[phase] = len(merged)
+		merged = append(merged, SyntheticSuppliedPhaseOutput{Phase: phase, PhaseOutputs: outputs})
+	}
+	seenSupplied := map[string]bool{}
+	for _, input := range supplied {
+		phase := strings.TrimSpace(input.Phase)
+		if seenSupplied[phase] {
+			return nil, &dispatchProblem{status: http.StatusUnprocessableEntity, message: fmt.Sprintf("supplied phase %q is repeated", phase)}
+		}
+		seenSupplied[phase] = true
+		if idx, ok := byPhase[phase]; ok {
+			for key, value := range input.PhaseOutputs {
+				if existing, exists := merged[idx].PhaseOutputs[key]; exists && existing != value {
+					return nil, &dispatchProblem{status: http.StatusUnprocessableEntity, message: fmt.Sprintf("supplied phase %q output %q conflicts with copied output", phase, key)}
+				}
+				merged[idx].PhaseOutputs[key] = value
+			}
+			continue
+		}
+		byPhase[phase] = len(merged)
+		merged = append(merged, input)
+	}
+	return merged, nil
+}
+
 func syntheticSuppliedAttempts(inputs []SyntheticSuppliedPhaseOutput, wf *Workflow, startIndex int) ([]RunAttemptData, *dispatchProblem) {
 	if len(inputs) == 0 {
 		return nil, nil
@@ -312,6 +474,7 @@ func syntheticSuppliedAttempts(inputs []SyntheticSuppliedPhaseOutput, wf *Workfl
 			AttemptIndex: len(out),
 			Phase:        phase,
 			Conclusion:   "supplied",
+			Verification: verificationDataFromPhaseOutputs(outputs),
 			Decision:     "advance",
 			Completed:    true,
 			CarryForward: true,
@@ -321,7 +484,29 @@ func syntheticSuppliedAttempts(inputs []SyntheticSuppliedPhaseOutput, wf *Workfl
 	return out, nil
 }
 
-func syntheticTriggerSource(req SyntheticDispatchRequest) map[string]any {
+func verificationDataFromPhaseOutputs(outputs map[string]string) *RunVerificationData {
+	raw := strings.TrimSpace(outputs["verification"])
+	if raw == "" {
+		return nil
+	}
+	payload, ok := decodeEvidenceJSONOutputObject(raw)
+	if !ok {
+		return nil
+	}
+	verification := &RunVerificationData{
+		Status:       strings.TrimSpace(stringValue(payload["status"])),
+		Reasons:      stringSliceFromAny(payload["reasons"]),
+		EvidenceRefs: stringSliceFromAny(payload["evidence_refs"]),
+		Evidence:     EvidenceArtifactsFromVerificationPayload(payload),
+	}
+	verification.EvidenceRefs = appendMissingStrings(verification.EvidenceRefs, EvidenceRefsFromArtifacts(verification.Evidence)...)
+	if verification.Status == "" && len(verification.Reasons) == 0 && len(verification.EvidenceRefs) == 0 && len(verification.Evidence) == 0 {
+		return nil
+	}
+	return verification
+}
+
+func syntheticTriggerSource(req SyntheticDispatchRequest, copyProvenance []map[string]any) map[string]any {
 	source := map[string]any{}
 	for key, value := range req.TriggerSource {
 		source[key] = value
@@ -341,6 +526,9 @@ func syntheticTriggerSource(req SyntheticDispatchRequest) map[string]any {
 	}
 	if len(context) > 0 {
 		source["execution_context"] = context
+	}
+	if len(copyProvenance) > 0 {
+		source["copied_phase_outputs"] = copyProvenance
 	}
 	return source
 }
