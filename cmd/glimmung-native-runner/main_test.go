@@ -826,6 +826,7 @@ func TestAgentStepBaseEnvStripsManagedSecrets(t *testing.T) {
 		"GLIMMUNG_EVENTS_URL=https://glimmung.test/events",
 		"GLIMMUNG_COMPLETED_URL=https://glimmung.test/completed",
 		"GLIMMUNG_GITHUB_TOKEN_URL=https://glimmung.test/github-token",
+		"GLIMMUNG_GITHUB_PUSH_POLICY_TOKEN=policy-token",
 		"GLIMMUNG_PR_TOUCHPOINT_URL=https://glimmung.test/touchpoint",
 		"GLIMMUNG_PR_MERGE_URL=https://glimmung.test/merge",
 		"GLIMMUNG_SSH_CERT_URL=https://glimmung.test/ssh-cert",
@@ -839,6 +840,7 @@ func TestAgentStepBaseEnvStripsManagedSecrets(t *testing.T) {
 		"GLIMMUNG_EVENTS_URL=",
 		"GLIMMUNG_COMPLETED_URL=",
 		"GLIMMUNG_GITHUB_TOKEN_URL=",
+		"GLIMMUNG_GITHUB_PUSH_POLICY_TOKEN=",
 		"GLIMMUNG_PR_TOUCHPOINT_URL=",
 		"GLIMMUNG_PR_MERGE_URL=",
 		"GLIMMUNG_SSH_CERT_URL=",
@@ -857,6 +859,33 @@ func TestAgentStepBaseEnvStripsManagedSecrets(t *testing.T) {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("agent env missing %q in %#v", want, got)
 		}
+	}
+}
+
+func TestInstallAgentGitHubCredential(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not installed")
+	}
+	repo := t.TempDir()
+	if err := runCapture(context.Background(), repo, "git", "init"); err != nil {
+		t.Fatalf("git init: %v", err)
+	}
+	if err := installAgentGitHubCredential(context.Background(), repo, "policy-token"); err != nil {
+		t.Fatalf("installAgentGitHubCredential: %v", err)
+	}
+	helper, err := runOutput(context.Background(), repo, "git", "config", "--local", "credential.https://github.com.helper")
+	if err != nil {
+		t.Fatalf("read helper: %v", err)
+	}
+	if !strings.Contains(helper, "glimmung-policy") || !strings.Contains(helper, "policy-token") {
+		t.Fatalf("credential helper=%q", helper)
+	}
+	username, err := runOutput(context.Background(), repo, "git", "config", "--local", "credential.https://github.com.username")
+	if err != nil {
+		t.Fatalf("read username: %v", err)
+	}
+	if strings.TrimSpace(username) != "glimmung-policy" {
+		t.Fatalf("username=%q", username)
 	}
 }
 

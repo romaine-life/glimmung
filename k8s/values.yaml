@@ -82,6 +82,12 @@ providerApiProxy:
     kvKey: codex-credentials
     secretKey: auth.json
     credentialMountPath: /etc/codex-credentials
+  github:
+    serviceName: github-git-policy-proxy
+    secretName: github-policy-proxy-app
+    appIdKvKey: glimmung-github-app-id
+    installationIdKvKey: glimmung-github-app-installation-id
+    privateKeyKvKey: glimmung-github-app-private-key
 
 artifacts:
   storageAccount: romaineglimmungartifacts

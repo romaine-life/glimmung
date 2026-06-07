@@ -17,6 +17,10 @@ dependencies = [
     # Prometheus client for /metrics. The aiohttp listener that serves
     # /metrics is wired in glimmung_api_proxy.metrics.start_metrics_server.
     "prometheus-client>=0.20",
+    # GitHub policy proxy mints GitHub App installation tokens with an
+    # RS256 app JWT. Keep crypto explicit instead of relying on transitive
+    # Azure dependencies.
+    "PyJWT[crypto]>=2.8",
 ]
 
 [build-system]

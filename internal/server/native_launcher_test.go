@@ -215,6 +215,7 @@ func TestNativeJobManifestIncludesStringMapPhaseInputs(t *testing.T) {
 			ID:            "run-123",
 			Project:       "ambience",
 			IssueNumber:   42,
+			IssueRepo:     "romaine-life/ambience",
 			CallbackToken: stringPtr("callback-token"),
 			Attempts:      []RunAttemptData{{AttemptIndex: 1, Phase: "llm-work"}},
 		},
@@ -299,6 +300,7 @@ func TestNativeJobManifestDoesNotMountProviderCredentialSecret(t *testing.T) {
 			ID:            "run-123",
 			Project:       "ambience",
 			IssueNumber:   42,
+			IssueRepo:     "romaine-life/ambience",
 			CallbackToken: stringPtr("callback-token"),
 			Attempts:      []RunAttemptData{{AttemptIndex: 1, Phase: "llm-work"}},
 		},
@@ -341,6 +343,7 @@ func TestNativeJobManifestWiresProviderAPIProxyForAgentJob(t *testing.T) {
 			ID:            "run-123",
 			Project:       "ambience",
 			IssueNumber:   42,
+			IssueRepo:     "romaine-life/ambience",
 			CallbackToken: stringPtr("callback-token"),
 			Attempts:      []RunAttemptData{{AttemptIndex: 1, Phase: "llm-work"}},
 		},
@@ -356,6 +359,7 @@ func TestNativeJobManifestWiresProviderAPIProxyForAgentJob(t *testing.T) {
 	proxyRuntime := providerAPIProxyRuntime{
 		ClaudeClusterIP: "172.16.1.10",
 		CodexClusterIP:  "172.16.1.11",
+		GitHubClusterIP: "172.16.1.12",
 		CASecretName:    "glimmung-provider-api-proxy-ca",
 		CABundlePath:    "/etc/glimmung-provider-api-proxy-bundle/ca-certificates.crt",
 	}
@@ -368,10 +372,10 @@ func TestNativeJobManifestWiresProviderAPIProxyForAgentJob(t *testing.T) {
 
 	podSpec := nativeManifestPodSpec(manifest)
 	hostAliases := podSpec["hostAliases"].([]any)
-	if len(hostAliases) != 2 {
+	if len(hostAliases) != 3 {
 		t.Fatalf("hostAliases=%#v", hostAliases)
 	}
-	if hostAliases[0].(map[string]any)["ip"] != "172.16.1.10" || hostAliases[1].(map[string]any)["ip"] != "172.16.1.11" {
+	if hostAliases[0].(map[string]any)["ip"] != "172.16.1.10" || hostAliases[1].(map[string]any)["ip"] != "172.16.1.11" || hostAliases[2].(map[string]any)["ip"] != "172.16.1.12" {
 		t.Fatalf("hostAliases=%#v", hostAliases)
 	}
 	if _, ok := podSpec["initContainers"]; !ok {
@@ -389,6 +393,9 @@ func TestNativeJobManifestWiresProviderAPIProxyForAgentJob(t *testing.T) {
 	}
 	if env["GLIMMUNG_PROVIDER_API_PROXY_CODEX_IP"] != "172.16.1.11" {
 		t.Fatalf("GLIMMUNG_PROVIDER_API_PROXY_CODEX_IP=%q", env["GLIMMUNG_PROVIDER_API_PROXY_CODEX_IP"])
+	}
+	if env["GLIMMUNG_PROVIDER_API_PROXY_GITHUB_IP"] != "172.16.1.12" {
+		t.Fatalf("GLIMMUNG_PROVIDER_API_PROXY_GITHUB_IP=%q", env["GLIMMUNG_PROVIDER_API_PROXY_GITHUB_IP"])
 	}
 }
 
@@ -409,6 +416,8 @@ func TestLaunchNativePhaseResolvesProviderAPIProxyForAgentJobs(t *testing.T) {
 			ProviderAPIProxyCABundlePath:  "/etc/glimmung-provider-api-proxy-bundle/ca-certificates.crt",
 			ProviderAPIProxyClaudeService: "claude-api-proxy",
 			ProviderAPIProxyCodexService:  "codex-api-proxy",
+			ProviderAPIProxyGitHubService: "github-git-policy-proxy",
+			GitHubAppPrivateKey:           "signing-key",
 		},
 		HTTPClient: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 			paths = append(paths, req.Method+" "+req.URL.Path)
@@ -418,6 +427,8 @@ func TestLaunchNativePhaseResolvesProviderAPIProxyForAgentJobs(t *testing.T) {
 				body = `{"spec":{"clusterIP":"172.16.1.10"}}`
 			case "GET /api/v1/namespaces/glimmung-runs/services/codex-api-proxy":
 				body = `{"spec":{"clusterIP":"172.16.1.11"}}`
+			case "GET /api/v1/namespaces/glimmung-runs/services/github-git-policy-proxy":
+				body = `{"spec":{"clusterIP":"172.16.1.12"}}`
 			case "POST /apis/batch/v1/namespaces/glimmung-runs/jobs":
 				raw, _ := io.ReadAll(req.Body)
 				postedJob = string(raw)
@@ -447,6 +458,7 @@ func TestLaunchNativePhaseResolvesProviderAPIProxyForAgentJobs(t *testing.T) {
 			ID:            "run-123",
 			Project:       "ambience",
 			IssueNumber:   42,
+			IssueRepo:     "romaine-life/ambience",
 			CallbackToken: stringPtr("callback-token"),
 			Attempts:      []RunAttemptData{{AttemptIndex: 1, Phase: "llm-work"}},
 		},
@@ -458,6 +470,7 @@ func TestLaunchNativePhaseResolvesProviderAPIProxyForAgentJobs(t *testing.T) {
 	for _, want := range []string{
 		"GET /api/v1/namespaces/glimmung-runs/services/claude-api-proxy",
 		"GET /api/v1/namespaces/glimmung-runs/services/codex-api-proxy",
+		"GET /api/v1/namespaces/glimmung-runs/services/github-git-policy-proxy",
 		"POST /api/v1/namespaces/glimmung-runs/secrets",
 		"POST /apis/batch/v1/namespaces/glimmung-runs/jobs",
 	} {
@@ -471,9 +484,12 @@ func TestLaunchNativePhaseResolvesProviderAPIProxyForAgentJobs(t *testing.T) {
 		`"ip":"172.16.1.11"`,
 		`"chatgpt.com"`,
 		`"api.openai.com"`,
+		`"github.com"`,
 		`"secretName":"glimmung-provider-api-proxy-ca"`,
 		`"name":"SSL_CERT_FILE"`,
 		`"name":"GLIMMUNG_PROVIDER_API_PROXY_CODEX_IP"`,
+		`"name":"GLIMMUNG_PROVIDER_API_PROXY_GITHUB_IP"`,
+		`"name":"GLIMMUNG_GITHUB_PUSH_POLICY_TOKEN"`,
 	} {
 		if !strings.Contains(postedJob, want) {
 			t.Fatalf("posted job missing %q: %s", want, postedJob)
@@ -501,6 +517,7 @@ func TestLaunchNativePhaseResolvesProviderAPIProxyForVerificationPhase(t *testin
 			ProviderAPIProxyCABundlePath:  "/etc/glimmung-provider-api-proxy-bundle/ca-certificates.crt",
 			ProviderAPIProxyClaudeService: "claude-api-proxy",
 			ProviderAPIProxyCodexService:  "codex-api-proxy",
+			ProviderAPIProxyGitHubService: "github-git-policy-proxy",
 		},
 		HTTPClient: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 			paths = append(paths, req.Method+" "+req.URL.Path)
@@ -510,6 +527,8 @@ func TestLaunchNativePhaseResolvesProviderAPIProxyForVerificationPhase(t *testin
 				body = `{"spec":{"clusterIP":"172.16.1.10"}}`
 			case "GET /api/v1/namespaces/glimmung-runs/services/codex-api-proxy":
 				body = `{"spec":{"clusterIP":"172.16.1.11"}}`
+			case "GET /api/v1/namespaces/glimmung-runs/services/github-git-policy-proxy":
+				body = `{"spec":{"clusterIP":"172.16.1.12"}}`
 			case "POST /apis/batch/v1/namespaces/glimmung-runs/jobs":
 				raw, _ := io.ReadAll(req.Body)
 				postedJob = string(raw)
@@ -551,6 +570,7 @@ func TestLaunchNativePhaseResolvesProviderAPIProxyForVerificationPhase(t *testin
 	for _, want := range []string{
 		"GET /api/v1/namespaces/glimmung-runs/services/claude-api-proxy",
 		"GET /api/v1/namespaces/glimmung-runs/services/codex-api-proxy",
+		"GET /api/v1/namespaces/glimmung-runs/services/github-git-policy-proxy",
 	} {
 		if !containsPath(paths, want) {
 			t.Fatalf("missing %s, paths=%#v", want, paths)
@@ -565,6 +585,9 @@ func TestLaunchNativePhaseResolvesProviderAPIProxyForVerificationPhase(t *testin
 		if !strings.Contains(postedJob, want) {
 			t.Fatalf("posted job missing %q: %s", want, postedJob)
 		}
+	}
+	if strings.Contains(postedJob, "github.com") || strings.Contains(postedJob, "GLIMMUNG_PROVIDER_API_PROXY_GITHUB_IP") {
+		t.Fatalf("verification job should not route github.com through policy proxy: %s", postedJob)
 	}
 }
 

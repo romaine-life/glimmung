@@ -3,9 +3,11 @@ package server
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
 	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -168,6 +170,7 @@ type KubernetesNativeLauncher struct {
 type providerAPIProxyRuntime struct {
 	ClaudeClusterIP string
 	CodexClusterIP  string
+	GitHubClusterIP string
 	CASecretName    string
 	CABundlePath    string
 }
@@ -347,6 +350,7 @@ func (l *KubernetesNativeLauncher) resolveProviderAPIProxyRuntime(ctx context.Co
 	namespace := firstNonEmpty(strings.TrimSpace(l.Settings.ProviderAPIProxyNamespace), strings.TrimSpace(l.Settings.NativeRunnerNamespace))
 	claudeService := firstNonEmpty(strings.TrimSpace(l.Settings.ProviderAPIProxyClaudeService), "claude-api-proxy")
 	codexService := firstNonEmpty(strings.TrimSpace(l.Settings.ProviderAPIProxyCodexService), "codex-api-proxy")
+	githubService := firstNonEmpty(strings.TrimSpace(l.Settings.ProviderAPIProxyGitHubService), "github-git-policy-proxy")
 	claudeIP, err := l.serviceClusterIP(ctx, namespace, claudeService)
 	if err != nil {
 		return providerAPIProxyRuntime{}, fmt.Errorf("resolve claude provider api proxy service: %w", err)
@@ -355,9 +359,14 @@ func (l *KubernetesNativeLauncher) resolveProviderAPIProxyRuntime(ctx context.Co
 	if err != nil {
 		return providerAPIProxyRuntime{}, fmt.Errorf("resolve codex provider api proxy service: %w", err)
 	}
+	githubIP, err := l.serviceClusterIP(ctx, namespace, githubService)
+	if err != nil {
+		return providerAPIProxyRuntime{}, fmt.Errorf("resolve github git policy proxy service: %w", err)
+	}
 	return providerAPIProxyRuntime{
 		ClaudeClusterIP: claudeIP,
 		CodexClusterIP:  codexIP,
+		GitHubClusterIP: githubIP,
 		CASecretName:    firstNonEmpty(strings.TrimSpace(l.Settings.ProviderAPIProxyCASecret), "glimmung-provider-api-proxy-ca"),
 		CABundlePath:    firstNonEmpty(strings.TrimSpace(l.Settings.ProviderAPIProxyCABundlePath), "/etc/glimmung-provider-api-proxy-bundle/ca-certificates.crt"),
 	}, nil
@@ -1630,6 +1639,9 @@ func nativeJobManifest(settings Settings, req NativeLaunchRequest, job NativeJob
 			map[string]any{"name": "GLIMMUNG_PROVIDER_API_PROXY_CA_SECRET", "value": proxyRuntime.CASecretName},
 			map[string]any{"name": "GLIMMUNG_PROVIDER_API_PROXY_CA_BUNDLE", "value": proxyRuntime.CABundlePath},
 		)
+		if nativeJobRequiresProviderAPIProxy(job) && strings.TrimSpace(proxyRuntime.GitHubClusterIP) != "" {
+			env = append(env, map[string]any{"name": "GLIMMUNG_PROVIDER_API_PROXY_GITHUB_IP", "value": proxyRuntime.GitHubClusterIP})
+		}
 		volumeMounts = append(volumeMounts,
 			map[string]any{"name": "provider-api-proxy-ca", "mountPath": caMountPath, "readOnly": true},
 			map[string]any{"name": "provider-api-proxy-ca-bundle", "mountPath": bundleMountPath, "readOnly": true},
@@ -1638,10 +1650,14 @@ func nativeJobManifest(settings Settings, req NativeLaunchRequest, job NativeJob
 			map[string]any{"name": "provider-api-proxy-ca", "secret": map[string]any{"secretName": proxyRuntime.CASecretName}},
 			map[string]any{"name": "provider-api-proxy-ca-bundle", "emptyDir": map[string]any{}},
 		)
-		podSpec["hostAliases"] = []any{
+		hostAliases := []any{
 			map[string]any{"ip": proxyRuntime.ClaudeClusterIP, "hostnames": []any{"api.anthropic.com"}},
 			map[string]any{"ip": proxyRuntime.CodexClusterIP, "hostnames": []any{"chatgpt.com", "api.openai.com"}},
 		}
+		if nativeJobRequiresProviderAPIProxy(job) && strings.TrimSpace(proxyRuntime.GitHubClusterIP) != "" {
+			hostAliases = append(hostAliases, map[string]any{"ip": proxyRuntime.GitHubClusterIP, "hostnames": []any{"github.com"}})
+		}
+		podSpec["hostAliases"] = hostAliases
 		podSpec["initContainers"] = []any{
 			map[string]any{
 				"name":    "provider-api-proxy-ca-bundle",
@@ -1753,6 +1769,9 @@ func nativeJobEnv(settings Settings, req NativeLaunchRequest, job NativeJobSpec,
 		{"name": "GLIMMUNG_ATTEMPT_TOKEN", "valueFrom": map[string]any{"secretKeyRef": map[string]any{"name": secretName, "key": "attempt-token"}}},
 	}
 	seen := envNameSet(env)
+	if token := githubPushPolicyTokenForJob(settings, req, job); token != "" {
+		env = appendLiteralEnv(env, seen, "GLIMMUNG_GITHUB_PUSH_POLICY_TOKEN", token)
+	}
 	for _, key := range []string{"issue_repo", "issue_number", "issue_title", "issue_body", "native_slot_index", "native_slot_name", "entrypoint_job_id", "entrypoint_step_slug", "work_context_id", "work_context_branch", "work_context_base_ref", "work_context_state"} {
 		if value, ok := metadata[key]; ok {
 			env = appendLiteralEnv(env, seen, "GLIMMUNG_"+envName(key), fmt.Sprint(value))
@@ -1806,6 +1825,87 @@ func nativeJobEnv(settings Settings, req NativeLaunchRequest, job NativeJobSpec,
 		env = appendLiteralEnv(env, seen, name, job.Env[name])
 	}
 	return env
+}
+
+func githubPushPolicyTokenForJob(settings Settings, req NativeLaunchRequest, job NativeJobSpec) string {
+	if !nativeJobRequiresProviderAPIProxy(job) {
+		return ""
+	}
+	signingKey := strings.TrimSpace(settings.GitHubAppPrivateKey)
+	repo := strings.TrimSpace(req.Run.IssueRepo)
+	branch := nativePolicyBranchName(req)
+	if signingKey == "" || repo == "" || branch == "" {
+		return ""
+	}
+	payload := map[string]any{
+		"version":      1,
+		"repo":         repo,
+		"branch":       branch,
+		"ref":          "refs/heads/" + branch,
+		"run_id":       req.Run.ID,
+		"run_ref":      runRefFromData(req.Run),
+		"project":      req.Run.Project,
+		"issue_number": req.Run.IssueNumber,
+		"expires_at":   time.Now().Add(12 * time.Hour).Unix(),
+	}
+	return signedGitHubPolicyToken(signingKey, payload)
+}
+
+func nativePolicyBranchName(req NativeLaunchRequest) string {
+	metadata := req.Lease.Metadata
+	if branch := strings.TrimSpace(fmt.Sprint(firstAny(metadata["implementation_branch"], metadata["implementationBranch"]))); branch != "" && branch != "<nil>" {
+		return branch
+	}
+	issueNumber := req.Run.IssueNumber
+	if issueNumber <= 0 {
+		if raw := strings.TrimSpace(fmt.Sprint(metadata["issue_number"])); raw != "" && raw != "<nil>" {
+			issueNumber, _ = strconv.Atoi(raw)
+		}
+	}
+	if issueNumber > 0 && strings.TrimSpace(req.Run.ID) != "" {
+		return "glimmung/issue-" + nativePolicyRefSegment(strconv.Itoa(issueNumber)) + "/" + nativePolicyRefSegment(req.Run.ID)
+	}
+	if branch := strings.TrimSpace(fmt.Sprint(metadata["work_context_branch"])); branch != "" && branch != "<nil>" {
+		return branch
+	}
+	if strings.TrimSpace(req.Run.ID) != "" {
+		return "glimmung/" + nativePolicyRefSegment(req.Run.ID)
+	}
+	return ""
+}
+
+func nativePolicyRefSegment(value string) string {
+	var b strings.Builder
+	lastDash := false
+	for _, r := range strings.ToLower(strings.TrimSpace(value)) {
+		ok := (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '.' || r == '_' || r == '-'
+		if ok {
+			b.WriteRune(r)
+			lastDash = false
+			continue
+		}
+		if !lastDash {
+			b.WriteByte('-')
+			lastDash = true
+		}
+	}
+	out := strings.Trim(b.String(), ".-")
+	if out == "" {
+		return "unknown"
+	}
+	return out
+}
+
+func signedGitHubPolicyToken(signingKey string, payload map[string]any) string {
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return ""
+	}
+	body := base64.RawURLEncoding.EncodeToString(raw)
+	mac := hmac.New(sha256.New, []byte(signingKey))
+	_, _ = mac.Write([]byte(body))
+	sig := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+	return body + "." + sig
 }
 
 func nativeRunnerEntrypoint(settings Settings) string {
