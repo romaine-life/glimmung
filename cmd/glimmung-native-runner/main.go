@@ -1142,6 +1142,9 @@ func (r *nativeRunner) checkout(ctx context.Context, checkout checkoutSpec) erro
 	if err := runCapture(ctx, "", "git", "clone", url, path); err != nil {
 		return scrubToken(err, token.Token)
 	}
+	if err := runCapture(ctx, path, "git", "remote", "set-url", "origin", "https://github.com/"+repo+".git"); err != nil {
+		return err
+	}
 	if ref := strings.TrimSpace(checkout.Ref); ref != "" {
 		if err := runCapture(ctx, path, "git", "checkout", ref); err != nil {
 			return scrubToken(err, token.Token)
