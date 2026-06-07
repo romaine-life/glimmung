@@ -214,6 +214,14 @@ func TestCarryForwardAttemptDocsPreserveOutputsForRecycleEntry(t *testing.T) {
 		Completed:    true,
 		CarryForward: true,
 		PhaseOutputs: map[string]string{"validation_url": "https://slot.example"},
+		Verification: &server.RunVerificationData{
+			Status:       "pass",
+			EvidenceRefs: []string{"/v1/artifacts/runs/proj/run-1/videos/portal.webm"},
+			Evidence: []server.EvidenceArtifact{{
+				Kind: "video",
+				Ref:  "/v1/artifacts/runs/proj/run-1/videos/portal.webm",
+			}},
+		},
 	}}, server.Workflow{Phases: []server.PhaseSpec{
 		{Name: "env-prep", Kind: "k8s_job"},
 		{Name: "llm-work", Kind: "k8s_job", DependsOn: []string{"env-prep"}},
@@ -226,9 +234,15 @@ func TestCarryForwardAttemptDocsPreserveOutputsForRecycleEntry(t *testing.T) {
 	if !doc.CarryForward || doc.AttemptIndex != 0 || doc.CompletedAt != now || doc.PhaseOutputs["validation_url"] != "https://slot.example" {
 		t.Fatalf("carry doc=%#v", doc)
 	}
+	if doc.Verification == nil || doc.Verification.Status != "pass" || len(doc.Verification.EvidenceRefs) != 1 || len(doc.Verification.Evidence) != 1 {
+		t.Fatalf("verification doc=%#v", doc.Verification)
+	}
 	roundTrip := carryForwardAttemptsFromDocs(docs)
 	if len(roundTrip) != 1 || !roundTrip[0].CarryForward || roundTrip[0].PhaseOutputs["validation_url"] != "https://slot.example" {
 		t.Fatalf("roundTrip=%#v", roundTrip)
+	}
+	if roundTrip[0].Verification == nil || roundTrip[0].Verification.Status != "pass" || len(roundTrip[0].Verification.EvidenceRefs) != 1 {
+		t.Fatalf("roundTrip verification=%#v", roundTrip[0].Verification)
 	}
 }
 

@@ -8202,6 +8202,15 @@ func carryForwardAttemptDocs(attempts []server.RunAttemptData, wf server.Workflo
 		workflowFilename := firstNonEmpty(phase.WorkflowFilename, fmt.Sprintf("%s:%s", kind, phase.Name))
 		conclusion := firstNonEmpty(attempt.Conclusion, "success")
 		decision := firstNonEmpty(attempt.Decision, "advance")
+		var verification *verificationDoc
+		if attempt.Verification != nil {
+			verification = &verificationDoc{
+				Status:       attempt.Verification.Status,
+				Reasons:      sliceOrEmpty(attempt.Verification.Reasons),
+				EvidenceRefs: sliceOrEmpty(attempt.Verification.EvidenceRefs),
+				Evidence:     sliceOrEmpty(attempt.Verification.Evidence),
+			}
+		}
 		out = append(out, attemptDoc{
 			AttemptIndex:     len(out),
 			Phase:            phase.Name,
@@ -8210,6 +8219,7 @@ func carryForwardAttemptDocs(attempts []server.RunAttemptData, wf server.Workflo
 			DispatchedAt:     now,
 			CompletedAt:      now,
 			Conclusion:       &conclusion,
+			Verification:     verification,
 			Decision:         &decision,
 			PhaseOutputs:     stringMapOrEmpty(attempt.PhaseOutputs),
 			CarryForward:     true,
@@ -8242,6 +8252,7 @@ func carryForwardAttemptsFromDocs(docs []attemptDoc) []server.RunAttemptData {
 			AttemptIndex: doc.AttemptIndex,
 			Phase:        doc.Phase,
 			Conclusion:   stringOrEmpty(doc.Conclusion),
+			Verification: runVerificationDataFromDoc(doc.Verification),
 			Decision:     stringOrEmpty(doc.Decision),
 			Completed:    doc.CompletedAt != "",
 			CarryForward: true,
@@ -8249,6 +8260,18 @@ func carryForwardAttemptsFromDocs(docs []attemptDoc) []server.RunAttemptData {
 		})
 	}
 	return out
+}
+
+func runVerificationDataFromDoc(doc *verificationDoc) *server.RunVerificationData {
+	if doc == nil {
+		return nil
+	}
+	return &server.RunVerificationData{
+		Status:       doc.Status,
+		Reasons:      sliceOrEmpty(doc.Reasons),
+		EvidenceRefs: sliceOrEmpty(doc.EvidenceRefs),
+		Evidence:     sliceOrEmpty(doc.Evidence),
+	}
 }
 
 func firstEvidenceRequirements(values ...[]server.EvidenceRequirement) []server.EvidenceRequirement {
