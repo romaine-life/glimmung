@@ -489,7 +489,9 @@ func TestLaunchNativePhaseResolvesProviderAPIProxyForAgentJobs(t *testing.T) {
 		`"name":"SSL_CERT_FILE"`,
 		`"name":"GLIMMUNG_PROVIDER_API_PROXY_CODEX_IP"`,
 		`"name":"GLIMMUNG_PROVIDER_API_PROXY_GITHUB_IP"`,
-		`"name":"GLIMMUNG_GITHUB_PUSH_POLICY_TOKEN"`,
+		`"name":"GLIMMUNG_GITHUB_AGENT_TOKEN_URL"`,
+		`"glimmung.romaine.life/github-policy-repo"`,
+		`"glimmung.romaine.life/github-policy-ref"`,
 	} {
 		if !strings.Contains(postedJob, want) {
 			t.Fatalf("posted job missing %q: %s", want, postedJob)
@@ -1433,6 +1435,10 @@ type fakeNativeGitHubTokenMinter struct {
 }
 
 func (m fakeNativeGitHubTokenMinter) InstallationToken(context.Context) (string, error) {
+	return m.token, m.err
+}
+
+func (m fakeNativeGitHubTokenMinter) RepositoryInstallationToken(context.Context, string, map[string]string) (string, error) {
 	return m.token, m.err
 }
 
