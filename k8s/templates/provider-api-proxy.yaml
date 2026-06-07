@@ -1,3 +1,19 @@
+{{- define "glimmung.providerApiProxyLeafSdsSecret" -}}
+secrets:
+  - name: provider_api_proxy_leaf
+    tls_certificate:
+      certificate_chain:
+        filename: /etc/envoy/tls/tls.crt
+      private_key:
+        filename: /etc/envoy/tls/tls.key
+      watched_directory:
+        path: /etc/envoy/tls
+{{- end -}}
+{{- define "glimmung.providerApiProxyDownstreamTlsContext" -}}
+common_tls_context:
+  tls_certificate_sds_secret_configs:
+    - name: provider_api_proxy_leaf
+{{- end -}}
 {{- if .Values.providerApiProxy.enabled }}
 {{- $ns := .Values.providerApiProxy.namespace }}
 {{- $sa := .Values.providerApiProxy.serviceAccount }}
@@ -153,6 +169,7 @@ data:
       address:
         socket_address: { address: 127.0.0.1, port_value: 9901 }
     static_resources:
+{{ include "glimmung.providerApiProxyLeafSdsSecret" . | nindent 6 }}
       listeners:
         - name: api_listener
           address:
@@ -163,10 +180,7 @@ data:
                 name: envoy.transport_sockets.tls
                 typed_config:
                   "@type": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.DownstreamTlsContext
-                  common_tls_context:
-                    tls_certificates:
-                      - certificate_chain: { filename: /etc/envoy/tls/tls.crt }
-                        private_key: { filename: /etc/envoy/tls/tls.key }
+{{ include "glimmung.providerApiProxyDownstreamTlsContext" . | nindent 18 }}
               filters:
                 - name: envoy.filters.network.http_connection_manager
                   typed_config:
