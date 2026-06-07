@@ -14,7 +14,7 @@ image:
   # The chart's deployment template fails if the resolved tag is empty,
   # so an unsynced bump or a misconfigured override still fails loudly.
   # Quote so all-digit short SHAs aren't reformatted as scientific notation.
-  tag: "app-438897ebeb4733377b94cec73781d513d835844666baddc2205a5c86ef63cbeb"
+  tag: "app-1fbd1cf1370e5af4c29a36415dbea7e8768d42ae8236aaf7ba68f7c6a54aadba"
   pullPolicy: IfNotPresent
 
 # Public hostname for the validation env. Set per-install to
