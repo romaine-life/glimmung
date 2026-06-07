@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -815,6 +816,84 @@ func TestNativeRunnerDoesNotWaitForeverForBlockedLogEvent(t *testing.T) {
 		t.Fatal("executeStep waited for blocked log drain after child exit")
 	}
 	close(releaseRequest)
+}
+
+func TestAgentStepBaseEnvStripsManagedSecrets(t *testing.T) {
+	got := agentStepBaseEnv([]string{
+		"PATH=/usr/bin",
+		"GLIMMUNG_RUN_ID=run-123",
+		"GLIMMUNG_ATTEMPT_TOKEN=secret",
+		"GLIMMUNG_EVENTS_URL=https://glimmung.test/events",
+		"GLIMMUNG_COMPLETED_URL=https://glimmung.test/completed",
+		"GLIMMUNG_GITHUB_TOKEN_URL=https://glimmung.test/github-token",
+		"GLIMMUNG_PR_TOUCHPOINT_URL=https://glimmung.test/touchpoint",
+		"GLIMMUNG_PR_MERGE_URL=https://glimmung.test/merge",
+		"GLIMMUNG_SSH_CERT_URL=https://glimmung.test/ssh-cert",
+		"GLIMMUNG_TAILSCALE_AUTHKEY_URL=https://glimmung.test/tailscale",
+		"GITHUB_TOKEN=github-secret",
+		"GH_TOKEN=gh-secret",
+	})
+	joined := "\n" + strings.Join(got, "\n") + "\n"
+	for _, forbidden := range []string{
+		"GLIMMUNG_ATTEMPT_TOKEN=",
+		"GLIMMUNG_EVENTS_URL=",
+		"GLIMMUNG_COMPLETED_URL=",
+		"GLIMMUNG_GITHUB_TOKEN_URL=",
+		"GLIMMUNG_PR_TOUCHPOINT_URL=",
+		"GLIMMUNG_PR_MERGE_URL=",
+		"GLIMMUNG_SSH_CERT_URL=",
+		"GLIMMUNG_TAILSCALE_AUTHKEY_URL=",
+		"GITHUB_TOKEN=",
+		"GH_TOKEN=",
+	} {
+		if strings.Contains(joined, "\n"+forbidden) {
+			t.Fatalf("agent env retained %s in %#v", forbidden, got)
+		}
+	}
+	for _, want := range []string{
+		"\nPATH=/usr/bin\n",
+		"\nGLIMMUNG_RUN_ID=run-123\n",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("agent env missing %q in %#v", want, got)
+		}
+	}
+}
+
+func TestInstallAgentPostCommitReminder(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not installed")
+	}
+	repo := t.TempDir()
+	if err := runCapture(context.Background(), repo, "git", "init"); err != nil {
+		t.Fatalf("git init: %v", err)
+	}
+	if err := installAgentPostCommitReminder(context.Background(), repo); err != nil {
+		t.Fatalf("installAgentPostCommitReminder: %v", err)
+	}
+	gitDir, err := runOutput(context.Background(), repo, "git", "rev-parse", "--absolute-git-dir")
+	if err != nil {
+		t.Fatalf("git rev-parse: %v", err)
+	}
+	hookPath := filepath.Join(strings.TrimSpace(gitDir), "hooks", "post-commit")
+	body, err := os.ReadFile(hookPath)
+	if err != nil {
+		t.Fatalf("read hook: %v", err)
+	}
+	if info, err := os.Stat(hookPath); err != nil {
+		t.Fatalf("stat hook: %v", err)
+	} else if info.Mode()&0o111 == 0 {
+		t.Fatalf("hook is not executable: mode=%v", info.Mode())
+	}
+	for _, want := range []string{
+		"GLIMMUNG MANAGED AGENT POST-COMMIT REMINDER",
+		"Push this commit to the run branch",
+		"inspect the draft PR CI checks",
+	} {
+		if !strings.Contains(string(body), want) {
+			t.Fatalf("hook missing %q:\n%s", want, body)
+		}
+	}
 }
 
 func TestAgentShellPreambleUsesProxyPlaceholderCredentials(t *testing.T) {

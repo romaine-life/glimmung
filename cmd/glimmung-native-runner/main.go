@@ -733,6 +733,10 @@ func stepEventMetadata(step stepSpec) map[string]any {
 }
 
 func (r *nativeRunner) executeStep(ctx context.Context, step stepSpec, outputFile, completionFile string) (int, error) {
+	return r.executeStepWithEnv(ctx, step, outputFile, completionFile, os.Environ())
+}
+
+func (r *nativeRunner) executeStepWithEnv(ctx context.Context, step stepSpec, outputFile, completionFile string, baseEnv []string) (int, error) {
 	workdir := firstNonEmpty(step.WorkingDirectory, r.cfg.Job.WorkingDirectory, r.cfg.Workspace)
 	if err := os.MkdirAll(workdir, 0o755); err != nil {
 		return 1, err
@@ -740,7 +744,7 @@ func (r *nativeRunner) executeStep(ctx context.Context, step stepSpec, outputFil
 	name, args := shellCommand(firstNonEmpty(step.Shell, r.cfg.Job.Shell), step.Run)
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = workdir
-	cmd.Env = mergedEnv(os.Environ(), r.cfg.Job.Env, step.Env, map[string]string{
+	cmd.Env = mergedEnv(baseEnv, r.cfg.Job.Env, step.Env, map[string]string{
 		"GLIMMUNG_MANAGED_RUNNER":  "1",
 		"GLIMMUNG_OUTPUT_FILE":     outputFile,
 		"GLIMMUNG_COMPLETION_FILE": completionFile,
@@ -817,6 +821,9 @@ func (r *nativeRunner) executeAgentStep(ctx context.Context, step stepSpec, outp
 		return 1, err
 	}
 	defer os.Remove(promptFile)
+	if err := installAgentPostCommitReminder(ctx, workdir); err != nil {
+		return 1, err
+	}
 	runStep := step
 	runStep.Type = "run"
 	runStep.Run, err = agentRunScript(profile, workdir, promptFile, completionFile)
@@ -824,7 +831,83 @@ func (r *nativeRunner) executeAgentStep(ctx context.Context, step stepSpec, outp
 		return 1, err
 	}
 	runStep.Shell = "bash"
-	return r.executeStep(ctx, runStep, outputFile, completionFile)
+	return r.executeStepWithEnv(ctx, runStep, outputFile, completionFile, agentStepBaseEnv(os.Environ()))
+}
+
+func installAgentPostCommitReminder(ctx context.Context, workdir string) error {
+	repoRoot, err := runOutput(ctx, workdir, "git", "rev-parse", "--show-toplevel")
+	if err != nil {
+		return nil
+	}
+	repoRoot = strings.TrimSpace(repoRoot)
+	if repoRoot == "" {
+		return nil
+	}
+	gitDir, err := runOutput(ctx, repoRoot, "git", "rev-parse", "--absolute-git-dir")
+	if err != nil {
+		return fmt.Errorf("resolve git dir for agent post-commit hook: %w", err)
+	}
+	gitDir = strings.TrimSpace(gitDir)
+	if gitDir == "" {
+		return nil
+	}
+	hooksDir := filepath.Join(gitDir, "hooks")
+	if err := os.MkdirAll(hooksDir, 0o755); err != nil {
+		return fmt.Errorf("create git hooks dir: %w", err)
+	}
+	hookPath := filepath.Join(hooksDir, "post-commit")
+	const marker = "GLIMMUNG MANAGED AGENT POST-COMMIT REMINDER"
+	hook := agentPostCommitReminderHook(marker)
+	if existing, err := os.ReadFile(hookPath); err == nil && !strings.Contains(string(existing), marker) {
+		return fmt.Errorf("refusing to replace existing post-commit hook: %s", hookPath)
+	}
+	if err := os.WriteFile(hookPath, []byte(hook), 0o755); err != nil {
+		return fmt.Errorf("write agent post-commit hook: %w", err)
+	}
+	return nil
+}
+
+func agentPostCommitReminderHook(marker string) string {
+	return "#!/bin/sh\n" +
+		"# " + marker + "\n" +
+		"cat <<'EOF'\n" +
+		"\n" +
+		"Post-commit agent reminder:\n" +
+		"- Push this commit to the run branch and inspect the draft PR CI checks.\n" +
+		"- Treat CI as part of the implementation contract, not optional evidence.\n" +
+		"- Resolve merge conflicts against the current base branch before handoff.\n" +
+		"- Do not hand off broken, pending, or intentionally failing CI unless the user explicitly accepted that state.\n" +
+		"\n" +
+		"EOF\n" +
+		"exit 0\n"
+}
+
+func agentStepBaseEnv(base []string) []string {
+	blocked := map[string]bool{
+		"GLIMMUNG_ATTEMPT_TOKEN":         true,
+		"GLIMMUNG_EVENTS_URL":            true,
+		"GLIMMUNG_STATUS_URL":            true,
+		"GLIMMUNG_COMPLETED_URL":         true,
+		"GLIMMUNG_GITHUB_TOKEN_URL":      true,
+		"GLIMMUNG_PR_TOUCHPOINT_URL":     true,
+		"GLIMMUNG_PR_MERGE_URL":          true,
+		"GLIMMUNG_SSH_CERT_URL":          true,
+		"GLIMMUNG_TAILSCALE_AUTHKEY_URL": true,
+		"GITHUB_TOKEN":                   true,
+		"GH_TOKEN":                       true,
+	}
+	filtered := make([]string, 0, len(base))
+	for _, row := range base {
+		key, _, ok := strings.Cut(row, "=")
+		if !ok {
+			continue
+		}
+		if blocked[key] {
+			continue
+		}
+		filtered = append(filtered, row)
+	}
+	return filtered
 }
 
 func (r *nativeRunner) agentPrompt(workdir string, step stepSpec, spec agentStepSpec, slot string, profile agentruntime.ResolvedProfile) (string, error) {
@@ -1179,6 +1262,16 @@ func runCapture(ctx context.Context, dir, name string, args ...string) error {
 		return fmt.Errorf("%s failed: %s", name, strings.TrimSpace(string(out)))
 	}
 	return nil
+}
+
+func runOutput(ctx context.Context, dir, name string, args ...string) (string, error) {
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+	return string(out), nil
 }
 
 func (r *nativeRunner) postEvent(ctx context.Context, event string, stepSlug *string, message string, exitCode *int, metadata map[string]any) error {
