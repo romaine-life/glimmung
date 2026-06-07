@@ -310,6 +310,10 @@ func (a *gitHubClientAdapter) InstallationToken(ctx context.Context) (string, er
 	return a.client.InstallationToken(ctx)
 }
 
+func (a *gitHubClientAdapter) RepositoryInstallationToken(ctx context.Context, repo string, permissions map[string]string) (string, error) {
+	return a.client.RepositoryInstallationToken(ctx, repo, permissions)
+}
+
 func (a *gitHubClientAdapter) EnsurePullRequest(ctx context.Context, req server.PullRequestEnsureRequest) (server.PullRequest, error) {
 	pr, err := a.client.EnsurePullRequest(ctx, githubclient.PullRequestEnsureRequest{
 		Repo:  req.Repo,
