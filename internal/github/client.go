@@ -254,6 +254,8 @@ type PullRequestMergeResult struct {
 // The flow:
 //  1. GET /repos/{repo}/pulls/{number} — if pull.merged is true, return
 //     AlreadyMerged=true. Treat that as a successful no-op.
+//  1.5. If the PR is a draft, promote it to ready-for-review (GraphQL) — a
+//     draft 405s the merge and REST cannot clear the flag.
 //  2. PUT /repos/{repo}/pulls/{number}/merge — perform the merge.
 //
 // GitHub returns 405 Method Not Allowed when a PR isn't mergeable (open
@@ -292,6 +294,19 @@ func (c *Client) MergePullRequest(ctx context.Context, req PullRequestMergeReque
 		}, nil
 	}
 
+	// 1.5. Promote a draft PR to ready-for-review. The touchpoint flow opens
+	// the PR as a draft (so it isn't a premature merge candidate while CI and
+	// verification run); the gate's approve is the point it becomes mergeable.
+	// GitHub's REST merge endpoint rejects a draft with 405 "Pull Request is
+	// still a draft", and REST cannot clear the draft flag, so promote it via
+	// the GraphQL markPullRequestReadyForReview mutation first. Idempotent: a
+	// PR that is already ready is left unchanged.
+	if current.Draft {
+		if err := c.markPullRequestReady(ctx, current.NodeID); err != nil {
+			return PullRequestMergeResult{}, fmt.Errorf("mark pull request ready for review: %w", err)
+		}
+	}
+
 	// 2. Perform the merge.
 	mergeURL := fmt.Sprintf("https://api.github.com/repos/%s/pulls/%d/merge", req.Repo, req.Number)
 	body := map[string]any{
@@ -314,6 +329,41 @@ func (c *Client) MergePullRequest(ctx context.Context, req PullRequestMergeReque
 		MergeCommitSHA: resp.SHA,
 		AlreadyMerged:  false,
 	}, nil
+}
+
+// markPullRequestReady clears a PR's draft flag via the GraphQL
+// markPullRequestReadyForReview mutation. GitHub's REST API cannot un-draft a
+// PR, so a draft must be promoted here before the merge PUT (which 405s on a
+// draft). nodeID is the PR's GraphQL global id (GET pulls/{number}.node_id).
+func (c *Client) markPullRequestReady(ctx context.Context, nodeID string) error {
+	nodeID = strings.TrimSpace(nodeID)
+	if nodeID == "" {
+		return fmt.Errorf("pull request node id is required to mark ready for review")
+	}
+	const mutation = "mutation($id:ID!){markPullRequestReadyForReview(input:{pullRequestId:$id}){pullRequest{isDraft}}}"
+	var out struct {
+		Errors []struct {
+			Message string `json:"message"`
+		} `json:"errors"`
+	}
+	if err := c.githubGraphQL(ctx, mutation, map[string]any{"id": nodeID}, &out); err != nil {
+		return err
+	}
+	if len(out.Errors) > 0 {
+		return fmt.Errorf("markPullRequestReadyForReview: %s", strings.TrimSpace(out.Errors[0].Message))
+	}
+	return nil
+}
+
+// githubGraphQL POSTs a query to GitHub's GraphQL endpoint with the App
+// installation token. GraphQL returns HTTP 200 with an `errors` array on
+// logical failures, so callers must inspect the decoded body.
+func (c *Client) githubGraphQL(ctx context.Context, query string, variables map[string]any, out any) error {
+	body := map[string]any{"query": query}
+	if len(variables) > 0 {
+		body["variables"] = variables
+	}
+	return c.githubJSON(ctx, http.MethodPost, "https://api.github.com/graphql", body, out)
 }
 
 func (c *Client) findOpenPullRequest(ctx context.Context, repo, head string) (PullRequest, bool, error) {
@@ -413,8 +463,10 @@ type githubPullRequest struct {
 // doesn't return them and the create endpoint returns merged=false always.
 type githubPullRequestDetail struct {
 	Number         int    `json:"number"`
+	NodeID         string `json:"node_id"`
 	HTMLURL        string `json:"html_url"`
 	State          string `json:"state"`
+	Draft          bool   `json:"draft"`
 	Merged         bool   `json:"merged"`
 	MergeCommitSHA string `json:"merge_commit_sha"`
 }

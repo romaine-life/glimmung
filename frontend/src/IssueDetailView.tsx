@@ -2981,9 +2981,13 @@ function TouchpointTab({
   const projection = graph.projection;
   const projectionTouchpoints = projection?.touchpoints ?? [];
   const projectedRun = latestProjectionRun(projection);
-  const projectedTouchpoint = projectionTouchpoints.find((tp) => touchpointNeedsDecision(tp))
-    ?? projectionTouchpoints[projectionTouchpoints.length - 1]
-    ?? null;
+  // Scope the approve/reject/cancel decision to the issue's current run's
+  // touchpoint rather than the first parked one on the issue (see
+  // pickDecisionTouchpoint).
+  const projectedTouchpoint = pickDecisionTouchpoint(
+    projectionTouchpoints,
+    projection?.current_run_ref ?? null,
+  );
   const pendingSignal = projection?.signals.find((signal) => (
     signal.state === "pending" || signal.state === "processing"
   )) ?? null;
@@ -3424,6 +3428,30 @@ function formatGraphState(state: string): string {
 
 function touchpointNeedsDecision(tp: RunProjectionTouchpoint): boolean {
   return ["ready", "needs_review", "open", "review_required"].includes(tp.state);
+}
+
+// pickDecisionTouchpoint chooses which touchpoint a reviewer's
+// approve/reject/cancel acts on. When several runs on one issue are parked at
+// their gate at once, scope the decision to the issue's current (latest) run
+// rather than silently picking the first parked touchpoint — otherwise an
+// approve can land on a stale run's PR (the bug that mis-routed an approve to an
+// old synthetic run's PR). Falls back to any touchpoint needing a decision,
+// then the most recent touchpoint.
+export function pickDecisionTouchpoint(
+  touchpoints: RunProjectionTouchpoint[],
+  currentRunRef: string | null,
+): RunProjectionTouchpoint | null {
+  const scoped = currentRunRef
+    ? touchpoints.find(
+        (tp) => tp.linked_run_ref === currentRunRef && touchpointNeedsDecision(tp),
+      )
+    : undefined;
+  return (
+    scoped
+    ?? touchpoints.find((tp) => touchpointNeedsDecision(tp))
+    ?? touchpoints[touchpoints.length - 1]
+    ?? null
+  );
 }
 
 function prNumberFromNode(node: GraphNode | null): number | null {
