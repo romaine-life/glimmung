@@ -2959,6 +2959,13 @@ function TouchpointTab({
     | { kind: "submitted"; signalId: string }
     | { kind: "error"; message: string }
   >({ kind: "idle" });
+  const [cancel, setCancel] = useState<
+    | { kind: "idle" }
+    | { kind: "armed" }
+    | { kind: "submitting" }
+    | { kind: "submitted"; signalId: string }
+    | { kind: "error"; message: string }
+  >({ kind: "idle" });
 
   if (!graphAvailable) {
     return (
@@ -3005,8 +3012,10 @@ function TouchpointTab({
     && !(structuredScreenshots.length > 0 && isRawScreenshotArtifact(item))
   ));
   const hasCurrentEvidence = prNumber !== null || Boolean(validationUrl) || projectionEvidence.length > 0;
-  const canReject = signedIn && isAdmin && !pendingSignal && prNumber !== null && Boolean(evidenceRepo) && reject.kind !== "submitting" && approve.kind !== "submitting";
-  const canApprove = signedIn && isAdmin && !pendingSignal && prNumber !== null && Boolean(evidenceRepo) && approve.kind !== "submitting" && reject.kind !== "submitting";
+  const busySubmitting = approve.kind === "submitting" || reject.kind === "submitting" || cancel.kind === "submitting";
+  const canReject = signedIn && isAdmin && !pendingSignal && prNumber !== null && Boolean(evidenceRepo) && !busySubmitting;
+  const canApprove = signedIn && isAdmin && !pendingSignal && prNumber !== null && Boolean(evidenceRepo) && !busySubmitting;
+  const canCancel = signedIn && isAdmin && !pendingSignal && prNumber !== null && Boolean(evidenceRepo) && !busySubmitting;
 
   const submitApprove = async () => {
     if (prNumber === null || !evidenceRepo) return;
@@ -3056,6 +3065,31 @@ function TouchpointTab({
       window.setTimeout(onSubmitted, 3000);
     } catch (e) {
       setReject({ kind: "error", message: e instanceof Error ? e.message : String(e) });
+    }
+  };
+
+  const submitCancel = async () => {
+    if (prNumber === null || !evidenceRepo) return;
+    setCancel({ kind: "submitting" });
+    try {
+      const r = await authedFetch("/v1/signals", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          target_type: "pr",
+          target_repo: evidenceRepo,
+          target_ref: String(prNumber),
+          source: "glimmung_ui",
+          payload: feedback.trim() ? { kind: "cancel", feedback: feedback.trim() } : { kind: "cancel" },
+        }),
+      });
+      if (!r.ok) throw new Error(`/v1/signals -> ${r.status}: ${await r.text()}`);
+      const sig = await r.json() as { ref?: string };
+      setCancel({ kind: "submitted", signalId: sig.ref ?? "signal" });
+      onSubmitted();
+      window.setTimeout(onSubmitted, 3000);
+    } catch (e) {
+      setCancel({ kind: "error", message: e instanceof Error ? e.message : String(e) });
     }
   };
 
@@ -3187,6 +3221,49 @@ function TouchpointTab({
         )}
         {reject.kind === "error" && (
           <span className="pill drain" title={reject.message}>error</span>
+        )}
+      </div>
+
+      <h2>Cancel touchpoint</h2>
+      <p className="dim">aborts the run and tears down its environment. does not merge and does not close the issue. an optional reason uses the feedback above.</p>
+      <div className="review-actions">
+        {cancel.kind === "armed" || cancel.kind === "submitting" ? (
+          <span className="confirm">
+            <button
+              type="button"
+              className="link danger-text"
+              onClick={() => void submitCancel()}
+              disabled={cancel.kind === "submitting"}
+            >
+              {cancel.kind === "submitting" ? "cancelling…" : "cancel run?"}
+            </button>
+            <span className="sep">/</span>
+            <button
+              type="button"
+              className="link"
+              onClick={() => setCancel({ kind: "idle" })}
+              disabled={cancel.kind === "submitting"}
+            >
+              keep
+            </button>
+          </span>
+        ) : (
+          <button
+            type="button"
+            className="link danger-text"
+            onClick={() => setCancel({ kind: "armed" })}
+            disabled={!canCancel}
+            title={!signedIn ? "sign in" : !isAdmin ? "admin only" : undefined}
+          >
+            cancel run
+          </button>
+        )}
+        {pendingSignal && <span className="dim mono">decision already queued</span>}
+        {cancel.kind === "submitted" && (
+          <span className="pill free">queued {cancel.signalId.slice(0, 8)}</span>
+        )}
+        {cancel.kind === "error" && (
+          <span className="pill drain" title={cancel.message}>error</span>
         )}
       </div>
     </>

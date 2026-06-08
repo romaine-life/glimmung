@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+
+	"github.com/romaine-life/glimmung/internal/domain/decision"
 )
 
 type SignalDrainStore interface {
@@ -61,6 +63,7 @@ var signalDrainWake atomic.Value // stores func()
 const (
 	triageDispatch              = "dispatch_triage"
 	triageReleaseGate           = "release_touchpoint_gate"
+	triageCancelGate            = "cancel_touchpoint_gate"
 	triageIgnore                = "ignore"
 	triageAbortNoRun            = "abort_no_run"
 	triageAbortBudgetAttempts   = "abort_budget_attempts"
@@ -145,6 +148,14 @@ func DrainSignals(ctx context.Context, store ReadStore, nativeLauncher NativeLau
 		}
 		if decision.Decision == triageReleaseGate {
 			if err := releaseTouchpointGate(ctx, drainStore, nativeLauncher, decision); err != nil {
+				_ = drainStore.MarkSignalFailed(ctx, signal, err.Error())
+				drainStore.ReleaseLock(ctx, scope, key, holderID)
+				result.Failed++
+				continue
+			}
+		}
+		if decision.Decision == triageCancelGate {
+			if err := cancelTouchpointGate(ctx, drainStore, nativeLauncher, decision); err != nil {
 				_ = drainStore.MarkSignalFailed(ctx, signal, err.Error())
 				drainStore.ReleaseLock(ctx, scope, key, holderID)
 				result.Failed++
@@ -264,6 +275,31 @@ func decideTriageSignal(ctx context.Context, store SignalDrainStore, signal Queu
 		}, nil
 	}
 
+	// cancel: release the review gate down the abort path. The run's
+	// run_on:always teardown runs, then the run settles terminal "aborted".
+	// Unlike approve this never merges; unlike reject it never recycles. The
+	// issue stays open (closeIssueOnGatedTerminal only fires on "passed").
+	if signalIsCancel(signal) {
+		gate := phaseSpecByName(wf.Phases, "")
+		for _, phase := range wf.Phases {
+			if phasePurpose(phase) == PhasePurposeReviewGate {
+				p := phase
+				gate = &p
+				break
+			}
+		}
+		if gate == nil {
+			return triageDecisionResult{Decision: triageIgnore, Detail: stringPtr("workflow has no review_gate phase; cancel has nothing to release")}, nil
+		}
+		return triageDecisionResult{
+			Decision: triageCancelGate,
+			Run:      run,
+			Workflow: wf,
+			Target:   gate,
+			Feedback: triageFeedbackText(signal),
+		}, nil
+	}
+
 	if wf.PR.RecyclePolicy == nil {
 		return triageDecisionResult{Decision: triageIgnore}, nil
 	}
@@ -300,7 +336,7 @@ func triageActionable(signal QueuedSignal) bool {
 	switch signal.Source {
 	case "glimmung_ui":
 		kind := stringValue(signal.Payload["kind"])
-		return kind == "reject" || kind == "approve"
+		return kind == "reject" || kind == "approve" || kind == "cancel"
 	case "gh_review":
 		return stringValue(signal.Payload["state"]) == "changes_requested" && strings.TrimSpace(stringValue(signal.Payload["body"])) != ""
 	default:
@@ -310,6 +346,10 @@ func triageActionable(signal QueuedSignal) bool {
 
 func signalIsApprove(signal QueuedSignal) bool {
 	return signal.Source == "glimmung_ui" && stringValue(signal.Payload["kind"]) == "approve"
+}
+
+func signalIsCancel(signal QueuedSignal) bool {
+	return signal.Source == "glimmung_ui" && stringValue(signal.Payload["kind"]) == "cancel"
 }
 
 func triageFeedbackText(signal QueuedSignal) string {
@@ -368,6 +408,62 @@ func releaseTouchpointGate(ctx context.Context, store SignalDrainStore, nativeLa
 	}
 	if err := launchTouchpointGateMerge(ctx, completionStore, nativeLauncher, decision.Run, decision.Workflow, *decision.Target); err != nil {
 		return fmt.Errorf("launch touchpoint gate: %w", err)
+	}
+	return nil
+}
+
+// cancelTouchpointGate cancels a parked review gate. It marks the gate attempt
+// abort_requested (CancelReviewGate) without running pr_merge, then drives the
+// run's abort-path teardown (run_on:always cleanup). When the teardown
+// completes, the standard completion callback settles the run terminal
+// "aborted"; the issue is left open (closeIssueOnGatedTerminal only fires on
+// "passed"). If the run is not parked at review_required this is a safe no-op
+// (cancel arrived late or twice; idempotent).
+func cancelTouchpointGate(ctx context.Context, store SignalDrainStore, nativeLauncher NativeLauncher, triage triageDecisionResult) error {
+	if triage.Run.State != "review_required" {
+		return nil
+	}
+	completionStore, ok := any(store).(RunCompletionStore)
+	if !ok || completionStore == nil {
+		return fmt.Errorf("cancel drain requires the RunCompletionStore surface")
+	}
+	if triage.Target == nil {
+		return fmt.Errorf("cancel drain missing target gate phase")
+	}
+	if triage.Workflow == nil {
+		return fmt.Errorf("cancel drain missing workflow")
+	}
+	gate := *triage.Target
+	attemptIdx, ok := latestAttemptIndexForPhase(triage.Run, gate.Name)
+	if !ok {
+		return fmt.Errorf("run is review_required but has no parked attempt for phase %q", gate.Name)
+	}
+	reason := strings.TrimSpace(triage.Feedback)
+	if reason == "" {
+		reason = "touchpoint cancelled by reviewer"
+	}
+	if err := completionStore.CancelReviewGate(ctx, triage.Run.Project, triage.Run.ID, gate.Name, attemptIdx, reason); err != nil {
+		return fmt.Errorf("cancel review gate: %w", err)
+	}
+	// Re-read with the gate attempt now abort_requested, then drive the
+	// abort-path teardown. The completion callback settles terminal "aborted".
+	run, err := completionStore.ReadRunForReplay(ctx, triage.Run.Project, triage.Run.ID)
+	if err != nil {
+		return fmt.Errorf("re-read run after cancel: %w", err)
+	}
+	targets := allReadyDispatchTargets(triage.Workflow, run, decision.AbortRequested)
+	if len(targets) == 0 {
+		// No teardown phase to run — settle aborted immediately.
+		reasonCopy := reason
+		if _, err := completionStore.SetRunTerminalState(ctx, run.Project, run.ID, "aborted", &reasonCopy); err != nil {
+			return fmt.Errorf("settle cancelled run aborted: %w", err)
+		}
+		return nil
+	}
+	for _, target := range targets {
+		if err := dispatchForwardPhase(ctx, completionStore, nativeLauncher, run, triage.Workflow, target); err != nil {
+			return fmt.Errorf("dispatch teardown after cancel: %w", err)
+		}
 	}
 	return nil
 }

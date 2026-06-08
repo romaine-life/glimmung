@@ -172,6 +172,7 @@ type RunCompletionStore interface {
 	SetRunTerminalState(ctx context.Context, project, runID, state string, abortReason *string) (AbortRunResult, error)
 	ParkRunAtReviewGate(ctx context.Context, project, runID, phase, phaseKind, workflowFilename string) (int, error)
 	ReleaseReviewGate(ctx context.Context, project, runID, phase string, attemptIndex int) error
+	CancelReviewGate(ctx context.Context, project, runID, phase string, attemptIndex int, reason string) error
 	StampLatestAttemptSkipped(ctx context.Context, project, runID string) error
 	CreateRecycleCycle(ctx context.Context, req CreateRecycleCycleRequest) (CreatedRun, error)
 	AppendRunAttempt(ctx context.Context, project, runID, phase, phaseKind, workflowFilename string) (int, error)

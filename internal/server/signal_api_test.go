@@ -264,3 +264,38 @@ func TestDrainSignalsDispatchesRequestChangesTriage(t *testing.T) {
 		t.Fatal("PR signal lock should release after creating the new queued/dispatched run")
 	}
 }
+
+func TestTriageActionableRecognizesCancel(t *testing.T) {
+	if !triageActionable(QueuedSignal{Source: "glimmung_ui", Payload: map[string]any{"kind": "cancel"}}) {
+		t.Fatal("glimmung_ui cancel signal should be actionable")
+	}
+	if !signalIsCancel(QueuedSignal{Source: "glimmung_ui", Payload: map[string]any{"kind": "cancel"}}) {
+		t.Fatal("signalIsCancel should recognize a glimmung_ui cancel")
+	}
+	if signalIsCancel(QueuedSignal{Source: "glimmung_ui", Payload: map[string]any{"kind": "approve"}}) {
+		t.Fatal("approve must not be treated as cancel")
+	}
+}
+
+func TestDecideTriageSignalCancelTargetsReviewGate(t *testing.T) {
+	store := &fakeSignalDrainStore{}
+	res, err := decideTriageSignal(context.Background(), store, QueuedSignal{
+		TargetType: "pr",
+		TargetRepo: "owner/repo",
+		TargetID:   "42",
+		Source:     "glimmung_ui",
+		Payload:    map[string]any{"kind": "cancel", "feedback": "drop it"},
+	})
+	if err != nil {
+		t.Fatalf("decideTriageSignal: %v", err)
+	}
+	if res.Decision != triageCancelGate {
+		t.Fatalf("decision=%q, want %q", res.Decision, triageCancelGate)
+	}
+	if res.Target == nil || res.Target.Name != "touchpoint_gate" {
+		t.Fatalf("target=%v, want touchpoint_gate", res.Target)
+	}
+	if res.Feedback != "drop it" {
+		t.Fatalf("feedback=%q, want %q", res.Feedback, "drop it")
+	}
+}

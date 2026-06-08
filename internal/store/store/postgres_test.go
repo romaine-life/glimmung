@@ -372,6 +372,51 @@ func TestReviewGateRawHelpersParkThenReleaseK8sJob(t *testing.T) {
 	}
 }
 
+func TestMarkPhaseCanceledRawAbortsGateProjection(t *testing.T) {
+	now := "2026-06-08T05:30:00Z"
+	raw := map[string]any{
+		"phase_executions": []any{
+			map[string]any{
+				"name":       "touchpoint_gate",
+				"kind":       "k8s_job",
+				"state":      "active",
+				"created_at": now,
+				"jobs": []any{map[string]any{
+					"id":         "pr-merge",
+					"state":      "not_started",
+					"created_at": now,
+					"steps": []any{map[string]any{
+						"slug":       "merge-pull-request",
+						"state":      "not_started",
+						"created_at": now,
+					}},
+				}},
+			},
+		},
+	}
+
+	markPhaseCanceledRaw(raw, "touchpoint_gate", "k8s_job", "touchpoint cancelled by reviewer", now)
+
+	gate := rawPhase(t, raw, "touchpoint_gate")
+	if got := stringValue(gate["state"]); got != "aborted" {
+		t.Fatalf("gate state=%q, want aborted", got)
+	}
+	if got := stringValue(gate["completed_at"]); got != now {
+		t.Fatalf("gate completed_at=%q, want %q", got, now)
+	}
+	if got := stringValue(gate["reason"]); got != "touchpoint cancelled by reviewer" {
+		t.Fatalf("gate reason=%q", got)
+	}
+	// pr_merge never runs on cancel — its job + steps abort.
+	job := rawJob(t, gate, "pr-merge")
+	if got := stringValue(job["state"]); got != "aborted" {
+		t.Fatalf("merge job state=%q, want aborted", got)
+	}
+	if got := stringValue(rawStep(t, job, "merge-pull-request")["state"]); got != "aborted" {
+		t.Fatalf("merge step state=%q, want aborted", got)
+	}
+}
+
 func TestJobCompletionFailurePreservesUnstartedSteps(t *testing.T) {
 	now := "2026-05-25T04:26:41Z"
 	raw := map[string]any{
