@@ -49,6 +49,11 @@ type fakeCompletionStore struct {
 	releaseGateCalls   int
 	releaseGateAttempt int
 	releaseGateErr     error
+	cancelGateCalls    int
+	cancelGateAttempt  int
+	cancelGatePhase    string
+	cancelGateReason   string
+	cancelGateErr      error
 	skippedStampCalls  int
 	skippedStampErr    error
 
@@ -198,6 +203,14 @@ func (s *fakeCompletionStore) ReleaseReviewGate(_ context.Context, _, _, phase s
 	s.appendPhase = phase
 	s.releaseGateAttempt = attemptIndex
 	return s.releaseGateErr
+}
+
+func (s *fakeCompletionStore) CancelReviewGate(_ context.Context, _, _, phase string, attemptIndex int, reason string) error {
+	s.cancelGateCalls++
+	s.cancelGatePhase = phase
+	s.cancelGateAttempt = attemptIndex
+	s.cancelGateReason = reason
+	return s.cancelGateErr
 }
 
 func (s *fakeCompletionStore) StampLatestAttemptSkipped(_ context.Context, _, _ string) error {

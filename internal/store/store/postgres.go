@@ -7775,6 +7775,112 @@ func (s *Store) ReleaseReviewGate(ctx context.Context, project, runID, phase str
 	return err
 }
 
+// CancelReviewGate cancels a parked review gate WITHOUT running the gate's
+// pr_merge primitive. It marks the existing gate attempt completed with an
+// abort_requested decision (the cancel intent) and flips the run back to
+// in_progress, so the completion engine — after the run_on:always teardown
+// phases finish — settles the run terminal "aborted" through the standard
+// teardown-then-abort path.
+//
+// Unlike approve (ReleaseReviewGate → pr_merge → terminal "passed", which
+// closes the issue), a cancelled gate leaves the issue OPEN: the reviewer
+// rejected this touchpoint outright but the work item is not done. Guards
+// mirror ReleaseReviewGate — the run must be parked at review_required with the
+// named, not-yet-completed gate attempt at attemptIndex.
+func (s *Store) CancelReviewGate(ctx context.Context, project, runID, phase string, attemptIndex int, reason string) error {
+	var conflict error
+	_, err := s.pgRuns.PatchPayload(ctx, project, runID, func(raw map[string]any) error {
+		if stringValue(raw["state"]) != "review_required" {
+			conflict = server.ErrConflict
+			return errAbortPatch
+		}
+		attempts, _ := raw["attempts"].([]any)
+		if attemptIndex < 0 || attemptIndex >= len(attempts) {
+			conflict = server.ErrConflict
+			return errAbortPatch
+		}
+		attempt, ok := attempts[attemptIndex].(map[string]any)
+		if !ok || stringValue(attempt["phase"]) != phase || stringValue(attempt["completed_at"]) != "" {
+			conflict = server.ErrConflict
+			return errAbortPatch
+		}
+		now := time.Now().UTC().Format(time.RFC3339Nano)
+		attempt["phase_kind"] = "k8s_job"
+		attempt["decision"] = string(decision.AbortRequested)
+		attempt["conclusion"] = "cancelled"
+		attempt["completed_at"] = now
+		attempt["cancel_requested_at"] = now
+		if strings.TrimSpace(reason) != "" {
+			attempt["cancel_reason"] = reason
+		}
+		attempts[attemptIndex] = attempt
+		raw["attempts"] = attempts
+		raw["state"] = "in_progress"
+		delete(raw, "queue_state")
+		markPhaseCanceledRaw(raw, phase, "k8s_job", reason, now)
+		raw["updated_at"] = now
+		return nil
+	})
+	if conflict != nil {
+		return conflict
+	}
+	if errors.Is(err, pgstore.ErrRunNotFound) {
+		return server.ErrNotFound
+	}
+	return err
+}
+
+// markPhaseCanceledRaw flips a parked review-gate phase projection to a terminal
+// aborted state so the dashboard reflects the cancel. The gate's pr_merge job
+// never runs, so its jobs/steps are marked aborted too. Load-bearing run logic
+// is driven off the attempts array, not this projection.
+func markPhaseCanceledRaw(raw map[string]any, phaseName, phaseKind, reason, now string) {
+	phases, ok := raw["phase_executions"].([]any)
+	if !ok {
+		return
+	}
+	for i, value := range phases {
+		phase, ok := value.(map[string]any)
+		if !ok || stringValue(phase["name"]) != phaseName {
+			continue
+		}
+		phase["kind"] = firstNonEmpty(phaseKind, "k8s_job")
+		phase["state"] = "aborted"
+		phase["completed_at"] = now
+		if strings.TrimSpace(reason) != "" {
+			phase["reason"] = reason
+		}
+		jobs, _ := phase["jobs"].([]any)
+		for j, jobValue := range jobs {
+			job, ok := jobValue.(map[string]any)
+			if !ok {
+				continue
+			}
+			if st := stringValue(job["state"]); st == "" || st == "dispatching" || st == "active" || st == "not_started" {
+				job["state"] = "aborted"
+			}
+			job["completed_at"] = now
+			steps, _ := job["steps"].([]any)
+			for k, stepValue := range steps {
+				step, ok := stepValue.(map[string]any)
+				if !ok {
+					continue
+				}
+				if st := stringValue(step["state"]); st == "" || st == "dispatching" || st == "active" || st == "not_started" {
+					step["state"] = "aborted"
+				}
+				steps[k] = step
+			}
+			job["steps"] = steps
+			jobs[j] = job
+		}
+		phase["jobs"] = jobs
+		phases[i] = phase
+		break
+	}
+	raw["phase_executions"] = phases
+}
+
 // SetRunTerminalState sets the run's state (passed or aborted) and best-effort
 // releases issue/PR locks plus the run slot lease. Mirrors AbortRunByID but for
 // non-abort terminal states.
