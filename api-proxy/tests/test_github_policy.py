@@ -8,6 +8,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from glimmung_api_proxy.github_policy import (
     PolicyError,
     enforce_receive_pack_policy,
+    forward_request_headers,
+    forward_response_headers,
     parse_basic_policy_token,
     repository_from_git_path,
     sign_policy_token,
@@ -101,6 +103,49 @@ class GitHubPolicyTests(unittest.TestCase):
             enforce_receive_pack_policy(body, "refs/heads/glimmung/issue-168/run-1")
 
         self.assertEqual(cm.exception.status, 403)
+
+
+class ForwardHeaderTests(unittest.TestCase):
+    def test_request_headers_strip_content_encoding_and_force_host(self) -> None:
+        # The protocol-v2 fetch POST that broke clones: git sends a gzip body
+        # but aiohttp decompresses it before we forward, so the stale
+        # Content-Encoding must not survive (else github 400s the mismatch).
+        out = forward_request_headers([
+            ("Host", "github.com"),
+            ("Content-Length", "1569"),
+            ("Content-Encoding", "gzip"),
+            ("Content-Type", "application/x-git-upload-pack-request"),
+            ("Git-Protocol", "version=2"),
+            ("Authorization", "Basic eA=="),
+            ("Connection", "keep-alive"),
+        ])
+        lower = {k.lower() for k in out}
+        self.assertNotIn("content-encoding", lower)
+        self.assertNotIn("content-length", lower)
+        self.assertNotIn("connection", lower)  # hop-by-hop dropped
+        self.assertEqual(out["Host"], "github.com")
+        self.assertEqual(out["Content-Type"], "application/x-git-upload-pack-request")
+        self.assertEqual(out["Git-Protocol"], "version=2")
+        self.assertEqual(out["Authorization"], "Basic eA==")
+
+    def test_request_headers_force_host_even_when_absent(self) -> None:
+        out = forward_request_headers([("Accept", "*/*")])
+        self.assertEqual(out["Host"], "github.com")
+
+    def test_response_headers_strip_content_encoding_and_length(self) -> None:
+        # httpx already decompressed resp.content, so a forwarded
+        # Content-Encoding would mislabel a plaintext body to the git client.
+        out = forward_response_headers([
+            ("Content-Encoding", "gzip"),
+            ("Content-Length", "5095"),
+            ("Content-Type", "application/x-git-upload-pack-result"),
+            ("Transfer-Encoding", "chunked"),
+        ])
+        lower = {k.lower() for k in out}
+        self.assertNotIn("content-encoding", lower)
+        self.assertNotIn("content-length", lower)
+        self.assertNotIn("transfer-encoding", lower)  # hop-by-hop dropped
+        self.assertEqual(out["Content-Type"], "application/x-git-upload-pack-result")
 
 
 if __name__ == "__main__":

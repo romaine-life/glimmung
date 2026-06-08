@@ -10,21 +10,12 @@ import httpx
 from .github_policy import (
     PolicyError,
     enforce_receive_pack_policy,
+    forward_request_headers,
+    forward_response_headers,
     repository_from_git_path,
 )
 
 log = logging.getLogger(__name__)
-
-HOP_BY_HOP_HEADERS = {
-    "connection",
-    "keep-alive",
-    "proxy-authenticate",
-    "proxy-authorization",
-    "te",
-    "trailer",
-    "transfer-encoding",
-    "upgrade",
-}
 
 K8S_HOST = os.environ.get("KUBERNETES_SERVICE_HOST", "kubernetes.default.svc")
 K8S_PORT = os.environ.get("KUBERNETES_SERVICE_PORT", "443")
@@ -111,24 +102,12 @@ class GitHubPolicyProxy:
 
     async def _forward(self, request: web.Request, body: bytes) -> web.StreamResponse:
         upstream_url = "https://github.com" + request.path_qs
-        headers = {}
-        for key, value in request.headers.items():
-            lower = key.lower()
-            if lower in HOP_BY_HOP_HEADERS or lower in {"host", "content-length"}:
-                continue
-            headers[key] = value
-        headers["Host"] = "github.com"
+        headers = forward_request_headers(request.headers.items())
 
         async with httpx.AsyncClient(timeout=None, follow_redirects=False) as client:
             resp = await client.request(request.method, upstream_url, headers=headers, content=body)
 
-        response_headers = {}
-        for key, value in resp.headers.items():
-            lower = key.lower()
-            if lower in HOP_BY_HOP_HEADERS or lower == "content-length":
-                continue
-            response_headers[key] = value
-
+        response_headers = forward_response_headers(resp.headers.items())
         return web.Response(status=resp.status_code, body=resp.content, headers=response_headers)
 
 
