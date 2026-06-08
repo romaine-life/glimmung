@@ -156,6 +156,7 @@ func writeNativeGitHubAgentToken(w http.ResponseWriter, r *http.Request, store R
 	permissions := map[string]string{
 		"contents": "write",
 		"metadata": "read",
+		"checks":   "read",
 	}
 	token, err := minter.RepositoryInstallationToken(r.Context(), repo, permissions)
 	if err != nil {

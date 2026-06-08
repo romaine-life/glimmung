@@ -1,0 +1,64 @@
+{{- if .Values.agentEgress.enabled }}
+{{- $ns := .Values.agentEgress.namespace | default .Values.providerApiProxy.namespace }}
+# Name-based egress allowlist for the locked-down implementation agent.
+#
+# OSS Calico cannot match egress by FQDN, so rather than maintain an IP/CIDR
+# allowlist the agent's api.github.com traffic is hostAlias'd onto this Envoy
+# Gateway, which forwards only the allowlisted SNI via TLS passthrough to an
+# external Backend. TLS stays end-to-end to GitHub (the agent validates
+# GitHub's real cert — no MITM, no CA bundle). Envoy Gateway provisions the
+# data-plane in envoy-gateway-system; the agent's egress NetworkPolicy allows
+# that namespace and nothing else external. Requires the Backend extension API
+# (envoy-gateway extensionApis.enableBackend, set in infra-bootstrap).
+# See docs/github-agent-push-policy.md.
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: {{ .Values.agentEgress.gatewayName }}
+  namespace: {{ $ns }}
+  labels:
+    app.kubernetes.io/part-of: glimmung-agent-egress
+spec:
+  gatewayClassName: {{ .Values.agentEgress.gatewayClassName }}
+  listeners:
+    - name: tls-passthrough
+      protocol: TLS
+      port: 443
+      tls:
+        mode: Passthrough
+      allowedRoutes:
+        kinds:
+          - kind: TLSRoute
+---
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: Backend
+metadata:
+  name: {{ .Values.agentEgress.gatewayName }}-github-api
+  namespace: {{ $ns }}
+  labels:
+    app.kubernetes.io/part-of: glimmung-agent-egress
+spec:
+  endpoints:
+    - fqdn:
+        hostname: {{ .Values.agentEgress.githubApiHost | quote }}
+        port: 443
+---
+apiVersion: gateway.networking.k8s.io/v1alpha2
+kind: TLSRoute
+metadata:
+  name: {{ .Values.agentEgress.gatewayName }}-github-api
+  namespace: {{ $ns }}
+  labels:
+    app.kubernetes.io/part-of: glimmung-agent-egress
+spec:
+  parentRefs:
+    - name: {{ .Values.agentEgress.gatewayName }}
+  hostnames:
+    - {{ .Values.agentEgress.githubApiHost | quote }}
+  rules:
+    - backendRefs:
+        - group: gateway.envoyproxy.io
+          kind: Backend
+          name: {{ .Values.agentEgress.gatewayName }}-github-api
+          port: 443
+{{- end }}
