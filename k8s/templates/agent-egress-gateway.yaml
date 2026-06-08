@@ -27,8 +27,14 @@ spec:
       tls:
         mode: Passthrough
       allowedRoutes:
+        # Written explicitly to match the Gateway-API server-side defaults
+        # (group + namespaces.from=Same) so ArgoCD does not see perpetual
+        # drift against the defaulted live object under ServerSideApply.
+        namespaces:
+          from: Same
         kinds:
-          - kind: TLSRoute
+          - group: gateway.networking.k8s.io
+            kind: TLSRoute
 ---
 apiVersion: gateway.envoyproxy.io/v1alpha1
 kind: Backend
@@ -52,7 +58,11 @@ metadata:
     app.kubernetes.io/part-of: glimmung-agent-egress
 spec:
   parentRefs:
-    - name: {{ .Values.agentEgress.gatewayName }}
+    # group + kind written explicitly to match server-side defaults (avoids
+    # perpetual ArgoCD drift under ServerSideApply).
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: {{ .Values.agentEgress.gatewayName }}
   hostnames:
     - {{ .Values.agentEgress.githubApiHost | quote }}
   rules:
@@ -61,4 +71,7 @@ spec:
           kind: Backend
           name: {{ .Values.agentEgress.gatewayName }}-github-api
           port: 443
+          # Default weight written explicitly (server-side default is 1) so the
+          # rendered manifest matches the live object and ArgoCD stays Synced.
+          weight: 1
 {{- end }}
