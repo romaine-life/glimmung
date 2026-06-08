@@ -59,7 +59,8 @@ func TestNativeGitHubAgentTokenByCallbackTokenMintsRepoScopedToken(t *testing.T)
 	if minter.calledRepo != "romaine-life/ambience" {
 		t.Fatalf("minter called repo=%q", minter.calledRepo)
 	}
-	if minter.calledPerms["contents"] != "write" || minter.calledPerms["metadata"] != "read" {
+	if minter.calledPerms["contents"] != "write" || minter.calledPerms["metadata"] != "read" ||
+		minter.calledPerms["checks"] != "read" {
 		t.Fatalf("minter called perms=%v", minter.calledPerms)
 	}
 }

@@ -1,97 +1,109 @@
-# GitHub Agent Push Policy
+# GitHub Agent Push & CI Access Policy
 
-Native implementation agents should use ordinary Git muscle memory:
+Native implementation agents use ordinary Git and GitHub muscle memory:
 
 ```sh
 git add -A
 git commit -m "agent: address <issue>"
 git push origin HEAD
+# read the draft PR's CI:
+curl -H "Authorization: Bearer $TOKEN" https://api.github.com/repos/<owner>/<repo>/commits/<sha>/check-runs
 ```
 
-The control plane must make that safe. Do not solve this by teaching every
-workflow a bespoke push command or by handing the agent a broad GitHub token.
+The control plane makes that safe without the agent knowing any of it is
+happening. The agent gets one repo-scoped GitHub token and behaves normally;
+branch-scoped push enforcement and egress confinement are transparent.
 
-## Required Shape
+## Token
 
-For native jobs with managed `type: agent` steps:
+The implementation agent owns a real **GitHub App installation token**, minted
+per run, **repo-scoped and minimally permissioned**:
 
-1. Glimmung creates the implementation branch and draft PR before the agent
-   starts. The branch name is issue-scoped, for example
-   `glimmung/issue-168/<run-id>`.
-2. The native runner installs a managed `post-commit` hook in the checkout.
-   The hook reminds the agent to push and inspect draft PR CI after every
-   commit.
-3. The agent subprocess does not receive Glimmung callback URLs, callback
-   tokens, GitHub API tokens, PR merge/touchpoint URLs, SSH cert mint URLs, or
-   Tailscale auth-key mint URLs in its environment.
-4. The checkout remote stays ordinary:
-   `https://github.com/<owner>/<repo>.git`.
-5. Native job pods route `github.com` through a Glimmung-managed GitHub policy
-   proxy with the same transparent host-alias + CA-bundle pattern used for
-   `api.anthropic.com`, `api.openai.com`, and `chatgpt.com`.
-6. The agent receives only a branch-scoped Git credential. That credential is
-   not a GitHub token. It is a Glimmung push-policy token containing repo,
-   allowed branch ref, run id, issue number, and expiry.
-7. The GitHub policy proxy validates the policy token, injects the server-held
-   GitHub App installation token upstream, and enforces the policy on
-   `git-receive-pack` before forwarding to GitHub.
-8. Wrong repo, wrong branch, expired policy token, malformed receive-pack, or
-   unsupported ref update fails closed with a normal git remote error. The
-   agent can then correct the branch and run the same `git push` again.
-9. After the agent exits, the deterministic workflow step waits for draft PR
-   checks for the pushed commit. Red or timed-out CI aborts before any LLM
-   verification work spends tokens.
+- `contents: write` — push the implementation branch.
+- `metadata: read` — baseline.
+- `checks: read` — read the draft PR's CI check-runs (the agent's CI-feedback loop).
 
-## Why Header Injection Is Not Enough
+> Earlier designs kept the GitHub token at a proxy and handed the agent a signed
+> "push-policy token" instead of a real GitHub token. That is **retired**: the
+> agent owns the token; the proxy holds no credentials. Do not reintroduce it.
 
-Git branch policy is not visible in the request headers. A smart-HTTP push is
-a `POST /<owner>/<repo>.git/git-receive-pack`; the updated refs are pkt-lines
-inside the request body. A proxy that only rewrites headers can authenticate a
-push, but it cannot enforce "only `refs/heads/glimmung/issue-...`". The proxy
-must parse the receive-pack command section or delegate to an equivalent
-dynamic GitHub branch ruleset. The current architecture assumes receive-pack
-parsing because the allowed branch is per run.
+The token is minted by `POST /v1/run-callbacks/{callback_token}/native/github-agent-token`
+(`writeNativeGitHubAgentToken` → `RepositoryInstallationToken(repo, permissions)`).
+The wrapper mints it and mounts it into the implementation agent Job as a file
+(`GITHUB_TOKEN_FILE`, `GITHUB_CREDENTIAL_USERNAME=x-access-token`). The agent
+subprocess does **not** receive Glimmung callback URLs/tokens, the broad
+installation-token URL, PR merge/touchpoint URLs, or SSH/Tailscale mint URLs
+(`agentStepBaseEnv` strips them).
 
-## Receive-Pack Enforcement Contract
+## Branch-scoped push enforcement
 
-The proxy must parse the command prelude before packfile bytes:
+There is no GitHub-native token shape for "may push only to branch X", so the
+push path is confined by a proxy, transparently:
 
-- Accept only updates whose ref is exactly the policy's allowed
-  `refs/heads/<branch>`.
-- Reject attempts to update, create, or delete any other ref.
-- Reject delete updates to the allowed branch unless final cleanup is using a
-  separate server-side cleanup path.
-- Reject pushes with zero parseable commands.
-- Treat parse errors and oversized unparsed preludes as policy failures, not
-  pass-through cases.
+1. Glimmung pre-creates the issue-scoped branch + draft PR before the agent
+   starts (so CI feedback exists during the agent loop).
+2. The agent Job routes `github.com` through the `github-git-policy-proxy`
+   (a `glimmung-runs` Envoy + policy sidecar) via a `hostAlias` + the
+   provider-proxy CA bundle.
+3. The agent pushes with its own token (Basic auth, `x-access-token`); the proxy
+   forwards that auth unchanged, holds no credentials of its own, and enforces
+   the authorized repo/ref on `git-receive-pack` (pkt-line parsing), keyed off
+   pod annotations (`glimmung.romaine.life/github-policy-{repo,ref}`).
+4. Wrong repo/ref/expired/malformed fails closed with a normal git error; the
+   agent corrects the branch and re-runs `git push`.
 
-The current proxy buffers the request body behind an explicit aiohttp
-`client_max_size` cap before forwarding. That is acceptable for the first
-production path because failed oversize pushes fail closed. A future streaming
-optimization may read only enough pkt-lines to make the policy decision, then
-forward the complete request body to GitHub after approval.
+## CI-checks egress (api.github.com)
+
+The agent reads its draft PR's CI by name (`api.github.com`) while under the
+default-deny egress lockdown. OSS Calico cannot match egress by FQDN, so
+`api.github.com` is routed, transparently, through a name-based **Envoy Gateway**:
+
+- A glimmung-owned `Gateway` (class `eg`, TLS **passthrough** `:443`) + `TLSRoute`
+  (SNI `api.github.com`) + external `Backend` (`api.github.com:443`) — see
+  `k8s/templates/agent-egress-gateway.yaml`. Requires Envoy Gateway's Backend
+  extension API (`extensionApis.enableBackend`, enabled in infra-bootstrap).
+- The agent Job `hostAlias`es `api.github.com` onto the gateway's data-plane
+  Service (resolved at runtime by the wrapper). TLS passthrough keeps it
+  **end-to-end to GitHub** — the agent validates GitHub's real cert; the gateway
+  terminates nothing and holds no credentials. It forwards only the
+  `api.github.com` SNI.
+- The agent never dispatches CI: the draft PR's `pull_request` event runs it
+  automatically; the agent only reads check-runs.
+
+## Egress lockdown
+
+Each implementation agent Job is confined by a per-run `NetworkPolicy`
+(default-deny egress; selects pods labeled
+`glimmung.romaine.life/github-egress-lockdown`). Allowed egress:
+
+- cluster DNS (kube-dns),
+- the `glimmung-runs` namespace (provider proxies + git policy proxy),
+- same-namespace (slot/app interactions),
+- the `envoy-gateway-system` namespace (the agent-egress gateway data-plane).
+
+The in-cluster allows are **not** port-restricted. Calico (Azure CNI overlay)
+enforces egress against the post-DNAT pod targetPort (the proxies listen on
+`8443`, the gateway on `10443`), so a Service-port `:443` rule never matches and
+silently blocks the agent from its own proxies. The namespace is the trust
+boundary. Everything else external is denied; GitHub is reachable only via the
+git proxy (push) and the egress gateway (`api.github.com`).
 
 ## Non-Goals
 
+- Do not hand the agent a broad installation token, or the broad-token mint URL.
 - Do not let the agent call Glimmung callback endpoints directly.
-- Do not expose the GitHub App installation token to the agent.
 - Do not rely on prompt wording as the safety boundary.
-- Do not make Ambience own the enforcement. Ambience can pre-create branches,
-  open draft PRs, and wait for CI, but Glimmung owns native-runner security.
+- Do not reintroduce the signed push-policy token or proxy-held GitHub credentials.
 
 ## Implementation
 
-The implemented path has four pieces:
-
-- `nativeJobEnv` mints `GLIMMUNG_GITHUB_PUSH_POLICY_TOKEN` for managed
-  `type: agent` jobs with a project repo and GitHub App private key.
-- `glimmung-native-runner` installs that token as a local Git credential for
-  `https://github.com`, then strips the token from the agent subprocess
-  environment.
-- Native agent jobs route `github.com` to `github-git-policy-proxy` through
-  `hostAliases` and the provider-proxy CA bundle. Verification wrapper jobs do
-  not get the `github.com` host alias, so their existing GitHub API/token flows
-  are not intercepted.
-- `glimmung_api_proxy.github_proxy` validates the token, rejects disallowed
-  receive-pack ref updates, mints a server-side GitHub App installation token,
-  and forwards allowed Git traffic to real GitHub.
+- glimmung `internal/server/native_github_token_api.go` — repo-scoped agent token
+  mint (`contents:write, metadata:read, checks:read`).
+- glimmung `cmd/glimmung-native-runner` — `agentStepBaseEnv` strips callback/token
+  URLs from the agent subprocess; installs the git credential.
+- glimmung `k8s/templates/agent-egress-gateway.yaml` — the egress Gateway + Backend
+  + TLSRoute; `k8s/templates/provider-api-proxy.yaml` — the git policy proxy
+  (`glimmung_api_proxy.github_proxy`).
+- ambience `scripts/glimmung-native/{implement.sh,agent-ci-feedback.sh,lib.sh}` +
+  `mcp/ambience_preview/ops.py` — branch/draft-PR setup, the per-run egress
+  NetworkPolicy + hostAliases, and the agent's CI-feedback script.

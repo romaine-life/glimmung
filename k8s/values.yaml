@@ -89,6 +89,22 @@ providerApiProxy:
     installationIdKvKey: glimmung-github-app-installation-id
     privateKeyKvKey: glimmung-github-app-private-key
 
+# Name-based egress for the locked-down implementation agent. OSS Calico cannot
+# match egress by FQDN, so the agent reaches api.github.com only through this
+# Envoy Gateway (TLS passthrough -> external Backend): end-to-end TLS to GitHub
+# (the agent validates GitHub's real cert; no MITM/CA), and the agent's egress
+# NetworkPolicy only needs to allow the EG data-plane namespace
+# (envoy-gateway-system). See templates/agent-egress-gateway.yaml.
+agentEgress:
+  enabled: true
+  gatewayName: agent-egress
+  gatewayClassName: eg
+  # Namespace for the Gateway/Backend/TLSRoute CRs; defaults to the
+  # provider-api-proxy namespace. EG provisions the Envoy data-plane in
+  # envoy-gateway-system regardless of this.
+  namespace: glimmung-runs
+  githubApiHost: api.github.com
+
 artifacts:
   storageAccount: romaineglimmungartifacts
   container: artifacts
