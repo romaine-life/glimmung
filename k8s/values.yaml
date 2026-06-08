@@ -3,7 +3,7 @@ image:
   # SHA-pinned. The build workflow rewrites this line on every push to main
   # via a `[skip ci]` follow-up commit. Quote the value so all-digit short
   # SHAs aren't reformatted as scientific notation by YAML.
-  tag: "app-349382e3ec90e71a70dda5b589ce843334f4012e76dd83a4e391003dc87bf2b2"
+  tag: "app-57af87308366527e0c4f0be56105c9799fea77187a5c56d3370ff1569843485f"
   pullPolicy: IfNotPresent
 
 namespace: glimmung
