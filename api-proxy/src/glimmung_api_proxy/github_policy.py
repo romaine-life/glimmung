@@ -6,7 +6,7 @@ import hmac
 import json
 import time
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Iterable
 
 
 class PolicyError(Exception):
@@ -14,6 +14,46 @@ class PolicyError(Exception):
         super().__init__(message)
         self.status = status
         self.message = message
+
+
+# Headers stripped when relaying between the git client and github: hop-by-hop
+# per RFC 7230, plus content-length (the forwarder re-derives it from the
+# buffered body) and content-encoding.
+#
+# content-encoding is the load-bearing one. The proxy's HTTP stacks
+# auto-decompress bodies — aiohttp on the inbound request (request.read() also
+# feeds the receive-pack policy parser, which needs plaintext) and httpx on the
+# upstream response — so the body that is re-sent is always already plaintext.
+# Forwarding the original `Content-Encoding: gzip` would label that plaintext as
+# gzip; github answers the mismatch with an empty-bodied 400. That is exactly
+# what broke git protocol-v2 clones: the fetch POST gzips its request body while
+# the ls-refs POST does not, so only the fetch failed.
+HOP_BY_HOP_HEADERS = frozenset(
+    {
+        "connection",
+        "keep-alive",
+        "proxy-authenticate",
+        "proxy-authorization",
+        "te",
+        "trailer",
+        "transfer-encoding",
+        "upgrade",
+    }
+)
+_STRIP_REQUEST_HEADERS = HOP_BY_HOP_HEADERS | {"host", "content-length", "content-encoding"}
+_STRIP_RESPONSE_HEADERS = HOP_BY_HOP_HEADERS | {"content-length", "content-encoding"}
+
+
+def forward_request_headers(items: Iterable[tuple[str, str]]) -> dict[str, str]:
+    """Header set to send upstream to github, with Host forced to github.com."""
+    out = {key: value for key, value in items if key.lower() not in _STRIP_REQUEST_HEADERS}
+    out["Host"] = "github.com"
+    return out
+
+
+def forward_response_headers(items: Iterable[tuple[str, str]]) -> dict[str, str]:
+    """Header set to relay from github back to the git client."""
+    return {key: value for key, value in items if key.lower() not in _STRIP_RESPONSE_HEADERS}
 
 
 @dataclass(frozen=True)
