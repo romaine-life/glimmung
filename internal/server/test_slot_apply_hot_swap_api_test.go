@@ -48,15 +48,15 @@ func newApplyHotSwapStore(t *testing.T) *fakeLeaseStore {
 								"restart":       "SIGHUP",
 								"builder_image": "node:20-alpine",
 							},
-							"gemini_runner": map[string]any{
+							"antigravity_runner": map[string]any{
 								"enabled":       true,
-								"source":        "gemini-runner/hot",
-								"target":        "/var/run/gemini-runner-hot",
-								"build_command": "cd gemini-runner && npm run build",
-								"pod_selector":  "tank-operator/session-id,tank-operator/mode in (gemini_gui,gemini_test)",
-								"container":     "gemini-runner",
+								"source":        "antigravity-runner/hot",
+								"target":        "/var/run/antigravity-runner-hot",
+								"build_command": "cd antigravity-runner && npm run build",
+								"pod_selector":  "tank-operator/session-id,tank-operator/mode=antigravity_gui",
+								"container":     "antigravity-runner",
 								"restart":       "SIGHUP",
-								"builder_image": "node:20-alpine",
+								"builder_image": "node:20-bookworm-slim",
 							},
 						},
 					},
@@ -182,7 +182,7 @@ func TestApplyTestSlotHotSwapCodexRunnerResolves(t *testing.T) {
 	}
 }
 
-func TestApplyTestSlotHotSwapGeminiRunnerResolves(t *testing.T) {
+func TestApplyTestSlotHotSwapAntigravityRunnerResolves(t *testing.T) {
 	store := newApplyHotSwapStore(t)
 	var seen ApplyHotSwapOptions
 	performer := func(_ context.Context, opts ApplyHotSwapOptions) (ApplyHotSwapResult, error) {
@@ -196,7 +196,7 @@ func TestApplyTestSlotHotSwapGeminiRunnerResolves(t *testing.T) {
 	}
 
 	handler := http.HandlerFunc(applyTestSlotHotSwap(store, nil, nil, performer))
-	body := `{"project":"tank-operator","slot_name":"tank-operator-slot-1","artifact_kind":"gemini_runner","git_ref":"feat/gemini","validation_target":"existing_session"}`
+	body := `{"project":"tank-operator","slot_name":"tank-operator-slot-1","artifact_kind":"antigravity_runner","git_ref":"feat/antigravity","validation_target":"existing_session"}`
 	req := authedApplyRequest(t, body)
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
@@ -204,11 +204,11 @@ func TestApplyTestSlotHotSwapGeminiRunnerResolves(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
 	}
-	if seen.ArtifactKind != "gemini_runner" {
+	if seen.ArtifactKind != "antigravity_runner" {
 		t.Fatalf("performer ArtifactKind = %q", seen.ArtifactKind)
 	}
-	if seen.Contract.GeminiRunner.Container != "gemini-runner" {
-		t.Fatalf("gemini runner contract not flowed correctly: %#v", seen.Contract.GeminiRunner)
+	if seen.Contract.AntigravityRunner.Container != "antigravity-runner" {
+		t.Fatalf("antigravity runner contract not flowed correctly: %#v", seen.Contract.AntigravityRunner)
 	}
 	if got := store.leases[0].Metadata["last_hot_swap_status"]; got != "persisted" {
 		t.Fatalf("history not recorded with persisted; got %v", got)

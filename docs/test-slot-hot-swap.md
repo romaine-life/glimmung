@@ -66,15 +66,15 @@ whichever ones it needs.
       "builder_image": "node:20-alpine"
     },
 
-    "gemini_runner": {
+    "antigravity_runner": {
       "enabled": true,
-      "source": "gemini-runner/dist",
-      "target": "/var/run/gemini-runner-hot/dist",
-      "build_command": "cd gemini-runner && npm run build",
-      "pod_selector": "tank-operator/session-id",
-      "container": "gemini-runner",
+      "source": "antigravity-runner/hot",
+      "target": "/var/run/antigravity-runner-hot",
+      "build_command": "cd antigravity-runner && npm ci && npm run build && rm -rf hot && mkdir -p hot && cp -R dist hot/dist && cp -R ../runner-shared hot/runner-shared && find hot/dist -name '*.js' -exec sed -i 's|\"\\.\\./\\.\\./runner-shared/|\"/var/run/antigravity-runner-hot/runner-shared/|g; s|\"\\.\\./\\.\\./\\.\\./runner-shared/|\"/var/run/antigravity-runner-hot/runner-shared/|g' {} +",
+      "pod_selector": "tank-operator/session-id,tank-operator/mode=antigravity_gui",
+      "container": "antigravity-runner",
       "restart": "SIGHUP",
-      "builder_image": "node:20-alpine"
+      "builder_image": "node:20-bookworm-slim"
     }
   }
 }
@@ -87,7 +87,7 @@ Kubernetes Job's init container using exactly the image named here. No
 language heuristics, no hardcoded defaults — the contract owns this so
 the project's build environment is explicit and reproducible.
 
-For `agent_runner`, `codex_runner`, and `gemini_runner`, `builder_image`
+For `agent_runner`, `codex_runner`, and `antigravity_runner`, `builder_image`
 is **required at contract validation time**: there is no legacy CLI path for
 these kinds, so a missing image is unambiguous misconfiguration. For `backend`,
 `builder_image` is **optional at validation time** (existing registered

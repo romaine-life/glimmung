@@ -57,7 +57,7 @@ type TestSlotApplyHotSwapResult struct {
 //  2. Endpoint resolves the active test-slot lease for project+slot.
 //  3. Endpoint reads the project's hot-swap contract from metadata.
 //  4. Endpoint validates artifact_kind is supported (v1 runner artifacts:
-//     agent_runner, codex_runner, or gemini_runner)
+//     agent_runner, codex_runner, or antigravity_runner)
 //     and the relevant builder_image is present.
 //  5. Endpoint dispatches a build-and-swap Job via ops.ApplyHotSwap,
 //     blocks on completion.
