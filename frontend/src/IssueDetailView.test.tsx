@@ -3,8 +3,36 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter, Outlet, Route, Routes, useLocation } from "react-router-dom";
 
-import { IssueDetailView } from "./IssueDetailView";
+import { IssueDetailView, pickDecisionTouchpoint } from "./IssueDetailView";
 import { ISSUE_DETAIL_CHILD_ROUTES } from "./routes";
+
+describe("pickDecisionTouchpoint", () => {
+  const tp = (runRef: string, pr: number, state = "open") => ({
+    ref: `tp-${pr}`,
+    repo: "romaine-life/ambience",
+    pr_number: pr,
+    title: `PR ${pr}`,
+    state,
+    linked_run_ref: runRef,
+    evidence: [],
+  });
+
+  it("prefers the issue's current run touchpoint over the first parked one", () => {
+    const stale = tp("ambience#168/runs/25.1", 290);
+    const current = tp("ambience#168/runs/28.3", 297);
+    expect(
+      pickDecisionTouchpoint([stale, current], "ambience#168/runs/28.3")?.pr_number,
+    ).toBe(297);
+  });
+
+  it("falls back to the first touchpoint needing a decision when the current run has none", () => {
+    const mergedCurrent = tp("ambience#168/runs/28.3", 297, "merged");
+    const parked = tp("ambience#168/runs/27.1", 296);
+    expect(
+      pickDecisionTouchpoint([mergedCurrent, parked], "ambience#168/runs/28.3")?.pr_number,
+    ).toBe(296);
+  });
+});
 
 const issueDetail = {
   ref: "ambience#172",
