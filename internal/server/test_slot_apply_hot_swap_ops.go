@@ -76,7 +76,7 @@ type k8sJobClient interface {
 //     sends the configured restart signal.
 //
 // v1 supports session-pod runner artifacts: agent_runner, codex_runner,
-// and gemini_runner.
+// and antigravity_runner.
 func ApplyHotSwap(ctx context.Context, k8s k8sJobClient, opts ApplyHotSwapOptions) (result ApplyHotSwapResult, err error) {
 	start := time.Now()
 	result = ApplyHotSwapResult{
@@ -241,8 +241,8 @@ func runnerContractForArtifact(contract hotswap.Contract, artifactKind string) (
 		return contract.AgentRunner, true
 	case "codex_runner":
 		return contract.CodexRunner, true
-	case "gemini_runner":
-		return contract.GeminiRunner, true
+	case "antigravity_runner":
+		return contract.AntigravityRunner, true
 	default:
 		return hotswap.AgentRunnerContract{}, false
 	}

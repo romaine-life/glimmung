@@ -30,7 +30,7 @@ type Contract struct {
 	FidelityClassifier FidelityClassifierContract `json:"fidelity_classifier"`
 	AgentRunner        AgentRunnerContract        `json:"agent_runner"`
 	CodexRunner        AgentRunnerContract        `json:"codex_runner"`
-	GeminiRunner       AgentRunnerContract        `json:"gemini_runner"`
+	AntigravityRunner  AgentRunnerContract        `json:"antigravity_runner"`
 }
 
 type StaticContract struct {
@@ -138,8 +138,8 @@ func (c Contract) Validate() error {
 	if !c.Enabled {
 		return nil
 	}
-	if !c.Static.Enabled && !c.Backend.Enabled && !c.AgentRunner.Enabled && !c.CodexRunner.Enabled && !c.GeminiRunner.Enabled {
-		return errors.New("test_slot_hot_swap must enable static, backend, agent_runner, codex_runner, or gemini_runner")
+	if !c.Static.Enabled && !c.Backend.Enabled && !c.AgentRunner.Enabled && !c.CodexRunner.Enabled && !c.AntigravityRunner.Enabled {
+		return errors.New("test_slot_hot_swap must enable static, backend, agent_runner, codex_runner, or antigravity_runner")
 	}
 	if c.Static.Enabled {
 		if strings.TrimSpace(c.Static.Source) == "" {
@@ -198,7 +198,7 @@ func (c Contract) Validate() error {
 	if err := validateRunnerContract("codex_runner", c.CodexRunner); err != nil {
 		return err
 	}
-	if err := validateRunnerContract("gemini_runner", c.GeminiRunner); err != nil {
+	if err := validateRunnerContract("antigravity_runner", c.AntigravityRunner); err != nil {
 		return err
 	}
 	return nil

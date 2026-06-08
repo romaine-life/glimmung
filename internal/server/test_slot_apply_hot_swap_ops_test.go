@@ -178,7 +178,7 @@ func TestApplyHotSwapCodexRunnerDispatchesJob(t *testing.T) {
 	}
 }
 
-func TestApplyHotSwapGeminiRunnerDispatchesJob(t *testing.T) {
+func TestApplyHotSwapAntigravityRunnerDispatchesJob(t *testing.T) {
 	k8s := &fakeK8sJobClient{
 		waitResult: "complete",
 		buildLogs:  "build ok",
@@ -186,23 +186,23 @@ func TestApplyHotSwapGeminiRunnerDispatchesJob(t *testing.T) {
 	}
 	result, err := ApplyHotSwap(context.Background(), k8s, ApplyHotSwapOptions{
 		Project:         "tank-operator",
-		ArtifactKind:    "gemini_runner",
-		GitRef:          "feat/gemini",
+		ArtifactKind:    "antigravity_runner",
+		GitRef:          "feat/antigravity",
 		RepoURL:         "https://github.com/romaine-life/tank-operator.git",
 		TargetNamespace: "tank-operator-slot-1-sessions",
 		JobNamespace:    "glimmung",
 		Timeout:         30 * time.Second,
 		Contract: hotswap.Contract{
 			Enabled: true,
-			GeminiRunner: hotswap.AgentRunnerContract{
+			AntigravityRunner: hotswap.AgentRunnerContract{
 				Enabled:      true,
-				Source:       "gemini-runner/hot",
-				Target:       "/var/run/gemini-runner-hot",
-				BuildCommand: "cd gemini-runner && npm run build",
-				PodSelector:  "tank-operator/session-id,tank-operator/mode in (gemini_gui,gemini_test)",
-				Container:    "gemini-runner",
+				Source:       "antigravity-runner/hot",
+				Target:       "/var/run/antigravity-runner-hot",
+				BuildCommand: "cd antigravity-runner && npm run build",
+				PodSelector:  "tank-operator/session-id,tank-operator/mode=antigravity_gui",
+				Container:    "antigravity-runner",
 				Restart:      "SIGHUP",
-				BuilderImage: "node:20-alpine",
+				BuilderImage: "node:20-bookworm-slim",
 			},
 		},
 	})
@@ -219,11 +219,11 @@ func TestApplyHotSwapGeminiRunnerDispatchesJob(t *testing.T) {
 	jobJSON, _ := json.Marshal(k8s.appliedJobs[0])
 	s := string(jobJSON)
 	checks := []string{
-		`"glimmung.io/apply-hot-swap-kind":"gemini_runner"`,
-		"gemini-runner/hot",
-		`/var/run/gemini-runner-hot`,
-		"gemini-runner",
-		"gemini_gui,gemini_test",
+		`"glimmung.io/apply-hot-swap-kind":"antigravity_runner"`,
+		"antigravity-runner/hot",
+		`/var/run/antigravity-runner-hot`,
+		"antigravity-runner",
+		"antigravity_gui",
 		"kill -HUP 1",
 	}
 	for _, c := range checks {
