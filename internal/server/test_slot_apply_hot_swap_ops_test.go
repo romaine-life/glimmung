@@ -110,6 +110,8 @@ func TestApplyHotSwapHappyPathDispatchesJob(t *testing.T) {
 		"tank-operator/session-id",                   // pod selector
 		"tar c -C /work/source",                      // tar-stream
 		`/var/run/agent-runner-hot/dist`,             // target path
+		"tar xf - -C .glimmung-hot-swap",             // extract into a user-owned sub-dir (non-root pods can't chmod the root-owned mount dir)
+		"cp -a .glimmung-hot-swap/. .",               // merge contents in without touching the target mount dir's own metadata
 		"kill -HUP 1",                                // SIGHUP signal
 		"feat/x",                                     // git ref
 	}
