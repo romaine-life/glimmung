@@ -1358,18 +1358,19 @@ func (s *Store) readLeaseDocByCallbackToken(ctx context.Context, token string) (
 }
 
 type workflowDoc struct {
-	ID                  string                     `json:"id"`
-	Kind                string                     `json:"kind,omitempty"`
-	Project             string                     `json:"project"`
-	Name                string                     `json:"name"`
-	SchemaRef           string                     `json:"schema_ref,omitempty"`
-	Phases              []phaseDoc                 `json:"phases"`
-	PR                  prDoc                      `json:"pr"`
-	Budget              budgetDoc                  `json:"budget"`
-	Constraints         server.WorkflowConstraints `json:"constraints,omitempty"`
-	DefaultRequirements map[string]any             `json:"defaultRequirements"`
-	Metadata            map[string]any             `json:"metadata"`
-	CreatedAt           string                     `json:"createdAt"`
+	ID                  string                       `json:"id"`
+	Kind                string                       `json:"kind,omitempty"`
+	Project             string                       `json:"project"`
+	Name                string                       `json:"name"`
+	SchemaRef           string                       `json:"schema_ref,omitempty"`
+	Phases              []phaseDoc                   `json:"phases"`
+	PR                  prDoc                        `json:"pr"`
+	Budget              budgetDoc                    `json:"budget"`
+	Constraints         server.WorkflowConstraints   `json:"constraints,omitempty"`
+	DefaultRequirements map[string]any               `json:"defaultRequirements"`
+	DispatchInputs      []server.DispatchInputSpec   `json:"dispatchInputs,omitempty"`
+	Metadata            map[string]any               `json:"metadata"`
+	CreatedAt           string                       `json:"createdAt"`
 }
 
 type leaseDoc struct {
@@ -1691,6 +1692,7 @@ func workflowFromDoc(doc workflowDoc) server.Workflow {
 		Budget:              budget.Config{Total: defaultBudgetTotal(doc.Budget.Total)},
 		Constraints:         doc.Constraints,
 		DefaultRequirements: mapOrEmpty(doc.DefaultRequirements),
+		DispatchInputs:      cloneDispatchInputs(doc.DispatchInputs),
 		Metadata:            mapOrEmpty(doc.Metadata),
 		CreatedAt:           parseTimeOrNow(doc.CreatedAt),
 	}
@@ -2408,6 +2410,7 @@ func workflowDocFromRegister(req server.WorkflowRegister, createdAt string) work
 		Budget:              budgetDoc{Total: defaultBudgetTotal(req.Budget.Total)},
 		Constraints:         req.Constraints,
 		DefaultRequirements: mapOrEmpty(req.DefaultRequirements),
+		DispatchInputs:      cloneDispatchInputs(req.DispatchInputs),
 		Metadata:            mapOrEmpty(req.Metadata),
 		CreatedAt:           createdAt,
 	}
@@ -2426,8 +2429,20 @@ func workflowRegisterFromDoc(doc workflowDoc) server.WorkflowRegister {
 		Budget:              budget.Config{Total: defaultBudgetTotal(doc.Budget.Total)},
 		Constraints:         doc.Constraints,
 		DefaultRequirements: mapOrEmpty(doc.DefaultRequirements),
+		DispatchInputs:      cloneDispatchInputs(doc.DispatchInputs),
 		Metadata:            mapOrEmpty(doc.Metadata),
 	}
+}
+
+// cloneDispatchInputs returns nil for an empty slice so the omitempty JSON
+// behavior on workflowDoc remains stable across round trips.
+func cloneDispatchInputs(inputs []server.DispatchInputSpec) []server.DispatchInputSpec {
+	if len(inputs) == 0 {
+		return nil
+	}
+	out := make([]server.DispatchInputSpec, len(inputs))
+	copy(out, inputs)
+	return out
 }
 
 func workflowSchemaRef(doc workflowDoc) string {
@@ -2439,6 +2454,7 @@ func workflowSchemaRef(doc workflowDoc) string {
 		Budget              budgetDoc                  `json:"budget"`
 		Constraints         server.WorkflowConstraints `json:"constraints,omitempty"`
 		DefaultRequirements map[string]any             `json:"defaultRequirements"`
+		DispatchInputs      []server.DispatchInputSpec `json:"dispatchInputs,omitempty"`
 		Metadata            map[string]any             `json:"metadata"`
 	}{
 		Project:             doc.Project,
@@ -2448,6 +2464,7 @@ func workflowSchemaRef(doc workflowDoc) string {
 		Budget:              doc.Budget,
 		Constraints:         doc.Constraints,
 		DefaultRequirements: mapOrEmpty(doc.DefaultRequirements),
+		DispatchInputs:      doc.DispatchInputs,
 		Metadata:            mapOrEmpty(doc.Metadata),
 	}
 	payload, _ := json.Marshal(canonical)
@@ -2592,6 +2609,11 @@ func validateWorkflowRegister(req server.WorkflowRegister) error {
 }
 
 func normalizeWorkflowRegister(req *server.WorkflowRegister) {
+	for i := range req.DispatchInputs {
+		req.DispatchInputs[i].Name = strings.TrimSpace(req.DispatchInputs[i].Name)
+		req.DispatchInputs[i].Description = strings.TrimSpace(req.DispatchInputs[i].Description)
+		req.DispatchInputs[i].Default = strings.TrimSpace(req.DispatchInputs[i].Default)
+	}
 	for i := range req.Phases {
 		req.Phases[i].Kind = strings.TrimSpace(req.Phases[i].Kind)
 		if req.Phases[i].Kind == "" {

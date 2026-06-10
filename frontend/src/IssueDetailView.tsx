@@ -330,6 +330,18 @@ type Workflow = {
   workflow_filename: string | null;
   workflow_ref: string | null;
   default_requirements: Record<string, unknown>;
+  // dispatch_inputs declares the run-input contract the workflow needs at
+  // dispatch time. The form renders these and POSTs values back to the server,
+  // which enforces missing-required and unknown-key rules. Older registrations
+  // without a declaration are present as undefined and render no form rows.
+  dispatch_inputs?: DispatchInputSpec[];
+};
+
+export type DispatchInputSpec = {
+  name: string;
+  description?: string;
+  required?: boolean;
+  default?: string;
 };
 
 type WorkflowPhase = {
@@ -538,6 +550,7 @@ export function IssueDetailView() {
   const [refreshTick, setRefreshTick] = useState(0);
   const [dispatchState, setDispatchState] = useState<DispatchState>({ kind: "idle" });
   const [abortState, setAbortState] = useState<AbortState>({ kind: "idle" });
+  const [dispatchInputValues, setDispatchInputValues] = useState<Record<string, string>>({});
   const issueWorkflowCandidates = useMemo(
     () => mergeWorkflows(snap?.workflows ?? [], projectWorkflows),
     [projectWorkflows, snap?.workflows],
@@ -567,6 +580,20 @@ export function IssueDetailView() {
     () => agentSlotsFromWorkflow(editableWorkflowDefinition),
     [editableWorkflowDefinition],
   );
+  const dispatchInputSpecs = useMemo<DispatchInputSpec[]>(
+    () => editableWorkflowDefinition?.dispatch_inputs ?? [],
+    [editableWorkflowDefinition],
+  );
+  // Reset the dispatch-input form values whenever the workflow changes so
+  // each input is pre-populated with its declared default. Without this the
+  // form would carry stale text from a previously-viewed issue or workflow.
+  useEffect(() => {
+    const seeded: Record<string, string> = {};
+    for (const spec of dispatchInputSpecs) {
+      seeded[spec.name] = spec.default ?? "";
+    }
+    setDispatchInputValues(seeded);
+  }, [dispatchInputSpecs]);
   const detailUrl =
     target
       ? `/v1/issues/by-number/${encodeURIComponent(target.project)}/${target.issue_number}`
@@ -594,6 +621,15 @@ export function IssueDetailView() {
     if (!detail) return;
     setDispatchState({ kind: "dispatching" });
     try {
+      // The dispatcher sends every declared dispatch input, including those
+      // the user did not edit. The server fills declared defaults itself, but
+      // sending them keeps the payload self-describing for audit and replay,
+      // and the server still validates against the workflow's declarations.
+      const inputs: Record<string, string> = {};
+      for (const spec of dispatchInputSpecs) {
+        const value = (dispatchInputValues[spec.name] ?? spec.default ?? "").trim();
+        if (value) inputs[spec.name] = value;
+      }
       const r = await authedFetch("/v1/runs/dispatch", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -601,6 +637,7 @@ export function IssueDetailView() {
           issue_number: detail.number,
           project: detail.project,
           workflow: stringOrNull(detail.metadata?.workflow) ?? undefined,
+          inputs: Object.keys(inputs).length > 0 ? inputs : undefined,
         }),
       });
       if (!r.ok) {
@@ -811,6 +848,9 @@ export function IssueDetailView() {
                 onSelectProjectionRun={(run) => navigate(projectionRunCyclePath(baseUrl, run))}
                 onSelectProjectionNode={(run, selection) => navigate(projectionSelectionPath(baseUrl, run, selection), { preventScrollReset: true })}
                 onDispatch={() => void dispatchRun()}
+                dispatchInputSpecs={dispatchInputSpecs}
+                dispatchInputValues={dispatchInputValues}
+                onDispatchInputChange={(name, value) => setDispatchInputValues((prev) => ({ ...prev, [name]: value }))}
                 onOpenTouchpoint={() => setTab("touchpoint")}
               />
             )}
@@ -1818,6 +1858,9 @@ function RunsPane({
   onSelectProjectionRun,
   onSelectProjectionNode,
   onDispatch,
+  dispatchInputSpecs,
+  dispatchInputValues,
+  onDispatchInputChange,
   onOpenTouchpoint,
 }: {
   graph: IssueGraph | null;
@@ -1844,6 +1887,9 @@ function RunsPane({
   onSelectProjectionRun: (run: RunProjectionRun) => void;
   onSelectProjectionNode: (run: RunProjectionRun, selection: ProjectionSelection) => void;
   onDispatch: () => void;
+  dispatchInputSpecs: DispatchInputSpec[];
+  dispatchInputValues: Record<string, string>;
+  onDispatchInputChange: (name: string, value: string) => void;
   onOpenTouchpoint: () => void;
 }) {
   const dispatching = dispatchState.kind === "dispatching";
@@ -1890,42 +1936,74 @@ function RunsPane({
         return runNumber ? { runNumber, state: latestGraphRun.state } : null;
       })()
     : null;
+  const dispatchInputsForm = dispatchInputSpecs.length > 0 ? (
+    <div
+      className="dispatch-inputs"
+      role="group"
+      aria-label="dispatch inputs"
+      style={{ display: "flex", flexWrap: "wrap", gap: "0.75rem", marginBottom: "0.5rem" }}
+    >
+      {dispatchInputSpecs.map((spec) => {
+        const current = dispatchInputValues[spec.name] ?? spec.default ?? "";
+        const labelText = spec.required ? `${spec.name} *` : spec.name;
+        return (
+          <label key={spec.name} style={{ display: "flex", flexDirection: "column", fontSize: "0.85em" }}>
+            <span title={spec.description || undefined}>{labelText}</span>
+            <input
+              type="text"
+              name={`dispatch-input-${spec.name}`}
+              value={current}
+              placeholder={spec.default ?? ""}
+              spellCheck={false}
+              autoCapitalize="off"
+              autoComplete="off"
+              onChange={(e) => onDispatchInputChange(spec.name, e.target.value)}
+              disabled={dispatching || !isAdmin}
+            />
+          </label>
+        );
+      })}
+    </div>
+  ) : null;
   const newRunButton = (
     <div
       className="run-actions"
-      style={{ display: "flex", alignItems: "center", gap: "0.75rem", flexWrap: "wrap", marginBottom: "1rem" }}
+      style={{ marginBottom: "1rem" }}
     >
-      <button
-        type="button"
-        className="link"
-        onClick={onDispatch}
-        disabled={dispatchDisabled}
-        title={buttonTitle}
-      >
-        {buttonLabel}
-      </button>
-      {dispatchState.kind === "result" && (
-        <span className={`pill ${dispatchResultPill(dispatchState.state)}`}>
-          {dispatchResultLabel(dispatchState.state)}
-        </span>
-      )}
-      {dispatchState.kind === "error" && (
-        <span className="dispatch-error" role="alert">
-          <span className="pill drain">error</span>
-          <span className="dispatch-error-message">{formatDispatchError(dispatchState.message)}</span>
-        </span>
-      )}
-      {cancelTarget?.runNumber && (
-        <RunCancelAction
-          signedIn={signedIn}
-          isAdmin={isAdmin}
-          runState={cancelTarget.state}
-          state={abortState}
-          onArm={onArmAbort}
-          onKeep={onCancelAbort}
-          onConfirm={() => onConfirmAbort(cancelTarget.runNumber)}
-        />
-      )}
+      {dispatchInputsForm}
+      <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", flexWrap: "wrap" }}>
+        <button
+          type="button"
+          className="link"
+          onClick={onDispatch}
+          disabled={dispatchDisabled}
+          title={buttonTitle}
+        >
+          {buttonLabel}
+        </button>
+        {dispatchState.kind === "result" && (
+          <span className={`pill ${dispatchResultPill(dispatchState.state)}`}>
+            {dispatchResultLabel(dispatchState.state)}
+          </span>
+        )}
+        {dispatchState.kind === "error" && (
+          <span className="dispatch-error" role="alert">
+            <span className="pill drain">error</span>
+            <span className="dispatch-error-message">{formatDispatchError(dispatchState.message)}</span>
+          </span>
+        )}
+        {cancelTarget?.runNumber && (
+          <RunCancelAction
+            signedIn={signedIn}
+            isAdmin={isAdmin}
+            runState={cancelTarget.state}
+            state={abortState}
+            onArm={onArmAbort}
+            onKeep={onCancelAbort}
+            onConfirm={() => onConfirmAbort(cancelTarget.runNumber)}
+          />
+        )}
+      </div>
     </div>
   );
 

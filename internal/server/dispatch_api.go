@@ -240,10 +240,16 @@ func dispatchRunWithAgentRuntime(ctx context.Context, dispatchStore RunDispatchS
 		Budget:              wf.Budget,
 		Constraints:         wf.Constraints,
 		DefaultRequirements: wf.DefaultRequirements,
+		DispatchInputs:      wf.DispatchInputs,
 		Metadata:            wf.Metadata,
 	}); err != nil {
 		return PublicDispatchResult{}, &dispatchProblem{status: http.StatusUnprocessableEntity, message: err.Error()}
 	}
+	resolvedInputs, dispatchInputsErr := resolveDispatchRunInputs(wf.DispatchInputs, runInputs)
+	if dispatchInputsErr != nil {
+		return PublicDispatchResult{}, &dispatchProblem{status: http.StatusUnprocessableEntity, message: dispatchInputsErr.Error()}
+	}
+	runInputs = resolvedInputs
 	projectRuntime, projectHasRuntime, err := agentruntime.ConfigFromMetadata(project.Metadata)
 	if err != nil {
 		return PublicDispatchResult{}, &dispatchProblem{status: http.StatusUnprocessableEntity, message: "project agent runtime config is invalid: " + err.Error()}

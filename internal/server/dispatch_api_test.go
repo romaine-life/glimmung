@@ -366,6 +366,8 @@ func TestDispatchRunDispatchedNativeK8sJob(t *testing.T) {
 
 func TestDispatchRunPersistsRunInputs(t *testing.T) {
 	store := minimalDispatchStore()
+	store.wf.DispatchInputs = []DispatchInputSpec{{Name: "git_ref", Required: true}}
+	store.workflows[0].DispatchInputs = store.wf.DispatchInputs
 	launcher := &fakeNativeLauncher{}
 	body, _ := json.Marshal(DispatchRunRequest{
 		Project:     "proj",
@@ -409,6 +411,74 @@ func TestDispatchRunRejectsInvalidRunInputs(t *testing.T) {
 	}
 	if store.runReq != nil || store.leaseReq != nil {
 		t.Fatalf("invalid inputs should fail before creating run or lease: run=%#v lease=%#v", store.runReq, store.leaseReq)
+	}
+}
+
+// TestDispatchRunRejectsMissingRequiredInput locks in that a workflow that
+// declares a required dispatch input rejects a dispatch payload that omits it
+// — no server-side fallback to "main" or to the project's default branch.
+// This is the migration-policy "no fallback defaults" rule for the dispatch
+// surface.
+func TestDispatchRunRejectsMissingRequiredInput(t *testing.T) {
+	store := minimalDispatchStore()
+	store.wf.DispatchInputs = []DispatchInputSpec{{Name: "git_ref", Required: true}}
+	store.workflows[0].DispatchInputs = store.wf.DispatchInputs
+	body, _ := json.Marshal(DispatchRunRequest{Project: "proj", IssueNumber: 1})
+	rec := httptest.NewRecorder()
+	newDispatchTestHandler(store, &fakeNativeLauncher{}).ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/runs/dispatch", bytes.NewReader(body)))
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "git_ref") || !strings.Contains(rec.Body.String(), "required") {
+		t.Fatalf("body=%s, want git_ref + required message", rec.Body.String())
+	}
+	if store.runReq != nil || store.leaseReq != nil {
+		t.Fatalf("missing required input should fail before creating run or lease: run=%#v lease=%#v", store.runReq, store.leaseReq)
+	}
+}
+
+// TestDispatchRunFillsDeclaredDefault locks in that a declared default
+// substitutes for an omitted caller value. The substitution is observable on
+// Run.RunInputs and on the launcher payload — both consumers downstream.
+func TestDispatchRunFillsDeclaredDefault(t *testing.T) {
+	store := minimalDispatchStore()
+	store.wf.DispatchInputs = []DispatchInputSpec{{Name: "git_ref", Required: true, Default: "main"}}
+	store.workflows[0].DispatchInputs = store.wf.DispatchInputs
+	launcher := &fakeNativeLauncher{}
+	body, _ := json.Marshal(DispatchRunRequest{Project: "proj", IssueNumber: 1})
+	rec := httptest.NewRecorder()
+	newDispatchTestHandler(store, launcher).ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/runs/dispatch", bytes.NewReader(body)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if got, want := store.runReq.RunInputs["git_ref"], "main"; got != want {
+		t.Fatalf("run input git_ref=%q, want default %q", got, want)
+	}
+	if got, want := launcher.req.Run.RunInputs["git_ref"], "main"; got != want {
+		t.Fatalf("launch run input git_ref=%q, want default %q", got, want)
+	}
+}
+
+// TestDispatchRunRejectsUndeclaredInput locks in the symmetric rule: the
+// caller cannot send an input the workflow's dispatch_inputs does not name.
+// Silent acceptance would let untraceable values flow into Run.RunInputs,
+// which is exactly the "Observed outcomes beat claimed intent" smell the
+// inspiration doc warns against.
+func TestDispatchRunRejectsUndeclaredInput(t *testing.T) {
+	store := minimalDispatchStore()
+	// No DispatchInputs declared.
+	body, _ := json.Marshal(DispatchRunRequest{
+		Project:     "proj",
+		IssueNumber: 1,
+		Inputs:      map[string]string{"git_ref": "feature/branch"},
+	})
+	rec := httptest.NewRecorder()
+	newDispatchTestHandler(store, &fakeNativeLauncher{}).ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/runs/dispatch", bytes.NewReader(body)))
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "git_ref") || !strings.Contains(rec.Body.String(), "not declared") {
+		t.Fatalf("body=%s, want git_ref + not declared message", rec.Body.String())
 	}
 }
 

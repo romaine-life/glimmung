@@ -455,6 +455,46 @@ callback-token-gated endpoints on Glimmung. The phase shape stays
 [`remote-host-execution.md`](remote-host-execution.md) for the endpoint
 contracts, threat model, and orchestrator-side flow.
 
+## Dispatch inputs
+
+Workflows can declare dispatch-time inputs that the dispatcher fills in before
+the run is created. Every `${{ inputs.X }}` reference inside a native
+`checkout.ref`, `extra_checkouts[].ref`, or phase `workflow_ref` must be backed
+by a declared input — registration is rejected at the `ValidateWorkflowRegister`
+boundary otherwise. The contract is symmetric: a dispatch payload that sends an
+input the workflow does not declare is also rejected, so caller-supplied values
+cannot silently flow into `Run.RunInputs`.
+
+```yaml
+dispatch_inputs:
+  - name: git_ref
+    description: branch or sha for native checkouts
+    required: true
+    default: main
+```
+
+Rules:
+
+- `name` follows the run-input identifier pattern (letters, numbers,
+  underscores, hyphens; starts with a letter or underscore). Duplicate names
+  are rejected.
+- `required: true` makes the dispatcher's omission a 422. There is no
+  server-side guess. A required input may set a `default` so a no-input
+  dispatch succeeds against the declared default; a no-input dispatch against
+  a required input with no default fails.
+- `required: false` requires a non-empty `default`. A non-required input
+  without a default has nothing to substitute and is rejected at register
+  time.
+- The dashboard renders one form row per declared input, pre-filled with the
+  declared default. The MCP `dispatch_run` tool keeps its existing optional
+  `inputs` parameter; per-workflow declarations are inspected by reading the
+  workflow registration.
+
+This makes the dispatch contract a durable, inspectable part of the workflow
+registration rather than an implicit promise scattered across templated
+checkout refs. The same `ValidateWorkflowRegister` walk catches both register
+and dispatch paths, so the rule cannot drift between them.
+
 ## Runtime source of truth
 
 Postgres workflow registrations are the runtime source of truth. The

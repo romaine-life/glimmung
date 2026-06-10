@@ -170,6 +170,7 @@ func AdmitQueuedRunCycle(ctx context.Context, store RunQueueStore, nativeLaunche
 		Budget:              wf.Budget,
 		Constraints:         wf.Constraints,
 		DefaultRequirements: wf.DefaultRequirements,
+		DispatchInputs:      wf.DispatchInputs,
 		Metadata:            wf.Metadata,
 	}); err != nil {
 		return abortQueuedAdmission(ctx, store, run, "workflow_schema_invalid: "+err.Error())

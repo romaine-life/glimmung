@@ -132,6 +132,7 @@ func syntheticDispatchRunWithAgentRuntime(ctx context.Context, store RunDispatch
 		Budget:              wf.Budget,
 		Constraints:         wf.Constraints,
 		DefaultRequirements: wf.DefaultRequirements,
+		DispatchInputs:      wf.DispatchInputs,
 		Metadata:            wf.Metadata,
 	}); err != nil {
 		return PublicDispatchResult{}, &dispatchProblem{status: http.StatusUnprocessableEntity, message: err.Error()}
