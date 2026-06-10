@@ -113,6 +113,12 @@ func TestApplyHotSwapHappyPathDispatchesJob(t *testing.T) {
 		"tar x --strip-components=1 -f -",            // strip the source/ member so the non-root pod never chmods the root-owned mount dir
 		"kill -HUP 1",                                // SIGHUP signal
 		"feat/x",                                     // git ref
+		// Post-swap verification: the Job must confirm a process is running the
+		// streamed artifact under Target and fail loudly otherwise, so a
+		// non-hot-swap-aware target image cannot report a false "persisted".
+		"/proc/[0-9]*", // verification scans the target container's processes
+		"grep -qF /var/run/agent-runner-hot/dist",           // a process must reference the artifact under Target
+		"hot-swap reported success but did not take effect", // loud failure when the restart was a no-op
 	}
 	for _, c := range checks {
 		if !strings.Contains(s, c) {
