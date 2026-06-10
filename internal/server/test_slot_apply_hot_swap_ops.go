@@ -385,20 +385,21 @@ func swapScriptFor(in applyHotSwapJobInputs) string {
 	// glimmung-pod bug from the first cut of this endpoint). Then for
 	// each pod tar-streams /work/source into Target and signals PID 1.
 	//
-	// The in-pod extraction lands the artifact via a throwaway sub-dir
-	// instead of `tar xf -` straight into Target. Reason: session-pod
-	// runners run as a non-root user (runAsNonRoot, uid 1000) and Target
-	// (e.g. /var/run/<runner>-hot) is an fsGroup emptyDir owned root:1000
-	// with the setgid bit. `tar c -C /work/source .` archives the `.`
-	// directory member, so a plain `tar xf -` into Target makes tar try to
-	// chmod/utime Target itself — which the non-root user cannot do (it
-	// doesn't own the root-owned mount dir), and GNU tar (the Debian-based
-	// antigravity runner pod) exits non-zero on that, aborting the swap
-	// before the restart signal. Extracting into a user-created sub-dir and
-	// `cp -a`-ing the contents in never touches Target's own metadata, so
-	// the delivered tree is identical but the swap no longer fails on the
-	// mount dir. Portable across busybox (alpine claude/codex pods) and GNU
-	// tar/cp (Debian antigravity pod); verified on both.
+	// The artifact is delivered with `tar c -C /work source | tar x
+	// --strip-components=1`, not `tar c -C /work/source . | tar xf -`.
+	// Reason: session-pod runners run as a non-root user (runAsNonRoot, uid
+	// 1000) and Target (e.g. /var/run/<runner>-hot) is an fsGroup emptyDir
+	// owned root:1000 with the setgid bit. Archiving `.` (the source dir
+	// itself) makes the in-pod tar try to chmod/utime Target — which the
+	// non-root user cannot do on the root-owned mount dir, so GNU tar (the
+	// Debian-based antigravity runner pod) exits non-zero and aborts the swap
+	// before the restart signal. Archiving the `source` directory from its
+	// parent and stripping one leading path component drops that directory
+	// member entirely, so only the artifact files land in Target and Target's
+	// own metadata is never touched. tar restores each file's mode, so the
+	// runner binary stays executable. Portable across busybox (alpine
+	// claude/codex pods) and GNU (Debian antigravity pod) tar — verified on
+	// both.
 	restartCmd := restartCommandFor(in.RestartSignal)
 	return strings.Join([]string{
 		"set -e",
@@ -410,8 +411,8 @@ func swapScriptFor(in applyHotSwapJobInputs) string {
 		`  echo "==> swapping into $pod"`,
 		`  kubectl -n ` + shellQuote(in.TargetNamespace) + ` exec "$pod" -c ` + shellQuote(in.TargetContainer) +
 			` -- sh -c ` + shellQuote("mkdir -p "+in.Target) + ` < /dev/null`,
-		`  tar c -C /work/source . | kubectl -n ` + shellQuote(in.TargetNamespace) + ` exec -i "$pod" -c ` + shellQuote(in.TargetContainer) +
-			` -- sh -c ` + shellQuote("cd "+in.Target+" && rm -rf .glimmung-hot-swap && mkdir .glimmung-hot-swap && tar xf - -C .glimmung-hot-swap && cp -a .glimmung-hot-swap/. . && rm -rf .glimmung-hot-swap"),
+		`  tar c -C /work source | kubectl -n ` + shellQuote(in.TargetNamespace) + ` exec -i "$pod" -c ` + shellQuote(in.TargetContainer) +
+			` -- sh -c ` + shellQuote("cd "+in.Target+" && tar x --strip-components=1 -f -"),
 		`  kubectl -n ` + shellQuote(in.TargetNamespace) + ` exec "$pod" -c ` + shellQuote(in.TargetContainer) +
 			` -- ` + restartCmd,
 		`done`,
