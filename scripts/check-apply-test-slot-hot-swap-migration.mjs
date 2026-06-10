@@ -172,7 +172,7 @@ const CHECKS = [
     file: "internal/domain/hotswap/hotswap.go",
     description: "Contract has runner fields of type AgentRunnerContract",
     kind: "grep-present",
-    pattern: /type\s+Contract\s+struct[\s\S]{0,500}?AgentRunner\s+AgentRunnerContract[\s\S]{0,200}?CodexRunner\s+AgentRunnerContract[\s\S]{0,200}?GeminiRunner\s+AgentRunnerContract/,
+    pattern: /type\s+Contract\s+struct[\s\S]{0,500}?AgentRunner\s+AgentRunnerContract[\s\S]{0,200}?CodexRunner\s+AgentRunnerContract[\s\S]{0,200}?AntigravityRunner\s+AgentRunnerContract/,
   },
   {
     id: "contract-builder-image-backend",

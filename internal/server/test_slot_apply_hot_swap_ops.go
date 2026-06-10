@@ -401,6 +401,14 @@ func swapScriptFor(in applyHotSwapJobInputs) string {
 	// claude/codex pods) and GNU (Debian antigravity pod) tar — verified on
 	// both.
 	restartCmd := restartCommandFor(in.RestartSignal)
+	// verifyScript confirms a process inside the target container is now executing
+	// the streamed artifact — its cmdline or its /proc/<pid>/exe resolves under
+	// Target. A hot-swap-aware launcher (the supervisor strategy) re-execs the
+	// artifact under Target on the restart signal; an image whose launcher is NOT
+	// hot-swap-aware exec's the baked runner directly and ignores Target, so the
+	// stream + signal both return 0 while nothing actually changed. grep -F matches
+	// Target literally.
+	verifyScript := `for pr in /proc/[0-9]*; do { tr "\0" " " < "$pr/cmdline" 2>/dev/null; readlink "$pr/exe" 2>/dev/null; } | grep -qF ` + in.Target + ` && exit 0; done; exit 1`
 	return strings.Join([]string{
 		"set -e",
 		"set -x",
@@ -415,6 +423,19 @@ func swapScriptFor(in applyHotSwapJobInputs) string {
 			` -- sh -c ` + shellQuote("cd "+in.Target+" && tar x --strip-components=1 -f -"),
 		`  kubectl -n ` + shellQuote(in.TargetNamespace) + ` exec "$pod" -c ` + shellQuote(in.TargetContainer) +
 			` -- ` + restartCmd,
+		// Fail loudly when the restart signal was a no-op: poll up to ~20s for a
+		// process running the streamed artifact under Target. Without this a
+		// non-hot-swap-aware target image makes the Job report a false "persisted"
+		// (the bug that hid a stale antigravity image during tank-operator#1030
+		// validation — the swap "succeeded" but the old launcher kept running node).
+		`  swapped=`,
+		`  n=0`,
+		`  while [ "$n" -lt 20 ]; do`,
+		`    if kubectl -n ` + shellQuote(in.TargetNamespace) + ` exec "$pod" -c ` + shellQuote(in.TargetContainer) +
+			` -- sh -c ` + shellQuote(verifyScript) + ` < /dev/null; then swapped=1; break; fi`,
+		`    n=$((n+1)); sleep 1`,
+		`  done`,
+		`  if [ -z "$swapped" ]; then echo "hot-swap reported success but did not take effect in $pod: no process is executing the streamed artifact under ` + in.Target + ` after the ` + in.RestartSignal + ` signal. The session image launcher is not hot-swap-aware (it exec's the baked runner and ignores ` + in.Target + `); rebuild the session image from a commit whose launcher supervises ` + in.Target + `." >&2; exit 1; fi`,
 		`done`,
 		`echo done`,
 	}, "\n")
