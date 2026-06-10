@@ -140,6 +140,14 @@ type Workflow = {
   workflow_filename: string | null;
   workflow_ref: string | null;
   default_requirements: Record<string, unknown>;
+  // dispatch_inputs declares the per-dispatch run-input contract; see
+  // IssueDetailView's DispatchInputSpec type and the workflow-shape doc.
+  dispatch_inputs?: Array<{
+    name: string;
+    description?: string;
+    required?: boolean;
+    default?: string;
+  }>;
   metadata: Record<string, unknown>;
   created_at: string;
 };

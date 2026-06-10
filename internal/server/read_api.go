@@ -48,8 +48,27 @@ type Workflow struct {
 	Budget              budget.Config       `json:"budget"`
 	Constraints         WorkflowConstraints `json:"constraints,omitempty"`
 	DefaultRequirements map[string]any      `json:"default_requirements"`
+	// DispatchInputs declares the dispatch-time inputs the workflow needs.
+	// Every `${{ inputs.X }}` reference inside a phase's WorkflowRef or any
+	// job's Checkout/ExtraCheckouts refs must name a declared input. The
+	// dispatcher (dashboard, MCP, replay) reads this list to render forms
+	// and validate payloads; the registration is rejected if a template
+	// reference is not backed by a declaration.
+	DispatchInputs      []DispatchInputSpec `json:"dispatch_inputs,omitempty"`
 	Metadata            map[string]any      `json:"metadata"`
 	CreatedAt           time.Time           `json:"created_at"`
+}
+
+// DispatchInputSpec declares one dispatch-time input on a workflow registration.
+// Name follows the same identifier rules as run-input keys. Required=true with
+// no Default means the caller must provide a value or the dispatch is rejected
+// at the API boundary (no fallback in the server, no implicit "main" guess).
+// Default is filled in by the dispatch handler when the caller omits the key.
+type DispatchInputSpec struct {
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	Required    bool   `json:"required,omitempty"`
+	Default     string `json:"default,omitempty"`
 }
 
 type WorkflowConstraints struct {

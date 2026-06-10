@@ -83,6 +83,11 @@ type WorkflowRegister struct {
 	Budget              budget.Config       `json:"budget"`
 	Constraints         WorkflowConstraints `json:"constraints,omitempty"`
 	DefaultRequirements map[string]any      `json:"default_requirements"`
+	// DispatchInputs declares the dispatch-time inputs the workflow needs.
+	// See Workflow.DispatchInputs for the contract; ValidateWorkflowRegister
+	// rejects any `${{ inputs.X }}` ref in checkout/extra_checkouts/workflow_ref
+	// that does not name a declared input.
+	DispatchInputs      []DispatchInputSpec `json:"dispatch_inputs,omitempty"`
 	Metadata            map[string]any      `json:"metadata"`
 }
 
@@ -301,6 +306,11 @@ func normalizeWorkflowRegisterWithDefaultKind(req *WorkflowRegister, defaultKind
 	}
 	req.DefaultRequirements = mapOrEmpty(req.DefaultRequirements)
 	req.Metadata = mapOrEmpty(req.Metadata)
+	for i := range req.DispatchInputs {
+		req.DispatchInputs[i].Name = strings.TrimSpace(req.DispatchInputs[i].Name)
+		req.DispatchInputs[i].Description = strings.TrimSpace(req.DispatchInputs[i].Description)
+		req.DispatchInputs[i].Default = strings.TrimSpace(req.DispatchInputs[i].Default)
+	}
 	for i := range req.Phases {
 		req.Phases[i].Kind = strings.TrimSpace(req.Phases[i].Kind)
 		if req.Phases[i].Kind == "" {
@@ -406,6 +416,13 @@ func ValidateWorkflowRegister(req WorkflowRegister) error {
 		return ValidationError{Message: "workflow " + req.Name + " is missing required phases: prepare, testing, cleanup"}
 	}
 	if err := validateWorkflowAllowedForProject(Project{}, req); err != nil {
+		return err
+	}
+	declaredInputs, err := validateDispatchInputs(req.Name, req.DispatchInputs)
+	if err != nil {
+		return err
+	}
+	if err := validateDispatchInputRefs(req.Name, req.Phases, declaredInputs); err != nil {
 		return err
 	}
 	constraints := CanonicalWorkflowConstraints(req)
@@ -587,6 +604,72 @@ func ValidateWorkflowRegister(req WorkflowRegister) error {
 	}
 	if err := phaserefs.Validate(phaseRefs); err != nil {
 		return ValidationError{Message: err.Error()}
+	}
+	return nil
+}
+
+// validateDispatchInputs returns the declared input names as a lookup set.
+// Each entry's Name must follow the run-input identifier rule, must be unique,
+// and a non-required input must have a Default value (a non-required missing
+// value is a malformed spec — there is nothing to substitute and no contract
+// to enforce). Default is rendered as the substituted value as-is.
+func validateDispatchInputs(workflowName string, inputs []DispatchInputSpec) (map[string]DispatchInputSpec, error) {
+	declared := map[string]DispatchInputSpec{}
+	for i, input := range inputs {
+		name := strings.TrimSpace(input.Name)
+		if name == "" {
+			return nil, ValidationError{Message: fmt.Sprintf("workflow %s dispatch_inputs[%d] is missing name", workflowName, i)}
+		}
+		if !runInputNamePattern.MatchString(name) {
+			return nil, ValidationError{Message: fmt.Sprintf("workflow %s dispatch_inputs[%d] name %q is invalid; use letters, numbers, underscores, or hyphens, starting with a letter or underscore", workflowName, i, input.Name)}
+		}
+		if _, dup := declared[name]; dup {
+			return nil, ValidationError{Message: fmt.Sprintf("workflow %s dispatch_inputs[%d] name %q duplicates an earlier entry", workflowName, i, name)}
+		}
+		if !input.Required && strings.TrimSpace(input.Default) == "" {
+			return nil, ValidationError{Message: fmt.Sprintf("workflow %s dispatch_inputs[%d] name %q is not required but has no default; non-required inputs must declare a default to substitute", workflowName, i, name)}
+		}
+		declared[name] = input
+	}
+	return declared, nil
+}
+
+// validateDispatchInputRefs walks every templated checkout.ref,
+// extra_checkouts[].ref, and phase.workflow_ref and requires each
+// `${{ inputs.X }}` reference to name a declared dispatch input. Mirrors the
+// cross-phase-ref check (phaserefs.Validate) but for dispatch-time inputs —
+// a workflow that promises to substitute X must declare X or be rejected at
+// register time. Empty refs and literal (non-templated) refs are passed.
+func validateDispatchInputRefs(workflowName string, phases []PhaseSpec, declared map[string]DispatchInputSpec) error {
+	check := func(location, value string) error {
+		matches := runInputRefPattern.FindStringSubmatch(value)
+		if matches == nil {
+			return nil
+		}
+		key := matches[1]
+		if _, ok := declared[key]; !ok {
+			return ValidationError{Message: fmt.Sprintf("workflow %s %s refs ${{ inputs.%s }} but dispatch_inputs does not declare %q; add it to dispatch_inputs or change the ref to a literal", workflowName, location, key, key)}
+		}
+		return nil
+	}
+	for _, phase := range phases {
+		phaseLocation := fmt.Sprintf("phase %q", phase.Name)
+		if err := check(phaseLocation+" workflow_ref", phase.WorkflowRef); err != nil {
+			return err
+		}
+		for _, job := range phase.Jobs {
+			jobLocation := fmt.Sprintf("phase %q job %q", phase.Name, job.ID)
+			if job.Checkout != nil {
+				if err := check(jobLocation+" checkout.ref", job.Checkout.Ref); err != nil {
+					return err
+				}
+			}
+			for j, extra := range job.ExtraCheckouts {
+				if err := check(fmt.Sprintf("%s extra_checkouts[%d].ref", jobLocation, j), extra.Ref); err != nil {
+					return err
+				}
+			}
+		}
 	}
 	return nil
 }

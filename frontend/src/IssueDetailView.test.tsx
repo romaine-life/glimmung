@@ -526,6 +526,75 @@ describe("IssueDetailView run execution graph", () => {
     });
   });
 
+  it("renders declared dispatch inputs as a form and sends entered values on dispatch", async () => {
+    const unlockedIssue = {
+      ...issueDetail,
+      issue_lock_held: false,
+      last_run_state: "passed",
+    };
+    const workflowWithInputs = {
+      ...agentWorkflow,
+      dispatch_inputs: [
+        {
+          name: "git_ref",
+          description: "branch or sha to check out",
+          required: true,
+          default: "main",
+        },
+      ],
+    };
+    let dispatchBody: unknown = null;
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url =
+        typeof input === "string"
+          ? new URL(input, "https://glimmung.test")
+          : input instanceof URL
+            ? input
+            : new URL(input.url);
+      if (url.pathname === "/v1/config") return json({ auth_url: "https://auth.test", tank_operator_base_url: "https://tank.test" });
+      if (url.pathname === "/v1/auth/me") return json({ signed_in: true, email: "admin@example.com" });
+      if (url.pathname === "/v1/issues/by-number/ambience/172") return json(unlockedIssue);
+      if (url.pathname === "/v1/issues/by-number/ambience/172/graph") return json(issueGraph);
+      if (url.pathname === "/v1/workflows") return json([workflowWithInputs]);
+      if (url.pathname === "/v1/runs/dispatch" && init?.method === "POST") {
+        dispatchBody = init.body ? JSON.parse(String(init.body)) : null;
+        return json({
+          state: "dispatched",
+          issue_ref: "ambience#172",
+          issue_number: 172,
+          run_number: 8,
+          cycle_number: 8,
+          run_cycle_number: 1,
+          run_ref: "ambience#172/runs/8.1",
+        });
+      }
+      throw new Error(`unhandled fetch ${url.pathname}`);
+    }));
+
+    const contextWithInputsWorkflow = {
+      ...runtimeContext,
+      snap: {
+        ...(runtimeContext.snap ?? {}),
+        workflows: [workflowWithInputs],
+      },
+    };
+    renderIssueDetail("/projects/ambience/issues/172/runs", contextWithInputsWorkflow);
+
+    const newRunButton = await screen.findByRole("button", { name: "new run" });
+    // Default is rendered as the controlled value; user types over it.
+    const gitRefInput = await screen.findByLabelText(/git_ref \*/);
+    expect((gitRefInput as HTMLInputElement).value).toBe("main");
+    await userEvent.clear(gitRefInput);
+    await userEvent.type(gitRefInput, "feature/lanterns");
+    await userEvent.click(newRunButton);
+
+    await waitFor(() => {
+      expect(dispatchBody).toBeTruthy();
+    });
+    const payload = dispatchBody as { inputs?: Record<string, string> };
+    expect(payload.inputs).toEqual({ git_ref: "feature/lanterns" });
+  });
+
   it("opens the newly dispatched run after clicking new run", async () => {
     const unlockedIssue = {
       ...issueDetail,

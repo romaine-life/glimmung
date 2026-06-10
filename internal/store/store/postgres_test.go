@@ -862,6 +862,57 @@ func TestWorkflowDocPersistsCanonicalVerificationConstraints(t *testing.T) {
 	}
 }
 
+// TestWorkflowDocRoundTripsDispatchInputs locks in that the declared
+// dispatch_inputs survive the doc -> register -> read paths and that the
+// schema ref reflects them. Two registrations that differ only in
+// dispatch_inputs must mint distinct schema refs so the immutable
+// run-schema model the workflow-shape doc names continues to capture the
+// dispatch contract.
+func TestWorkflowDocRoundTripsDispatchInputs(t *testing.T) {
+	base := server.WorkflowRegister{
+		Project: "ambience",
+		Name:    "default",
+		Phases: []server.PhaseSpec{
+			{Name: "prepare", Outputs: []string{server.IssueContractOutputKey}, Jobs: []server.NativeJobSpec{{ID: server.IssueContractJobID, Checkout: &server.NativeCheckoutSpec{Ref: "${{ inputs.git_ref }}"}}}},
+			{Name: "test", Verify: true, DependsOn: []string{"prepare"}, Jobs: verificationCaseJobsForStoreTest()},
+			{Name: "cleanup_early", RunOn: server.PhaseRunOnAlways, Purpose: server.PhasePurposeTeardown, SkipWhenPreserveTestEnv: true, DependsOn: []string{"test"}, Jobs: []server.NativeJobSpec{{ID: "cleanup-early"}}},
+			{Name: "touchpoint", RunOn: server.PhaseRunOnSuccess, Purpose: server.PhasePurposeReviewTouchpoint, DependsOn: []string{"cleanup_early"}, Jobs: []server.NativeJobSpec{{ID: "pr-touchpoint", Primitive: "pr_touchpoint"}}},
+			{Name: "touchpoint_gate", Kind: "k8s_job", Purpose: server.PhasePurposeReviewGate, DependsOn: []string{"touchpoint"}, Jobs: []server.NativeJobSpec{{ID: "pr-merge", Primitive: "pr_merge"}}},
+			{Name: "cleanup_final", RunOn: server.PhaseRunOnAlways, Purpose: server.PhasePurposeTeardown, DependsOn: []string{"touchpoint_gate"}, Jobs: []server.NativeJobSpec{{ID: "cleanup-final"}}},
+		},
+		DispatchInputs: []server.DispatchInputSpec{
+			{Name: "git_ref", Description: "branch or sha", Required: true, Default: "main"},
+		},
+	}
+	normalizeWorkflowRegister(&base)
+	if err := validateWorkflowRegister(base); err != nil {
+		t.Fatalf("validateWorkflowRegister: %v", err)
+	}
+
+	doc := workflowDocFromRegister(base, "2026-06-10T00:00:00Z")
+	if len(doc.DispatchInputs) != 1 || doc.DispatchInputs[0].Name != "git_ref" || doc.DispatchInputs[0].Default != "main" || !doc.DispatchInputs[0].Required {
+		t.Fatalf("doc.DispatchInputs=%#v", doc.DispatchInputs)
+	}
+	register := workflowRegisterFromDoc(doc)
+	if len(register.DispatchInputs) != 1 || register.DispatchInputs[0].Name != "git_ref" {
+		t.Fatalf("register.DispatchInputs=%#v", register.DispatchInputs)
+	}
+	read := workflowFromDoc(doc)
+	if len(read.DispatchInputs) != 1 || read.DispatchInputs[0].Name != "git_ref" {
+		t.Fatalf("read.DispatchInputs=%#v", read.DispatchInputs)
+	}
+
+	// Same workflow without dispatch_inputs would also need to revalidate;
+	// without inputs the checkout.ref ${{ inputs.git_ref }} would now be
+	// rejected at register time, so we only assert the schema ref differs by
+	// comparing two declared variants.
+	docWithDescription := doc
+	docWithDescription.DispatchInputs = []server.DispatchInputSpec{{Name: "git_ref", Description: "different description", Required: true, Default: "main"}}
+	if workflowSchemaRef(doc) == workflowSchemaRef(docWithDescription) {
+		t.Fatalf("schema_ref must reflect dispatch_inputs payload; changing description did not change the ref")
+	}
+}
+
 func TestNativeJobDocRoundTripsAgentStepConfig(t *testing.T) {
 	job := server.NativeJobSpec{
 		ID:      "implement",
