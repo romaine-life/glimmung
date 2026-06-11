@@ -578,15 +578,15 @@ describe("IssueDetailView run execution graph", () => {
         workflows: [workflowWithInputs],
       },
     };
-    renderIssueDetail("/projects/ambience/issues/172/runs", contextWithInputsWorkflow);
+    renderIssueDetail("/projects/ambience/issues/172/settings", contextWithInputsWorkflow);
 
-    const newRunButton = await screen.findByRole("button", { name: "new run" });
+    expect(await screen.findByRole("heading", { name: "New run" })).toBeInTheDocument();
     // Default is rendered as the controlled value; user types over it.
     const gitRefInput = await screen.findByLabelText(/git_ref \*/);
     expect((gitRefInput as HTMLInputElement).value).toBe("main");
     await userEvent.clear(gitRefInput);
     await userEvent.type(gitRefInput, "feature/lanterns");
-    await userEvent.click(newRunButton);
+    await userEvent.click(screen.getByRole("button", { name: "dispatch" }));
 
     await waitFor(() => {
       expect(dispatchBody).toBeTruthy();
@@ -595,7 +595,39 @@ describe("IssueDetailView run execution graph", () => {
     expect(payload.inputs).toEqual({ git_ref: "feature/lanterns" });
   });
 
-  it("opens the newly dispatched run after clicking new run", async () => {
+  it("routes new run from runs to issue settings", async () => {
+    const unlockedIssue = {
+      ...issueDetail,
+      issue_lock_held: false,
+      last_run_state: "passed",
+    };
+
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url =
+        typeof input === "string"
+          ? new URL(input, "https://glimmung.test")
+          : input instanceof URL
+            ? input
+            : new URL(input.url);
+      if (url.pathname === "/v1/issues/by-number/ambience/172") return json(unlockedIssue);
+      if (url.pathname === "/v1/issues/by-number/ambience/172/graph") return json(issueGraph);
+      if (url.pathname === "/v1/workflows") return json([]);
+      throw new Error(`unhandled fetch ${url.pathname}`);
+    }));
+
+    renderIssueDetail("/projects/ambience/issues/172/runs");
+
+    await userEvent.click(await screen.findByRole("button", { name: "new run" }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("path")).toHaveTextContent(
+        "/projects/ambience/issues/172/settings",
+      );
+    });
+    expect(await screen.findByRole("heading", { name: "New run" })).toBeInTheDocument();
+  });
+
+  it("opens the newly dispatched run after dispatching from settings", async () => {
     const unlockedIssue = {
       ...issueDetail,
       issue_lock_held: false,
@@ -626,9 +658,9 @@ describe("IssueDetailView run execution graph", () => {
       throw new Error(`unhandled fetch ${url.pathname}`);
     }));
 
-    renderIssueDetail("/projects/ambience/issues/172/runs");
+    renderIssueDetail("/projects/ambience/issues/172/settings");
 
-    await userEvent.click(await screen.findByRole("button", { name: "new run" }));
+    await userEvent.click(await screen.findByRole("button", { name: "dispatch" }));
 
     await waitFor(() => {
       expect(screen.getByTestId("path")).toHaveTextContent(
