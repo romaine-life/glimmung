@@ -332,7 +332,7 @@ func TestNativeRunnerAggregatesDynamicCaseVerification(t *testing.T) {
 					{
 						Slug:       "emit",
 						Type:       "run",
-						Run:        `if [ "$GLIMMUNG_DYNAMIC_CASE_INDEX" = "1" ]; then printf '{"verification":{"status":"pass","evidence_refs":["blob://artifacts/one.png"]}}' > "$GLIMMUNG_COMPLETION_FILE"; else printf '{"verification":{"status":"fail","reasons":["missing video"],"evidence_refs":["blob://artifacts/two.webm"]}}' > "$GLIMMUNG_COMPLETION_FILE"; fi`,
+						Run:        `if [ "$GLIMMUNG_DYNAMIC_CASE_INDEX" = "1" ]; then printf '{"verification":{"status":"pass","evidence_refs":["blob://artifacts/one.png"]},"summary_markdown":"case one observed fine","screenshots_markdown":"- [one.png](blob://artifacts/one.png)"}' > "$GLIMMUNG_COMPLETION_FILE"; else printf '{"verification":{"status":"fail","reasons":["missing video"],"evidence_refs":["blob://artifacts/two.webm"]},"summary_markdown":"case two observed a missing video","screenshots_markdown":"- [two.webm](blob://artifacts/two.webm)"}' > "$GLIMMUNG_COMPLETION_FILE"; fi`,
 						Group:      "test-cases",
 						GroupTitle: "Test cases generated at runtime",
 						DynamicGroup: &dynamicGroupSpec{
@@ -370,6 +370,40 @@ func TestNativeRunnerAggregatesDynamicCaseVerification(t *testing.T) {
 	cases := got.Verification["cases"].([]any)
 	if len(cases) != 2 {
 		t.Fatalf("cases=%#v", cases)
+	}
+	// Per-case markdown joins into the job completion as "### <label>"
+	// sections with failed cases first (glimmung#145) — the failing case's
+	// verifier narrative must lead the run report.
+	if got.SummaryMarkdown == nil {
+		t.Fatal("expected aggregated summary markdown")
+	}
+	summary := *got.SummaryMarkdown
+	failIdx := strings.Index(summary, "### case two")
+	passIdx := strings.Index(summary, "### case one")
+	if failIdx == -1 || passIdx == -1 || failIdx > passIdx {
+		t.Fatalf("summary sections wrong (failed case must lead):\n%s", summary)
+	}
+	if !strings.Contains(summary, "case two observed a missing video") || !strings.Contains(summary, "case one observed fine") {
+		t.Fatalf("summary missing per-case bodies:\n%s", summary)
+	}
+	if got.ScreenshotsMarkdown == nil || !strings.Contains(*got.ScreenshotsMarkdown, "### case two") || !strings.Contains(*got.ScreenshotsMarkdown, "two.webm") {
+		t.Fatalf("screenshots markdown=%v", got.ScreenshotsMarkdown)
+	}
+}
+
+func TestAggregateDynamicCaseMarkdownSkipsEmptyAndOrdersFailuresFirst(t *testing.T) {
+	cases := []dynamicCaseCompletion{
+		{Index: 1, Label: "alpha", Verification: map[string]any{"status": "pass"}, SummaryMarkdown: "alpha body"},
+		{Index: 2, Label: "bravo", Verification: map[string]any{"status": "error"}, SummaryMarkdown: "bravo body"},
+		{Index: 3, Label: "charlie", Verification: map[string]any{"status": "pass"}},
+	}
+	got := aggregateDynamicCaseMarkdown(cases, func(tc dynamicCaseCompletion) string { return tc.SummaryMarkdown })
+	want := "### bravo\n\nbravo body\n\n### alpha\n\nalpha body"
+	if got != want {
+		t.Fatalf("joined markdown=%q want %q", got, want)
+	}
+	if aggregateDynamicCaseMarkdown(nil, func(tc dynamicCaseCompletion) string { return tc.SummaryMarkdown }) != "" {
+		t.Fatal("nil cases must join to empty")
 	}
 }
 
