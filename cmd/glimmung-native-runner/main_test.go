@@ -14,6 +14,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/romaine-life/glimmung/internal/domain/agentruntime"
 )
 
 func TestParseOutputFileAcceptsKeyValueAndJSON(t *testing.T) {
@@ -1007,4 +1009,78 @@ func TestAgentShellPreambleUsesProxyPlaceholderCredentials(t *testing.T) {
 // shellQuote produces a POSIX-shell-safe single-quoted form of s.
 func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+func TestAggregateDynamicCaseVerificationPropagatesFailureBlock(t *testing.T) {
+	failing := map[string]any{
+		"status":  "fail",
+		"reasons": []any{"verifier reported status=abort reason=claimed_result_not_observed"},
+		"failure": map[string]any{
+			"expected":        "5-10 lantern cluster",
+			"observed":        "counts of 13 and 12",
+			"suspected_cause": "test_expectation_mismatch",
+		},
+	}
+	out := aggregateDynamicCaseVerification([]dynamicCaseCompletion{
+		{Index: 1, Label: "case-a", Verification: map[string]any{"status": "pass"}},
+		{Index: 2, Label: "case-b", Verification: failing},
+		{Index: 3, Label: "case-c", Verification: map[string]any{
+			"status":  "fail",
+			"failure": map[string]any{"expected": "later failing case must not win"},
+		}},
+	})
+	if out["status"] != "fail" {
+		t.Fatalf("status=%v", out["status"])
+	}
+	failure, ok := out["failure"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected aggregate failure block, got %#v", out["failure"])
+	}
+	if failure["suspected_cause"] != "test_expectation_mismatch" || failure["expected"] != "5-10 lantern cluster" {
+		t.Fatalf("failure=%#v", failure)
+	}
+	cases, ok := out["cases"].([]map[string]any)
+	if !ok || len(cases) != 3 {
+		t.Fatalf("cases=%#v", out["cases"])
+	}
+	if _, hasFailure := cases[0]["failure"]; hasFailure {
+		t.Fatalf("passing case should not carry failure: %#v", cases[0])
+	}
+	caseFailure, ok := cases[1]["failure"].(map[string]any)
+	if !ok || caseFailure["observed"] != "counts of 13 and 12" {
+		t.Fatalf("per-case failure=%#v", cases[1])
+	}
+}
+
+func TestAggregateDynamicCaseVerificationNoFailureKeyOnPass(t *testing.T) {
+	out := aggregateDynamicCaseVerification([]dynamicCaseCompletion{
+		{Index: 1, Label: "case-a", Verification: map[string]any{"status": "pass"}},
+	})
+	if _, exists := out["failure"]; exists {
+		t.Fatalf("pass aggregate should not carry a failure key: %#v", out)
+	}
+}
+
+func TestAgentPromptIncludesPriorVerification(t *testing.T) {
+	t.Setenv("GLIMMUNG_PRIOR_VERIFICATION_JSON", `{"phase":"llm-verify","verification":{"status":"fail","failure":{"suspected_cause":"test_expectation_mismatch"}}}`)
+	r := &nativeRunner{cfg: runnerConfig{Workspace: t.TempDir()}}
+	prompt, err := r.agentPrompt(t.TempDir(), stepSpec{Slug: "run-test-plan"}, agentStepSpec{Prompt: "do the work"}, "test_plan", agentruntime.ResolvedProfile{ProfileID: "p", Provider: "claude", Model: "m"})
+	if err != nil {
+		t.Fatalf("agentPrompt: %v", err)
+	}
+	if !strings.Contains(prompt, "## Prior attempt verification — reasons to address") {
+		t.Fatalf("prompt missing prior verification heading:\n%s", prompt)
+	}
+	if !strings.Contains(prompt, "test_expectation_mismatch") {
+		t.Fatalf("prompt missing prior verification payload:\n%s", prompt)
+	}
+
+	t.Setenv("GLIMMUNG_PRIOR_VERIFICATION_JSON", "")
+	prompt, err = r.agentPrompt(t.TempDir(), stepSpec{Slug: "run-test-plan"}, agentStepSpec{Prompt: "do the work"}, "test_plan", agentruntime.ResolvedProfile{ProfileID: "p", Provider: "claude", Model: "m"})
+	if err != nil {
+		t.Fatalf("agentPrompt: %v", err)
+	}
+	if strings.Contains(prompt, "Prior attempt verification") {
+		t.Fatalf("prompt should omit prior verification section when env empty:\n%s", prompt)
+	}
 }

@@ -938,6 +938,15 @@ func (r *nativeRunner) agentPrompt(workdir string, step stepSpec, spec agentStep
 	if reqs := strings.TrimSpace(os.Getenv("GLIMMUNG_EVIDENCE_REQUIREMENTS_JSON")); reqs != "" {
 		fmt.Fprintf(&b, "## Evidence requirements\n\n```json\n%s\n```\n\n", reqs)
 	}
+	if prior := strings.TrimSpace(os.Getenv("GLIMMUNG_PRIOR_VERIFICATION_JSON")); prior != "" {
+		// Recycle cycles carry the parent cycle's deciding verification
+		// (status, reasons, structured failure block). Stage prompts name
+		// this exact heading as the first thing to address before the
+		// original issue description.
+		fmt.Fprintf(&b, "## Prior attempt verification — reasons to address\n\n")
+		fmt.Fprintf(&b, "The previous run cycle failed verification; this cycle exists to fix that. Address the failure below — especially `failure.expected` vs `failure.observed` and `failure.suspected_cause` — before falling back to the original issue description.\n\n")
+		fmt.Fprintf(&b, "```json\n%s\n```\n\n", prior)
+	}
 	if caseJSON := strings.TrimSpace(step.Env["GLIMMUNG_DYNAMIC_CASE_JSON"]); caseJSON != "" {
 		fmt.Fprintf(&b, "## Dynamic test case\n\n")
 		fmt.Fprintf(&b, "- case index: %s of %s\n", strings.TrimSpace(step.Env["GLIMMUNG_DYNAMIC_CASE_INDEX"]), strings.TrimSpace(step.Env["GLIMMUNG_DYNAMIC_CASE_COUNT"]))
@@ -1500,6 +1509,7 @@ func aggregateDynamicCaseVerification(cases []dynamicCaseCompletion) map[string]
 	reasons := []string{}
 	evidenceRefs := []string{}
 	evidence := []evidenceArtifact{}
+	var failure any
 	for _, tc := range cases {
 		caseStatus := strings.TrimSpace(fmt.Sprint(tc.Verification["status"]))
 		switch caseStatus {
@@ -1522,6 +1532,14 @@ func aggregateDynamicCaseVerification(cases []dynamicCaseCompletion) map[string]
 			}
 			reasons = append(reasons, fmt.Sprintf("%s: %s", dynamicCaseCompletionLabel(tc), strings.TrimSpace(reason)))
 		}
+		// Surface the first failing case's structured failure block on the
+		// aggregate so the phase verdict carries expected/observed/cause,
+		// not just the merged enum status.
+		if failure == nil && caseStatus != "" && caseStatus != "pass" {
+			if block, ok := tc.Verification["failure"].(map[string]any); ok && len(block) > 0 {
+				failure = block
+			}
+		}
 		evidenceRefs = appendMissingStrings(evidenceRefs, stringSliceFromAny(tc.Verification["evidence_refs"])...)
 		evidence = appendEvidenceArtifacts(evidence, evidenceArtifactsFromAny(tc.Verification["evidence"])...)
 		evidence = appendEvidenceArtifacts(evidence, tc.Evidence...)
@@ -1529,6 +1547,9 @@ func aggregateDynamicCaseVerification(cases []dynamicCaseCompletion) map[string]
 	out := map[string]any{
 		"status": status,
 		"cases":  dynamicCaseVerificationSummaries(cases),
+	}
+	if failure != nil {
+		out["failure"] = failure
 	}
 	if len(reasons) > 0 {
 		out["reasons"] = reasons
@@ -1558,6 +1579,9 @@ func dynamicCaseVerificationSummaries(cases []dynamicCaseCompletion) []map[strin
 			"index":  tc.Index,
 			"label":  dynamicCaseCompletionLabel(tc),
 			"status": strings.TrimSpace(fmt.Sprint(tc.Verification["status"])),
+		}
+		if block, ok := tc.Verification["failure"].(map[string]any); ok && len(block) > 0 {
+			item["failure"] = block
 		}
 		out = append(out, item)
 	}

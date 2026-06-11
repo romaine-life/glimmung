@@ -639,4 +639,3 @@ func TestInspectionLeaseResolverMatchesTankSession(t *testing.T) {
 		t.Fatalf("expected ErrNotFound got %v", missErr)
 	}
 }
-

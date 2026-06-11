@@ -16,12 +16,28 @@ import (
 	"github.com/romaine-life/glimmung/internal/metrics"
 )
 
+// VerificationFailure is the structured why of a non-pass verification: the
+// claim being verified, the literal contradicting observation, where it was
+// observed, and the verifier's causal classification (code_bug |
+// test_expectation_mismatch | environment_config | harness_flake). Producers
+// emit it as the `failure` block of verification.json; it rides the attempt
+// record into reports, abort explanations, and the next recycle cycle's
+// prior-verification context.
+type VerificationFailure struct {
+	Expected       string `json:"expected,omitempty"`
+	Observed       string `json:"observed,omitempty"`
+	Where          string `json:"where,omitempty"`
+	SuspectedCause string `json:"suspected_cause,omitempty"`
+	CauseDetail    string `json:"cause_detail,omitempty"`
+}
+
 // CompletionPayload carries the completion data to stamp on a run attempt.
 type CompletionPayload struct {
 	JobID               *string
 	Conclusion          string
 	VerificationStatus  string
 	VerificationReasons []string
+	VerificationFailure *VerificationFailure
 	EvidenceRefs        []string
 	Evidence            []EvidenceArtifact
 	CostUSD             float64
@@ -353,9 +369,38 @@ func extractVerification(raw map[string]any, p *CompletionPayload) {
 			}
 		}
 	}
+	p.VerificationFailure = verificationFailureFromAny(raw["failure"])
 	p.EvidenceRefs = stringSliceFromVerification(raw["evidence_refs"])
 	p.Evidence = EvidenceArtifactsFromVerificationPayload(raw)
 	p.EvidenceRefs = appendMissingStrings(p.EvidenceRefs, EvidenceRefsFromArtifacts(p.Evidence)...)
+}
+
+// verificationFailureFromAny parses a verification.json `failure` block.
+// Returns nil for absent, non-object, or all-empty blocks so storage and
+// reports never carry a hollow failure record.
+func verificationFailureFromAny(raw any) *VerificationFailure {
+	block, ok := raw.(map[string]any)
+	if !ok || len(block) == 0 {
+		return nil
+	}
+	stringField := func(key string) string {
+		if s, ok := block[key].(string); ok {
+			return strings.TrimSpace(s)
+		}
+		return ""
+	}
+	failure := &VerificationFailure{
+		Expected:       stringField("expected"),
+		Observed:       stringField("observed"),
+		Where:          stringField("where"),
+		SuspectedCause: stringField("suspected_cause"),
+		CauseDetail:    stringField("cause_detail"),
+	}
+	if failure.Expected == "" && failure.Observed == "" && failure.Where == "" &&
+		failure.SuspectedCause == "" && failure.CauseDetail == "" {
+		return nil
+	}
+	return failure
 }
 
 func stringSliceFromVerification(raw any) []string {
@@ -1141,6 +1186,7 @@ func dispatchRetry(
 	if err != nil {
 		return fmt.Errorf("substitute retry phase inputs: %w", err)
 	}
+	priorVerification := priorVerificationForRetry(run, failingPhase)
 	recycle, err := store.CreateRecycleCycle(ctx, CreateRecycleCycleRequest{
 		Parent:               run,
 		WorkflowSchemaRef:    wf.SchemaRef,
@@ -1148,6 +1194,7 @@ func dispatchRetry(
 		CarryForwardAttempts: carryForwardAttempts,
 		TriggerSource:        map[string]any{"kind": "recycle_policy", "recycled_from_run_id": run.ID, "failing_phase": failingPhase},
 		EvidenceRequirements: run.EvidenceRequirements,
+		PriorVerification:    priorVerification,
 	})
 	if err != nil {
 		return fmt.Errorf("create recycle cycle: %w", err)
@@ -1187,6 +1234,7 @@ func dispatchRetry(
 		TriggerSource:        map[string]any{"kind": "recycle_policy", "recycled_from_run_id": run.ID, "failing_phase": failingPhase},
 		RunInputs:            run.RunInputs,
 		EvidenceRequirements: run.EvidenceRequirements,
+		PriorVerification:    priorVerification,
 		Attempts: append(append([]RunAttemptData{}, recycle.CarryForwardAttempts...), RunAttemptData{
 			AttemptIndex: newAttemptIdx,
 			Phase:        targetPhase.Name,
@@ -1209,6 +1257,26 @@ func dispatchRetry(
 		return fmt.Errorf("native dispatch: %w", err)
 	}
 	_ = recordLaunchedNativeJobs(ctx, store, recycleRun, *targetPhase, launched)
+	return nil
+}
+
+// priorVerificationForRetry extracts the deciding verification from the
+// failing phase's latest attempt on the parent cycle. Nil when the attempt
+// carried no verification (e.g. a malformed producer).
+func priorVerificationForRetry(parent RunReplayData, failingPhase string) *PriorVerificationData {
+	for i := len(parent.Attempts) - 1; i >= 0; i-- {
+		attempt := parent.Attempts[i]
+		if attempt.Phase != failingPhase {
+			continue
+		}
+		if attempt.Verification == nil {
+			return nil
+		}
+		return &PriorVerificationData{
+			Phase:        attempt.Phase,
+			Verification: *attempt.Verification,
+		}
+	}
 	return nil
 }
 

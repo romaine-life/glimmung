@@ -116,4 +116,3 @@ func sweepLeaseInspections(ctx context.Context, store ReadStore, lease Lease, lo
 		}
 	}
 }
-

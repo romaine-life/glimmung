@@ -3677,6 +3677,16 @@ function AttemptCard({
   const verificationReasons = verification && Array.isArray(verification.reasons)
     ? verification.reasons.filter((r): r is string => typeof r === "string")
     : [];
+  // Structured failure block (expected / observed / where / suspected
+  // cause) emitted by producers on a non-pass verdict. Renders the why
+  // above the raw reasons list so a failed attempt reads as
+  // expected-vs-observed instead of a bare enum.
+  const verificationFailure = verification && isRecord(verification.failure) ? verification.failure : null;
+  const failureExpected = verificationFailure ? stringOrNull(verificationFailure.expected) : null;
+  const failureObserved = verificationFailure ? stringOrNull(verificationFailure.observed) : null;
+  const failureWhere = verificationFailure ? stringOrNull(verificationFailure.where) : null;
+  const failureCause = verificationFailure ? stringOrNull(verificationFailure.suspected_cause) : null;
+  const failureCauseDetail = verificationFailure ? stringOrNull(verificationFailure.cause_detail) : null;
   const phaseKind = stringOrNull(meta.phase_kind);
   const attemptIndex = numberOrNull(meta.attempt_index);
   const logArchiveUrl = stringOrNull(meta.log_archive_url);
@@ -3776,6 +3786,32 @@ function AttemptCard({
           </div>
         )}
       </div>
+      {(failureExpected || failureObserved || failureCause) && (
+        <div className="attempt-card-failure">
+          {failureExpected && (
+            <div>
+              <span className="key">expected</span>{" "}
+              <span className="mono">{failureExpected}</span>
+            </div>
+          )}
+          {failureObserved && (
+            <div>
+              <span className="key">observed</span>{" "}
+              <span className="mono">
+                {failureObserved}
+                {failureWhere ? ` [${failureWhere}]` : ""}
+              </span>
+            </div>
+          )}
+          {failureCause && (
+            <div>
+              <span className="key">suspected cause</span>{" "}
+              <span className="mono">{failureCause}</span>
+              {failureCauseDetail ? <span className="dim"> — {failureCauseDetail}</span> : null}
+            </div>
+          )}
+        </div>
+      )}
       {verificationReasons.length > 0 && (
         <ul className="attempt-card-reasons">
           {verificationReasons.map((r, i) => (

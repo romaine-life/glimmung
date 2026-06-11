@@ -457,3 +457,46 @@ func TestAbortExplanationRequestedFallbackWhenReasonMissing(t *testing.T) {
 		t.Fatalf("unexpected explanation: %s", text)
 	}
 }
+
+func TestAbortExplanationIncludesVerificationFailureDetail(t *testing.T) {
+	failing := attemptWithReasons("agent", VerificationFail, "failure", "verifier reported status=abort reason=claimed_result_not_observed")
+	failing.Verification.Failure = &VerificationFailure{
+		Expected:       "release-pulse launches a brief 5-10 lantern cluster",
+		Observed:       "event log shows release-pulse counts of 13 and 12",
+		Where:          "event log",
+		SuspectedCause: "test_expectation_mismatch",
+		CauseDetail:    "the claim assumes schema-default cluster knobs the session does not carry",
+	}
+	text, err := AbortExplanation(
+		run([]Attempt{failing}, 3.0, 25.0),
+		workflow(withMaxAttempts(1)),
+		AbortBudgetAttempts,
+	)
+	if err != nil {
+		t.Fatalf("AbortExplanation returned error: %v", err)
+	}
+	for _, want := range []string{
+		"Verification failure detail:",
+		"expected: release-pulse launches a brief 5-10 lantern cluster",
+		"observed: event log shows release-pulse counts of 13 and 12 [event log]",
+		"suspected cause: test_expectation_mismatch — the claim assumes schema-default cluster knobs the session does not carry",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("explanation missing %q:\n%s", want, text)
+		}
+	}
+}
+
+func TestAbortExplanationOmitsFailureSectionWhenAbsent(t *testing.T) {
+	text, err := AbortExplanation(
+		run([]Attempt{attemptWithReasons("agent", VerificationFail, "failure", "some reason")}, 3.0, 25.0),
+		workflow(withMaxAttempts(1)),
+		AbortBudgetAttempts,
+	)
+	if err != nil {
+		t.Fatalf("AbortExplanation returned error: %v", err)
+	}
+	if strings.Contains(text, "Verification failure detail:") {
+		t.Fatalf("explanation should omit failure section when no failure block present:\n%s", text)
+	}
+}

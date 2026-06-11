@@ -2069,3 +2069,82 @@ func TestNativeRunCompletedByCallbackTokenEvidenceGateRetryCanRestartAtEnvPrep(t
 		t.Fatalf("recycle request=%#v", store.recycleReq)
 	}
 }
+
+func TestCompletionPayloadFromNativeExtractsVerificationFailure(t *testing.T) {
+	jobID := "verify"
+	payload := completionPayloadFromNative(NativeRunCompletedRequest{
+		JobID:      &jobID,
+		Conclusion: "failure",
+		Verification: map[string]any{
+			"status":  "fail",
+			"reasons": []any{"verifier reported status=abort reason=claimed_result_not_observed"},
+			"failure": map[string]any{
+				"expected":        "release-pulse launches a brief 5-10 lantern cluster",
+				"observed":        "event log shows counts of 13 and 12",
+				"where":           "event log",
+				"suspected_cause": "test_expectation_mismatch",
+				"cause_detail":    "claim assumed schema defaults",
+			},
+		},
+	})
+	failure := payload.VerificationFailure
+	if failure == nil {
+		t.Fatal("expected verification failure block to be parsed")
+	}
+	if failure.Expected != "release-pulse launches a brief 5-10 lantern cluster" ||
+		failure.Observed != "event log shows counts of 13 and 12" ||
+		failure.Where != "event log" ||
+		failure.SuspectedCause != "test_expectation_mismatch" ||
+		failure.CauseDetail != "claim assumed schema defaults" {
+		t.Fatalf("failure=%#v", failure)
+	}
+}
+
+func TestCompletionPayloadFromNativeIgnoresEmptyOrMalformedFailure(t *testing.T) {
+	jobID := "verify"
+	for name, failure := range map[string]any{
+		"absent":     nil,
+		"non-object": "claimed_result_not_observed",
+		"empty":      map[string]any{},
+		"all-blank":  map[string]any{"expected": "  ", "observed": ""},
+	} {
+		verification := map[string]any{"status": "fail"}
+		if failure != nil {
+			verification["failure"] = failure
+		}
+		payload := completionPayloadFromNative(NativeRunCompletedRequest{
+			JobID:        &jobID,
+			Conclusion:   "failure",
+			Verification: verification,
+		})
+		if payload.VerificationFailure != nil {
+			t.Fatalf("%s: expected nil failure, got %#v", name, payload.VerificationFailure)
+		}
+	}
+}
+
+func TestPriorVerificationForRetryPicksDecidingAttempt(t *testing.T) {
+	failure := &VerificationFailure{Expected: "x", Observed: "y", SuspectedCause: "code_bug"}
+	parent := RunReplayData{Attempts: []RunAttemptData{
+		{Phase: "prepare", Conclusion: "success"},
+		{Phase: "llm-verify", Verification: &RunVerificationData{Status: "fail", Reasons: []string{"old attempt"}}},
+		{Phase: "llm-verify", Verification: &RunVerificationData{Status: "fail", Reasons: []string{"deciding attempt"}, Failure: failure}},
+	}}
+	prior := priorVerificationForRetry(parent, "llm-verify")
+	if prior == nil {
+		t.Fatal("expected prior verification")
+	}
+	if prior.Phase != "llm-verify" || len(prior.Verification.Reasons) != 1 || prior.Verification.Reasons[0] != "deciding attempt" {
+		t.Fatalf("prior=%#v", prior)
+	}
+	if prior.Verification.Failure == nil || prior.Verification.Failure.SuspectedCause != "code_bug" {
+		t.Fatalf("failure=%#v", prior.Verification.Failure)
+	}
+	if priorVerificationForRetry(parent, "missing-phase") != nil {
+		t.Fatal("expected nil for unknown phase")
+	}
+	noVerification := RunReplayData{Attempts: []RunAttemptData{{Phase: "llm-verify", Conclusion: "failure"}}}
+	if priorVerificationForRetry(noVerification, "llm-verify") != nil {
+		t.Fatal("expected nil when deciding attempt has no verification")
+	}
+}

@@ -13,7 +13,7 @@ import (
 // inline (records stripped projects without persisting a real change).
 type migrationFakeStore struct {
 	*fakeSlotStore
-	projects        []Project
+	projects         []Project
 	strippedProjects map[string]bool
 }
 

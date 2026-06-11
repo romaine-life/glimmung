@@ -101,6 +101,11 @@ type CreateRecycleCycleRequest struct {
 	CarryForwardAttempts []RunAttemptData
 	TriggerSource        map[string]any
 	EvidenceRequirements []EvidenceRequirement
+	// PriorVerification is the deciding (failing) verification of the
+	// parent cycle. Persisted on the recycle run and exposed to its pods
+	// as GLIMMUNG_PRIOR_VERIFICATION_JSON so the retry plans against the
+	// previous failure instead of rediscovering it.
+	PriorVerification *PriorVerificationData
 }
 
 // RunDispatchStore provides all store operations needed by the dispatch handler.

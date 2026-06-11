@@ -57,6 +57,7 @@ type RunReplayData struct {
 	PreserveTestEnv      bool
 	State                string
 	TerminalObservation  *RunTerminalObservation
+	PriorVerification    *PriorVerificationData
 }
 
 // RunAttemptData holds one attempt's decision-engine-relevant fields.
@@ -73,10 +74,21 @@ type RunAttemptData struct {
 
 // RunVerificationData holds the status and reasons from a verification result.
 type RunVerificationData struct {
-	Status       string
-	Reasons      []string
-	EvidenceRefs []string
-	Evidence     []EvidenceArtifact
+	Status       string               `json:"status"`
+	Reasons      []string             `json:"reasons"`
+	Failure      *VerificationFailure `json:"failure,omitempty"`
+	EvidenceRefs []string             `json:"evidence_refs,omitempty"`
+	Evidence     []EvidenceArtifact   `json:"evidence,omitempty"`
+}
+
+// PriorVerificationData carries the deciding (failing) verification of the
+// cycle a recycle was created from. It is persisted on the new cycle's run
+// record and exposed to its native pods as GLIMMUNG_PRIOR_VERIFICATION_JSON,
+// so retry attempts plan and implement against the previous failure instead
+// of rediscovering it. Phase names the verify phase that failed.
+type PriorVerificationData struct {
+	Phase        string              `json:"phase"`
+	Verification RunVerificationData `json:"verification"`
 }
 
 // SyntheticCompletion mirrors the /completed callback body for in-memory replay.
@@ -223,6 +235,7 @@ func replayRunDecisionByNumber(store ReadStore) http.HandlerFunc {
 				last.Verification = &decision.Verification{
 					Status:  decision.VerificationStatus(statusRaw),
 					Reasons: reasons,
+					Failure: decisionFailureFromServer(verificationFailureFromAny(req.SyntheticCompletion.Verification["failure"])),
 				}
 			} else {
 				last.Verification = nil
@@ -320,6 +333,22 @@ func serverPhasesToDecisionWorkflow(phases []PhaseSpec) decision.Workflow {
 	return decision.Workflow{Phases: dPhases}
 }
 
+// decisionFailureFromServer converts the server-side verification failure
+// block into the decision package's mirror so abort explanations can render
+// expected/observed/suspected-cause without importing server types.
+func decisionFailureFromServer(failure *VerificationFailure) *decision.VerificationFailure {
+	if failure == nil {
+		return nil
+	}
+	return &decision.VerificationFailure{
+		Expected:       failure.Expected,
+		Observed:       failure.Observed,
+		Where:          failure.Where,
+		SuspectedCause: failure.SuspectedCause,
+		CauseDetail:    failure.CauseDetail,
+	}
+}
+
 func decisionAttemptsForRun(run RunReplayData) []decision.Attempt {
 	attempts := make([]decision.Attempt, len(run.Attempts))
 	for i, a := range run.Attempts {
@@ -332,6 +361,7 @@ func decisionAttemptsForRun(run RunReplayData) []decision.Attempt {
 			attempts[i].Verification = &decision.Verification{
 				Status:  decision.VerificationStatus(a.Verification.Status),
 				Reasons: a.Verification.Reasons,
+				Failure: decisionFailureFromServer(a.Verification.Failure),
 			}
 		}
 	}

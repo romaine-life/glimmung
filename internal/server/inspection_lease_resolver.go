@@ -54,4 +54,3 @@ func (r *inspectionLeaseResolver) ResolveTestSlotLeaseByTankSession(ctx context.
 	sortLeasesForReturn(candidates)
 	return candidates[0], nil
 }
-

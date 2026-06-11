@@ -87,8 +87,8 @@ type WorkflowRegister struct {
 	// See Workflow.DispatchInputs for the contract; ValidateWorkflowRegister
 	// rejects any `${{ inputs.X }}` ref in checkout/extra_checkouts/workflow_ref
 	// that does not name a declared input.
-	DispatchInputs      []DispatchInputSpec `json:"dispatch_inputs,omitempty"`
-	Metadata            map[string]any      `json:"metadata"`
+	DispatchInputs []DispatchInputSpec `json:"dispatch_inputs,omitempty"`
+	Metadata       map[string]any      `json:"metadata"`
 }
 
 type WorkflowPatchStore interface {
