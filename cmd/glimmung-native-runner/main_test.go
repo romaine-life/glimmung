@@ -3,11 +3,13 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -756,6 +758,83 @@ func TestNativeRunnerSuppressesEvidenceTarPayloadLogs(t *testing.T) {
 			t.Fatalf("expected omitted payload summary event, got %+v", snapshot)
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// Multi-line step output must replay in emission order. Sequence numbers are
+// the events API's only order contract, so they must be allocated at
+// line-forward time (caller order), not inside the per-line POST goroutine
+// where the scheduler can run later lines first. Regression for the
+// scrambled JSON verdict on ambience#167 run 5.1 emit-case-03.
+func TestNativeRunnerPreservesLogLineOrderForMultiLineOutput(t *testing.T) {
+	const lineCount = 80
+	var (
+		mu     sync.Mutex
+		events []nativeEventRequest
+	)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/events" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		var event nativeEventRequest
+		_ = json.NewDecoder(r.Body).Decode(&event)
+		mu.Lock()
+		events = append(events, event)
+		mu.Unlock()
+		_ = json.NewEncoder(w).Encode(map[string]any{"accepted": true})
+	}))
+	defer server.Close()
+
+	workspace := t.TempDir()
+	r := &nativeRunner{
+		cfg: runnerConfig{
+			EventsURL: server.URL + "/events",
+			Workspace: workspace,
+			Job: jobSpec{
+				WorkingDirectory: workspace,
+				Shell:            "sh",
+			},
+		},
+		client:  server.Client(),
+		outputs: map[string]string{},
+	}
+
+	script := fmt.Sprintf("i=0; while [ \"$i\" -lt %d ]; do printf 'ordered-line-%%s\\n' \"$i\"; i=$((i + 1)); done", lineCount)
+	exitCode, err := r.executeStep(context.Background(), stepSpec{Slug: "emit", Run: script}, filepath.Join(workspace, "out"), filepath.Join(workspace, "completion"))
+	if err != nil || exitCode != 0 {
+		t.Fatalf("executeStep exit=%d err=%v", exitCode, err)
+	}
+
+	// Log posts are fire-and-forget goroutines; wait for all lines to land.
+	deadline := time.Now().Add(5 * time.Second)
+	var ordered []nativeEventRequest
+	for {
+		mu.Lock()
+		ordered = ordered[:0]
+		for _, event := range events {
+			if event.Event != "log" || event.Message == nil || !strings.HasPrefix(*event.Message, "ordered-line-") {
+				continue
+			}
+			ordered = append(ordered, event)
+		}
+		mu.Unlock()
+		if len(ordered) >= lineCount {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("expected %d ordered log events, got %d", lineCount, len(ordered))
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	// Replay exactly as the events API does: strictly by seq.
+	sort.Slice(ordered, func(i, j int) bool { return ordered[i].Seq < ordered[j].Seq })
+	for i, event := range ordered {
+		want := fmt.Sprintf("ordered-line-%d", i)
+		if *event.Message != want {
+			t.Fatalf("log order scrambled at seq index %d: got %q want %q (seq=%d)", i, *event.Message, want, event.Seq)
+		}
 	}
 }
 

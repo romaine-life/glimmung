@@ -84,16 +84,16 @@ type checkoutSpec struct {
 }
 
 type runnerConfig struct {
-	Job             jobSpec
-	JobID           string
-	AttemptIndex    *int
-	EventsURL       string
-	CompletedURL    string
-	GitHubTokenURL  string
+	Job                 jobSpec
+	JobID               string
+	AttemptIndex        *int
+	EventsURL           string
+	CompletedURL        string
+	GitHubTokenURL      string
 	GitHubAgentTokenURL string
-	AttemptToken    string
-	Workspace       string
-	AgentRuntime    agentruntime.Snapshot
+	AttemptToken        string
+	Workspace           string
+	AgentRuntime        agentruntime.Snapshot
 }
 
 type nativeRunner struct {
@@ -238,16 +238,16 @@ func runnerConfigFromEnv() (runnerConfig, error) {
 		}
 	}
 	return runnerConfig{
-		Job:             job,
-		JobID:           jobID,
-		AttemptIndex:    attemptIndex,
-		EventsURL:       strings.TrimSpace(os.Getenv("GLIMMUNG_EVENTS_URL")),
-		CompletedURL:    strings.TrimSpace(os.Getenv("GLIMMUNG_COMPLETED_URL")),
-		GitHubTokenURL:  strings.TrimSpace(os.Getenv("GLIMMUNG_GITHUB_TOKEN_URL")),
+		Job:                 job,
+		JobID:               jobID,
+		AttemptIndex:        attemptIndex,
+		EventsURL:           strings.TrimSpace(os.Getenv("GLIMMUNG_EVENTS_URL")),
+		CompletedURL:        strings.TrimSpace(os.Getenv("GLIMMUNG_COMPLETED_URL")),
+		GitHubTokenURL:      strings.TrimSpace(os.Getenv("GLIMMUNG_GITHUB_TOKEN_URL")),
 		GitHubAgentTokenURL: strings.TrimSpace(os.Getenv("GLIMMUNG_GITHUB_AGENT_TOKEN_URL")),
-		AttemptToken:    token,
-		Workspace:       firstNonEmpty(os.Getenv("GLIMMUNG_WORKSPACE"), defaultWorkspace),
-		AgentRuntime:    runtime,
+		AttemptToken:        token,
+		Workspace:           firstNonEmpty(os.Getenv("GLIMMUNG_WORKSPACE"), defaultWorkspace),
+		AgentRuntime:        runtime,
 	}, nil
 }
 
@@ -886,20 +886,20 @@ func agentPostCommitReminderHook(marker string) string {
 
 func agentStepBaseEnv(base []string) []string {
 	blocked := map[string]bool{
-		"GLIMMUNG_ATTEMPT_TOKEN":            true,
-		"GLIMMUNG_EVENTS_URL":               true,
-		"GLIMMUNG_STATUS_URL":               true,
-		"GLIMMUNG_COMPLETED_URL":            true,
-		"GLIMMUNG_GITHUB_TOKEN_URL":         true,
-		"GLIMMUNG_GITHUB_AGENT_TOKEN_URL":    true,
-		"GLIMMUNG_GITHUB_PUSH_POLICY_TOKEN": true,
+		"GLIMMUNG_ATTEMPT_TOKEN":                true,
+		"GLIMMUNG_EVENTS_URL":                   true,
+		"GLIMMUNG_STATUS_URL":                   true,
+		"GLIMMUNG_COMPLETED_URL":                true,
+		"GLIMMUNG_GITHUB_TOKEN_URL":             true,
+		"GLIMMUNG_GITHUB_AGENT_TOKEN_URL":       true,
+		"GLIMMUNG_GITHUB_PUSH_POLICY_TOKEN":     true,
 		"GLIMMUNG_GITHUB_PUSH_POLICY_TOKEN_URL": true,
-		"GLIMMUNG_PR_TOUCHPOINT_URL":        true,
-		"GLIMMUNG_PR_MERGE_URL":             true,
-		"GLIMMUNG_SSH_CERT_URL":             true,
-		"GLIMMUNG_TAILSCALE_AUTHKEY_URL":    true,
-		"GITHUB_TOKEN":                      true,
-		"GH_TOKEN":                          true,
+		"GLIMMUNG_PR_TOUCHPOINT_URL":            true,
+		"GLIMMUNG_PR_MERGE_URL":                 true,
+		"GLIMMUNG_SSH_CERT_URL":                 true,
+		"GLIMMUNG_TAILSCALE_AUTHKEY_URL":        true,
+		"GITHUB_TOKEN":                          true,
+		"GH_TOKEN":                              true,
 	}
 	filtered := make([]string, 0, len(base))
 	for _, row := range base {
@@ -1154,10 +1154,22 @@ func (r *nativeRunner) forwardLogLine(ctx context.Context, stepSlug, stream, lin
 }
 
 func (r *nativeRunner) postLogEvent(ctx context.Context, stepSlug, stream, line string) {
+	if r.cfg.EventsURL == "" {
+		return
+	}
+	// Allocate the sequence number HERE, in caller order, before handing the
+	// HTTP POST to a goroutine. Log lines are read from the step's pipe in
+	// order, but goroutine scheduling is not FIFO — assigning seq inside the
+	// goroutine let later lines claim earlier sequence numbers, and the
+	// events API (which orders strictly by seq) then replayed multi-line
+	// output scrambled. Seen on ambience#167 run 5.1 emit-case-03, where a
+	// pretty-printed JSON verdict came back shuffled. Network arrival order
+	// is irrelevant; seq is the order contract.
+	seq := r.nextSeq()
 	go func() {
 		postCtx, cancel := context.WithTimeout(ctx, logEventPostTimeout)
 		defer cancel()
-		_ = r.postEvent(postCtx, "log", &stepSlug, line, nil, map[string]any{"stream": stream})
+		_ = r.postEventWithSeq(postCtx, seq, "log", &stepSlug, line, nil, map[string]any{"stream": stream})
 	}()
 }
 
@@ -1283,14 +1295,25 @@ func shellSingleQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", `'\''`) + "'"
 }
 
-func (r *nativeRunner) postEvent(ctx context.Context, event string, stepSlug *string, message string, exitCode *int, metadata map[string]any) error {
-	if r.cfg.EventsURL == "" {
-		return nil
-	}
+func (r *nativeRunner) nextSeq() int {
 	r.mu.Lock()
 	r.seq++
 	seq := r.seq
 	r.mu.Unlock()
+	return seq
+}
+
+func (r *nativeRunner) postEvent(ctx context.Context, event string, stepSlug *string, message string, exitCode *int, metadata map[string]any) error {
+	if r.cfg.EventsURL == "" {
+		return nil
+	}
+	return r.postEventWithSeq(ctx, r.nextSeq(), event, stepSlug, message, exitCode, metadata)
+}
+
+func (r *nativeRunner) postEventWithSeq(ctx context.Context, seq int, event string, stepSlug *string, message string, exitCode *int, metadata map[string]any) error {
+	if r.cfg.EventsURL == "" {
+		return nil
+	}
 	var messagePtr *string
 	if message != "" {
 		messagePtr = &message
