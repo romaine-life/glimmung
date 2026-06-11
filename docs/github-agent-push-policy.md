@@ -21,7 +21,14 @@ per run, **repo-scoped and minimally permissioned**:
 
 - `contents: write` — push the implementation branch.
 - `metadata: read` — baseline.
-- `checks: read` — read the draft PR's CI check-runs (the agent's CI-feedback loop).
+
+The requested set must stay within the App installation's grant — GitHub
+rejects the entire mint (`422 The permissions requested are not granted to
+this installation`) when any requested permission is ungranted, which is how
+an earlier `checks: read` request broke every managed-step mint
+(ambience#167 run 7.1). CI check-runs are readable without `checks: read` on
+public repos; when a private project onboards, grant `checks: read` on the
+App installation first, then widen the requested set.
 
 > Earlier designs kept the GitHub token at a proxy and handed the agent a signed
 > "push-policy token" instead of a real GitHub token. That is **retired**: the

@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -153,13 +154,25 @@ func writeNativeGitHubAgentToken(w http.ResponseWriter, r *http.Request, store R
 		writeProblem(w, http.StatusConflict, "run has no issue repo")
 		return
 	}
+	// Request exactly the permissions the App installation holds and the
+	// agent contract needs. The installation grants {issues, actions,
+	// contents, metadata, workflows, pull_requests}; requesting anything
+	// outside the grant makes GitHub 422 the whole mint ("The permissions
+	// requested are not granted to this installation") — the prior set
+	// included checks:read and had never minted successfully (ambience#167
+	// run 7.1). CI check-runs are readable without checks:read on public
+	// repos; if a private project onboards, grant checks:read on the App
+	// first and then widen this set.
 	permissions := map[string]string{
 		"contents": "write",
 		"metadata": "read",
-		"checks":   "read",
 	}
 	token, err := minter.RepositoryInstallationToken(r.Context(), repo, permissions)
 	if err != nil {
+		slog.Error("mint repo-scoped GitHub agent token failed",
+			"repo", repo,
+			"error", err,
+		)
 		writeProblem(w, http.StatusBadGateway, "mint repo-scoped GitHub token failed")
 		return
 	}
