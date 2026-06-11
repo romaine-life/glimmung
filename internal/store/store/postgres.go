@@ -1736,9 +1736,10 @@ type nativeStepDoc struct {
 }
 
 type agentStepDoc struct {
-	Slot       string `json:"slot,omitempty"`
-	Prompt     string `json:"prompt,omitempty"`
-	PromptFile string `json:"promptFile,omitempty"`
+	Slot        string `json:"slot,omitempty"`
+	Prompt      string `json:"prompt,omitempty"`
+	PromptFile  string `json:"promptFile,omitempty"`
+	GithubToken bool   `json:"githubToken,omitempty"`
 }
 
 type nativeCheckoutDoc struct {
@@ -2641,9 +2642,10 @@ func agentStepDocFromSpec(step *server.AgentStepSpec) *agentStepDoc {
 		return nil
 	}
 	return &agentStepDoc{
-		Slot:       step.Slot,
-		Prompt:     step.Prompt,
-		PromptFile: step.PromptFile,
+		Slot:        step.Slot,
+		Prompt:      step.Prompt,
+		PromptFile:  step.PromptFile,
+		GithubToken: step.GithubToken,
 	}
 }
 
@@ -2870,9 +2872,10 @@ func agentStepFromDoc(doc *agentStepDoc) *server.AgentStepSpec {
 		return nil
 	}
 	return &server.AgentStepSpec{
-		Slot:       doc.Slot,
-		Prompt:     doc.Prompt,
-		PromptFile: doc.PromptFile,
+		Slot:        doc.Slot,
+		Prompt:      doc.Prompt,
+		PromptFile:  doc.PromptFile,
+		GithubToken: doc.GithubToken,
 	}
 }
 
