@@ -161,6 +161,11 @@ type AgentStepSpec struct {
 	Slot       string `json:"slot,omitempty"`
 	Prompt     string `json:"prompt,omitempty"`
 	PromptFile string `json:"prompt_file,omitempty"`
+	// GithubToken opts the managed agent step into the repo-scoped GitHub
+	// token contract (docs/github-agent-push-policy.md): the runner mints
+	// per run and hands the agent GITHUB_TOKEN_FILE. Implementation steps
+	// only — read-only stages must not set it.
+	GithubToken bool `json:"github_token,omitempty"`
 }
 
 // PrPrimitive declares the workflow's PR recycle policy. Every Glimmung

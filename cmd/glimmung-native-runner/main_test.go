@@ -1084,3 +1084,76 @@ func TestAgentPromptIncludesPriorVerification(t *testing.T) {
 		t.Fatalf("prompt should omit prior verification section when env empty:\n%s", prompt)
 	}
 }
+
+func TestExecuteAgentStepMintsGithubTokenWhenRequested(t *testing.T) {
+	var minted int
+	var mu sync.Mutex
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/github-agent-token":
+			mu.Lock()
+			minted++
+			mu.Unlock()
+			_ = json.NewEncoder(w).Encode(map[string]any{"token": "ghs_test_token", "repo": "romaine-life/ambience"})
+		case "/events":
+			_ = json.NewEncoder(w).Encode(map[string]any{"accepted": true})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	workspace := t.TempDir()
+	r := &nativeRunner{
+		cfg: runnerConfig{
+			EventsURL:           server.URL + "/events",
+			GitHubAgentTokenURL: server.URL + "/github-agent-token",
+			Workspace:           workspace,
+			Job:                 jobSpec{WorkingDirectory: workspace, Shell: "bash"},
+		},
+		client:  server.Client(),
+		outputs: map[string]string{},
+	}
+
+	// The agent CLI is not present in the test environment, so exercise the
+	// internals executeAgentStep composes: the mint (URL, file contents,
+	// permissions) and the preamble's credential wiring.
+	tokenFile, err := r.mintAgentGithubTokenFile(context.Background())
+	if err != nil {
+		t.Fatalf("mintAgentGithubTokenFile: %v", err)
+	}
+	defer os.Remove(tokenFile)
+	data, err := os.ReadFile(tokenFile)
+	if err != nil || string(data) != "ghs_test_token" {
+		t.Fatalf("token file contents=%q err=%v", string(data), err)
+	}
+	info, err := os.Stat(tokenFile)
+	if err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("token file mode=%v err=%v", info.Mode(), err)
+	}
+	mu.Lock()
+	if minted != 1 {
+		mu.Unlock()
+		t.Fatalf("minted=%d", minted)
+	}
+	mu.Unlock()
+
+	// The shared preamble wires git credentials when GITHUB_TOKEN_FILE is set.
+	preamble := agentShellPreamble()
+	for _, want := range []string{
+		`if [ -n "${GITHUB_TOKEN_FILE:-}" ]`,
+		"credential.https://github.com.username",
+		"credential.https://github.com.helper",
+	} {
+		if !strings.Contains(preamble, want) {
+			t.Fatalf("preamble missing %q:\n%s", want, preamble)
+		}
+	}
+}
+
+func TestMintAgentGithubTokenFileRequiresURL(t *testing.T) {
+	r := &nativeRunner{cfg: runnerConfig{}}
+	if _, err := r.mintAgentGithubTokenFile(context.Background()); err == nil {
+		t.Fatal("expected error when GLIMMUNG_GITHUB_AGENT_TOKEN_URL unset")
+	}
+}

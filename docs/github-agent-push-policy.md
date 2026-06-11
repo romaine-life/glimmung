@@ -29,11 +29,17 @@ per run, **repo-scoped and minimally permissioned**:
 
 The token is minted by `POST /v1/run-callbacks/{callback_token}/native/github-agent-token`
 (`writeNativeGitHubAgentToken` → `RepositoryInstallationToken(repo, permissions)`).
-The wrapper mints it and mounts it into the implementation agent Job as a file
-(`GITHUB_TOKEN_FILE`, `GITHUB_CREDENTIAL_USERNAME=x-access-token`). The agent
-subprocess does **not** receive Glimmung callback URLs/tokens, the broad
-installation-token URL, PR merge/touchpoint URLs, or SSH/Tailscale mint URLs
-(`agentStepBaseEnv` strips them).
+For glimmung-managed `type: agent` steps, the step opts in with
+`agent.github_token: true` in the workflow registration; the native runner
+mints the token before starting the agent, writes it to a 0600 file, and
+hands the agent subprocess `GITHUB_TOKEN_FILE` +
+`GITHUB_CREDENTIAL_USERNAME=x-access-token` with git credentials configured
+by the shell preamble. Implementation steps set the flag; read-only stages
+(issue-contract, test-plan, verification judging) must not. For the
+script-launched inner-Job path, the project wrapper mints and mounts the
+same file shape. The agent subprocess does **not** receive Glimmung callback
+URLs/tokens, the broad installation-token URL, PR merge/touchpoint URLs, or
+SSH/Tailscale mint URLs (`agentStepBaseEnv` strips them).
 
 ## Branch-scoped push enforcement
 
