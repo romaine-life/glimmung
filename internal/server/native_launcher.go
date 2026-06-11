@@ -1711,7 +1711,7 @@ func nativeJobManifest(settings Settings, req NativeLaunchRequest, job NativeJob
 					"labels":      podLabels,
 					"annotations": annotations,
 				},
-				"spec":        podSpec,
+				"spec": podSpec,
 			},
 		},
 	}
@@ -1805,6 +1805,14 @@ func nativeJobEnv(settings Settings, req NativeLaunchRequest, job NativeJobSpec,
 	if rawRequirements := metadata["evidence_requirements"]; rawRequirements != nil {
 		if payload, err := json.Marshal(rawRequirements); err == nil && string(payload) != "null" {
 			env = appendLiteralEnv(env, seen, "GLIMMUNG_EVIDENCE_REQUIREMENTS_JSON", string(payload))
+		}
+	}
+	if req.Run.PriorVerification != nil {
+		// Recycle cycles carry the parent cycle's deciding verification so
+		// stage prompts can address the previous failure (status, reasons,
+		// and the structured failure block) instead of rediscovering it.
+		if payload, err := json.Marshal(req.Run.PriorVerification); err == nil && string(payload) != "null" {
+			env = appendLiteralEnv(env, seen, "GLIMMUNG_PRIOR_VERIFICATION_JSON", string(payload))
 		}
 	}
 	if rawRuntime := metadata["agent_runtime"]; rawRuntime != nil {

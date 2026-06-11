@@ -2766,6 +2766,15 @@ h2 .inline-action,
 .attempt-card-reasons li {
   margin-bottom: 2px;
 }
+.attempt-card-failure {
+  margin: 8px 0 0;
+  padding: 6px 10px;
+  border-left: 2px solid var(--state-danger-fg);
+  font-size: 0.8rem;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
 .native-inspector {
   margin-top: 12px;
 }

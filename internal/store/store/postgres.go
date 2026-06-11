@@ -1358,19 +1358,19 @@ func (s *Store) readLeaseDocByCallbackToken(ctx context.Context, token string) (
 }
 
 type workflowDoc struct {
-	ID                  string                       `json:"id"`
-	Kind                string                       `json:"kind,omitempty"`
-	Project             string                       `json:"project"`
-	Name                string                       `json:"name"`
-	SchemaRef           string                       `json:"schema_ref,omitempty"`
-	Phases              []phaseDoc                   `json:"phases"`
-	PR                  prDoc                        `json:"pr"`
-	Budget              budgetDoc                    `json:"budget"`
-	Constraints         server.WorkflowConstraints   `json:"constraints,omitempty"`
-	DefaultRequirements map[string]any               `json:"defaultRequirements"`
-	DispatchInputs      []server.DispatchInputSpec   `json:"dispatchInputs,omitempty"`
-	Metadata            map[string]any               `json:"metadata"`
-	CreatedAt           string                       `json:"createdAt"`
+	ID                  string                     `json:"id"`
+	Kind                string                     `json:"kind,omitempty"`
+	Project             string                     `json:"project"`
+	Name                string                     `json:"name"`
+	SchemaRef           string                     `json:"schema_ref,omitempty"`
+	Phases              []phaseDoc                 `json:"phases"`
+	PR                  prDoc                      `json:"pr"`
+	Budget              budgetDoc                  `json:"budget"`
+	Constraints         server.WorkflowConstraints `json:"constraints,omitempty"`
+	DefaultRequirements map[string]any             `json:"defaultRequirements"`
+	DispatchInputs      []server.DispatchInputSpec `json:"dispatchInputs,omitempty"`
+	Metadata            map[string]any             `json:"metadata"`
+	CreatedAt           string                     `json:"createdAt"`
 }
 
 type leaseDoc struct {
@@ -1436,6 +1436,10 @@ type runDoc struct {
 	// flag at dispatch time. Default false. The cleanup_early phase
 	// consults this to decide execute vs `skipped`.
 	PreserveTestEnv bool `json:"preserve_test_env,omitempty"`
+	// PriorVerification is set on recycle cycles: the deciding (failing)
+	// verification of the parent cycle, exposed to this cycle's pods as
+	// GLIMMUNG_PRIOR_VERIFICATION_JSON so retries address the prior failure.
+	PriorVerification *priorVerificationDoc `json:"prior_verification,omitempty"`
 }
 
 type phaseExecutionDoc struct {
@@ -1595,9 +1599,85 @@ type nativeEventDoc struct {
 type verificationDoc struct {
 	Status       string                    `json:"status"`
 	Reasons      []string                  `json:"reasons"`
+	Failure      *verificationFailureDoc   `json:"failure,omitempty"`
 	EvidenceRefs []string                  `json:"evidence_refs"`
 	Evidence     []server.EvidenceArtifact `json:"evidence,omitempty"`
 	CostUSD      float64                   `json:"cost_usd"`
+}
+
+// verificationFailureDoc persists the verifier's structured failure block
+// (expected / observed / where / suspected_cause / cause_detail) alongside
+// the verification status it explains.
+type verificationFailureDoc struct {
+	Expected       string `json:"expected,omitempty"`
+	Observed       string `json:"observed,omitempty"`
+	Where          string `json:"where,omitempty"`
+	SuspectedCause string `json:"suspected_cause,omitempty"`
+	CauseDetail    string `json:"cause_detail,omitempty"`
+}
+
+func verificationFailureDocFromServer(f *server.VerificationFailure) *verificationFailureDoc {
+	if f == nil {
+		return nil
+	}
+	return &verificationFailureDoc{
+		Expected:       f.Expected,
+		Observed:       f.Observed,
+		Where:          f.Where,
+		SuspectedCause: f.SuspectedCause,
+		CauseDetail:    f.CauseDetail,
+	}
+}
+
+func serverVerificationFailureFromDoc(d *verificationFailureDoc) *server.VerificationFailure {
+	if d == nil {
+		return nil
+	}
+	return &server.VerificationFailure{
+		Expected:       d.Expected,
+		Observed:       d.Observed,
+		Where:          d.Where,
+		SuspectedCause: d.SuspectedCause,
+		CauseDetail:    d.CauseDetail,
+	}
+}
+
+// priorVerificationDoc persists the deciding verification of the cycle a
+// recycle was created from, so the new cycle's pods receive it as
+// GLIMMUNG_PRIOR_VERIFICATION_JSON across restarts and resumes.
+type priorVerificationDoc struct {
+	Phase        string          `json:"phase"`
+	Verification verificationDoc `json:"verification"`
+}
+
+func priorVerificationDocFromServer(p *server.PriorVerificationData) *priorVerificationDoc {
+	if p == nil {
+		return nil
+	}
+	return &priorVerificationDoc{
+		Phase: p.Phase,
+		Verification: verificationDoc{
+			Status:       p.Verification.Status,
+			Reasons:      sliceOrEmpty(p.Verification.Reasons),
+			Failure:      verificationFailureDocFromServer(p.Verification.Failure),
+			EvidenceRefs: sliceOrEmpty(p.Verification.EvidenceRefs),
+			Evidence:     sliceOrEmpty(p.Verification.Evidence),
+		},
+	}
+}
+
+func serverPriorVerificationFromDoc(p *priorVerificationDoc) *server.PriorVerificationData {
+	if p == nil {
+		return nil
+	}
+	verification := runVerificationDataFromDoc(&p.Verification)
+	if verification == nil {
+		return nil
+	}
+	return &server.PriorVerificationData{
+		Phase:        p.Phase,
+		Verification: *verification,
+	}
 }
 
 type phaseDoc struct {
@@ -2106,10 +2186,12 @@ func innerJobRefsFromDoc(docs []innerJobDoc) []server.InnerJobRef {
 
 func runReportAttemptFromDoc(doc attemptDoc, lineageByID map[string]string) server.RunReportAttempt {
 	var verificationStatus *string
+	var verificationFailure *server.VerificationFailure
 	evidenceRefs := []string{}
 	var cost *float64
 	if doc.Verification != nil {
 		verificationStatus = optionalNonEmptyStringPtr(doc.Verification.Status)
+		verificationFailure = serverVerificationFailureFromDoc(doc.Verification.Failure)
 		evidenceRefs = sliceOrEmpty(doc.Verification.EvidenceRefs)
 		evidenceRefs = appendMissingStrings(evidenceRefs, server.EvidenceRefsFromArtifacts(doc.Verification.Evidence)...)
 		if doc.CostUSD == nil {
@@ -2129,33 +2211,36 @@ func runReportAttemptFromDoc(doc attemptDoc, lineageByID map[string]string) serv
 		return jobCompletions[i].JobID < jobCompletions[j].JobID
 	})
 	return server.RunReportAttempt{
-		AttemptIndex:       doc.AttemptIndex,
-		Phase:              doc.Phase,
-		PhaseKind:          firstNonEmpty(doc.PhaseKind, "k8s_job"),
-		WorkflowFilename:   doc.WorkflowFilename,
-		CarryForward:       doc.CarryForward,
-		DispatchedAt:       parseTimeOrNow(doc.DispatchedAt),
-		CompletedAt:        parseOptionalTime(doc.CompletedAt),
-		Conclusion:         emptyStringNil(doc.Conclusion),
-		VerificationStatus: verificationStatus,
-		EvidenceRefs:       evidenceRefs,
-		Evidence:           evidence,
-		SummaryMarkdown:    emptyStringNil(doc.SummaryMarkdown),
-		Decision:           emptyStringNil(doc.Decision),
-		CostUSD:            cost,
-		LogArchiveURL:      emptyStringNil(doc.LogArchiveURL),
-		PhaseOutputs:       mapStringOrEmpty(doc.PhaseOutputs),
-		JobCompletions:     jobCompletions,
+		AttemptIndex:        doc.AttemptIndex,
+		Phase:               doc.Phase,
+		PhaseKind:           firstNonEmpty(doc.PhaseKind, "k8s_job"),
+		WorkflowFilename:    doc.WorkflowFilename,
+		CarryForward:        doc.CarryForward,
+		DispatchedAt:        parseTimeOrNow(doc.DispatchedAt),
+		CompletedAt:         parseOptionalTime(doc.CompletedAt),
+		Conclusion:          emptyStringNil(doc.Conclusion),
+		VerificationStatus:  verificationStatus,
+		VerificationFailure: verificationFailure,
+		EvidenceRefs:        evidenceRefs,
+		Evidence:            evidence,
+		SummaryMarkdown:     emptyStringNil(doc.SummaryMarkdown),
+		Decision:            emptyStringNil(doc.Decision),
+		CostUSD:             cost,
+		LogArchiveURL:       emptyStringNil(doc.LogArchiveURL),
+		PhaseOutputs:        mapStringOrEmpty(doc.PhaseOutputs),
+		JobCompletions:      jobCompletions,
 	}
 }
 
 func runAttemptJobCompletionFromDoc(doc nativeJobCompletionDoc) server.RunAttemptJobCompletion {
 	var verificationStatus *string
+	var verificationFailure *server.VerificationFailure
 	verificationReasons := []string{}
 	evidenceRefs := []string{}
 	if doc.Verification != nil {
 		verificationStatus = optionalNonEmptyStringPtr(doc.Verification.Status)
 		verificationReasons = sliceOrEmpty(doc.Verification.Reasons)
+		verificationFailure = serverVerificationFailureFromDoc(doc.Verification.Failure)
 		evidenceRefs = sliceOrEmpty(doc.Verification.EvidenceRefs)
 		evidenceRefs = appendMissingStrings(evidenceRefs, server.EvidenceRefsFromArtifacts(doc.Verification.Evidence)...)
 	}
@@ -2165,6 +2250,7 @@ func runAttemptJobCompletionFromDoc(doc nativeJobCompletionDoc) server.RunAttemp
 		Conclusion:          doc.Conclusion,
 		VerificationStatus:  verificationStatus,
 		VerificationReasons: verificationReasons,
+		VerificationFailure: verificationFailure,
 		EvidenceRefs:        evidenceRefs,
 		Evidence:            sliceOrEmpty(doc.VerificationEvidence()),
 		CostUSD:             doc.CostUSD,
@@ -5143,6 +5229,7 @@ func runReplayDataFromDoc(doc runDoc) server.RunReplayData {
 			verif = &server.RunVerificationData{
 				Status:       a.Verification.Status,
 				Reasons:      a.Verification.Reasons,
+				Failure:      serverVerificationFailureFromDoc(a.Verification.Failure),
 				EvidenceRefs: sliceOrEmpty(a.Verification.EvidenceRefs),
 				Evidence:     sliceOrEmpty(a.Verification.Evidence),
 			}
@@ -6429,6 +6516,7 @@ func nativeJobCompletionDocFromPayload(jobID string, p server.CompletionPayload,
 		verification = &verificationDoc{
 			Status:       p.VerificationStatus,
 			Reasons:      sliceOrEmpty(p.VerificationReasons),
+			Failure:      verificationFailureDocFromServer(p.VerificationFailure),
 			EvidenceRefs: sliceOrEmpty(p.EvidenceRefs),
 			Evidence:     sliceOrEmpty(p.Evidence),
 			CostUSD:      p.CostUSD,
@@ -7516,6 +7604,7 @@ func aggregateNativePhaseCompletion(expected []string, completions map[string]na
 	evidenceArtifacts := make([]server.EvidenceArtifact, 0)
 	conclusion := "success"
 	verificationStatus := ""
+	var verificationFailure *server.VerificationFailure
 	for _, id := range ids {
 		completion, ok := completions[id]
 		if !ok {
@@ -7535,6 +7624,9 @@ func aggregateNativePhaseCompletion(expected []string, completions map[string]na
 		}
 		if completion.Verification != nil {
 			verificationStatus = combineVerificationStatus(verificationStatus, completion.Verification.Status)
+			if verificationFailure == nil && completion.Verification.Status != "pass" && completion.Verification.Status != "" {
+				verificationFailure = serverVerificationFailureFromDoc(completion.Verification.Failure)
+			}
 			for _, reason := range completion.Verification.Reasons {
 				if strings.TrimSpace(reason) != "" {
 					reasons = append(reasons, id+": "+reason)
@@ -7549,7 +7641,7 @@ func aggregateNativePhaseCompletion(expected []string, completions map[string]na
 	}
 	if verificationStatus != "" {
 		if _, exists := phaseOutputs["verification"]; !exists {
-			phaseOutputs["verification"] = synthesizedVerificationOutput(verificationStatus, reasons, evidenceRefs, evidenceArtifacts)
+			phaseOutputs["verification"] = synthesizedVerificationOutput(verificationStatus, reasons, verificationFailure, evidenceRefs, evidenceArtifacts)
 		}
 		if conclusion == "success" {
 			switch verificationStatus {
@@ -7562,6 +7654,7 @@ func aggregateNativePhaseCompletion(expected []string, completions map[string]na
 		Conclusion:          conclusion,
 		VerificationStatus:  verificationStatus,
 		VerificationReasons: reasons,
+		VerificationFailure: verificationFailure,
 		EvidenceRefs:        evidenceRefs,
 		Evidence:            evidenceArtifacts,
 		CostUSD:             sumNativeJobCosts(completions),
@@ -7578,12 +7671,15 @@ func aggregateNativePhaseCompletion(expected []string, completions map[string]na
 	return payload
 }
 
-func synthesizedVerificationOutput(status string, reasons []string, evidenceRefs []string, evidence []server.EvidenceArtifact) string {
+func synthesizedVerificationOutput(status string, reasons []string, failure *server.VerificationFailure, evidenceRefs []string, evidence []server.EvidenceArtifact) string {
 	payload := map[string]any{
 		"status":        status,
 		"reasons":       sliceOrEmpty(reasons),
 		"evidence_refs": sliceOrEmpty(evidenceRefs),
 		"evidence":      sliceOrEmpty(evidence),
+	}
+	if failure != nil {
+		payload["failure"] = verificationFailureDocFromServer(failure)
 	}
 	data, err := json.Marshal(payload)
 	if err != nil {
@@ -7662,13 +7758,17 @@ func (s *Store) StampRunCompletion(ctx context.Context, project, runID string, p
 			promoteRunReviewOutputsRaw(raw, p.PhaseOutputs)
 		}
 		if p.VerificationStatus != "" || len(p.EvidenceRefs) > 0 || len(p.Evidence) > 0 {
-			attempt["verification"] = map[string]any{
+			verification := map[string]any{
 				"status":        p.VerificationStatus,
 				"reasons":       p.VerificationReasons,
 				"evidence_refs": sliceOrEmpty(p.EvidenceRefs),
 				"evidence":      sliceOrEmpty(p.Evidence),
 				"cost_usd":      p.CostUSD,
 			}
+			if p.VerificationFailure != nil {
+				verification["failure"] = verificationFailureDocFromServer(p.VerificationFailure)
+			}
+			attempt["verification"] = verification
 		}
 		attempt["cost_usd"] = p.CostUSD
 		attempts[idx] = attempt
@@ -8335,6 +8435,7 @@ func carryForwardAttemptDocs(attempts []server.RunAttemptData, wf server.Workflo
 			verification = &verificationDoc{
 				Status:       attempt.Verification.Status,
 				Reasons:      sliceOrEmpty(attempt.Verification.Reasons),
+				Failure:      verificationFailureDocFromServer(attempt.Verification.Failure),
 				EvidenceRefs: sliceOrEmpty(attempt.Verification.EvidenceRefs),
 				Evidence:     sliceOrEmpty(attempt.Verification.Evidence),
 			}
@@ -8397,6 +8498,7 @@ func runVerificationDataFromDoc(doc *verificationDoc) *server.RunVerificationDat
 	return &server.RunVerificationData{
 		Status:       doc.Status,
 		Reasons:      sliceOrEmpty(doc.Reasons),
+		Failure:      serverVerificationFailureFromDoc(doc.Failure),
 		EvidenceRefs: sliceOrEmpty(doc.EvidenceRefs),
 		Evidence:     sliceOrEmpty(doc.Evidence),
 	}
@@ -8497,6 +8599,7 @@ func (s *Store) CreateRecycleCycle(ctx context.Context, req server.CreateRecycle
 		RootRunID:            &rootRunID,
 		OriginKind:           &originKind,
 		IsCycle:              true,
+		PriorVerification:    priorVerificationDocFromServer(req.PriorVerification),
 		IssueID:              parent.IssueID,
 		IssueRepo:            parent.IssueRepo,
 		IssueNumber:          parent.IssueNumber,

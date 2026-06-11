@@ -54,9 +54,9 @@ type Workflow struct {
 	// dispatcher (dashboard, MCP, replay) reads this list to render forms
 	// and validate payloads; the registration is rejected if a template
 	// reference is not backed by a declaration.
-	DispatchInputs      []DispatchInputSpec `json:"dispatch_inputs,omitempty"`
-	Metadata            map[string]any      `json:"metadata"`
-	CreatedAt           time.Time           `json:"created_at"`
+	DispatchInputs []DispatchInputSpec `json:"dispatch_inputs,omitempty"`
+	Metadata       map[string]any      `json:"metadata"`
+	CreatedAt      time.Time           `json:"created_at"`
 }
 
 // DispatchInputSpec declares one dispatch-time input on a workflow registration.

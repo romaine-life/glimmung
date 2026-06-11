@@ -62,6 +62,24 @@ const (
 type Verification struct {
 	Status  VerificationStatus
 	Reasons []string
+	// Failure is the verifier's structured why for a non-pass verdict:
+	// the claim being verified, the literal contradicting observation,
+	// and the verifier's causal classification. Optional — producers
+	// that have not adopted the failure contract leave it nil.
+	Failure *VerificationFailure
+}
+
+// VerificationFailure mirrors the `failure` block of a producer's
+// verification.json. SuspectedCause is the verifier's closed-enum causal
+// classification (code_bug | test_expectation_mismatch | environment_config
+// | harness_flake); the decision trail and abort explanations surface it so
+// a human reading the abort knows what kind of fix the next cycle needs.
+type VerificationFailure struct {
+	Expected       string
+	Observed       string
+	Where          string
+	SuspectedCause string
+	CauseDetail    string
 }
 
 type Attempt struct {
@@ -222,6 +240,7 @@ func AbortExplanation(run Run, workflow Workflow, decision RunDecision) (string,
 		}
 		detail = "\n\nMost recent verification reasons:\n" + strings.Join(lines, "\n")
 	}
+	detail += verificationFailureDetail(last)
 
 	switch decision {
 	case AbortRequested:
@@ -269,6 +288,38 @@ func AbortExplanation(run Run, workflow Workflow, decision RunDecision) (string,
 	default:
 		return "", fmt.Errorf("abort explanation called with non-abort decision %q", decision)
 	}
+}
+
+// verificationFailureDetail renders the structured failure block of the
+// deciding attempt for abort explanations: expected vs observed plus the
+// verifier's suspected cause. Empty when the producer supplied no block.
+func verificationFailureDetail(last *Attempt) string {
+	if last == nil || last.Verification == nil || last.Verification.Failure == nil {
+		return ""
+	}
+	f := last.Verification.Failure
+	lines := []string{}
+	if strings.TrimSpace(f.Expected) != "" {
+		lines = append(lines, "- expected: "+strings.TrimSpace(f.Expected))
+	}
+	if strings.TrimSpace(f.Observed) != "" {
+		observed := "- observed: " + strings.TrimSpace(f.Observed)
+		if strings.TrimSpace(f.Where) != "" {
+			observed += " [" + strings.TrimSpace(f.Where) + "]"
+		}
+		lines = append(lines, observed)
+	}
+	if strings.TrimSpace(f.SuspectedCause) != "" {
+		cause := "- suspected cause: " + strings.TrimSpace(f.SuspectedCause)
+		if strings.TrimSpace(f.CauseDetail) != "" {
+			cause += " — " + strings.TrimSpace(f.CauseDetail)
+		}
+		lines = append(lines, cause)
+	}
+	if len(lines) == 0 {
+		return ""
+	}
+	return "\n\nVerification failure detail:\n" + strings.Join(lines, "\n")
 }
 
 func malformedAbortExplanation(last *Attempt, workflow Workflow) string {

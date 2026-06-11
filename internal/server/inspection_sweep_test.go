@@ -14,8 +14,10 @@ type inspectionSweepFakeStore struct {
 	rows []SlotInspectionRecord
 }
 
-func (s *inspectionSweepFakeStore) ListProjects(context.Context) ([]Project, error)   { return nil, nil }
-func (s *inspectionSweepFakeStore) ListWorkflows(context.Context) ([]Workflow, error) { return nil, nil }
+func (s *inspectionSweepFakeStore) ListProjects(context.Context) ([]Project, error) { return nil, nil }
+func (s *inspectionSweepFakeStore) ListWorkflows(context.Context) ([]Workflow, error) {
+	return nil, nil
+}
 
 func (s *inspectionSweepFakeStore) InsertSlotInspection(_ context.Context, row SlotInspectionRecord) (SlotInspectionRecord, error) {
 	row.CreatedAt = time.Now()

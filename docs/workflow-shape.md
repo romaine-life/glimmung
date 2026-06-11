@@ -232,6 +232,30 @@ payload with `verification.status`, `reasons`, and evidence refs/artifacts.
 Glimmung stores the phase output `verification` for reports, terminal
 observations, and any later phase that needs to read the verdict.
 
+On a non-pass verdict the verification payload should also carry a
+structured `failure` block — the why, not just the enum:
+
+```json
+"failure": {
+  "expected": "the claim being verified, quoted",
+  "observed": "the literal contradicting observation",
+  "where": "event log | decoded frame | snapshot | http response",
+  "suspected_cause": "code_bug | test_expectation_mismatch | environment_config | harness_flake",
+  "cause_detail": "1-3 sentences of causal analysis"
+}
+```
+
+Glimmung persists the block on the attempt and per-job completions, renders
+expected/observed/suspected-cause on the dashboard attempt card, folds it
+into abort explanations, and — when a recycle policy retries the run — passes
+the deciding cycle's verification (status, reasons, failure) to every pod of
+the new cycle as `GLIMMUNG_PRIOR_VERIFICATION_JSON`
+(`{"phase": "...", "verification": {"status", "reasons", "failure", ...}}`),
+so retry attempts plan against the previous failure instead of rediscovering
+it. For dynamic verification groups, the runner promotes the first failing
+case's `failure` block to the aggregate verdict and keeps each case's block
+on `verification.cases[]`.
+
 For `bounded_case_jobs`, every case job is named `verify-case-01` through
 `verify-case-10` and sets `timeout_seconds` no higher than 600 seconds. Each
 case runner selects the plan item at its 1-based index; unused slots write no-op

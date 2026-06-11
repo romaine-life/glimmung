@@ -1536,3 +1536,55 @@ func nativeManifestPodSpec(manifest map[string]any) map[string]any {
 	template := spec["template"].(map[string]any)
 	return template["spec"].(map[string]any)
 }
+
+func TestNativeJobEnvCarriesPriorVerification(t *testing.T) {
+	req := NativeLaunchRequest{
+		Lease:    Lease{Project: "ambience"},
+		Workflow: Workflow{Name: "default"},
+		Phase:    PhaseSpec{Name: "prepare"},
+		Run: RunReplayData{
+			ID:          "run-1",
+			IssueNumber: 1,
+			PriorVerification: &PriorVerificationData{
+				Phase: "llm-verify",
+				Verification: RunVerificationData{
+					Status:  "fail",
+					Reasons: []string{"verifier reported status=abort reason=claimed_result_not_observed"},
+					Failure: &VerificationFailure{
+						Expected:       "5-10 lantern cluster",
+						Observed:       "counts of 13 and 12",
+						SuspectedCause: "test_expectation_mismatch",
+					},
+				},
+			},
+		},
+	}
+	env := nativeJobEnv(Settings{}, req, NativeJobSpec{}, "secret")
+	var payload string
+	for _, entry := range env {
+		if entry["name"] == "GLIMMUNG_PRIOR_VERIFICATION_JSON" {
+			payload, _ = entry["value"].(string)
+		}
+	}
+	if payload == "" {
+		t.Fatalf("expected GLIMMUNG_PRIOR_VERIFICATION_JSON in env: %v", env)
+	}
+	var decoded PriorVerificationData
+	if err := json.Unmarshal([]byte(payload), &decoded); err != nil {
+		t.Fatalf("decode prior verification env: %v", err)
+	}
+	if decoded.Phase != "llm-verify" || decoded.Verification.Status != "fail" {
+		t.Fatalf("decoded=%#v", decoded)
+	}
+	if decoded.Verification.Failure == nil || decoded.Verification.Failure.SuspectedCause != "test_expectation_mismatch" {
+		t.Fatalf("failure=%#v", decoded.Verification.Failure)
+	}
+
+	// No prior verification -> no env entry.
+	req.Run.PriorVerification = nil
+	for _, entry := range nativeJobEnv(Settings{}, req, NativeJobSpec{}, "secret") {
+		if entry["name"] == "GLIMMUNG_PRIOR_VERIFICATION_JSON" {
+			t.Fatal("env should not carry prior verification when absent")
+		}
+	}
+}

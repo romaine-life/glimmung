@@ -18,23 +18,24 @@ type RunStore interface {
 }
 
 type RunReportAttempt struct {
-	AttemptIndex       int                       `json:"attempt_index"`
-	Phase              string                    `json:"phase"`
-	PhaseKind          string                    `json:"phase_kind"`
-	WorkflowFilename   string                    `json:"workflow_filename"`
-	CarryForward       bool                      `json:"carry_forward,omitempty"`
-	DispatchedAt       time.Time                 `json:"dispatched_at"`
-	CompletedAt        *time.Time                `json:"completed_at"`
-	Conclusion         *string                   `json:"conclusion"`
-	VerificationStatus *string                   `json:"verification_status"`
-	EvidenceRefs       []string                  `json:"evidence_refs"`
-	Evidence           []EvidenceArtifact        `json:"evidence"`
-	SummaryMarkdown    *string                   `json:"summary_markdown"`
-	Decision           *string                   `json:"decision"`
-	CostUSD            *float64                  `json:"cost_usd"`
-	LogArchiveURL      *string                   `json:"log_archive_url"`
-	PhaseOutputs       map[string]string         `json:"phase_outputs"`
-	JobCompletions     []RunAttemptJobCompletion `json:"job_completions"`
+	AttemptIndex        int                       `json:"attempt_index"`
+	Phase               string                    `json:"phase"`
+	PhaseKind           string                    `json:"phase_kind"`
+	WorkflowFilename    string                    `json:"workflow_filename"`
+	CarryForward        bool                      `json:"carry_forward,omitempty"`
+	DispatchedAt        time.Time                 `json:"dispatched_at"`
+	CompletedAt         *time.Time                `json:"completed_at"`
+	Conclusion          *string                   `json:"conclusion"`
+	VerificationStatus  *string                   `json:"verification_status"`
+	VerificationFailure *VerificationFailure      `json:"verification_failure,omitempty"`
+	EvidenceRefs        []string                  `json:"evidence_refs"`
+	Evidence            []EvidenceArtifact        `json:"evidence"`
+	SummaryMarkdown     *string                   `json:"summary_markdown"`
+	Decision            *string                   `json:"decision"`
+	CostUSD             *float64                  `json:"cost_usd"`
+	LogArchiveURL       *string                   `json:"log_archive_url"`
+	PhaseOutputs        map[string]string         `json:"phase_outputs"`
+	JobCompletions      []RunAttemptJobCompletion `json:"job_completions"`
 }
 
 type RunPhaseExecution struct {
@@ -111,15 +112,16 @@ type RunStepExecution struct {
 }
 
 type RunAttemptJobCompletion struct {
-	JobID               string             `json:"job_id"`
-	CompletedAt         *time.Time         `json:"completed_at"`
-	Conclusion          string             `json:"conclusion"`
-	VerificationStatus  *string            `json:"verification_status"`
-	VerificationReasons []string           `json:"verification_reasons"`
-	EvidenceRefs        []string           `json:"evidence_refs"`
-	Evidence            []EvidenceArtifact `json:"evidence"`
-	CostUSD             float64            `json:"cost_usd"`
-	PhaseOutputs        map[string]string  `json:"phase_outputs"`
+	JobID               string               `json:"job_id"`
+	CompletedAt         *time.Time           `json:"completed_at"`
+	Conclusion          string               `json:"conclusion"`
+	VerificationStatus  *string              `json:"verification_status"`
+	VerificationReasons []string             `json:"verification_reasons"`
+	VerificationFailure *VerificationFailure `json:"verification_failure,omitempty"`
+	EvidenceRefs        []string             `json:"evidence_refs"`
+	Evidence            []EvidenceArtifact   `json:"evidence"`
+	CostUSD             float64              `json:"cost_usd"`
+	PhaseOutputs        map[string]string    `json:"phase_outputs"`
 }
 
 type RunReport struct {

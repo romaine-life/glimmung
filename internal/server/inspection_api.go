@@ -606,4 +606,3 @@ func isMaxBytesError(err error) bool {
 	// where the typed error isn't yet wired through every reader.
 	return strings.Contains(err.Error(), "request body too large")
 }
-
