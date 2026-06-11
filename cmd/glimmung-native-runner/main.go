@@ -75,6 +75,15 @@ type agentStepSpec struct {
 	Slot       string `json:"slot"`
 	Prompt     string `json:"prompt"`
 	PromptFile string `json:"prompt_file"`
+	// GithubToken opts this agent step into the repo-scoped GitHub App
+	// installation token contract (docs/github-agent-push-policy.md): the
+	// runner mints the token via GLIMMUNG_GITHUB_AGENT_TOKEN_URL before the
+	// agent starts and hands it to the agent subprocess as GITHUB_TOKEN_FILE
+	// + GITHUB_CREDENTIAL_USERNAME, with git credentials configured by the
+	// shell preamble. The mint URL itself stays stripped from the agent env.
+	// Implementation stages set this; read-only stages (contract, plan,
+	// verify-judging) must not.
+	GithubToken bool `json:"github_token"`
 }
 
 type checkoutSpec struct {
@@ -806,6 +815,18 @@ func (r *nativeRunner) executeAgentStep(ctx context.Context, step stepSpec, outp
 	}); err != nil {
 		return 1, err
 	}
+	agentEnv := agentStepBaseEnv(os.Environ())
+	if spec.GithubToken {
+		tokenFile, err := r.mintAgentGithubTokenFile(ctx)
+		if err != nil {
+			return 1, fmt.Errorf("agent step %q requires a GitHub token: %w", step.Slug, err)
+		}
+		defer os.Remove(tokenFile)
+		agentEnv = append(agentEnv,
+			"GITHUB_TOKEN_FILE="+tokenFile,
+			"GITHUB_CREDENTIAL_USERNAME=x-access-token",
+		)
+	}
 	prompt, err := r.agentPrompt(workdir, step, *spec, slot, profile)
 	if err != nil {
 		return 1, err
@@ -833,7 +854,42 @@ func (r *nativeRunner) executeAgentStep(ctx context.Context, step stepSpec, outp
 		return 1, err
 	}
 	runStep.Shell = "bash"
-	return r.executeStepWithEnv(ctx, runStep, outputFile, completionFile, agentStepBaseEnv(os.Environ()))
+	return r.executeStepWithEnv(ctx, runStep, outputFile, completionFile, agentEnv)
+}
+
+// mintAgentGithubTokenFile mints the repo-scoped agent GitHub token through
+// the run callback (runner-side — the agent never sees the mint URL) and
+// writes it to a 0600 file for GITHUB_TOKEN_FILE consumption.
+func (r *nativeRunner) mintAgentGithubTokenFile(ctx context.Context) (string, error) {
+	if r.cfg.GitHubAgentTokenURL == "" {
+		return "", errors.New("GLIMMUNG_GITHUB_AGENT_TOKEN_URL is not configured")
+	}
+	var result githubTokenResult
+	if err := r.postJSON(ctx, r.cfg.GitHubAgentTokenURL, map[string]any{}, &result); err != nil {
+		return "", err
+	}
+	if result.Token == "" {
+		return "", errors.New("agent GitHub token response did not include token")
+	}
+	handle, err := os.CreateTemp("", "glimmung-agent-github-token-*")
+	if err != nil {
+		return "", err
+	}
+	path := handle.Name()
+	if _, err := handle.WriteString(result.Token); err != nil {
+		_ = handle.Close()
+		_ = os.Remove(path)
+		return "", err
+	}
+	if err := handle.Close(); err != nil {
+		_ = os.Remove(path)
+		return "", err
+	}
+	if err := os.Chmod(path, 0o600); err != nil {
+		_ = os.Remove(path)
+		return "", err
+	}
+	return path, nil
 }
 
 func installAgentPostCommitReminder(ctx context.Context, workdir string) error {
@@ -1025,7 +1081,12 @@ cat > "$HOME/.codex/config.toml" <<'EOF'
 cli_auth_credentials_store = "file"
 EOF
 git config --global user.name "glimmung-agent[bot]" || true
-git config --global user.email "glimmung-agent@romaine.life" || true`
+git config --global user.email "glimmung-agent@romaine.life" || true
+if [ -n "${GITHUB_TOKEN_FILE:-}" ] && [ -s "${GITHUB_TOKEN_FILE}" ]; then
+  GITHUB_CREDENTIAL_USERNAME="${GITHUB_CREDENTIAL_USERNAME:-x-access-token}"
+  git config --global credential.https://github.com.username "${GITHUB_CREDENTIAL_USERNAME}"
+  git config --global credential.https://github.com.helper "!f() { if [ \"\$1\" = get ]; then echo username=${GITHUB_CREDENTIAL_USERNAME}; printf 'password='; cat ${GITHUB_TOKEN_FILE}; echo; fi; }; f"
+fi`
 }
 
 func claudeShellPreamble(workdir string) string {
