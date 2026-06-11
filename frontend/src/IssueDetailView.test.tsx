@@ -941,7 +941,8 @@ describe("IssueDetailView run execution graph", () => {
     expect(within(runPanelMeta as HTMLElement).getByText(/^duration$/)).toBeInTheDocument();
     expect(within(runPanelMeta as HTMLElement).getByText(/elapsed$/)).toBeInTheDocument();
     expect(within(screen.getByLabelText("native job steps")).getAllByText(/elapsed/).length).toBeGreaterThanOrEqual(2);
-    expect(await screen.findByText(/cloning repo/)).toBeInTheDocument();
+    expect(await screen.findByText("Click a step to see its logs.")).toBeInTheDocument();
+    expect(screen.queryByText(/cloning repo/)).not.toBeInTheDocument();
     expect(within(screen.getByLabelText("native job steps")).getByRole("button", { name: /Build validation image/ })).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("button", { name: /Build validation image/ }));
@@ -980,7 +981,7 @@ describe("IssueDetailView run execution graph", () => {
       throw new Error(`unhandled fetch ${url.pathname}`);
     }));
 
-    renderIssueDetail("/projects/ambience/issues/172/runs/7/cycles/1/phases/env-prep/jobs/env-prep");
+    renderIssueDetail("/projects/ambience/issues/172/runs/7/cycles/1/phases/env-prep/jobs/env-prep/steps/probe-mod-set");
 
     expect(await screen.findByRole("button", { name: /Verify allowed mods/ })).toHaveTextContent("aborted");
     expect(await screen.findByText(/reason baselib_missing_or_unversioned/)).toBeInTheDocument();
@@ -1064,6 +1065,243 @@ describe("IssueDetailView run execution graph", () => {
     expect(await screen.findByText("job cost")).toBeInTheDocument();
     expect(screen.getAllByText("$2.3456").length).toBeGreaterThanOrEqual(2);
     expect(within(screen.getByLabelText("native job steps")).getByText("ran 6m 0s")).toBeInTheDocument();
+  });
+
+  it("links selected dynamic verification case evidence from the step detail", async () => {
+    const evidenceProjection = {
+      ...runProjection,
+      runs: [{
+        ...runProjection.runs[0],
+        evidence: [
+          {
+            kind: "screenshot",
+            ref: "screenshots/dev-paper-lanterns-default-frame.png",
+            label: "dev paper lanterns default frame",
+            url: "/v1/artifacts/runs/ambience/run-7/screenshots/dev-paper-lanterns-default-frame.png",
+            source_phase: "llm-verify",
+            source_attempt_index: 2,
+          },
+          {
+            kind: "video",
+            ref: "videos/dev-paper-lanterns-default.webm",
+            label: "dev paper lanterns default",
+            url: "/v1/artifacts/runs/ambience/run-7/videos/dev-paper-lanterns-default.webm",
+            duration_ms: 9100,
+            source_phase: "llm-verify",
+            source_attempt_index: 2,
+          },
+          {
+            kind: "screenshot",
+            ref: "screenshots/dev-paper-lanterns-release-pulse-frame.png",
+            label: "dev paper lanterns release pulse decoded frame",
+            url: "/v1/artifacts/runs/ambience/run-7/screenshots/dev-paper-lanterns-release-pulse-frame.png",
+            source_phase: "llm-verify",
+            source_attempt_index: 2,
+          },
+          {
+            kind: "video",
+            ref: "videos/dev-paper-lanterns-release-pulse.webm",
+            label: "dev paper lanterns release pulse",
+            url: "/v1/artifacts/runs/ambience/run-7/videos/dev-paper-lanterns-release-pulse.webm",
+            duration_ms: 10400,
+            source_phase: "llm-verify",
+            source_attempt_index: 2,
+          },
+        ],
+        phases: [
+          ...runProjection.runs[0].phases,
+          {
+            name: "llm-verify",
+            kind: "k8s_job",
+            state: "failed",
+            verify: true,
+            run_on: "success",
+            purpose: "work",
+            depends_on: ["agent-execute"],
+            jobs: [{
+              id: "llm-verify",
+              name: "LLM: Verify dynamic cases",
+              state: "failed",
+              reason: "verification_failed",
+              steps: [
+                { slug: "run-verification-case-03", title: "run-verification-case-03", state: "succeeded", group: "test-cases/case-03", group_title: "dev-paper-lanterns-release-pulse" },
+                { slug: "emit-case-03", title: "emit-case-03", state: "failed", reason: "exit_nonzero", exit_code: 1, group: "test-cases/case-03", group_title: "dev-paper-lanterns-release-pulse" },
+              ],
+            }],
+            attempts: [{
+              attempt_index: 2,
+              state: "failed",
+              conclusion: "failure",
+              verification_status: "fail",
+              decision: "retry",
+              log_archive_url: null,
+              evidence_refs: [
+                "screenshots/dev-paper-lanterns-release-pulse-frame.png",
+                "videos/dev-paper-lanterns-release-pulse.webm",
+              ],
+              job_completions: [],
+            }],
+          },
+        ],
+      }],
+    };
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url =
+        typeof input === "string"
+          ? new URL(input, "https://glimmung.test")
+          : input instanceof URL
+            ? input
+            : new URL(input.url);
+      if (url.pathname === "/v1/issues/by-number/ambience/172") return json(issueDetail);
+      if (url.pathname === "/v1/issues/by-number/ambience/172/graph") return json(issueGraph);
+      if (url.pathname === "/v1/projects/ambience/issues/172/runs/7/cycles/1/graph") return json(evidenceProjection);
+      if (url.pathname === "/v1/workflows") return json([]);
+      if (url.pathname === "/v1/projects/ambience/issues/172/runs/7.1/native/events") {
+        return json({ ...nativeEvents, attempt_index: 2, job_id: "llm-verify", events: [] });
+      }
+      throw new Error(`unhandled fetch ${url.pathname}`);
+    }));
+
+    renderIssueDetail("/projects/ambience/issues/172/runs/7/cycles/1/phases/llm-verify/jobs/llm-verify/steps/emit-case-03");
+
+    const evidenceStrip = await screen.findByLabelText("step evidence");
+    expect(evidenceStrip.closest(".native-log-content")).toBeTruthy();
+    expect(evidenceStrip.querySelector("video")).toHaveAttribute(
+      "src",
+      "/v1/artifacts/runs/ambience/run-7/videos/dev-paper-lanterns-release-pulse.webm",
+    );
+    expect(evidenceStrip.querySelector("video")?.closest(".native-evidence-item")).toHaveClass("failed");
+    expect(within(evidenceStrip).getByRole("img", { name: "dev paper lanterns release pulse decoded frame" })).toHaveAttribute(
+      "src",
+      "/v1/artifacts/runs/ambience/run-7/screenshots/dev-paper-lanterns-release-pulse-frame.png",
+    );
+    expect(within(evidenceStrip).getAllByTitle("verified evidence failed").length).toBeGreaterThanOrEqual(1);
+    expect(within(evidenceStrip).getByRole("link", { name: "video: dev paper lanterns release pulse 10s" })).toHaveAttribute(
+      "href",
+      "/v1/artifacts/runs/ambience/run-7/videos/dev-paper-lanterns-release-pulse.webm",
+    );
+    expect(within(evidenceStrip).getByRole("link", { name: "frame: dev paper lanterns release pulse decoded frame" })).toHaveAttribute(
+      "href",
+      "/v1/artifacts/runs/ambience/run-7/screenshots/dev-paper-lanterns-release-pulse-frame.png",
+    );
+    expect(screen.queryByText("dev paper lanterns default frame")).not.toBeInTheDocument();
+    expect(screen.queryByText("video: dev paper lanterns default 9s")).not.toBeInTheDocument();
+  });
+
+  it("shows collected job evidence in the job detail pane", async () => {
+    const evidenceProjection = {
+      ...runProjection,
+      runs: [{
+        ...runProjection.runs[0],
+        evidence: [
+          {
+            kind: "screenshot",
+            ref: "screenshots/dev-paper-lanterns-default-frame.png",
+            label: "dev paper lanterns default frame",
+            url: "/v1/artifacts/runs/ambience/run-7/screenshots/dev-paper-lanterns-default-frame.png",
+            source_phase: "llm-verify",
+            source_attempt_index: 2,
+          },
+          {
+            kind: "video",
+            ref: "videos/dev-paper-lanterns-release-pulse.webm",
+            label: "dev paper lanterns release pulse",
+            url: "/v1/artifacts/runs/ambience/run-7/videos/dev-paper-lanterns-release-pulse.webm",
+            duration_ms: 10400,
+            source_phase: "llm-verify",
+            source_attempt_index: 2,
+          },
+        ],
+        phases: [
+          ...runProjection.runs[0].phases,
+          {
+            name: "llm-verify",
+            kind: "k8s_job",
+            state: "failed",
+            verify: true,
+            run_on: "success",
+            purpose: "work",
+            depends_on: ["agent-execute"],
+            jobs: [{
+              id: "llm-verify",
+              name: "LLM: Verify dynamic cases",
+              state: "failed",
+              reason: "verification_failed",
+              steps: [
+                { slug: "run-verification-case-01", title: "run-verification-case-01", state: "succeeded", group: "test-cases/case-01", group_title: "dev-paper-lanterns-default" },
+                { slug: "emit-case-03", title: "emit-case-03", state: "failed", reason: "exit_nonzero", exit_code: 1, group: "test-cases/case-03", group_title: "dev-paper-lanterns-release-pulse" },
+              ],
+            }],
+            attempts: [{
+              attempt_index: 2,
+              state: "failed",
+              conclusion: "failure",
+              verification_status: "fail",
+              decision: "retry",
+              log_archive_url: null,
+              evidence_refs: [
+                "screenshots/dev-paper-lanterns-default-frame.png",
+                "videos/dev-paper-lanterns-release-pulse.webm",
+              ],
+              job_completions: [],
+            }],
+          },
+        ],
+      }],
+    };
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url =
+        typeof input === "string"
+          ? new URL(input, "https://glimmung.test")
+          : input instanceof URL
+            ? input
+            : new URL(input.url);
+      if (url.pathname === "/v1/issues/by-number/ambience/172") return json(issueDetail);
+      if (url.pathname === "/v1/issues/by-number/ambience/172/graph") return json(issueGraph);
+      if (url.pathname === "/v1/projects/ambience/issues/172/runs/7/cycles/1/graph") return json(evidenceProjection);
+      if (url.pathname === "/v1/workflows") return json([]);
+      if (url.pathname === "/v1/projects/ambience/issues/172/runs/7.1/native/events") {
+        return json({ ...nativeEvents, attempt_index: 2, job_id: "llm-verify", events: [] });
+      }
+      throw new Error(`unhandled fetch ${url.pathname}`);
+    }));
+
+    renderIssueDetail("/projects/ambience/issues/172/runs/7/cycles/1/phases/llm-verify/jobs/llm-verify");
+
+    expect(await screen.findByText("Click a step to see its logs.")).toBeInTheDocument();
+    const logContent = document.querySelector(".native-log-content");
+    expect(logContent).not.toBeNull();
+    expect(within(logContent as HTMLElement).queryByLabelText("step evidence")).not.toBeInTheDocument();
+
+    const collected = await screen.findByLabelText("collected test evidence");
+    expect(collected.closest(".native-log-content")).toBe(logContent);
+    expect(within(collected).getByText("Collected test evidence:")).toBeInTheDocument();
+    expect(within(collected).getByRole("img", { name: "dev paper lanterns default frame" })).toHaveAttribute(
+      "src",
+      "/v1/artifacts/runs/ambience/run-7/screenshots/dev-paper-lanterns-default-frame.png",
+    );
+    expect(within(collected).getByRole("img", { name: "dev paper lanterns default frame" }).closest(".native-evidence-item")).toHaveClass("passed");
+    expect(within(collected).getByRole("link", { name: "video: dev paper lanterns release pulse 10s" })).toHaveAttribute(
+      "href",
+      "/v1/artifacts/runs/ambience/run-7/videos/dev-paper-lanterns-release-pulse.webm",
+    );
+    expect(within(collected).getByRole("link", { name: "video: dev paper lanterns release pulse 10s" }).closest(".native-evidence-item")).toHaveClass("failed");
+
+    await userEvent.click(screen.getByRole("button", { name: "view evidence for dev-paper-lanterns-release-pulse" }));
+
+    expect(screen.getByTestId("path")).toHaveTextContent(
+      "/projects/ambience/issues/172/runs/7/cycles/1/phases/llm-verify/jobs/llm-verify",
+    );
+    const testSetEvidence = await screen.findByLabelText("test set evidence");
+    expect(testSetEvidence.closest(".native-log-content")).toBe(logContent);
+    expect(within(logContent as HTMLElement).getByText("Click a step to see its logs.")).toBeInTheDocument();
+    expect(within(testSetEvidence).getByRole("link", { name: "video: dev paper lanterns release pulse 10s" })).toHaveAttribute(
+      "href",
+      "/v1/artifacts/runs/ambience/run-7/videos/dev-paper-lanterns-release-pulse.webm",
+    );
+    expect(within(testSetEvidence).getByRole("link", { name: "video: dev paper lanterns release pulse 10s" }).closest(".native-evidence-item")).toHaveClass("failed");
+    expect(within(testSetEvidence).queryByText("frame: dev paper lanterns default frame")).not.toBeInTheDocument();
+    expect(within(screen.getByLabelText("native job steps")).getByRole("button", { name: /emit-case-03/ })).toBeInTheDocument();
   });
 
   it("renders LLM native step JSON as a transcript while keeping raw logs available", async () => {
@@ -1372,7 +1610,7 @@ describe("IssueDetailView run execution graph", () => {
     expect(await screen.findByText("native job inspector")).toBeInTheDocument();
     expect(screen.getByText("planned")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Checkout workspace/ })).toBeInTheDocument();
-    expect(screen.getByText(/No hot native events recorded/)).toBeInTheDocument();
+    expect(screen.getByText("Click a step to see its logs.")).toBeInTheDocument();
 
     await userEvent.click(within(screen.getByLabelText("native job steps")).getByRole("button", { name: /Run agent/ }));
     await waitFor(() => {

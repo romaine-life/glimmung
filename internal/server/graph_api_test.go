@@ -138,6 +138,7 @@ func TestIssueGraphByNumberBuildsRunAttemptAndTouchpointNodes(t *testing.T) {
 			Labels:  []string{"backend"},
 		},
 		runs: []RunReport{{
+			ID:                "run-1",
 			Project:           "glimmung",
 			RunRef:            runRef,
 			RunNumber:         &runNumber,
@@ -161,8 +162,15 @@ func TestIssueGraphByNumberBuildsRunAttemptAndTouchpointNodes(t *testing.T) {
 				Conclusion:         stringPtr("success"),
 				VerificationStatus: stringPtr("pass"),
 				EvidenceRefs:       []string{"blob://artifacts/glimmung/17/verification.json"},
-				LogArchiveURL:      stringPtr("blob://artifacts/glimmung/17/native.log"),
-				PhaseOutputs:       map[string]string{"validation_url": "https://preview.example"},
+				Evidence: []EvidenceArtifact{{
+					Kind:               "video",
+					Ref:                "videos/release-pulse.webm",
+					Label:              "release pulse",
+					SourcePhase:        "env-prep",
+					SourceAttemptIndex: intPtr(0),
+				}},
+				LogArchiveURL: stringPtr("blob://artifacts/glimmung/17/native.log"),
+				PhaseOutputs:  map[string]string{"validation_url": "https://preview.example"},
 				JobCompletions: []RunAttemptJobCompletion{{
 					JobID:              "prepare",
 					CompletedAt:        &now,
@@ -259,6 +267,23 @@ func TestIssueGraphByNumberBuildsRunAttemptAndTouchpointNodes(t *testing.T) {
 	assertProjectionEvidence(t, graph.Projection.Runs[0], "artifact", "blob://artifacts/glimmung/17/verification.json")
 	assertProjectionEvidence(t, graph.Projection.Runs[0], "log", "blob://artifacts/glimmung/17/native.log")
 	assertProjectionEvidence(t, graph.Projection.Runs[0], "screenshot", "blob://artifacts/runs/glimmung/run-1/screenshots/default.png")
+	videoEvidence := findProjectionEvidence(t, graph.Projection.Runs[0], "video", "videos/release-pulse.webm")
+	if videoEvidence.URL == nil || *videoEvidence.URL != "/v1/artifacts/runs/glimmung/run-1/videos/release-pulse.webm" {
+		t.Fatalf("video evidence URL=%#v", videoEvidence.URL)
+	}
+	if videoEvidence.ArtifactPath != "runs/glimmung/run-1/videos/release-pulse.webm" {
+		t.Fatalf("video evidence artifact_path=%q", videoEvidence.ArtifactPath)
+	}
+	if videoEvidence.SourcePhase != "env-prep" || videoEvidence.SourceAttemptIndex == nil || *videoEvidence.SourceAttemptIndex != 0 {
+		t.Fatalf("video evidence source phase/index=%q/%#v", videoEvidence.SourcePhase, videoEvidence.SourceAttemptIndex)
+	}
+	if videoEvidence.VerificationStatus != "pass" {
+		t.Fatalf("video evidence verification_status=%q", videoEvidence.VerificationStatus)
+	}
+	refEvidence := findProjectionEvidence(t, graph.Projection.Runs[0], "artifact", "blob://artifacts/glimmung/17/verification.json")
+	if refEvidence.VerificationStatus != "pass" || refEvidence.SourcePhase != "env-prep" || refEvidence.SourceAttemptIndex == nil || *refEvidence.SourceAttemptIndex != 0 {
+		t.Fatalf("ref evidence verification/source=%q/%q/%#v", refEvidence.VerificationStatus, refEvidence.SourcePhase, refEvidence.SourceAttemptIndex)
+	}
 	assertProjectionEvidence(t, graph.Projection.Runs[0], "pull_request", "https://github.com/romaine-life/glimmung/pull/452")
 	if len(graph.Projection.Signals) != 1 || graph.Projection.Signals[0].Kind != "reject" {
 		t.Fatalf("projection signals=%#v", graph.Projection.Signals)
@@ -1270,13 +1295,19 @@ func assertProjectionPhase(t *testing.T, run RunProjectionRun, name string) RunP
 
 func assertProjectionEvidence(t *testing.T, run RunProjectionRun, kind, ref string) {
 	t.Helper()
+	_ = findProjectionEvidence(t, run, kind, ref)
+}
+
+func findProjectionEvidence(t *testing.T, run RunProjectionRun, kind, ref string) RunProjectionEvidence {
+	t.Helper()
 	for _, evidence := range run.Evidence {
 		if evidence.Kind == kind && evidence.Ref == ref {
-			return
+			return evidence
 		}
 	}
 	encoded, _ := json.MarshalIndent(run.Evidence, "", "  ")
 	t.Fatalf("missing projection evidence %s:%s in %s", kind, ref, encoded)
+	return RunProjectionEvidence{}
 }
 
 func assertProjectionEdge(t *testing.T, projection RunGraphProjection, source, target, kind string) {
