@@ -59,8 +59,16 @@ func TestNativeGitHubAgentTokenByCallbackTokenMintsRepoScopedToken(t *testing.T)
 	if minter.calledRepo != "romaine-life/ambience" {
 		t.Fatalf("minter called repo=%q", minter.calledRepo)
 	}
-	if minter.calledPerms["contents"] != "write" || minter.calledPerms["metadata"] != "read" ||
-		minter.calledPerms["checks"] != "read" {
+	if minter.calledPerms["contents"] != "write" || minter.calledPerms["metadata"] != "read" {
 		t.Fatalf("minter called perms=%v", minter.calledPerms)
+	}
+	// The App installation does not grant checks; requesting it makes
+	// GitHub 422 the entire mint, so the handler must not ask for it
+	// (ambience#167 run 7.1).
+	if _, requested := minter.calledPerms["checks"]; requested {
+		t.Fatalf("handler requested ungranted checks permission: %v", minter.calledPerms)
+	}
+	if len(minter.calledPerms) != 2 {
+		t.Fatalf("handler requested unexpected permissions: %v", minter.calledPerms)
 	}
 }
