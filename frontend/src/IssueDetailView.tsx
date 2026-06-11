@@ -847,11 +847,8 @@ export function IssueDetailView() {
                 executionLoading={Boolean(runGraphUrl) && runProjection === null && !error}
                 onSelectProjectionRun={(run) => navigate(projectionRunCyclePath(baseUrl, run))}
                 onSelectProjectionNode={(run, selection) => navigate(projectionSelectionPath(baseUrl, run, selection), { preventScrollReset: true })}
-                onDispatch={() => void dispatchRun()}
-                dispatchInputSpecs={dispatchInputSpecs}
-                dispatchInputValues={dispatchInputValues}
-                onDispatchInputChange={(name, value) => setDispatchInputValues((prev) => ({ ...prev, [name]: value }))}
                 onOpenTouchpoint={() => setTab("touchpoint")}
+                onOpenRunSettings={() => setTab("settings")}
               />
             )}
             {tab === "settings" && (
@@ -865,6 +862,11 @@ export function IssueDetailView() {
                 globalAgentRuntime={snap?.agent_runtime ?? null}
                 projectAgentRuntime={projectAgentRuntime}
                 onIssueAgentSaved={() => setRefreshTick((t) => t + 1)}
+                dispatchState={dispatchState}
+                onDispatch={() => void dispatchRun()}
+                dispatchInputSpecs={dispatchInputSpecs}
+                dispatchInputValues={dispatchInputValues}
+                onDispatchInputChange={(name, value) => setDispatchInputValues((prev) => ({ ...prev, [name]: value }))}
               />
             )}
             {tab === "touchpoint" && (
@@ -1857,11 +1859,8 @@ function RunsPane({
   executionLoading,
   onSelectProjectionRun,
   onSelectProjectionNode,
-  onDispatch,
-  dispatchInputSpecs,
-  dispatchInputValues,
-  onDispatchInputChange,
   onOpenTouchpoint,
+  onOpenRunSettings,
 }: {
   graph: IssueGraph | null;
   graphAvailable: boolean;
@@ -1886,11 +1885,8 @@ function RunsPane({
   executionLoading: boolean;
   onSelectProjectionRun: (run: RunProjectionRun) => void;
   onSelectProjectionNode: (run: RunProjectionRun, selection: ProjectionSelection) => void;
-  onDispatch: () => void;
-  dispatchInputSpecs: DispatchInputSpec[];
-  dispatchInputValues: Record<string, string>;
-  onDispatchInputChange: (name: string, value: string) => void;
   onOpenTouchpoint: () => void;
+  onOpenRunSettings: () => void;
 }) {
   const dispatching = dispatchState.kind === "dispatching";
   // Disable for non-admins so a 403 is impossible by clicking. The server
@@ -1936,62 +1932,21 @@ function RunsPane({
         return runNumber ? { runNumber, state: latestGraphRun.state } : null;
       })()
     : null;
-  const dispatchInputsForm = dispatchInputSpecs.length > 0 ? (
-    <div
-      className="dispatch-inputs"
-      role="group"
-      aria-label="dispatch inputs"
-      style={{ display: "flex", flexWrap: "wrap", gap: "0.75rem", marginBottom: "0.5rem" }}
-    >
-      {dispatchInputSpecs.map((spec) => {
-        const current = dispatchInputValues[spec.name] ?? spec.default ?? "";
-        const labelText = spec.required ? `${spec.name} *` : spec.name;
-        return (
-          <label key={spec.name} style={{ display: "flex", flexDirection: "column", fontSize: "0.85em" }}>
-            <span title={spec.description || undefined}>{labelText}</span>
-            <input
-              type="text"
-              name={`dispatch-input-${spec.name}`}
-              value={current}
-              placeholder={spec.default ?? ""}
-              spellCheck={false}
-              autoCapitalize="off"
-              autoComplete="off"
-              onChange={(e) => onDispatchInputChange(spec.name, e.target.value)}
-              disabled={dispatching || !isAdmin}
-            />
-          </label>
-        );
-      })}
-    </div>
-  ) : null;
   const newRunButton = (
     <div
       className="run-actions"
       style={{ marginBottom: "1rem" }}
     >
-      {dispatchInputsForm}
       <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", flexWrap: "wrap" }}>
         <button
           type="button"
           className="link"
-          onClick={onDispatch}
+          onClick={onOpenRunSettings}
           disabled={dispatchDisabled}
           title={buttonTitle}
         >
           {buttonLabel}
         </button>
-        {dispatchState.kind === "result" && (
-          <span className={`pill ${dispatchResultPill(dispatchState.state)}`}>
-            {dispatchResultLabel(dispatchState.state)}
-          </span>
-        )}
-        {dispatchState.kind === "error" && (
-          <span className="dispatch-error" role="alert">
-            <span className="pill drain">error</span>
-            <span className="dispatch-error-message">{formatDispatchError(dispatchState.message)}</span>
-          </span>
-        )}
         {cancelTarget?.runNumber && (
           <RunCancelAction
             signedIn={signedIn}
@@ -2802,6 +2757,11 @@ function IssueSettingsPane({
   globalAgentRuntime,
   projectAgentRuntime,
   onIssueAgentSaved,
+  dispatchState,
+  onDispatch,
+  dispatchInputSpecs,
+  dispatchInputValues,
+  onDispatchInputChange,
 }: {
   issue: IssueDetail;
   workflow: Workflow | null;
@@ -2812,6 +2772,11 @@ function IssueSettingsPane({
   globalAgentRuntime: AgentRuntimeConfig | null;
   projectAgentRuntime: AgentRuntimeConfig | null;
   onIssueAgentSaved: () => void;
+  dispatchState: DispatchState;
+  onDispatch: () => void;
+  dispatchInputSpecs: DispatchInputSpec[];
+  dispatchInputValues: Record<string, string>;
+  onDispatchInputChange: (name: string, value: string) => void;
 }) {
   const location = useLocation();
   return (
@@ -2819,6 +2784,16 @@ function IssueSettingsPane({
       <div className="run-section-header">
         <h2>Issue settings</h2>
       </div>
+      <RunDispatchSettingsPanel
+        issue={issue}
+        signedIn={signedIn}
+        isAdmin={isAdmin}
+        dispatchState={dispatchState}
+        onDispatch={onDispatch}
+        dispatchInputSpecs={dispatchInputSpecs}
+        dispatchInputValues={dispatchInputValues}
+        onDispatchInputChange={onDispatchInputChange}
+      />
       <section className="run-panel">
         <div className="run-section-header">
           <h2>Workflow definition</h2>
@@ -2858,6 +2833,112 @@ function IssueSettingsPane({
         projectAgentRuntime={projectAgentRuntime}
         onSaved={onIssueAgentSaved}
       />
+    </section>
+  );
+}
+
+function RunDispatchSettingsPanel({
+  issue,
+  signedIn,
+  isAdmin,
+  dispatchState,
+  onDispatch,
+  dispatchInputSpecs,
+  dispatchInputValues,
+  onDispatchInputChange,
+}: {
+  issue: IssueDetail;
+  signedIn: boolean;
+  isAdmin: boolean;
+  dispatchState: DispatchState;
+  onDispatch: () => void;
+  dispatchInputSpecs: DispatchInputSpec[];
+  dispatchInputValues: Record<string, string>;
+  onDispatchInputChange: (name: string, value: string) => void;
+}) {
+  const dispatching = dispatchState.kind === "dispatching";
+  const dispatchDisabled = issue.issue_lock_held || dispatching || !signedIn || !isAdmin;
+  const dispatchLabel = dispatching
+    ? "dispatching..."
+    : issue.issue_lock_held
+    ? "in flight"
+    : !signedIn
+    ? "sign in"
+    : !isAdmin
+    ? "admin only"
+    : "dispatch";
+  const dispatchTitle = !signedIn
+    ? undefined
+    : !isAdmin && !dispatching && !issue.issue_lock_held
+    ? "Dispatching runs is restricted to admins. Ask an admin to promote your account at auth.romaine.life/admin."
+    : undefined;
+  const dispatchInputsForm = dispatchInputSpecs.length > 0 ? (
+    <div
+      className="dispatch-inputs"
+      role="group"
+      aria-label="dispatch inputs"
+      style={{ display: "flex", flexWrap: "wrap", gap: "0.75rem", marginTop: "0.75rem" }}
+    >
+      {dispatchInputSpecs.map((spec) => {
+        const current = dispatchInputValues[spec.name] ?? spec.default ?? "";
+        const labelText = spec.required ? `${spec.name} *` : spec.name;
+        return (
+          <label key={spec.name} style={{ display: "flex", flexDirection: "column", fontSize: "0.85em" }}>
+            <span title={spec.description || undefined}>{labelText}</span>
+            <input
+              type="text"
+              name={`dispatch-input-${spec.name}`}
+              value={current}
+              placeholder={spec.default ?? ""}
+              spellCheck={false}
+              autoCapitalize="off"
+              autoComplete="off"
+              onChange={(e) => onDispatchInputChange(spec.name, e.target.value)}
+              disabled={dispatching || !isAdmin}
+            />
+          </label>
+        );
+      })}
+    </div>
+  ) : null;
+
+  return (
+    <section className="run-panel">
+      <div className="run-section-header">
+        <h2>New run</h2>
+        <span className="pill info">settings apply at dispatch</span>
+      </div>
+      <div className="run-panel-meta">
+        <div>
+          <span className="key">issue</span> <span className="mono">#{issue.number ?? issue.ref}</span>
+        </div>
+        <div>
+          <span className="key">workflow</span>{" "}
+          <span className="mono">{stringOrNull(issue.metadata?.workflow) ?? "default"}</span>
+        </div>
+      </div>
+      {dispatchInputsForm}
+      <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", flexWrap: "wrap", marginTop: "0.75rem" }}>
+        <button
+          type="button"
+          onClick={onDispatch}
+          disabled={dispatchDisabled}
+          title={dispatchTitle}
+        >
+          {dispatchLabel}
+        </button>
+        {dispatchState.kind === "result" && (
+          <span className={`pill ${dispatchResultPill(dispatchState.state)}`}>
+            {dispatchResultLabel(dispatchState.state)}
+          </span>
+        )}
+        {dispatchState.kind === "error" && (
+          <span className="dispatch-error" role="alert">
+            <span className="pill drain">error</span>
+            <span className="dispatch-error-message">{formatDispatchError(dispatchState.message)}</span>
+          </span>
+        )}
+      </div>
     </section>
   );
 }
