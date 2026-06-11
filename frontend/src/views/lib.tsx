@@ -70,6 +70,33 @@ export function usd(n?: number | null): string {
   return `$${n.toFixed(2)}`;
 }
 
+export function durationLabel(startedAt?: string | null, completedAt?: string | null, state?: string | null): string {
+  if (!startedAt) return "—";
+  const started = new Date(startedAt).getTime();
+  if (!Number.isFinite(started)) return "—";
+  if (completedAt) {
+    const completed = new Date(completedAt).getTime();
+    if (!Number.isFinite(completed) || completed < started) return "—";
+    return `ran ${compactDuration(completed - started)}`;
+  }
+  if (state === "in_progress" || state === "queued" || state === "pending" || state === "needs_review" || state === "review_required") {
+    return `${compactDuration(Date.now() - started)} elapsed`;
+  }
+  return "—";
+}
+
+export function compactDuration(ms: number): string {
+  if (!Number.isFinite(ms) || ms < 0) return "—";
+  const sec = Math.floor(ms / 1000);
+  if (sec < 60) return `${sec}s`;
+  const min = Math.floor(sec / 60);
+  const remSec = sec % 60;
+  if (min < 60) return `${min}m ${remSec}s`;
+  const hr = Math.floor(min / 60);
+  const remMin = min % 60;
+  return `${hr}h ${remMin}m`;
+}
+
 export function issueSummaryPath(project: string, number: number | string): string {
   return `/projects/${encodeURIComponent(project)}/issues/${number}/summary`;
 }

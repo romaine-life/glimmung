@@ -782,6 +782,7 @@ func TestRunCycleGraphProjectionKeepsPendingWorkflowJobsWithDurableExecutions(t 
 					ID:        "prepare",
 					State:     "active",
 					CreatedAt: now.Format(time.RFC3339Nano),
+					StartedAt: stringPtr(now.Add(-2 * time.Minute).Format(time.RFC3339Nano)),
 					Steps: []RunStepExecution{{
 						Slug:       "checkout",
 						Title:      stringPtr("Checkout"),
@@ -789,6 +790,7 @@ func TestRunCycleGraphProjectionKeepsPendingWorkflowJobsWithDurableExecutions(t 
 						Group:      "setup",
 						GroupTitle: stringPtr("setup"),
 						CreatedAt:  now.Format(time.RFC3339Nano),
+						StartedAt:  stringPtr(now.Add(-90 * time.Second).Format(time.RFC3339Nano)),
 					}},
 				}},
 			}},
@@ -802,6 +804,12 @@ func TestRunCycleGraphProjectionKeepsPendingWorkflowJobsWithDurableExecutions(t 
 	envPhase := assertProjectionPhase(t, projection.Runs[0], "env-prep")
 	if envPhase.State != "active" || envPhase.Jobs[0].Steps[0].State != "active" {
 		t.Fatalf("env-prep projection=%#v", envPhase)
+	}
+	if envPhase.Jobs[0].StartedAt == nil || *envPhase.Jobs[0].StartedAt != now.Add(-2*time.Minute).Format(time.RFC3339Nano) {
+		t.Fatalf("env-prep job started_at=%v", envPhase.Jobs[0].StartedAt)
+	}
+	if envPhase.Jobs[0].Steps[0].StartedAt == nil || *envPhase.Jobs[0].Steps[0].StartedAt != now.Add(-90*time.Second).Format(time.RFC3339Nano) {
+		t.Fatalf("env-prep step started_at=%v", envPhase.Jobs[0].Steps[0].StartedAt)
 	}
 	if envPhase.Jobs[0].Steps[0].Group != "setup" || envPhase.Jobs[0].Steps[0].GroupTitle == nil || *envPhase.Jobs[0].Steps[0].GroupTitle != "setup" {
 		t.Fatalf("env-prep step group=%#v", envPhase.Jobs[0].Steps[0])

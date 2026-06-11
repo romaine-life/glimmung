@@ -224,6 +224,7 @@ type ProjectRun = {
   cost_usd: number;
   agent_runtime?: AgentRuntimeSnapshot;
   started_at: string;
+  completed_at?: string | null;
   updated_at: string;
 };
 
@@ -1806,6 +1807,7 @@ function ProjectRunsTable({
             <th>State</th>
             <th>Phase</th>
             <th>Cost</th>
+            <th>Duration</th>
             <th>Updated</th>
             <th></th>
           </tr>
@@ -1850,6 +1852,7 @@ function ProjectRunsTable({
               <td><span className={`pill ${runStatePill(run.state)}`}>{run.state}</span></td>
               <td className="mono dim">{run.current_phase}</td>
               <td className="mono dim">${run.cost_usd.toFixed(2)}</td>
+              <td className="mono dim">{runDurationLabel(run.started_at, run.completed_at ?? null, run.state)}</td>
               <td className="mono dim">{relTime(run.updated_at)}</td>
               <td>
                 <RunCancelAction
@@ -1924,6 +1927,7 @@ function projectRunFromReport(report: RunReport): ProjectRun {
     cost_usd: report.cumulative_cost_usd,
     agent_runtime: report.agent_runtime,
     started_at: report.started_at,
+    completed_at: report.completed_at,
     updated_at: report.updated_at,
   };
 }
@@ -3382,4 +3386,31 @@ function relTime(iso: string | null): string {
   const h = Math.floor(m / 60);
   if (h < 24) return `${h}h ago`;
   return `${Math.floor(h / 24)}d ago`;
+}
+
+function runDurationLabel(startedAt: string | null, completedAt: string | null, state: string | null): string {
+  if (!startedAt) return "—";
+  const started = new Date(startedAt).getTime();
+  if (!Number.isFinite(started)) return "—";
+  if (completedAt) {
+    const completed = new Date(completedAt).getTime();
+    if (!Number.isFinite(completed) || completed < started) return "—";
+    return `ran ${compactDuration(completed - started)}`;
+  }
+  if (state === "in_progress" || state === "queued" || state === "pending" || state === "needs_review" || state === "review_required") {
+    return `${compactDuration(Date.now() - started)} elapsed`;
+  }
+  return "—";
+}
+
+function compactDuration(ms: number): string {
+  if (!Number.isFinite(ms) || ms < 0) return "—";
+  const sec = Math.floor(ms / 1000);
+  if (sec < 60) return `${sec}s`;
+  const min = Math.floor(sec / 60);
+  const remSec = sec % 60;
+  if (min < 60) return `${min}m ${remSec}s`;
+  const hr = Math.floor(min / 60);
+  const remMin = min % 60;
+  return `${hr}h ${remMin}m`;
 }

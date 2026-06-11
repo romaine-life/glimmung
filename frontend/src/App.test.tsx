@@ -200,6 +200,10 @@ describe("project runs", () => {
       </MemoryRouter>,
     );
 
+    expect((await screen.findAllByText("Duration")).length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText(/24m \d+s elapsed/)).toBeInTheDocument();
+    expect(screen.getAllByText("ran 1h 10m").length).toBeGreaterThanOrEqual(1);
+
     const cancelButtons = await screen.findAllByRole("button", { name: "cancel run" });
     expect(cancelButtons.length).toBeGreaterThan(1);
     expect(cancelButtons.some((button) => button.hasAttribute("disabled"))).toBe(true);

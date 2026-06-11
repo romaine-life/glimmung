@@ -659,6 +659,7 @@ export const mockRuns = [
     current_phase: "verify",
     cost_usd: 8.91,
     started_at: ago(24),
+    completed_at: null,
     updated_at: ago(2),
   },
   {
@@ -676,6 +677,7 @@ export const mockRuns = [
     current_phase: "generate",
     cost_usd: 3.42,
     started_at: ago(180),
+    completed_at: null,
     updated_at: ago(38),
   },
   {
@@ -693,6 +695,7 @@ export const mockRuns = [
     current_phase: "touchpoint",
     cost_usd: 2.18,
     started_at: ago(860),
+    completed_at: ago(790),
     updated_at: ago(790),
   },
   {
@@ -710,6 +713,7 @@ export const mockRuns = [
     current_phase: "preview",
     cost_usd: 0,
     started_at: ago(16),
+    completed_at: null,
     updated_at: ago(16),
   },
   {
@@ -727,6 +731,7 @@ export const mockRuns = [
     current_phase: "preview",
     cost_usd: 1.07,
     started_at: ago(1440),
+    completed_at: ago(1380),
     updated_at: ago(1380),
   },
 ];
@@ -927,9 +932,10 @@ const issueGraph = {
 	            id: "verify-ui",
 	            name: "verify ui",
 	            state: "claimed",
+	            started_at: ago(5),
 	            steps: [
-	              { slug: "capture-screenshot", title: "capture screenshot", state: "succeeded", group: "sweep-01", group_title: "sweep 01" },
-	              { slug: "capture-video", title: "capture video", state: "claimed", group: "sweep-01", group_title: "sweep 01" },
+	              { slug: "capture-screenshot", title: "capture screenshot", state: "succeeded", started_at: ago(5), completed_at: ago(3), group: "sweep-01", group_title: "sweep 01" },
+	              { slug: "capture-video", title: "capture video", state: "claimed", started_at: ago(3), group: "sweep-01", group_title: "sweep 01" },
 	              { slug: "judge-evidence", title: "judge evidence", state: "not_started", group: "sweep-01", group_title: "sweep 01" },
 	            ],
 	          }],
