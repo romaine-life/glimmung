@@ -2576,12 +2576,26 @@ function InnerJobsRow({
     new Set(innerJobs.map((ij) => (ij.intent ?? "").trim()).filter(Boolean)),
   );
   const heading = intents.length === 1 ? `${intents[0].replace(/_/g, " ")}s` : "agents";
+  const summary = innerJobSummary(innerJobs, heading);
+  const summaryPill = summary.failed > 0 ? "drain" : summary.active > 0 ? "busy" : summary.succeeded === innerJobs.length ? "free" : "pending";
   return (
-    <div style={{ width: "100%" }}>
-      <div>
+    <div className="inner-jobs-summary">
+      <div className="inner-jobs-summary-head">
         <span className="key">{heading}</span>
+        <span className={`pill ${summaryPill}`}>{summary.label}</span>
       </div>
-      <ul style={{ listStyle: "none", margin: "0.25rem 0 0", padding: "0 0 0 0.5rem" }}>
+      <div className="inner-jobs-table-wrap">
+        <table className="inner-jobs-table" aria-label={heading}>
+          <thead>
+            <tr>
+              <th scope="col">status</th>
+              <th scope="col">agent</th>
+              <th scope="col">step</th>
+              <th scope="col">duration</th>
+              <th scope="col">logs</th>
+            </tr>
+          </thead>
+          <tbody>
         {innerJobs.map((ij) => {
           // Prefer the durable URL the reconciler stamped on
           // termination (it covers the child's full life window with
@@ -2598,40 +2612,92 @@ function InnerJobsRow({
             );
           const state = (ij.state ?? "unknown").trim() || "unknown";
           const pill = state === "succeeded" ? "free" : state === "failed" ? "drain" : "busy";
+          const duration = nativeDurationLabel(state, ij.registered_at, ij.completed_at ?? null);
+          const stepLabel = innerJobStepLabel(ij.parent_step_slug ?? null);
+          const agentLabel = innerJobAgentLabel(ij);
           return (
-            <li key={`${ij.namespace}/${ij.job_name}`} className="run-panel-meta" style={{ padding: "0.15rem 0" }}>
-              <div>
-                <span className={`pill ${pill}`}>{state}</span>{" "}
-                <span>{(ij.intent ?? "").trim().replace(/_/g, " ") || "agent"}</span>
-                {ij.reason && (
-                  <>
-                    {" "}
-                    <span className="key">reason</span> <span className="mono">{ij.reason}</span>
-                  </>
-                )}
+            <tr key={`${ij.namespace}/${ij.job_name}`}>
+              <td>
+                <span className={`pill ${pill}`}>{state}</span>
+                {ij.reason && <span className="mono dim inner-job-reason">{ij.reason}</span>}
+              </td>
+              <td>
+                <span className="mono" title={`${ij.namespace}/${ij.job_name}`}>{agentLabel}</span>
+              </td>
+              <td>
+                <span className="mono dim">{stepLabel}</span>
+              </td>
+              <td>
+                <span className="mono dim">{duration ?? "—"}</span>
+              </td>
+              <td>
                 {lokiUrl && (
                   <a
                     href={lokiUrl}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="link"
-                    style={{ marginLeft: "0.5rem" }}
                     title={`open ${ij.namespace}/${ij.job_name} logs in Grafana Explore`}
                   >
                     logs ↗
                   </a>
                 )}
-              </div>
-              <div className="mono dim" style={{ fontSize: "0.72rem" }}>{ij.namespace}/{ij.job_name}</div>
-            </li>
+              </td>
+            </tr>
           );
         })}
-      </ul>
+          </tbody>
+        </table>
+      </div>
       {/* run.started_at is referenced only so the prop is typed; the
           inner job's registered_at is the authoritative start. */}
       <span style={{ display: "none" }}>{run.started_at}</span>
     </div>
   );
+}
+
+function innerJobSummary(innerJobs: RunProjectionInnerJob[], heading: string): {
+  label: string;
+  succeeded: number;
+  failed: number;
+  active: number;
+} {
+  let succeeded = 0;
+  let failed = 0;
+  let active = 0;
+  for (const ij of innerJobs) {
+    const state = (ij.state ?? "unknown").trim();
+    if (state === "succeeded") succeeded += 1;
+    else if (state === "failed") failed += 1;
+    else active += 1;
+  }
+  const parts = [`${innerJobs.length} ${heading}`];
+  if (succeeded > 0 || innerJobs.length > 1) parts.push(`${succeeded} succeeded`);
+  parts.push(`${failed} failed`);
+  if (active > 0) parts.push(`${active} active`);
+  return {
+    label: parts.join(" · "),
+    succeeded,
+    failed,
+    active,
+  };
+}
+
+function innerJobAgentLabel(innerJob: RunProjectionInnerJob): string {
+  const label = (innerJob.label ?? "").trim();
+  if (label && label !== "verification" && label !== "verify-agent") return label;
+  const vcMatch = innerJob.job_name.match(/-(vc\d+(?:-\d+)?)$/);
+  if (vcMatch) return vcMatch[1];
+  const agentSuffix = innerJob.job_name.match(/^agent-[0-9a-f-]{12,}-(.+)$/i);
+  if (agentSuffix) return agentSuffix[1];
+  return innerJob.job_name;
+}
+
+function innerJobStepLabel(stepSlug: string | null): string {
+  if (!stepSlug) return "—";
+  const caseMatch = stepSlug.match(/case-(\d+)$/);
+  if (caseMatch) return `case ${caseMatch[1]}`;
+  return stepSlug;
 }
 
 function ProjectionRunMetaSummary({ run, repo }: { run: RunProjectionRun; repo: string | null }) {

@@ -2693,6 +2693,69 @@ h2 .inline-action,
   font-size: 0.75rem;
   margin-right: 4px;
 }
+.inner-jobs-summary {
+  width: 100%;
+  min-width: 0;
+}
+.inner-jobs-summary-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  margin-bottom: 6px;
+}
+.inner-jobs-table-wrap {
+  overflow-x: auto;
+}
+.inner-jobs-table {
+  width: 100%;
+  min-width: 520px;
+  border-collapse: collapse;
+  table-layout: fixed;
+  font-size: 0.8rem;
+}
+.inner-jobs-table th,
+.inner-jobs-table td {
+  padding: 4px 8px 4px 0;
+  text-align: left;
+  vertical-align: top;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+.inner-jobs-table th {
+  color: #888;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 0.68rem;
+  font-weight: 600;
+}
+.inner-jobs-table th:nth-child(1),
+.inner-jobs-table td:nth-child(1) {
+  width: 26%;
+}
+.inner-jobs-table th:nth-child(2),
+.inner-jobs-table td:nth-child(2) {
+  width: 20%;
+}
+.inner-jobs-table th:nth-child(3),
+.inner-jobs-table td:nth-child(3) {
+  width: 20%;
+}
+.inner-jobs-table th:nth-child(4),
+.inner-jobs-table td:nth-child(4) {
+  width: 20%;
+}
+.inner-jobs-table th:nth-child(5),
+.inner-jobs-table td:nth-child(5) {
+  width: 14%;
+}
+.inner-jobs-table .mono {
+  overflow-wrap: anywhere;
+}
+.inner-job-reason {
+  display: block;
+  margin-top: 3px;
+  font-size: 0.72rem;
+}
 .run-failure-detail {
   display: flex;
   align-items: flex-start;
