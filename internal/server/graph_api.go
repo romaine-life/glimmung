@@ -216,14 +216,17 @@ type RunProjectionAttempt struct {
 }
 
 type RunProjectionEvidence struct {
-	Kind         string  `json:"kind"`
-	Ref          string  `json:"ref"`
-	Label        string  `json:"label"`
-	URL          *string `json:"url,omitempty"`
-	ContentType  string  `json:"content_type,omitempty"`
-	SizeBytes    int64   `json:"size_bytes,omitempty"`
-	DurationMS   int     `json:"duration_ms,omitempty"`
-	ArtifactPath string  `json:"artifact_path,omitempty"`
+	Kind               string  `json:"kind"`
+	Ref                string  `json:"ref"`
+	Label              string  `json:"label"`
+	URL                *string `json:"url,omitempty"`
+	ContentType        string  `json:"content_type,omitempty"`
+	SizeBytes          int64   `json:"size_bytes,omitempty"`
+	DurationMS         int     `json:"duration_ms,omitempty"`
+	ArtifactPath       string  `json:"artifact_path,omitempty"`
+	SourcePhase        string  `json:"source_phase,omitempty"`
+	SourceAttemptIndex *int    `json:"source_attempt_index,omitempty"`
+	VerificationStatus string  `json:"verification_status,omitempty"`
 }
 
 type RunProjectionTouchpoint struct {
@@ -1960,6 +1963,7 @@ func runProjectionEvidence(run RunReport, touchpoints []TouchpointRow) []RunProj
 	add := func(item RunProjectionEvidence) {
 		item.Kind = firstNonEmpty(strings.TrimSpace(item.Kind), EvidenceKindArtifact)
 		item.Ref = strings.TrimSpace(item.Ref)
+		item.URL = stringPointerOrNil(strings.TrimSpace(stringValueFromPtr(item.URL)))
 		if item.Label == "" {
 			item.Label = evidenceLabel(item.Ref)
 		}
@@ -1986,22 +1990,37 @@ func runProjectionEvidence(run RunReport, touchpoints []TouchpointRow) []RunProj
 				continue
 			}
 			itemURL := strings.TrimSpace(artifact.URL)
-			if itemURL == "" && strings.TrimSpace(artifact.ArtifactPath) != "" {
-				itemURL = artifactURLForBlobName(artifact.ArtifactPath)
+			artifactPath := strings.TrimSpace(artifact.ArtifactPath)
+			if itemURL == "" {
+				artifactPath, itemURL = runEvidenceArtifactPathAndURL(run, firstNonEmpty(artifactPath, ref))
 			}
 			add(RunProjectionEvidence{
-				Kind:         firstNonEmpty(strings.TrimSpace(artifact.Kind), EvidenceKindForRef(ref)),
-				Ref:          ref,
-				Label:        firstNonEmpty(strings.TrimSpace(artifact.Label), evidenceLabel(ref)),
-				URL:          stringPointerOrNil(itemURL),
-				ContentType:  strings.TrimSpace(artifact.ContentType),
-				SizeBytes:    artifact.SizeBytes,
-				DurationMS:   artifact.DurationMS,
-				ArtifactPath: strings.TrimSpace(artifact.ArtifactPath),
+				Kind:               firstNonEmpty(strings.TrimSpace(artifact.Kind), EvidenceKindForRef(ref)),
+				Ref:                ref,
+				Label:              firstNonEmpty(strings.TrimSpace(artifact.Label), evidenceLabel(ref)),
+				URL:                stringPointerOrNil(itemURL),
+				ContentType:        strings.TrimSpace(artifact.ContentType),
+				SizeBytes:          artifact.SizeBytes,
+				DurationMS:         artifact.DurationMS,
+				ArtifactPath:       artifactPath,
+				SourcePhase:        strings.TrimSpace(artifact.SourcePhase),
+				SourceAttemptIndex: artifact.SourceAttemptIndex,
+				VerificationStatus: strings.TrimSpace(stringValueFromPtr(attempt.VerificationStatus)),
 			})
 		}
 		for _, ref := range attempt.EvidenceRefs {
-			addRef("artifact", ref, evidenceLabel(ref), evidenceURL(ref))
+			artifactPath, itemURL := runEvidenceArtifactPathAndURL(run, ref)
+			attemptIndex := attempt.AttemptIndex
+			add(RunProjectionEvidence{
+				Kind:               EvidenceKindForRef(ref),
+				Ref:                strings.TrimSpace(ref),
+				Label:              evidenceLabel(ref),
+				URL:                stringPointerOrNil(itemURL),
+				ArtifactPath:       artifactPath,
+				SourcePhase:        strings.TrimSpace(attempt.Phase),
+				SourceAttemptIndex: &attemptIndex,
+				VerificationStatus: strings.TrimSpace(stringValueFromPtr(attempt.VerificationStatus)),
+			})
 		}
 		if attempt.LogArchiveURL != nil && *attempt.LogArchiveURL != "" {
 			addRef("log", *attempt.LogArchiveURL, "native events", evidenceURL(*attempt.LogArchiveURL))
@@ -2018,8 +2037,9 @@ func runProjectionEvidence(run RunReport, touchpoints []TouchpointRow) []RunProj
 			}
 			label := firstNonEmpty(strings.TrimSpace(item.Label), evidenceLabel(ref))
 			itemURL := strings.TrimSpace(item.URL)
-			if itemURL == "" && strings.TrimSpace(item.ArtifactPath) != "" {
-				itemURL = artifactURLForBlobName(item.ArtifactPath)
+			artifactPath := strings.TrimSpace(item.ArtifactPath)
+			if itemURL == "" && artifactPath != "" {
+				itemURL = artifactURLForBlobName(artifactPath)
 			}
 			add(RunProjectionEvidence{
 				Kind:         firstNonEmpty(strings.TrimSpace(item.Kind), EvidenceKindArtifact),
@@ -2029,7 +2049,7 @@ func runProjectionEvidence(run RunReport, touchpoints []TouchpointRow) []RunProj
 				ContentType:  strings.TrimSpace(item.ContentType),
 				SizeBytes:    item.SizeBytes,
 				DurationMS:   item.DurationMS,
-				ArtifactPath: strings.TrimSpace(item.ArtifactPath),
+				ArtifactPath: artifactPath,
 			})
 		}
 		if tp.HTMLURL != nil && *tp.HTMLURL != "" {
@@ -2040,6 +2060,36 @@ func runProjectionEvidence(run RunReport, touchpoints []TouchpointRow) []RunProj
 		}
 	}
 	return evidence
+}
+
+func runEvidenceArtifactPathAndURL(run RunReport, ref string) (string, string) {
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return "", ""
+	}
+	if strings.HasPrefix(ref, "http://") || strings.HasPrefix(ref, "https://") {
+		return "", ref
+	}
+	if strings.HasPrefix(ref, "/v1/artifacts/") {
+		path := strings.TrimPrefix(ref, "/v1/artifacts/")
+		return path, ref
+	}
+	if strings.HasPrefix(ref, "blob://artifacts/") {
+		path := strings.TrimPrefix(ref, "blob://artifacts/")
+		return path, artifactURLForBlobName(path)
+	}
+	if strings.HasPrefix(ref, "runs/") || strings.HasPrefix(ref, "issues/") || strings.HasPrefix(ref, "reports/") || strings.HasPrefix(ref, "inspections/") {
+		return ref, artifactURLForBlobName(ref)
+	}
+	if strings.HasPrefix(ref, "screenshots/") || strings.HasPrefix(ref, "videos/") {
+		runID := strings.TrimSpace(run.ID)
+		if runID == "" {
+			return "", ""
+		}
+		path := "runs/" + strings.Trim(strings.TrimSpace(run.Project), "/") + "/" + runID + "/" + strings.Trim(ref, "/")
+		return path, artifactURLForBlobName(path)
+	}
+	return "", ""
 }
 
 func applyNativeEventsToProjectionRun(run *RunProjectionRun, events []NativeRunLogEvent) {

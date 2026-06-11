@@ -702,18 +702,24 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.step-group-row {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  border-bottom: 1px solid var(--border);
+  border-left: 2px solid var(--border);
+  background: transparent;
+}
 .step-group-label {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  width: 100%;
+  flex: 1 1 auto;
+  min-width: 0;
   min-height: 28px;
-  padding: 7px 12px 5px 34px;
-  border-bottom: 1px solid var(--border);
-  border-left: 2px solid var(--border);
-  border-top: 0;
-  border-right: 0;
+  padding: 7px 10px 5px 34px;
+  border: 0;
   background: transparent;
   color: var(--fg-muted);
   font-family: var(--font-mono);
@@ -724,18 +730,22 @@
 }
 /* Group header rail mirrors its steps: grey before run, blue while active,
    green when every step succeeded, red if any failed. */
-.step-group-label.done {
+.step-group-row.done {
   border-left-color: var(--state-success-fg);
   background: color-mix(in srgb, var(--state-success-bg) 14%, transparent);
 }
-.step-group-label.active {
+.step-group-row.active {
   border-left-color: var(--state-busy-fg);
   background: color-mix(in srgb, var(--state-busy-bg) 16%, transparent);
   color: var(--fg);
 }
-.step-group-label.failed {
+.step-group-row.failed {
   border-left-color: var(--state-danger-fg);
   background: color-mix(in srgb, var(--state-danger-bg) 16%, transparent);
+  color: var(--fg);
+}
+.step-group-row.selected {
+  background: var(--surface-hover);
   color: var(--fg);
 }
 .step-group-label small {
@@ -745,8 +755,24 @@
   font-weight: 500;
 }
 .step-group-label:hover,
-.step-group-label:focus-visible {
+.step-group-label:focus-visible,
+.step-group-evidence-button:hover,
+.step-group-evidence-button:focus-visible {
   background: var(--surface-hover);
+}
+.step-group-evidence-button {
+  flex: 0 0 28px;
+  align-self: stretch;
+  display: grid;
+  place-items: center;
+  min-height: 28px;
+  border: 0;
+  border-left: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+  background: transparent;
+  color: var(--fg-dimmer);
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  cursor: pointer;
 }
 .step-row.grouped {
   padding-left: 26px;
@@ -1831,6 +1857,99 @@ h2 .inline-action,
 .evidence-shot span {
   overflow-wrap: anywhere;
 }
+.native-log-content {
+  display: grid;
+  gap: 8px;
+  align-content: start;
+  min-width: 0;
+  max-height: 420px;
+  overflow: auto;
+  padding: 14px;
+  background: #050507;
+}
+.native-evidence-strip {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--surface);
+}
+.native-collected-evidence {
+  margin-top: 10px;
+}
+.native-evidence-heading {
+  display: block;
+}
+.native-evidence-links {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 260px));
+  gap: 10px;
+  min-width: 0;
+  width: 100%;
+}
+.native-evidence-item {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  position: relative;
+  padding: 6px;
+  border: 1px solid color-mix(in srgb, var(--border) 84%, transparent);
+  border-radius: 4px;
+  background: #0b0b0e;
+}
+.native-evidence-item.passed {
+  border-color: color-mix(in srgb, var(--state-success-fg) 72%, var(--border));
+  background: color-mix(in srgb, var(--state-success-bg) 12%, #0b0b0e);
+}
+.native-evidence-item.failed {
+  border-color: color-mix(in srgb, var(--state-danger-fg) 76%, var(--border));
+  background: color-mix(in srgb, var(--state-danger-bg) 16%, #0b0b0e);
+}
+.native-evidence-item.skipped {
+  border-color: color-mix(in srgb, var(--fg-dimmer) 60%, var(--border));
+}
+.native-evidence-verdict {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  background: color-mix(in srgb, #050507 82%, transparent);
+  color: var(--fg-muted);
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  line-height: 1;
+}
+.native-evidence-item.passed .native-evidence-verdict {
+  color: var(--state-success-fg);
+}
+.native-evidence-item.failed .native-evidence-verdict {
+  color: var(--state-danger-fg);
+}
+.native-evidence-item.skipped .native-evidence-verdict {
+  color: var(--fg-dimmer);
+}
+.native-evidence-item video,
+.native-evidence-item img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+}
+.native-evidence-item a,
+.native-evidence-item span {
+  font-size: 0.72rem;
+  overflow-wrap: anywhere;
+}
 
 .project-workspace {
   display: grid;
@@ -2692,6 +2811,26 @@ h2 .inline-action,
 .native-step-terminal {
   max-height: 420px;
   white-space: pre-wrap;
+}
+.native-log-content .native-step-terminal {
+  min-height: 0;
+  max-height: none;
+  padding: 0;
+  overflow: visible;
+  background: transparent;
+}
+.native-log-content .agent-transcript {
+  min-height: 0;
+  max-height: none;
+  padding: 0;
+  overflow: visible;
+  background: transparent;
+}
+.native-log-placeholder {
+  padding: 10px;
+  border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  border-radius: 6px;
+  background: #0b0b0e;
 }
 .native-view-toggle {
   display: inline-flex;

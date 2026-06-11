@@ -247,6 +247,9 @@ type RunProjectionEvidence = {
   size_bytes?: number;
   duration_ms?: number;
   artifact_path?: string | null;
+  source_phase?: string | null;
+  source_attempt_index?: number | null;
+  verification_status?: string | null;
 };
 
 type RunProjectionTouchpoint = {
@@ -2435,6 +2438,8 @@ function ProjectionInspector({
   const selectedJobDuration = selectedJob
     ? nativeDurationLabel(selectedJob.state ?? null, selectedJob.started_at ?? null, selectedJob.completed_at ?? null)
     : null;
+  const selectedEvidence = projectionEvidenceForSelection(run.evidence ?? [], phase, latestAttempt, step);
+  const collectedEvidence = step ? [] : projectionEvidenceForJob(run.evidence ?? [], phase, latestAttempt);
   return (
     <div className="run-panel">
       <div className="run-panel-header">
@@ -2519,19 +2524,23 @@ function ProjectionInspector({
       )}
       {selectedJob && nativeJob ? (
         latestAttempt && issueNumber !== null && runNumber ? (
-          <NativeJobInspector
-            project={project}
-            runId={run.run_ref}
-            issueNumber={issueNumber}
-            runNumber={runNumber}
-            attemptIndex={latestAttempt.attempt_index}
-            jobs={[nativeJob]}
-            archiveUrl={latestAttempt.log_archive_url ?? null}
-            live={selectedJob.state === "active" || selectedJob.state === "dispatching"}
-            selectedJobId={selectedJob.id}
-            selectedStepSlug={step?.slug ?? null}
-            onSelectStep={onSelectStep}
-          />
+          <>
+            <NativeJobInspector
+              project={project}
+              runId={run.run_ref}
+              issueNumber={issueNumber}
+              runNumber={runNumber}
+              attemptIndex={latestAttempt.attempt_index}
+              jobs={[nativeJob]}
+              archiveUrl={latestAttempt.log_archive_url ?? null}
+              live={selectedJob.state === "active" || selectedJob.state === "dispatching"}
+              selectedJobId={selectedJob.id}
+              selectedStepSlug={step?.slug ?? null}
+              selectedEvidence={selectedEvidence}
+              collectedEvidence={collectedEvidence}
+              onSelectStep={onSelectStep}
+            />
+          </>
         ) : (
           <PlannedNativeJobInspector
             job={nativeJob}
@@ -3337,20 +3346,23 @@ function TouchpointTab({
           {structuredScreenshots.length > 0 && <StructuredScreenshotEvidence items={structuredScreenshots} />}
           {listedEvidence.length > 0 && (
             <div className="project-info touchpoint-evidence-list">
-              {listedEvidence.map((item) => (
-                <div className="row" key={`${item.kind}:${item.ref}`}>
-                  <span className="key">{item.kind}</span>
-                  <span className="val">
-                    {item.url ? (
-                      <a className="mono" href={item.url} target="_blank" rel="noreferrer">
-                        {item.label}
-                      </a>
-                    ) : (
-                      <span className="mono">{item.label}</span>
-                    )}
-                  </span>
-                </div>
-              ))}
+              {listedEvidence.map((item) => {
+                const href = evidenceHref(item);
+                return (
+                  <div className="row" key={`${item.kind}:${item.ref}`}>
+                    <span className="key">{item.kind}</span>
+                    <span className="val">
+                      {href ? (
+                        <a className="mono" href={href} target="_blank" rel="noreferrer">
+                          {item.label}
+                        </a>
+                      ) : (
+                        <span className="mono">{item.label}</span>
+                      )}
+                    </span>
+                  </div>
+                );
+              })}
             </div>
           )}
           {projectionEvidence.length === 0 && (
@@ -3798,6 +3810,8 @@ function NativeJobInspector({
   live,
   selectedJobId = null,
   selectedStepSlug = null,
+  selectedEvidence = [],
+  collectedEvidence = [],
   onSelectStep,
 }: {
   project: string;
@@ -3810,6 +3824,8 @@ function NativeJobInspector({
   live: boolean;
   selectedJobId?: string | null;
   selectedStepSlug?: string | null;
+  selectedEvidence?: RunProjectionEvidence[];
+  collectedEvidence?: RunProjectionEvidence[];
   onSelectStep?: (jobId: string, stepSlug: string) => void;
 }) {
   const [logs, setLogs] = useState<NativeRunEventsResponse | null>(null);
@@ -3825,16 +3841,27 @@ function NativeJobInspector({
   const defaultSelection = useMemo(
     () => selectedStepSlug
       ? stepRefs.find((step) => step.step.slug === selectedStepSlug)?.key ?? preferredNativeStepKey(stepRefs)
-      : preferredNativeStepKey(stepRefs),
+      : null,
     [selectedStepSlug, stepRefs],
   );
   const [selectedKey, setSelectedKey] = useState<string | null>(defaultSelection);
+  const [selectedGroupKey, setSelectedGroupKey] = useState<string | null>(null);
   const [collapsedStepGroups, setCollapsedStepGroups] = useState<Set<string>>(() => new Set());
   const [viewMode, setViewMode] = useState<NativeLogViewMode>("transcript");
   const [transcriptFilter, setTranscriptFilter] = useState<AgentTranscriptFilter>("all");
   const [pageCursors, setPageCursors] = useState<number[]>([]);
   const pageAfterSeq = pageCursors[pageCursors.length - 1] ?? null;
-  const selected = stepRefs.find((step) => step.key === selectedKey) ?? stepRefs[0] ?? null;
+  const selected = selectedKey ? stepRefs.find((step) => step.key === selectedKey) ?? null : null;
+  const selectedGroup = selectedGroupKey
+    ? stepRefs.find(({ job, step }) => `${job.job_id}:${nativeStepGroupKey(step)}` === selectedGroupKey) ?? null
+    : null;
+  const jobEvidence = evidenceWithNativeGroupVerdicts(collectedEvidence, stepRefs);
+  const selectedGroupEvidence = selectedGroup
+    ? evidenceForNativeStepGroup(jobEvidence, selectedGroup.step)
+    : [];
+  const selectedStepEvidence = selected
+    ? evidenceWithNativeGroupVerdicts(selectedEvidence, stepRefs)
+    : selectedEvidence;
   const selectedStepSlugForEvents = selected?.step.slug ?? null;
 
   useLayoutEffect(() => {
@@ -3844,6 +3871,7 @@ function NativeJobInspector({
 
   useEffect(() => {
     setSelectedKey(defaultSelection);
+    setSelectedGroupKey(null);
   }, [defaultSelection]);
 
   useEffect(() => {
@@ -3924,7 +3952,7 @@ function NativeJobInspector({
         event.job_id === selected.job.job_id
         && (event.step_slug === selected.step.slug || (event.event === "log" && !event.step_slug))
       ))
-    : events;
+    : [];
   const transcriptEntries = selected && nativeSelectionUsesTranscript(selected.job, selected.step)
     ? agentTranscriptEntries(selectedEvents)
     : [];
@@ -4042,6 +4070,12 @@ function NativeJobInspector({
               const groupStepCount = groupTitle ? nativeStepGroupCount(stepRefs, index) : 0;
               const groupedClass = groupKey ? " grouped" : "";
               const jobDuration = nativeDurationLabel(job.state ?? null, job.started_at ?? null, job.completed_at ?? null);
+              const groupSelected = Boolean(scopedGroupKey && selectedGroupKey === scopedGroupKey);
+              const selectGroup = () => {
+                if (!scopedGroupKey) return;
+                setSelectedKey(null);
+                setSelectedGroupKey(scopedGroupKey);
+              };
               return (
                 <Fragment key={key}>
                   {(index === 0 || stepRefs[index - 1]?.job.job_id !== job.job_id) && (
@@ -4057,23 +4091,35 @@ function NativeJobInspector({
                     </div>
                   )}
                   {groupTitle && (
-                    <button
-                      type="button"
-                      className={`step-group-label ${nativeStepGroupRowClass(stepRefs, index)}`}
-                      aria-expanded={!groupCollapsed}
-                      onClick={() => {
-                        if (!scopedGroupKey) return;
-                        setCollapsedStepGroups((current) => {
-                          const next = new Set(current);
-                          if (next.has(scopedGroupKey)) next.delete(scopedGroupKey);
-                          else next.add(scopedGroupKey);
-                          return next;
-                        });
-                      }}
-                    >
-                      <span>{groupTitle}</span>
-                      <small>{groupStepCount} step{groupStepCount === 1 ? "" : "s"}</small>
-                    </button>
+                    <div className={`step-group-row ${nativeStepGroupRowClass(stepRefs, index)}${groupSelected ? " selected" : ""}`}>
+                      <button
+                        type="button"
+                        className="step-group-label"
+                        aria-expanded={!groupCollapsed}
+                        onClick={() => {
+                          selectGroup();
+                          if (!scopedGroupKey) return;
+                          setCollapsedStepGroups((current) => {
+                            const next = new Set(current);
+                            if (next.has(scopedGroupKey)) next.delete(scopedGroupKey);
+                            else next.add(scopedGroupKey);
+                            return next;
+                          });
+                        }}
+                      >
+                        <span>{groupTitle}</span>
+                        <small>{groupStepCount} step{groupStepCount === 1 ? "" : "s"}</small>
+                      </button>
+                      <button
+                        type="button"
+                        className="step-group-evidence-button"
+                        aria-label={`view evidence for ${groupTitle}`}
+                        title="view test set evidence"
+                        onClick={selectGroup}
+                      >
+                        ⊡
+                      </button>
+                    </div>
                   )}
                   {!groupCollapsed && (
                     <button
@@ -4081,6 +4127,7 @@ function NativeJobInspector({
                       className={`step-row ${nativeStepRowClass(step.state ?? "")}${groupedClass}${key === selected?.key ? " selected" : ""}`}
                       onClick={() => {
                         setSelectedKey(key);
+                        setSelectedGroupKey(null);
                         onSelectStep?.(job.job_id, step.slug);
                       }}
                     >
@@ -4098,18 +4145,93 @@ function NativeJobInspector({
             })
           )}
         </aside>
-        {activeViewMode === "transcript" ? (
-          <AgentTranscriptView
-            entries={visibleTranscriptEntries}
-            emptyLabel={transcriptFilter === "assistant" ? "No assistant text in this batch." : "No transcript rows in this batch."}
-          />
-        ) : (
-          <pre className="step-terminal native-step-terminal">
-            {selected
-              ? nativeTerminalText(selected.job, selected.step, selectedEvents)
-              : nativeTerminalText(null, null, events)}
-          </pre>
-        )}
+        <div className="native-log-content">
+          {selectedGroup ? (
+            <>
+              <div className="native-log-placeholder mono dim">Click a step to see its logs.</div>
+              {selectedGroupEvidence.length > 0 ? (
+                <NativeStepEvidenceStrip
+                  evidence={selectedGroupEvidence}
+                  label="Collected test evidence:"
+                  ariaLabel="test set evidence"
+                />
+              ) : (
+                <div className="native-log-placeholder mono dim">No collected evidence for this test set.</div>
+              )}
+            </>
+          ) : !selected ? (
+            <>
+              <div className="native-log-placeholder mono dim">Click a step to see its logs.</div>
+              {jobEvidence.length > 0 && (
+                <NativeStepEvidenceStrip
+                  evidence={jobEvidence}
+                  label="Collected test evidence:"
+                  ariaLabel="collected test evidence"
+                />
+              )}
+            </>
+          ) : (
+            <>
+              {selectedStepEvidence.length > 0 && <NativeStepEvidenceStrip evidence={selectedStepEvidence} label="Step evidence:" />}
+              {activeViewMode === "transcript" ? (
+            <AgentTranscriptView
+              entries={visibleTranscriptEntries}
+              emptyLabel={transcriptFilter === "assistant" ? "No assistant text in this batch." : "No transcript rows in this batch."}
+            />
+              ) : (
+            <pre className="step-terminal native-step-terminal">
+              {nativeTerminalText(selected.job, selected.step, selectedEvents)}
+            </pre>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function NativeStepEvidenceStrip({
+  evidence,
+  label = "Evidence:",
+  ariaLabel = "step evidence",
+  className = "",
+}: {
+  evidence: RunProjectionEvidence[];
+  label?: string;
+  ariaLabel?: string;
+  className?: string;
+}) {
+  return (
+    <div className={`native-evidence-strip${className ? ` ${className}` : ""}`} aria-label={ariaLabel}>
+      <span className="key native-evidence-heading">{label}</span>
+      <div className="native-evidence-links">
+        {evidence.map((item) => {
+          const href = evidenceHref(item);
+          const verdict = evidenceVerdict(item);
+          const kind = item.kind === "screenshot" ? "frame" : item.kind;
+          const duration = item.duration_ms ? ` ${Math.round(item.duration_ms / 1000)}s` : "";
+          const label = `${kind}: ${item.label}${duration}`;
+          const body = href && item.kind === "video" ? (
+            <video src={href} controls preload="metadata" />
+          ) : href && item.kind === "screenshot" ? (
+            <img src={href} alt={item.label} loading="lazy" />
+          ) : null;
+          return href ? (
+            <div key={`${item.kind}:${item.ref}`} className={`native-evidence-item${verdict ? ` ${verdict.className}` : ""}`}>
+              {verdict && <span className="native-evidence-verdict" title={verdict.title}>{verdict.mark}</span>}
+              {body}
+              <a className="mono" href={href} target="_blank" rel="noreferrer">
+                {label}
+              </a>
+            </div>
+          ) : (
+            <div key={`${item.kind}:${item.ref}`} className={`native-evidence-item${verdict ? ` ${verdict.className}` : ""}`}>
+              {verdict && <span className="native-evidence-verdict" title={verdict.title}>{verdict.mark}</span>}
+              <span className="mono">{label}</span>
+            </div>
+          );
+        })}
       </div>
     </div>
   );
@@ -4201,12 +4323,12 @@ function PlannedNativeJobInspector({
   const defaultSelection = useMemo(
     () => selectedStepSlug
       ? stepRefs.find((step) => step.step.slug === selectedStepSlug)?.key ?? preferredNativeStepKey(stepRefs)
-      : preferredNativeStepKey(stepRefs),
+      : null,
     [selectedStepSlug, stepRefs],
   );
   const [selectedKey, setSelectedKey] = useState<string | null>(defaultSelection);
   const [collapsedStepGroups, setCollapsedStepGroups] = useState<Set<string>>(() => new Set());
-  const selected = stepRefs.find((step) => step.key === selectedKey) ?? stepRefs[0] ?? null;
+  const selected = selectedKey ? stepRefs.find((step) => step.key === selectedKey) ?? null : null;
 
   useEffect(() => {
     setSelectedKey(defaultSelection);
@@ -4305,11 +4427,15 @@ function PlannedNativeJobInspector({
             })
           )}
         </aside>
-        <pre className="step-terminal native-step-terminal">
-          {selected
-            ? nativeTerminalText(selected.job, selected.step, [])
-            : nativeTerminalText(null, null, [])}
-        </pre>
+        {selected ? (
+          <pre className="step-terminal native-step-terminal">
+            {nativeTerminalText(selected.job, selected.step, [])}
+          </pre>
+        ) : (
+          <div className="native-log-content">
+            <div className="native-log-placeholder mono dim">Click a step to see its logs.</div>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -4778,12 +4904,16 @@ function numberValue(value: unknown): number | null {
 function StructuredScreenshotEvidence({ items }: { items: RunProjectionEvidence[] }) {
   return (
     <div className="evidence-gallery">
-      {items.map((item) => (
-        <a key={`${item.kind}:${item.ref}`} className="evidence-shot" href={item.url ?? item.ref} target="_blank" rel="noreferrer">
-          <img src={item.url ?? item.ref} alt={item.label} loading="lazy" />
-          <span>{item.label}</span>
-        </a>
-      ))}
+      {items.map((item) => {
+        const href = evidenceHref(item);
+        if (!href) return null;
+        return (
+          <a key={`${item.kind}:${item.ref}`} className="evidence-shot" href={href} target="_blank" rel="noreferrer">
+            <img src={href} alt={item.label} loading="lazy" />
+            <span>{item.label}</span>
+          </a>
+        );
+      })}
     </div>
   );
 }
@@ -4791,29 +4921,33 @@ function StructuredScreenshotEvidence({ items }: { items: RunProjectionEvidence[
 function StructuredVideoEvidence({ items }: { items: RunProjectionEvidence[] }) {
   return (
     <div className="evidence-video-gallery">
-      {items.map((item) => (
-        <div key={`${item.kind}:${item.ref}`} className="evidence-video">
-          <video src={item.url ?? item.ref} controls preload="metadata" />
-          <div className="evidence-video-caption">
-            <a className="mono" href={item.url ?? item.ref} target="_blank" rel="noreferrer">
-              {item.label}
-            </a>
-            {item.duration_ms ? (
-              <span className="dim mono">{Math.round(item.duration_ms / 1000)}s</span>
-            ) : null}
+      {items.map((item) => {
+        const href = evidenceHref(item);
+        if (!href) return null;
+        return (
+          <div key={`${item.kind}:${item.ref}`} className="evidence-video">
+            <video src={href} controls preload="metadata" />
+            <div className="evidence-video-caption">
+              <a className="mono" href={href} target="_blank" rel="noreferrer">
+                {item.label}
+              </a>
+              {item.duration_ms ? (
+                <span className="dim mono">{Math.round(item.duration_ms / 1000)}s</span>
+              ) : null}
+            </div>
           </div>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
 
 function isInlineVideoEvidence(item: RunProjectionEvidence): boolean {
-  return item.kind === "video" && Boolean(item.url);
+  return item.kind === "video" && Boolean(evidenceHref(item));
 }
 
 function isInlineScreenshotEvidence(item: RunProjectionEvidence): boolean {
-  return item.kind === "screenshot" && Boolean(item.url);
+  return item.kind === "screenshot" && Boolean(evidenceHref(item));
 }
 
 function isRawVideoArtifact(item: RunProjectionEvidence): boolean {
@@ -4824,6 +4958,141 @@ function isRawVideoArtifact(item: RunProjectionEvidence): boolean {
 function isRawScreenshotArtifact(item: RunProjectionEvidence): boolean {
   if (item.kind !== "artifact") return false;
   return /\.(png|jpe?g|webp|gif)$/i.test(item.ref.split(/[?#]/)[0] ?? "");
+}
+
+function projectionEvidenceForSelection(
+  evidence: RunProjectionEvidence[],
+  phase: RunProjectionPhase,
+  latestAttempt: RunProjectionPhase["attempts"][number] | null,
+  step: RunProjectionPhase["jobs"][number]["steps"][number] | null,
+): RunProjectionEvidence[] {
+  const scoped = projectionEvidenceForJob(evidence, phase, latestAttempt);
+  if (!step) return [];
+  return evidenceForStepGroup(scoped, step);
+}
+
+function projectionEvidenceForJob(
+  evidence: RunProjectionEvidence[],
+  phase: RunProjectionPhase,
+  latestAttempt: RunProjectionPhase["attempts"][number] | null,
+): RunProjectionEvidence[] {
+  const latestAttemptIndex = latestAttempt?.attempt_index ?? null;
+  const phaseEvidence = evidence.filter((item) => {
+    if (item.source_phase && item.source_phase !== phase.name) return false;
+    if (latestAttemptIndex !== null && item.source_attempt_index !== undefined && item.source_attempt_index !== null) {
+      return item.source_attempt_index === latestAttemptIndex;
+    }
+    return item.source_phase === phase.name;
+  });
+  return phaseEvidence.length > 0 ? phaseEvidence : evidenceForRefs(latestAttempt?.evidence_refs ?? [], evidence);
+}
+
+function evidenceForRefs(refs: string[], evidence: RunProjectionEvidence[]): RunProjectionEvidence[] {
+  if (refs.length === 0) return [];
+  const wanted = new Set(refs.map((ref) => ref.trim()).filter(Boolean));
+  return evidence.filter((item) => wanted.has(item.ref));
+}
+
+function evidenceForNativeStepGroup(
+  evidence: RunProjectionEvidence[],
+  step: NativeAttemptStep,
+): RunProjectionEvidence[] {
+  return evidenceForStepGroup(evidence, step);
+}
+
+function evidenceForStepGroup(
+  evidence: RunProjectionEvidence[],
+  step: { group?: string | null; group_title?: string | null },
+): RunProjectionEvidence[] {
+  const marker = normalizeEvidenceMatchText(step.group_title ?? step.group ?? "");
+  if (!marker) return [];
+  return evidence.filter((item) => normalizeEvidenceMatchText(`${item.label} ${item.ref}`).includes(marker));
+}
+
+function evidenceWithNativeGroupVerdicts(
+  evidence: RunProjectionEvidence[],
+  stepRefs: NativeStepRef[],
+): RunProjectionEvidence[] {
+  if (evidence.length === 0 || stepRefs.length === 0) return evidence;
+  return evidence.map((item) => {
+    const group = nativeEvidenceMatchingGroup(item, stepRefs);
+    if (!group) return item;
+    const status = nativeStepGroupVerificationStatus(stepRefs, group.jobId, group.groupKey);
+    return status ? { ...item, verification_status: status } : item;
+  });
+}
+
+function nativeEvidenceMatchingGroup(
+  item: RunProjectionEvidence,
+  stepRefs: NativeStepRef[],
+): { jobId: string; groupKey: string } | null {
+  const text = normalizeEvidenceMatchText(`${item.label} ${item.ref}`);
+  const seen = new Set<string>();
+  for (const ref of stepRefs) {
+    const groupKey = nativeStepGroupKey(ref.step);
+    if (!groupKey) continue;
+    const scopedKey = `${ref.job.job_id}:${groupKey}`;
+    if (seen.has(scopedKey)) continue;
+    seen.add(scopedKey);
+    const marker = normalizeEvidenceMatchText(ref.step.group_title ?? ref.step.group ?? "");
+    if (marker && text.includes(marker)) {
+      return { jobId: ref.job.job_id, groupKey };
+    }
+  }
+  return null;
+}
+
+function nativeStepGroupVerificationStatus(
+  stepRefs: NativeStepRef[],
+  jobId: string,
+  groupKey: string,
+): string | null {
+  const grouped = stepRefs.filter((ref) => ref.job.job_id === jobId && nativeStepGroupKey(ref.step) === groupKey);
+  if (grouped.length === 0) return null;
+  let sawPass = false;
+  let sawSkipped = false;
+  let sawPending = false;
+  for (const ref of grouped) {
+    const state = ref.step.state ?? "";
+    if (state === "failed" || state === "aborted") return "fail";
+    if (state === "succeeded") sawPass = true;
+    else if (state === "skipped" || state === "supplied") sawSkipped = true;
+    else sawPending = true;
+  }
+  if (sawPass && !sawPending) return "pass";
+  if (sawSkipped && !sawPass && !sawPending) return "skipped";
+  return null;
+}
+
+function evidenceVerdict(item: RunProjectionEvidence): { className: string; mark: string; title: string } | null {
+  const status = item.verification_status?.trim().toLowerCase();
+  if (!status) return null;
+  if (status === "pass" || status === "passed" || status === "success" || status === "succeeded") {
+    return { className: "passed", mark: "✓", title: "verified evidence passed" };
+  }
+  if (status === "fail" || status === "failed" || status === "error" || status === "abort" || status === "aborted") {
+    return { className: "failed", mark: "×", title: "verified evidence failed" };
+  }
+  if (status === "skip" || status === "skipped") {
+    return { className: "skipped", mark: "·", title: "evidence verification skipped" };
+  }
+  return null;
+}
+
+function normalizeEvidenceMatchText(value: string): string {
+  return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+}
+
+function evidenceHref(item: RunProjectionEvidence): string | null {
+  const direct = item.url?.trim();
+  if (direct) return direct;
+  const artifactPath = item.artifact_path?.trim();
+  if (artifactPath) return `/v1/artifacts/${artifactPathFromUrl(artifactPath)}`;
+  const ref = item.ref.trim();
+  if (!ref) return null;
+  if (/^https?:\/\//i.test(ref) || ref.startsWith("/v1/artifacts/")) return ref;
+  if (ref.startsWith("blob://artifacts/")) return `/v1/artifacts/${artifactPathFromUrl(ref)}`;
+  return null;
 }
 
 function nativeSelectionUsesTranscript(job: NativeAttemptJob | null, step: NativeAttemptStep): boolean {
