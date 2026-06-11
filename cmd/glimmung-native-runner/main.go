@@ -173,10 +173,12 @@ type evidenceArtifact struct {
 }
 
 type dynamicCaseCompletion struct {
-	Index        int
-	Label        string
-	Verification map[string]any
-	Evidence     []evidenceArtifact
+	Index               int
+	Label               string
+	Verification        map[string]any
+	Evidence            []evidenceArtifact
+	SummaryMarkdown     string
+	ScreenshotsMarkdown string
 }
 
 type githubTokenResult struct {
@@ -1407,9 +1409,21 @@ func (r *nativeRunner) complete(ctx context.Context, conclusion, summary string)
 	}
 	verification := r.completion.Verification
 	evidence := r.completion.Evidence
+	summaryMarkdown := r.completion.SummaryMarkdown
+	screenshotsMarkdown := r.completion.ScreenshotsMarkdown
 	if len(r.caseCompletions) > 0 {
 		verification = aggregateDynamicCaseVerification(r.caseCompletions)
 		evidence = aggregateDynamicCaseEvidence(r.caseCompletions, evidence)
+		// Per-case markdown is the run report's why-channel — the failing
+		// case's verifier narrative and durable report links live there.
+		// Join them as per-case sections, failed cases first, so the
+		// section a human needs leads the report (glimmung#145).
+		if joined := aggregateDynamicCaseMarkdown(r.caseCompletions, func(tc dynamicCaseCompletion) string { return tc.SummaryMarkdown }); joined != "" {
+			summaryMarkdown = joined
+		}
+		if joined := aggregateDynamicCaseMarkdown(r.caseCompletions, func(tc dynamicCaseCompletion) string { return tc.ScreenshotsMarkdown }); joined != "" {
+			screenshotsMarkdown = joined
+		}
 	}
 	req := completedRequest{
 		JobID:        r.cfg.JobID,
@@ -1424,11 +1438,11 @@ func (r *nativeRunner) complete(ctx context.Context, conclusion, summary string)
 	if len(evidence) > 0 {
 		req.Evidence = evidence
 	}
-	if strings.TrimSpace(r.completion.ScreenshotsMarkdown) != "" {
-		req.ScreenshotsMarkdown = &r.completion.ScreenshotsMarkdown
+	if strings.TrimSpace(screenshotsMarkdown) != "" {
+		req.ScreenshotsMarkdown = &screenshotsMarkdown
 	}
-	if strings.TrimSpace(r.completion.SummaryMarkdown) != "" {
-		req.SummaryMarkdown = &r.completion.SummaryMarkdown
+	if strings.TrimSpace(summaryMarkdown) != "" {
+		req.SummaryMarkdown = &summaryMarkdown
 	} else if strings.TrimSpace(summary) != "" {
 		req.SummaryMarkdown = &summary
 	}
@@ -1496,10 +1510,12 @@ func (r *nativeRunner) collectCompletionMetadata(path string, step stepSpec) err
 	if len(metadata.Verification) > 0 && strings.TrimSpace(step.Env["GLIMMUNG_DYNAMIC_CASE_INDEX"]) != "" {
 		index, _ := strconv.Atoi(strings.TrimSpace(step.Env["GLIMMUNG_DYNAMIC_CASE_INDEX"]))
 		r.caseCompletions = append(r.caseCompletions, dynamicCaseCompletion{
-			Index:        index,
-			Label:        strings.TrimSpace(step.Env["GLIMMUNG_DYNAMIC_CASE_LABEL"]),
-			Verification: metadata.Verification,
-			Evidence:     metadata.Evidence,
+			Index:               index,
+			Label:               strings.TrimSpace(step.Env["GLIMMUNG_DYNAMIC_CASE_LABEL"]),
+			Verification:        metadata.Verification,
+			Evidence:            metadata.Evidence,
+			SummaryMarkdown:     metadata.SummaryMarkdown,
+			ScreenshotsMarkdown: metadata.ScreenshotsMarkdown,
 		})
 		return nil
 	}
@@ -1631,6 +1647,33 @@ func aggregateDynamicCaseEvidence(cases []dynamicCaseCompletion, existing []evid
 		out = appendEvidenceArtifacts(out, evidenceArtifactsFromAny(tc.Verification["evidence"])...)
 	}
 	return out
+}
+
+// aggregateDynamicCaseMarkdown joins per-case markdown (summary or
+// screenshots/evidence) into one document of "### <case label>" sections.
+// Failed and errored cases lead so the narrative a reviewer needs is at the
+// top of the run report; cases without markdown are skipped.
+func aggregateDynamicCaseMarkdown(cases []dynamicCaseCompletion, pick func(dynamicCaseCompletion) string) string {
+	ordered := make([]dynamicCaseCompletion, 0, len(cases))
+	passed := make([]dynamicCaseCompletion, 0, len(cases))
+	for _, tc := range cases {
+		switch strings.TrimSpace(fmt.Sprint(tc.Verification["status"])) {
+		case "fail", "error":
+			ordered = append(ordered, tc)
+		default:
+			passed = append(passed, tc)
+		}
+	}
+	ordered = append(ordered, passed...)
+	sections := make([]string, 0, len(ordered))
+	for _, tc := range ordered {
+		body := strings.TrimSpace(pick(tc))
+		if body == "" {
+			continue
+		}
+		sections = append(sections, "### "+dynamicCaseCompletionLabel(tc)+"\n\n"+body)
+	}
+	return strings.Join(sections, "\n\n")
 }
 
 func dynamicCaseVerificationSummaries(cases []dynamicCaseCompletion) []map[string]any {
