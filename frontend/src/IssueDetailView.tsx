@@ -183,6 +183,7 @@ type RunProjectionPhase = {
     reason?: string | null;
     k8s_job_name?: string | null;
     conclusion?: string | null;
+    started_at?: string | null;
     completed_at?: string | null;
     cost_usd?: number | null;
     steps: Array<{
@@ -194,6 +195,8 @@ type RunProjectionPhase = {
       group?: string | null;
       group_title?: string | null;
       dynamic_group?: StepDynamicGroup | null;
+      started_at?: string | null;
+      completed_at?: string | null;
     }>;
   }>;
   attempts: Array<{
@@ -398,6 +401,8 @@ type NativeAttemptJob = {
   job_id: string;
   name?: string | null;
   state?: string | null;
+  started_at?: string | null;
+  completed_at?: string | null;
   cost_usd?: number | null;
   steps: NativeAttemptStep[];
 };
@@ -409,6 +414,8 @@ type NativeAttemptStep = {
   reason?: string | null;
   message?: string | null;
   exit_code?: number | null;
+  started_at?: string | null;
+  completed_at?: string | null;
   group?: string | null;
   group_title?: string | null;
   dynamic_group?: StepDynamicGroup | null;
@@ -2093,6 +2100,7 @@ function RunsPane({
             <th>Run cycle</th>
             <th>State</th>
             <th>Started</th>
+            <th>Duration</th>
             <th title="The prior cycle that directly produced this cycle, when any.">Previous</th>
             <th>Cost</th>
             <th>Touchpoint</th>
@@ -2130,6 +2138,7 @@ function RunsPane({
                   </button>
                 </td>
                 <td className="mono dim">{r.started_at ? formatTime(r.started_at) : "—"}</td>
+                <td className="mono dim">{nativeDurationLabel(r.state ?? null, r.started_at ?? null, r.completed_at ?? null) ?? "—"}</td>
                 <td className="mono"><span className="dim">—</span></td>
                 <td className="mono">{Number.isFinite(cost) ? `$${cost.toFixed(4)}` : "—"}</td>
                 <td className="mono dim">—</td>
@@ -2151,6 +2160,7 @@ function RunsPane({
             const meta = r.metadata;
             const cost = numberOrNull(meta.cumulative_cost_usd);
             const prNumber = numberOrNull(meta.pr_number);
+            const completedAt = stringOrNull(meta.completed_at);
             const lineage = computeCycleLineage(graph, id);
             const recycledTarget = recycledGraphRunTarget(graph, id);
             const stateTargetId = recycledTarget ? runIdFromNode(recycledTarget) : id;
@@ -2183,6 +2193,7 @@ function RunsPane({
                   </button>
                 </td>
                 <td className="mono dim">{r.timestamp ? formatTime(r.timestamp) : "—"}</td>
+                <td className="mono dim">{nativeDurationLabel(r.state ?? null, r.timestamp ?? null, completedAt) ?? "—"}</td>
                 <td className="mono">
                   {lineage.kicker ? (
                     <RunRefLink graph={graph} runId={lineage.kicker} onSelectRun={onSelectRun} />
@@ -2466,6 +2477,9 @@ function ProjectionInspector({
   const runNumber = run.run_display_number ?? (run.run_number ? `${run.run_number}.${run.run_cycle_number ?? 1}` : null);
   const dispatchFailureDetail = projectionDispatchFailureDetail(run, phase, selectedJob);
   const selectedJobCost = selectedJob?.cost_usd ?? null;
+  const selectedJobDuration = selectedJob
+    ? nativeDurationLabel(selectedJob.state ?? null, selectedJob.started_at ?? null, selectedJob.completed_at ?? null)
+    : null;
   return (
     <div className="run-panel">
       <div className="run-panel-header">
@@ -2474,6 +2488,7 @@ function ProjectionInspector({
           <span className={`pill ${graphStatePill(selectedJob?.state ?? phase.state)}`} style={{ marginLeft: "0.5rem" }}>
             {formatGraphState(selectedJob?.state ?? phase.state)}
           </span>
+          {selectedJobDuration && <span className="dim mono" style={{ marginLeft: "0.5rem" }}>{selectedJobDuration}</span>}
           {selectedJob?.reason && <span className="dim mono" style={{ marginLeft: "0.5rem" }}>{selectedJob.reason}</span>}
         </div>
         <button type="button" className="link" onClick={onClose}>
@@ -2494,6 +2509,11 @@ function ProjectionInspector({
             <span className="key">job cost</span> <span className="mono">{formatUsd4(selectedJobCost)}</span>
           </div>
         )}
+        {selectedJobDuration && (
+          <div>
+            <span className="key">duration</span> <span className="mono">{selectedJobDuration}</span>
+          </div>
+        )}
         {selectedJob?.k8s_job_name && (
           <div>
             <span className="key">k8s</span> <span className="mono">{selectedJob.k8s_job_name}</span>{" "}
@@ -2502,12 +2522,9 @@ function ProjectionInspector({
               // stream so the data is one click away. We intentionally
               // do not bound `to` for active jobs — Grafana follows
               // "now" so a live stuck step keeps streaming. For
-              // completed jobs we still leave a generous window (the
-              // job projection does not carry started_at, so we anchor
-              // on the run's started_at — phases are short relative to
-              // the 24h default fallback).
+              // completed jobs we still leave a generous window.
               const lokiUrl = lokiExploreUrl(currentConfig(), selectedJob.k8s_job_name, {
-                from: run.started_at,
+                from: selectedJob.started_at ?? run.started_at,
                 to: selectedJob.completed_at ?? undefined,
               });
               return lokiUrl ? (
@@ -2707,6 +2724,8 @@ function projectionJobToNativeJob(job: RunProjectionPhase["jobs"][number]): Nati
     job_id: job.id,
     name: job.name,
     state: job.state,
+    started_at: job.started_at ?? null,
+    completed_at: job.completed_at ?? null,
     cost_usd: job.cost_usd ?? null,
     steps: job.steps.map((step) => ({
       slug: step.slug,
@@ -2714,6 +2733,8 @@ function projectionJobToNativeJob(job: RunProjectionPhase["jobs"][number]): Nati
       state: step.state,
       reason: step.reason ?? null,
       exit_code: step.exit_code ?? null,
+      started_at: step.started_at ?? null,
+      completed_at: step.completed_at ?? null,
       group: step.group ?? null,
       group_title: step.group_title ?? null,
       dynamic_group: step.dynamic_group ?? null,
@@ -3939,6 +3960,7 @@ function NativeJobInspector({
               const groupCollapsed = scopedGroupKey ? collapsedStepGroups.has(scopedGroupKey) : false;
               const groupStepCount = groupTitle ? nativeStepGroupCount(stepRefs, index) : 0;
               const groupedClass = groupKey ? " grouped" : "";
+              const jobDuration = nativeDurationLabel(job.state ?? null, job.started_at ?? null, job.completed_at ?? null);
               return (
                 <Fragment key={key}>
                   {(index === 0 || stepRefs[index - 1]?.job.job_id !== job.job_id) && (
@@ -3947,6 +3969,7 @@ function NativeJobInspector({
                       <span className={`pill ${nativeStatePill(job.state ?? "")}`}>
                         {job.state || "not run"}
                       </span>
+                      {jobDuration && <span className="mono dim">{jobDuration}</span>}
                       {job.cost_usd !== null && job.cost_usd !== undefined && (
                         <span className="mono dim">{formatUsd4(job.cost_usd)}</span>
                       )}
@@ -3985,9 +4008,7 @@ function NativeJobInspector({
                         {step.title || step.slug}
                       </strong>
                       <small>
-                        {step.exit_code !== null && step.exit_code !== undefined
-                          ? `exit ${step.exit_code}`
-                          : step.state ? formatGraphState(step.state) : "not run"}
+                        {nativeStepDetailLabel(step)}
                       </small>
                     </button>
                   )}
@@ -4148,6 +4169,7 @@ function PlannedNativeJobInspector({
               const groupCollapsed = scopedGroupKey ? collapsedStepGroups.has(scopedGroupKey) : false;
               const groupStepCount = groupTitle ? nativeStepGroupCount(stepRefs, index) : 0;
               const groupedClass = groupKey ? " grouped" : "";
+              const jobDuration = nativeDurationLabel(refJob.state ?? null, refJob.started_at ?? null, refJob.completed_at ?? null);
               return (
                 <Fragment key={key}>
                   {(index === 0 || stepRefs[index - 1]?.job.job_id !== refJob.job_id) && (
@@ -4156,6 +4178,7 @@ function PlannedNativeJobInspector({
                       <span className={`pill ${nativeStatePill(refJob.state ?? "")}`}>
                         {refJob.state || "not run"}
                       </span>
+                      {jobDuration && <span className="mono dim">{jobDuration}</span>}
                       {refJob.cost_usd !== null && refJob.cost_usd !== undefined && (
                         <span className="mono dim">{formatUsd4(refJob.cost_usd)}</span>
                       )}
@@ -4193,11 +4216,7 @@ function PlannedNativeJobInspector({
                       <strong>
                         {step.title || step.slug}
                       </strong>
-                      <small>
-                        {step.exit_code !== null && step.exit_code !== undefined
-                          ? `exit ${step.exit_code}`
-                          : step.state ? formatGraphState(step.state) : "not run"}
-                      </small>
+                      <small>{nativeStepDetailLabel(step)}</small>
                     </button>
                   )}
                 </Fragment>
@@ -4936,6 +4955,8 @@ function nativeAttemptJobs(x: unknown): NativeAttemptJob[] {
             reason: stringOrNull(s.reason),
             message: stringOrNull(s.message),
             exit_code: numberOrNull(s.exit_code),
+            started_at: stringOrNull(s.started_at),
+            completed_at: stringOrNull(s.completed_at),
           }];
         })
       : [];
@@ -4943,10 +4964,48 @@ function nativeAttemptJobs(x: unknown): NativeAttemptJob[] {
       job_id: jobId,
       name: stringOrNull(raw.name),
       state: stringOrNull(raw.state),
+      started_at: stringOrNull(raw.started_at),
+      completed_at: stringOrNull(raw.completed_at),
       cost_usd: numberOrNull(raw.cost_usd),
       steps,
     }];
   });
+}
+
+function nativeStepDetailLabel(step: NativeAttemptStep): string {
+  const parts: string[] = [];
+  if (step.exit_code !== null && step.exit_code !== undefined) {
+    parts.push(`exit ${step.exit_code}`);
+  } else {
+    parts.push(step.state ? formatGraphState(step.state) : "not run");
+  }
+  const duration = nativeDurationLabel(step.state ?? null, step.started_at ?? null, step.completed_at ?? null);
+  if (duration) parts.push(duration);
+  return parts.join(" · ");
+}
+
+function nativeDurationLabel(state: string | null, startedAt: string | null, completedAt: string | null): string | null {
+  if (!startedAt) return null;
+  const started = parseTs(startedAt);
+  if (!started) return null;
+  if (completedAt) {
+    const completed = parseTs(completedAt);
+    if (!completed || completed < started) return null;
+    return `ran ${formatDuration(completed - started)}`;
+  }
+  if (
+    state === "active" ||
+    state === "dispatching" ||
+    state === "claimed" ||
+    state === "in_progress" ||
+    state === "queued" ||
+    state === "pending" ||
+    state === "needs_review" ||
+    state === "review_required"
+  ) {
+    return `${formatDuration(now() - started)} elapsed`;
+  }
+  return null;
 }
 
 function nativeStatePill(state: string): string {

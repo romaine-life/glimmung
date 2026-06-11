@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { Pill, Token } from "../ui/bits";
 import { isMockMode, mockRuns } from "../mockApi";
-import { relTime, runStateTone, useLayout, usd, type Tone } from "./lib";
+import { durationLabel, relTime, runStateTone, useLayout, usd, type Tone } from "./lib";
 import type { ProjectRun, RunReport } from "../App";
 
 type RunRow = {
@@ -19,6 +19,7 @@ type RunRow = {
   state: string;
   abortReason: string | null;
   started: string;
+  completed: string | null;
 };
 
 function fromReport(r: RunReport): RunRow {
@@ -36,6 +37,7 @@ function fromReport(r: RunReport): RunRow {
     state: r.state,
     abortReason: r.abort_reason ?? null,
     started: r.started_at,
+    completed: r.completed_at,
   };
 }
 
@@ -54,6 +56,7 @@ function fromProjectRun(r: ProjectRun): RunRow {
     state: r.state,
     abortReason: null,
     started: r.started_at,
+    completed: r.completed_at ?? null,
   };
 }
 
@@ -117,7 +120,7 @@ export function Runs() {
 
       <div className="card">
         <table className="tbl">
-          <thead><tr><th>Run</th><th>Issue</th><th>Workflow</th><th>Phase</th><th>Cycle</th><th>Attempts</th><th>Cost</th><th>State</th><th>Started</th></tr></thead>
+          <thead><tr><th>Run</th><th>Issue</th><th>Workflow</th><th>Phase</th><th>Cycle</th><th>Attempts</th><th>Cost</th><th>State</th><th>Started</th><th>Duration</th></tr></thead>
           <tbody>
             {rows.map((r) => (
               <tr key={r.key}>
@@ -140,10 +143,11 @@ export function Runs() {
                   </span>
                 </td>
                 <td className="dim">{relTime(r.started)}</td>
+                <td className="mono dim">{durationLabel(r.started, r.completed, r.state)}</td>
               </tr>
             ))}
-            {!loading && rows.length === 0 && <tr><td colSpan={9}><div className="empty">No runs yet.</div></td></tr>}
-            {loading && rows.length === 0 && <tr><td colSpan={9}><div className="empty">Loading…</div></td></tr>}
+            {!loading && rows.length === 0 && <tr><td colSpan={10}><div className="empty">No runs yet.</div></td></tr>}
+            {loading && rows.length === 0 && <tr><td colSpan={10}><div className="empty">Loading…</div></td></tr>}
           </tbody>
         </table>
       </div>

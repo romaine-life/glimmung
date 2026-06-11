@@ -115,7 +115,7 @@ const runProjection = {
     phases: [{
       name: "env-prep",
       kind: "k8s_job",
-      state: "dispatching",
+      state: "active",
       verify: false,
       run_on: "success",
       purpose: "work",
@@ -123,10 +123,16 @@ const runProjection = {
       jobs: [{
         id: "env-prep",
         name: "Environment prep",
-        state: "dispatching",
+        state: "active",
+        started_at: "2026-05-20T17:24:09.336Z",
         k8s_job_name: "glim-ambience-172-runs-7-1-0-env-prep",
         steps: [
-          { slug: "clone-repo", title: "Clone repository", state: "not_started" },
+          {
+            slug: "clone-repo",
+            title: "Clone repository",
+            state: "active",
+            started_at: "2026-05-20T17:24:10.000Z",
+          },
           { slug: "build-validation-image", title: "Build validation image", state: "not_started" },
         ],
       }],
@@ -727,11 +733,13 @@ describe("IssueDetailView run execution graph", () => {
     const middleCells = within(rows[2]).getAllByRole("cell");
     const oldestCells = within(rows[3]).getAllByRole("cell");
 
+    expect(within(rows[0]).getByText("Duration")).toBeInTheDocument();
     expect(newestCells[0]).toHaveTextContent(/^3$/);
     expect(within(newestCells[1]).getByRole("button")).toHaveTextContent(/^2$/);
     expect(newestCells[1]).not.toHaveTextContent(/cycle/i);
     expect(newestCells[1]).not.toHaveTextContent(/\./);
     expect(newestCells[2]).toHaveTextContent(/^2$/);
+    expect(newestCells[5]).toHaveTextContent(/elapsed$/);
 
     expect(middleCells[0]).toHaveTextContent(/^2$/);
     expect(within(middleCells[1]).getByRole("button")).toHaveTextContent(/^2$/);
@@ -898,6 +906,9 @@ describe("IssueDetailView run execution graph", () => {
     const runPanelMeta = document.querySelector(".run-panel-meta");
     expect(runPanelMeta).not.toBeNull();
     expect(within(runPanelMeta as HTMLElement).queryByText(/^attempt$/)).not.toBeInTheDocument();
+    expect(within(runPanelMeta as HTMLElement).getByText(/^duration$/)).toBeInTheDocument();
+    expect(within(runPanelMeta as HTMLElement).getByText(/elapsed$/)).toBeInTheDocument();
+    expect(within(screen.getByLabelText("native job steps")).getAllByText(/elapsed/).length).toBeGreaterThanOrEqual(2);
     expect(await screen.findByText(/cloning repo/)).toBeInTheDocument();
     expect(within(screen.getByLabelText("native job steps")).getByRole("button", { name: /Build validation image/ })).toBeInTheDocument();
 
@@ -983,7 +994,13 @@ describe("IssueDetailView run execution graph", () => {
           ? {
               ...phase,
               jobs: phase.jobs.map((job) => job.id === "env-prep"
-                ? { ...job, state: "succeeded", cost_usd: 2.3456 }
+                ? {
+                    ...job,
+                    state: "succeeded",
+                    started_at: "2026-05-20T17:24:09.336Z",
+                    completed_at: "2026-05-20T17:30:09.336Z",
+                    cost_usd: 2.3456,
+                  }
                 : job),
             }
           : phase),
@@ -1014,6 +1031,7 @@ describe("IssueDetailView run execution graph", () => {
 
     expect(await screen.findByText("job cost")).toBeInTheDocument();
     expect(screen.getAllByText("$2.3456").length).toBeGreaterThanOrEqual(2);
+    expect(within(screen.getByLabelText("native job steps")).getByText("ran 6m 0s")).toBeInTheDocument();
   });
 
   it("renders LLM native step JSON as a transcript while keeping raw logs available", async () => {

@@ -178,6 +178,7 @@ type RunProjectionJob struct {
 	Reason      *string             `json:"reason,omitempty"`
 	K8sJobName  *string             `json:"k8s_job_name,omitempty"`
 	Conclusion  *string             `json:"conclusion,omitempty"`
+	StartedAt   *string             `json:"started_at,omitempty"`
 	CompletedAt *string             `json:"completed_at,omitempty"`
 	CostUSD     *float64            `json:"cost_usd,omitempty"`
 	Steps       []RunProjectionStep `json:"steps"`
@@ -192,6 +193,8 @@ type RunProjectionStep struct {
 	Group        string            `json:"group,omitempty"`
 	GroupTitle   *string           `json:"group_title,omitempty"`
 	DynamicGroup *StepDynamicGroup `json:"dynamic_group,omitempty"`
+	StartedAt    *string           `json:"started_at,omitempty"`
+	CompletedAt  *string           `json:"completed_at,omitempty"`
 }
 
 type RunProjectionAttempt struct {
@@ -1459,6 +1462,8 @@ func runProjectionJobsFromExecutions(executions []RunJobExecution, completions m
 				Group:        step.Group,
 				GroupTitle:   step.GroupTitle,
 				DynamicGroup: step.DynamicGroup,
+				StartedAt:    step.StartedAt,
+				CompletedAt:  step.CompletedAt,
 			})
 		}
 		jobs = append(jobs, RunProjectionJob{
@@ -1468,6 +1473,7 @@ func runProjectionJobsFromExecutions(executions []RunJobExecution, completions m
 			Reason:      execution.Reason,
 			K8sJobName:  execution.K8sJobName,
 			Conclusion:  conclusion,
+			StartedAt:   execution.StartedAt,
 			CompletedAt: completedAt,
 			CostUSD:     completionCostPtr(completion),
 			Steps:       steps,
