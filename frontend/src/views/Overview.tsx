@@ -42,24 +42,37 @@ export function Overview() {
       </div>
 
       <div className="kpis">
-        <div className="card kpi">
+        <div className="card kpi clickable">
+          <Link to="/leases" className="card-link-overlay" aria-label="Active leases" />
           <div className="kpi-label">Active leases</div>
           <div className="kpi-val">{leases.length}</div>
-          <div className="kpi-foot"><Icon name="lease" />{testLeases} test · {agentLeases} agent</div>
+          <div className="kpi-foot">
+            <Icon name="lease" />
+            <Link to="/leases" state={{ tab: "test" }} className="kpi-link">
+              {testLeases} test
+            </Link>
+            {" · "}
+            <Link to="/leases" state={{ tab: "agent" }} className="kpi-link">
+              {agentLeases} agent
+            </Link>
+          </div>
         </div>
-        <div className="card kpi">
+        <div className="card kpi clickable">
+          <Link to="/needs-attention" className="card-link-overlay" aria-label="Needs review" />
           <div className="kpi-label">Needs review</div>
           <div className="kpi-val">{issues.loading ? "—" : attentionRows.length}</div>
           <div className="kpi-foot">
             {openTouchpoints.length > 0 ? <Pill tone="vio">{openTouchpoints.length} touchpoints</Pill> : <span className="dim">no open touchpoints</span>}
           </div>
         </div>
-        <div className="card kpi">
+        <div className="card kpi clickable">
+          <Link to="/test-slots" className="card-link-overlay" aria-label="Test slots" />
           <div className="kpi-label">Test slots</div>
           <div className="kpi-val">{busySlots}<small> / {slots.length} busy</small></div>
           <div className="kpi-foot"><Icon name="flask" />{waiting} waiting</div>
         </div>
-        <div className="card kpi">
+        <div className="card kpi clickable">
+          <Link to="/projects" className="card-link-overlay" aria-label="Projects" />
           <div className="kpi-label">Projects</div>
           <div className="kpi-val">{projects.length}</div>
           <div className="kpi-foot"><Icon name="workflow" />{workflows.length} workflows</div>

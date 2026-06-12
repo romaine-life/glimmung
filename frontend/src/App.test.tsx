@@ -221,3 +221,143 @@ describe("project runs", () => {
     });
   });
 });
+
+describe("overview KPI click redirection", () => {
+  it("routes clicking 'test' active leases KPI text to /leases with tab=test state", async () => {
+    window.history.pushState({}, "", "/?mock=1");
+    installMockFetch();
+
+    const { container } = render(
+      <MemoryRouter initialEntries={["/"]}>
+        <App />
+      </MemoryRouter>,
+    );
+
+    // Find the link wrapping the test leases text inside the first KPI card
+    const kpis = container.querySelectorAll(".kpis .card.kpi");
+    const leasesKpi = kpis[0];
+    expect(leasesKpi).toBeDefined();
+    
+    // Find the test link inside the foot
+    const testLink = leasesKpi.querySelector(".kpi-foot a");
+    expect(testLink).not.toBeNull();
+    expect(testLink?.textContent).toContain("test");
+
+    await userEvent.click(testLink!);
+
+    // It should navigate to /leases with "test" tab selected/displayed
+    await waitFor(() => {
+      const heading = container.querySelector("h1.display");
+      expect(heading).toBeInTheDocument();
+      expect(heading?.textContent).toBe("Leases");
+    });
+
+    // The "test" tab should have class "on"
+    const testTab = container.querySelector(".tabs .tab.on");
+    expect(testTab).toBeInTheDocument();
+    expect(testTab?.textContent).toBe("test");
+  });
+
+  it("routes clicking the active leases KPI card container to /leases", async () => {
+    window.history.pushState({}, "", "/?mock=1");
+    installMockFetch();
+
+    const { container } = render(
+      <MemoryRouter initialEntries={["/"]}>
+        <App />
+      </MemoryRouter>,
+    );
+
+    const kpis = container.querySelectorAll(".kpis .card.kpi");
+    const leasesKpi = kpis[0];
+    expect(leasesKpi).toBeDefined();
+
+    // In a real browser, the absolute positioned .card-link-overlay covers the entire card area
+    // and receives the click. In JSDOM we click the overlay Link directly.
+    const overlay = leasesKpi.querySelector(".card-link-overlay");
+    expect(overlay).not.toBeNull();
+    await userEvent.click(overlay!);
+
+    // It should navigate to /leases
+    await waitFor(() => {
+      const heading = container.querySelector("h1.display");
+      expect(heading).toBeInTheDocument();
+      expect(heading?.textContent).toBe("Leases");
+    });
+  });
+
+  it("routes clicking the needs review KPI card container to /needs-attention", async () => {
+    window.history.pushState({}, "", "/?mock=1");
+    installMockFetch();
+
+    const { container } = render(
+      <MemoryRouter initialEntries={["/"]}>
+        <App />
+      </MemoryRouter>,
+    );
+
+    const kpis = container.querySelectorAll(".kpis .card.kpi");
+    const needsReviewKpi = kpis[1];
+    expect(needsReviewKpi).toBeDefined();
+
+    const overlay = needsReviewKpi.querySelector(".card-link-overlay");
+    expect(overlay).not.toBeNull();
+    await userEvent.click(overlay!);
+
+    await waitFor(() => {
+      const heading = container.querySelector("h1.display");
+      expect(heading).toBeInTheDocument();
+      expect(heading?.textContent).toBe("Needs attention");
+    });
+  });
+
+  it("routes clicking the test slots KPI card container to /test-slots", async () => {
+    window.history.pushState({}, "", "/?mock=1");
+    installMockFetch();
+
+    const { container } = render(
+      <MemoryRouter initialEntries={["/"]}>
+        <App />
+      </MemoryRouter>,
+    );
+
+    const kpis = container.querySelectorAll(".kpis .card.kpi");
+    const testSlotsKpi = kpis[2];
+    expect(testSlotsKpi).toBeDefined();
+
+    const overlay = testSlotsKpi.querySelector(".card-link-overlay");
+    expect(overlay).not.toBeNull();
+    await userEvent.click(overlay!);
+
+    await waitFor(() => {
+      const heading = container.querySelector("h1.display");
+      expect(heading).toBeInTheDocument();
+      expect(heading?.textContent).toBe("Test slots");
+    });
+  });
+
+  it("routes clicking the projects KPI card container to /projects", async () => {
+    window.history.pushState({}, "", "/?mock=1");
+    installMockFetch();
+
+    const { container } = render(
+      <MemoryRouter initialEntries={["/"]}>
+        <App />
+      </MemoryRouter>,
+    );
+
+    const kpis = container.querySelectorAll(".kpis .card.kpi");
+    const projectsKpi = kpis[3];
+    expect(projectsKpi).toBeDefined();
+
+    const overlay = projectsKpi.querySelector(".card-link-overlay");
+    expect(overlay).not.toBeNull();
+    await userEvent.click(overlay!);
+
+    await waitFor(() => {
+      const heading = container.querySelector("h2");
+      expect(heading).toBeInTheDocument();
+      expect(heading?.textContent).toBe("Projects");
+    });
+  });
+});
