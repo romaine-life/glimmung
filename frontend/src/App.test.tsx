@@ -285,4 +285,79 @@ describe("overview KPI click redirection", () => {
       expect(heading?.textContent).toBe("Leases");
     });
   });
+
+  it("routes clicking the needs review KPI card container to /needs-attention", async () => {
+    window.history.pushState({}, "", "/?mock=1");
+    installMockFetch();
+
+    const { container } = render(
+      <MemoryRouter initialEntries={["/"]}>
+        <App />
+      </MemoryRouter>,
+    );
+
+    const kpis = container.querySelectorAll(".kpis .card.kpi");
+    const needsReviewKpi = kpis[1];
+    expect(needsReviewKpi).toBeDefined();
+
+    const overlay = needsReviewKpi.querySelector(".card-link-overlay");
+    expect(overlay).not.toBeNull();
+    await userEvent.click(overlay!);
+
+    await waitFor(() => {
+      const heading = container.querySelector("h1.display");
+      expect(heading).toBeInTheDocument();
+      expect(heading?.textContent).toBe("Needs attention");
+    });
+  });
+
+  it("routes clicking the test slots KPI card container to /test-slots", async () => {
+    window.history.pushState({}, "", "/?mock=1");
+    installMockFetch();
+
+    const { container } = render(
+      <MemoryRouter initialEntries={["/"]}>
+        <App />
+      </MemoryRouter>,
+    );
+
+    const kpis = container.querySelectorAll(".kpis .card.kpi");
+    const testSlotsKpi = kpis[2];
+    expect(testSlotsKpi).toBeDefined();
+
+    const overlay = testSlotsKpi.querySelector(".card-link-overlay");
+    expect(overlay).not.toBeNull();
+    await userEvent.click(overlay!);
+
+    await waitFor(() => {
+      const heading = container.querySelector("h1.display");
+      expect(heading).toBeInTheDocument();
+      expect(heading?.textContent).toBe("Test slots");
+    });
+  });
+
+  it("routes clicking the projects KPI card container to /projects", async () => {
+    window.history.pushState({}, "", "/?mock=1");
+    installMockFetch();
+
+    const { container } = render(
+      <MemoryRouter initialEntries={["/"]}>
+        <App />
+      </MemoryRouter>,
+    );
+
+    const kpis = container.querySelectorAll(".kpis .card.kpi");
+    const projectsKpi = kpis[3];
+    expect(projectsKpi).toBeDefined();
+
+    const overlay = projectsKpi.querySelector(".card-link-overlay");
+    expect(overlay).not.toBeNull();
+    await userEvent.click(overlay!);
+
+    await waitFor(() => {
+      const heading = container.querySelector("h2");
+      expect(heading).toBeInTheDocument();
+      expect(heading?.textContent).toBe("Projects");
+    });
+  });
 });
