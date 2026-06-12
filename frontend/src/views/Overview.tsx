@@ -45,7 +45,16 @@ export function Overview() {
         <div className="card kpi">
           <div className="kpi-label">Active leases</div>
           <div className="kpi-val">{leases.length}</div>
-          <div className="kpi-foot"><Icon name="lease" />{testLeases} test · {agentLeases} agent</div>
+          <div className="kpi-foot">
+            <Icon name="lease" />
+            <Link to="/leases" state={{ tab: "test" }} className="kpi-link">
+              {testLeases} test
+            </Link>
+            {" · "}
+            <Link to="/leases" state={{ tab: "agent" }} className="kpi-link">
+              {agentLeases} agent
+            </Link>
+          </div>
         </div>
         <div className="card kpi">
           <div className="kpi-label">Needs review</div>

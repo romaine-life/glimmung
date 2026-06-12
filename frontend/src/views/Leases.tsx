@@ -1,12 +1,22 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Pill } from "../ui/bits";
 import { authedFetch } from "../auth";
 import { leaseKind, leaseStateTone, relTime, requesterLabel, ttlRemaining, useLayout } from "./lib";
 import type { Lease, LeaseKind } from "../App";
+import { useLocation } from "react-router-dom";
 
 export function Leases() {
   const { snap, isAdmin } = useLayout();
+  const location = useLocation();
+  const stateTab = (location.state as { tab?: LeaseKind })?.tab;
   const [tab, setTab] = useState<LeaseKind>("test");
+
+  useEffect(() => {
+    if (stateTab) {
+      setTab(stateTab);
+    }
+  }, [stateTab]);
+
   const [confirming, setConfirming] = useState<string | null>(null);
   const [cancelling, setCancelling] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
