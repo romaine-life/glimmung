@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 
 	"github.com/romaine-life/glimmung/internal/domain/publicids"
+	"github.com/romaine-life/glimmung/internal/domain/whenexpr"
 )
 
 const defaultRunQueueBatchSize = 25
@@ -21,6 +22,7 @@ type RunQueueStore interface {
 	GetWorkflowByName(ctx context.Context, project, name string) (*Workflow, error)
 	GetWorkflowBySchemaRef(ctx context.Context, project, schemaRef string) (*Workflow, error)
 	StartRunCycle(ctx context.Context, req StartRunCycleRequest) (int, error)
+	RecordNativeJobsSkipped(ctx context.Context, project, runID, phase string, skipped map[string]string) error
 	AcquireLease(ctx context.Context, req LeaseAcquireRequest) (Lease, error)
 	CancelLeaseByRef(ctx context.Context, project, ref string) (CancelLeaseResult, error)
 	AbortRunByID(ctx context.Context, project, runID, reason string) (AbortRunResult, error)
@@ -220,6 +222,7 @@ func admitRunCycle(
 	ctx context.Context,
 	store interface {
 		StartRunCycle(ctx context.Context, req StartRunCycleRequest) (int, error)
+		RecordNativeJobsSkipped(ctx context.Context, project, runID, phase string, skipped map[string]string) error
 		AcquireLease(ctx context.Context, req LeaseAcquireRequest) (Lease, error)
 		CancelLeaseByRef(ctx context.Context, project, ref string) (CancelLeaseResult, error)
 		AbortRunByID(ctx context.Context, project, runID, reason string) (AbortRunResult, error)
@@ -326,11 +329,34 @@ func admitRunCycle(
 	}
 	started := runWithAttempt(run, attemptIdx, initPhase.Name)
 	started.SlotLeaseRef = &leaseRef
+	// Job-level when conditions apply to the entry phase exactly as they do
+	// to forward phases: skipped jobs get synthesized completions and no
+	// Kubernetes Job. Registration guarantees an entry phase never declares
+	// a phase-level when and keeps at least one job unconditional, so the
+	// entry always launches something.
+	_, _, skippedJobs, err := evaluatePhaseWhen(initPhase, whenexpr.Context{
+		Vars:            wf.Vars,
+		Inputs:          started.RunInputs,
+		PreserveTestEnv: started.PreserveTestEnv,
+	})
+	if err != nil {
+		_, _ = store.AbortRunByID(ctx, run.Project, run.ID, "native_dispatch_failed: "+err.Error())
+		detail := fmt.Sprintf("native dispatch failed: %s", err)
+		return RunCycleAdmissionResult{State: "dispatch_failed", Detail: &detail}, nil
+	}
+	if len(skippedJobs) > 0 {
+		if err := store.RecordNativeJobsSkipped(ctx, run.Project, run.ID, initPhase.Name, skippedJobs); err != nil {
+			_, _ = store.AbortRunByID(ctx, run.Project, run.ID, "native_dispatch_failed: "+err.Error())
+			detail := fmt.Sprintf("native dispatch failed: %s", err)
+			return RunCycleAdmissionResult{State: "dispatch_failed", Detail: &detail}, nil
+		}
+	}
 	launched, err := launchCommittedNativePhase(ctx, nativeLauncher, NativeLaunchRequest{
-		Lease:    lease,
-		Workflow: *wf,
-		Phase:    initPhase,
-		Run:      started,
+		Lease:      lease,
+		Workflow:   *wf,
+		Phase:      initPhase,
+		Run:        started,
+		SkipJobIDs: skippedJobs,
 	})
 	if err != nil {
 		if acquiredLease {

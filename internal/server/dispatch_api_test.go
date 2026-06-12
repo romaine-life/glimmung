@@ -17,6 +17,8 @@ import (
 )
 
 type fakeDispatchStore struct {
+	skippedJobsPhase string
+	skippedJobs      map[string]string
 	fakeReadStore
 
 	githubRepo    string
@@ -81,14 +83,24 @@ type fakeNativeLauncher struct {
 	ctxErrOnEntry error
 }
 
-func (l *fakeNativeLauncher) LaunchNativePhase(ctx context.Context, req NativeLaunchRequest) ([]string, error) {
+func (l *fakeNativeLauncher) LaunchNativePhase(ctx context.Context, req NativeLaunchRequest) ([]NativeLaunchedJob, error) {
 	l.called = true
 	l.req = req
 	l.ctxErrOnEntry = ctx.Err()
 	if l.err != nil {
 		return nil, l.err
 	}
-	return []string{"native-job"}, nil
+	launched := make([]NativeLaunchedJob, 0, len(req.Phase.Jobs))
+	for _, job := range req.Phase.Jobs {
+		if _, skip := req.SkipJobIDs[job.ID]; skip {
+			continue
+		}
+		launched = append(launched, NativeLaunchedJob{JobID: job.ID, K8sJobName: "native-job-" + job.ID})
+	}
+	if len(launched) == 0 {
+		launched = append(launched, NativeLaunchedJob{JobID: "job", K8sJobName: "native-job"})
+	}
+	return launched, nil
 }
 
 func (s *fakeDispatchStore) ReadProjectGitHubRepo(context.Context, string) (string, error) {
@@ -146,6 +158,12 @@ func (s *fakeDispatchStore) CreateRun(_ context.Context, req CreateRunRequest) (
 	return CreatedRun{ID: "run-1", RunNumber: 1, CycleNumber: 1, RunCycle: 1, RunDisplay: "1.1", CallbackToken: "tok"}, nil
 }
 
+func (s *fakeDispatchStore) RecordNativeJobsSkipped(_ context.Context, _, _, phase string, skipped map[string]string) error {
+	s.skippedJobsPhase = phase
+	s.skippedJobs = skipped
+	return nil
+}
+
 func (s *fakeDispatchStore) StartRunCycle(_ context.Context, req StartRunCycleRequest) (int, error) {
 	s.startReq = &req
 	return 0, nil
@@ -184,7 +202,7 @@ func gatedTestPhases() []PhaseSpec {
 	return []PhaseSpec{
 		{Name: "prepare", Kind: "k8s_job", WorkflowFilename: "k8s_job:prepare", Outputs: []string{IssueContractOutputKey}, Jobs: []NativeJobSpec{{ID: IssueContractJobID, Image: "runner:latest"}}},
 		{Name: "verify", Kind: "k8s_job", WorkflowFilename: "k8s_job:verify", DependsOn: []string{"prepare"}, Verify: true, RecyclePolicy: &RecyclePolicy{MaxAttempts: 1, On: []string{"verify_fail"}, LandsAt: "prepare"}, Jobs: verificationCaseJobsForTest()},
-		{Name: "cleanup_early", Kind: "k8s_job", WorkflowFilename: "k8s_job:cleanup_early", DependsOn: []string{"verify"}, RunOn: PhaseRunOnAlways, Purpose: PhasePurposeTeardown, SkipWhenPreserveTestEnv: true, Jobs: []NativeJobSpec{{ID: "cleanup", Image: "runner:latest"}}},
+		{Name: "cleanup_early", Kind: "k8s_job", WorkflowFilename: "k8s_job:cleanup_early", DependsOn: []string{"verify"}, RunOn: PhaseRunOnAlways, Purpose: PhasePurposeTeardown, When: "${{ run.preserve_test_env }} == 'false'", Jobs: []NativeJobSpec{{ID: "cleanup", Image: "runner:latest"}}},
 		{Name: "touchpoint", Kind: "k8s_job", WorkflowFilename: "k8s_job:touchpoint", DependsOn: []string{"cleanup_early"}, RunOn: PhaseRunOnSuccess, Purpose: PhasePurposeReviewTouchpoint, Jobs: []NativeJobSpec{{ID: PRTouchpointJobID, Primitive: JobPrimitivePRTouchpoint, Managed: true}}},
 		{Name: "touchpoint_gate", Kind: "k8s_job", WorkflowFilename: "k8s_job:touchpoint_gate", Purpose: PhasePurposeReviewGate, DependsOn: []string{"touchpoint"}, Jobs: []NativeJobSpec{{ID: PRMergeJobID, Primitive: JobPrimitivePRMerge, Managed: true}}},
 		{Name: "cleanup_final", Kind: "k8s_job", WorkflowFilename: "k8s_job:cleanup_final", DependsOn: []string{"touchpoint_gate"}, RunOn: PhaseRunOnAlways, Purpose: PhasePurposeTeardown, Jobs: []NativeJobSpec{{ID: "cleanup-final", Image: "runner:latest"}}},

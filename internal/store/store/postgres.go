@@ -1809,6 +1809,7 @@ type workflowDoc struct {
 	Budget              budgetDoc                  `json:"budget"`
 	Constraints         server.WorkflowConstraints `json:"constraints,omitempty"`
 	DefaultRequirements map[string]any             `json:"defaultRequirements"`
+	Vars                map[string]string          `json:"vars,omitempty"`
 	DispatchInputs      []server.DispatchInputSpec `json:"dispatchInputs,omitempty"`
 	Metadata            map[string]any             `json:"metadata"`
 	CreatedAt           string                     `json:"createdAt"`
@@ -2136,6 +2137,7 @@ type phaseDoc struct {
 	EvidenceVerificationGate bool              `json:"evidenceVerificationGate"`
 	DependsOn                []string          `json:"dependsOn"`
 	Jobs                     []nativeJobDoc    `json:"jobs"`
+	When                     string            `json:"when,omitempty"`
 	SkipWhenPreserveTestEnv  bool              `json:"skipWhenPreserveTestEnv,omitempty"`
 }
 
@@ -2160,6 +2162,7 @@ type nativeJobDoc struct {
 	ExtraCheckouts   []nativeCheckoutDoc `json:"extraCheckouts,omitempty"`
 	WorkingDirectory string              `json:"workingDirectory,omitempty"`
 	Shell            string              `json:"shell,omitempty"`
+	When             string              `json:"when,omitempty"`
 }
 
 type nativeStepDoc struct {
@@ -2214,6 +2217,7 @@ func workflowFromDoc(doc workflowDoc) server.Workflow {
 		Budget:              budget.Config{Total: defaultBudgetTotal(doc.Budget.Total)},
 		Constraints:         doc.Constraints,
 		DefaultRequirements: mapOrEmpty(doc.DefaultRequirements),
+		Vars:                stringMapOrEmpty(doc.Vars),
 		DispatchInputs:      cloneDispatchInputs(doc.DispatchInputs),
 		Metadata:            mapOrEmpty(doc.Metadata),
 		CreatedAt:           parseTimeOrNow(doc.CreatedAt),
@@ -2938,6 +2942,7 @@ func workflowDocFromRegister(req server.WorkflowRegister, createdAt string) work
 		Budget:              budgetDoc{Total: defaultBudgetTotal(req.Budget.Total)},
 		Constraints:         req.Constraints,
 		DefaultRequirements: mapOrEmpty(req.DefaultRequirements),
+		Vars:                stringMapOrEmpty(req.Vars),
 		DispatchInputs:      cloneDispatchInputs(req.DispatchInputs),
 		Metadata:            mapOrEmpty(req.Metadata),
 		CreatedAt:           createdAt,
@@ -2957,6 +2962,7 @@ func workflowRegisterFromDoc(doc workflowDoc) server.WorkflowRegister {
 		Budget:              budget.Config{Total: defaultBudgetTotal(doc.Budget.Total)},
 		Constraints:         doc.Constraints,
 		DefaultRequirements: mapOrEmpty(doc.DefaultRequirements),
+		Vars:                stringMapOrEmpty(doc.Vars),
 		DispatchInputs:      cloneDispatchInputs(doc.DispatchInputs),
 		Metadata:            mapOrEmpty(doc.Metadata),
 	}
@@ -3035,6 +3041,7 @@ func phaseDocFromSpec(phase server.PhaseSpec) phaseDoc {
 		EvidenceVerificationGate: phase.EvidenceVerificationGate,
 		DependsOn:                sliceOrEmpty(phase.DependsOn),
 		Jobs:                     jobs,
+		When:                     phase.When,
 		SkipWhenPreserveTestEnv:  phase.SkipWhenPreserveTestEnv,
 	}
 }
@@ -3075,6 +3082,7 @@ func nativeJobDocFromSpec(job server.NativeJobSpec) nativeJobDoc {
 		ExtraCheckouts:   extraCheckouts,
 		WorkingDirectory: job.WorkingDirectory,
 		Shell:            job.Shell,
+		When:             job.When,
 	}
 }
 
@@ -3265,6 +3273,7 @@ func phaseFromDoc(doc phaseDoc) server.PhaseSpec {
 		EvidenceVerificationGate: doc.EvidenceVerificationGate,
 		DependsOn:                sliceOrEmpty(doc.DependsOn),
 		Jobs:                     jobs,
+		When:                     doc.When,
 		SkipWhenPreserveTestEnv:  doc.SkipWhenPreserveTestEnv,
 	}
 }
@@ -3305,6 +3314,7 @@ func jobFromDoc(doc nativeJobDoc) server.NativeJobSpec {
 		ExtraCheckouts:   extraCheckouts,
 		WorkingDirectory: doc.WorkingDirectory,
 		Shell:            doc.Shell,
+		When:             doc.When,
 	}
 }
 
@@ -5679,14 +5689,15 @@ func runReplayDataFromDoc(doc runDoc) server.RunReplayData {
 			}
 		}
 		attempts = append(attempts, server.RunAttemptData{
-			AttemptIndex: a.AttemptIndex,
-			Phase:        a.Phase,
-			Conclusion:   conclusion,
-			Verification: verif,
-			Decision:     stringOrEmpty(a.Decision),
-			Completed:    a.CompletedAt != "",
-			CarryForward: a.CarryForward,
-			PhaseOutputs: stringMapOrEmpty(a.PhaseOutputs),
+			AttemptIndex:   a.AttemptIndex,
+			Phase:          a.Phase,
+			Conclusion:     conclusion,
+			Verification:   verif,
+			Decision:       stringOrEmpty(a.Decision),
+			Completed:      a.CompletedAt != "",
+			CarryForward:   a.CarryForward,
+			PhaseOutputs:   stringMapOrEmpty(a.PhaseOutputs),
+			HasSkippedJobs: anySkippedJobCompletion(a.JobCompletions),
 		})
 	}
 	var bdg budget.Config
@@ -7030,6 +7041,18 @@ func genericNativeJobStateAndReason(completion nativeJobCompletionDoc, verificat
 	}
 }
 
+// anySkippedJobCompletion reports whether an attempt carries a synthesized
+// when-skip job completion, which relaxes downstream output substitution for
+// that phase (skipped legs publish nothing).
+func anySkippedJobCompletion(completions map[string]nativeJobCompletionDoc) bool {
+	for _, completion := range completions {
+		if completion.Conclusion == "skipped" {
+			return true
+		}
+	}
+	return false
+}
+
 func cloneJobCompletions(values map[string]nativeJobCompletionDoc) map[string]nativeJobCompletionDoc {
 	out := make(map[string]nativeJobCompletionDoc, len(values))
 	for k, v := range values {
@@ -7674,6 +7697,13 @@ func markJobCompletionInExecutionsRaw(raw map[string]any, phaseName, jobID, stat
 						step["reason"] = firstNonEmpty(reason, "job_failed")
 						step["completed_at"] = completedAt
 					}
+					// A when-skipped job never executes: every declared step
+					// renders skipped, attributed to the resolved condition.
+					if state == "skipped" && (stringValue(step["state"]) == "not_started" || stringValue(step["state"]) == "") {
+						step["state"] = "skipped"
+						step["reason"] = firstNonEmpty(reason, "job_skipped")
+						step["completed_at"] = completedAt
+					}
 					steps[k] = step
 				}
 				job["steps"] = steps
@@ -8054,7 +8084,11 @@ func aggregateNativePhaseCompletion(expected []string, completions map[string]na
 		if !ok {
 			continue
 		}
-		if completion.Conclusion != "" && completion.Conclusion != "success" && conclusion == "success" {
+		// A when-skipped job is verdict-neutral: it must neither degrade a
+		// succeeding phase nor mask a failing sibling (a "skipped" phase
+		// conclusion is an advance conclusion, so letting it win over a
+		// later "failure" would advance past a failed job).
+		if completion.Conclusion != "" && completion.Conclusion != "success" && completion.Conclusion != "skipped" && conclusion == "success" {
 			conclusion = completion.Conclusion
 		}
 		for key, value := range completion.PhaseOutputs {
@@ -8606,12 +8640,13 @@ func (s *Store) AppendRunAttempt(ctx context.Context, project, runID, phase, pha
 
 // StampLatestAttemptSkipped marks the latest attempt on a run as completed
 // with conclusion="skipped" and decision="advance" without launching any
-// jobs. Used when a teardown phase with SkipWhenPreserveTestEnv is
-// dispatched against a run whose preserve_test_env snapshot is true: the
-// phase appears in run history with a deliberate "skipped" outcome and the
-// workflow advances past it like a success. The skip is durable in the
-// attempt record so projections render the dedicated "skipped" pill.
-func (s *Store) StampLatestAttemptSkipped(ctx context.Context, project, runID string) error {
+// jobs. Used when a phase-level `when` condition evaluates false at dispatch
+// (including the every-job-skipped collapse): the phase appears in run
+// history with a deliberate "skipped" outcome attributed to the resolved
+// condition, and the workflow advances past it like a success. The skip is
+// durable in the attempt record so projections render the dedicated
+// "skipped" pill.
+func (s *Store) StampLatestAttemptSkipped(ctx context.Context, project, runID, reason string) error {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	_, err := s.pgRuns.PatchPayload(ctx, project, runID, func(raw map[string]any) error {
 		attempts, _ := raw["attempts"].([]any)
@@ -8627,6 +8662,9 @@ func (s *Store) StampLatestAttemptSkipped(ctx context.Context, project, runID st
 		last["conclusion"] = skipped
 		last["decision"] = advance
 		last["completed_at"] = now
+		if strings.TrimSpace(reason) != "" {
+			last["summary_markdown"] = reason
+		}
 		attempts[len(attempts)-1] = last
 		raw["attempts"] = attempts
 		raw["updated_at"] = now
@@ -8636,6 +8674,55 @@ func (s *Store) StampLatestAttemptSkipped(ctx context.Context, project, runID st
 		return server.ErrNotFound
 	}
 	return err
+}
+
+// RecordNativeJobsSkipped writes synthesized "skipped" job completions for
+// jobs whose `when` condition evaluated false at dispatch, on the run's
+// latest attempt. No Kubernetes Job ever exists for these jobs: the
+// synthesized completion pre-satisfies the expected-job completion set (so
+// the phase completes on launched siblings alone) and the execution
+// projection renders the job and its declared steps as skipped, attributed
+// to the resolved condition. Written before the launcher runs so a fast real
+// callback can never observe a half-stamped phase.
+func (s *Store) RecordNativeJobsSkipped(ctx context.Context, project, runID, phase string, skipped map[string]string) error {
+	if len(skipped) == 0 {
+		return nil
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	return s.mutateRunRaw(ctx, project, runID, func(_ runDoc, raw map[string]any) (bool, error) {
+		attempts, _ := raw["attempts"].([]any)
+		if len(attempts) == 0 {
+			return false, fmt.Errorf("run has no attempts to record skipped jobs on")
+		}
+		last, ok := attempts[len(attempts)-1].(map[string]any)
+		if !ok {
+			return false, fmt.Errorf("malformed attempt record")
+		}
+		if stringValue(last["phase"]) != phase {
+			return false, fmt.Errorf("latest attempt is for phase %q, not %q", stringValue(last["phase"]), phase)
+		}
+		completions, _ := last["job_completions"].(map[string]any)
+		if completions == nil {
+			completions = map[string]any{}
+		}
+		for jobID, reason := range skipped {
+			summary := reason
+			completions[jobID] = map[string]any{
+				"job_id":           jobID,
+				"completed_at":     now,
+				"conclusion":       "skipped",
+				"summary_markdown": summary,
+			}
+		}
+		last["job_completions"] = completions
+		attempts[len(attempts)-1] = last
+		raw["attempts"] = attempts
+		for jobID, reason := range skipped {
+			markJobCompletionInExecutionsRaw(raw, phase, jobID, "skipped", reason, now)
+		}
+		raw["updated_at"] = now
+		return true, nil
+	})
 }
 
 func (s *Store) StartRunCycle(ctx context.Context, req server.StartRunCycleRequest) (int, error) {
@@ -8922,14 +9009,15 @@ func carryForwardAttemptsFromDocs(docs []attemptDoc) []server.RunAttemptData {
 			continue
 		}
 		out = append(out, server.RunAttemptData{
-			AttemptIndex: doc.AttemptIndex,
-			Phase:        doc.Phase,
-			Conclusion:   stringOrEmpty(doc.Conclusion),
-			Verification: runVerificationDataFromDoc(doc.Verification),
-			Decision:     stringOrEmpty(doc.Decision),
-			Completed:    doc.CompletedAt != "",
-			CarryForward: true,
-			PhaseOutputs: stringMapOrEmpty(doc.PhaseOutputs),
+			AttemptIndex:   doc.AttemptIndex,
+			Phase:          doc.Phase,
+			Conclusion:     stringOrEmpty(doc.Conclusion),
+			Verification:   runVerificationDataFromDoc(doc.Verification),
+			Decision:       stringOrEmpty(doc.Decision),
+			Completed:      doc.CompletedAt != "",
+			CarryForward:   true,
+			PhaseOutputs:   stringMapOrEmpty(doc.PhaseOutputs),
+			HasSkippedJobs: anySkippedJobCompletion(doc.JobCompletions),
 		})
 	}
 	return out

@@ -73,8 +73,15 @@ func Validate(phases []Phase) error {
 	return nil
 }
 
-// Substitute resolves a phase's inputs against captured outputs from earlier phases.
-func Substitute(phase Phase, priorOutputs map[string]map[string]string) (map[string]string, error) {
+// Substitute resolves a phase's inputs against captured outputs from earlier
+// phases. skippedPhases names upstream phases that completed with one or more
+// `when`-skipped jobs (or were skipped wholesale): a declared output the
+// skipped leg would have published resolves to the empty string instead of a
+// hard error — GitHub-Actions parity, where a skipped job's outputs are
+// empty. Phases with no skips keep the strict fail-closed behavior: a
+// launched job that forgets to publish a declared output is still a loud
+// contract violation, not an empty string.
+func Substitute(phase Phase, priorOutputs map[string]map[string]string, skippedPhases map[string]bool) (map[string]string, error) {
 	resolved := map[string]string{}
 	for inputName, value := range phase.Inputs {
 		ref, ok := Parse(value)
@@ -88,6 +95,10 @@ func Substitute(phase Phase, priorOutputs map[string]map[string]string) (map[str
 		}
 		outputs, ok := priorOutputs[ref.Phase]
 		if !ok {
+			if skippedPhases[ref.Phase] {
+				resolved[inputName] = ""
+				continue
+			}
 			return nil, fmt.Errorf(
 				"phase %q input %q refs phase %q which has no captured outputs on this run",
 				phase.Name,
@@ -97,6 +108,10 @@ func Substitute(phase Phase, priorOutputs map[string]map[string]string) (map[str
 		}
 		output, ok := outputs[ref.Key]
 		if !ok {
+			if skippedPhases[ref.Phase] {
+				resolved[inputName] = ""
+				continue
+			}
 			return nil, fmt.Errorf(
 				"phase %q input %q refs %s.outputs.%q; phase posted outputs %v",
 				phase.Name,

@@ -119,6 +119,7 @@ type RunDispatchStore interface {
 	ReleaseIssueLock(ctx context.Context, project string, issueNumber int, holderID string)
 	CreateRun(ctx context.Context, req CreateRunRequest) (CreatedRun, error)
 	StartRunCycle(ctx context.Context, req StartRunCycleRequest) (int, error)
+	RecordNativeJobsSkipped(ctx context.Context, project, runID, phase string, skipped map[string]string) error
 	AcquireLease(ctx context.Context, req LeaseAcquireRequest) (Lease, error)
 	ReadLeaseByRef(ctx context.Context, project, ref string) (Lease, error)
 	CancelLeaseByRef(ctx context.Context, project, ref string) (CancelLeaseResult, error)

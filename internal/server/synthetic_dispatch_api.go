@@ -11,6 +11,7 @@ import (
 	"github.com/romaine-life/glimmung/internal/domain/agentruntime"
 	"github.com/romaine-life/glimmung/internal/domain/budget"
 	"github.com/romaine-life/glimmung/internal/domain/publicids"
+	"github.com/romaine-life/glimmung/internal/domain/whenexpr"
 	"github.com/romaine-life/glimmung/internal/metrics"
 )
 
@@ -272,7 +273,24 @@ func syntheticDispatchRunWithAgentRuntime(ctx context.Context, store RunDispatch
 		return PublicDispatchResult{}, &dispatchProblem{status: http.StatusInternalServerError, message: "start run cycle failed"}
 	}
 	runData.Attempts[len(runData.Attempts)-1].AttemptIndex = attemptIdx
-	launched, err := launchCommittedNativePhase(ctx, nativeLauncher, NativeLaunchRequest{Lease: lease, Workflow: *wf, Phase: *startPhase, Run: runData})
+	// Job-level when conditions apply to synthetic dispatches exactly as to
+	// ordinary ones: break-glass runs still honor the registered shape.
+	_, _, skippedJobs, err := evaluatePhaseWhen(*startPhase, whenexpr.Context{
+		Vars:            wf.Vars,
+		Inputs:          runData.RunInputs,
+		PreserveTestEnv: runData.PreserveTestEnv,
+	})
+	if err != nil {
+		_, _ = store.AbortRunByID(ctx, req.Project, run.ID, "native_dispatch_failed: "+err.Error())
+		return PublicDispatchResult{State: "dispatch_failed", RunNumber: &run.RunNumber, CycleNumber: &run.CycleNumber, RunCycle: &run.RunCycle, RunID: &run.ID, RunRef: stringPtr(publicids.RunRef(req.Project, req.IssueNumber, run.RunDisplay)), Workflow: &wf.Name, Detail: stringPtr("native dispatch failed: " + err.Error())}, nil
+	}
+	if len(skippedJobs) > 0 {
+		if err := store.RecordNativeJobsSkipped(ctx, req.Project, run.ID, startPhase.Name, skippedJobs); err != nil {
+			_, _ = store.AbortRunByID(ctx, req.Project, run.ID, "native_dispatch_failed: "+err.Error())
+			return PublicDispatchResult{State: "dispatch_failed", RunNumber: &run.RunNumber, CycleNumber: &run.CycleNumber, RunCycle: &run.RunCycle, RunID: &run.ID, RunRef: stringPtr(publicids.RunRef(req.Project, req.IssueNumber, run.RunDisplay)), Workflow: &wf.Name, Detail: stringPtr("native dispatch failed: " + err.Error())}, nil
+		}
+	}
+	launched, err := launchCommittedNativePhase(ctx, nativeLauncher, NativeLaunchRequest{Lease: lease, Workflow: *wf, Phase: *startPhase, Run: runData, SkipJobIDs: skippedJobs})
 	if err != nil {
 		_, _ = store.AbortRunByID(ctx, req.Project, run.ID, "native_dispatch_failed: "+err.Error())
 		return PublicDispatchResult{State: "dispatch_failed", RunNumber: &run.RunNumber, CycleNumber: &run.CycleNumber, RunCycle: &run.RunCycle, RunID: &run.ID, RunRef: stringPtr(publicids.RunRef(req.Project, req.IssueNumber, run.RunDisplay)), Workflow: &wf.Name, Detail: stringPtr("native dispatch failed: " + err.Error())}, nil

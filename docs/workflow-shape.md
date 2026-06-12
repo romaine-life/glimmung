@@ -151,6 +151,64 @@ project, or issue defaults later does not mutate an in-flight or historical
 run. This keeps agent selection containerized: a workflow inserts an agent step
 without forking the workflow per model/provider.
 
+## Conditional Phases And Jobs (`when` / `vars`)
+
+Phases and jobs may declare a `when` condition, evaluated **server-side at
+phase dispatch, before any Kubernetes Job exists**. A false condition spends
+zero compute (GitHub Actions `if:` / GitLab `rules:` parity): the platform
+synthesizes durable skipped records instead of launching, and the dashboard
+renders the declared-but-skipped leg. The workflow shape stays total — the
+skip *is* the documentation of the toggle.
+
+```yaml
+vars:
+  feature_type: effect
+phases:
+  - name: llm-work
+    jobs:
+      - id: llm-test-plan
+        when: "${{ vars.feature_type }} != 'effect'"   # skipped for effect runs
+      - id: llm-implement                               # unconditional
+  - name: cleanup_early
+    purpose: teardown
+    when: "${{ run.preserve_test_env }} == 'false'"
+```
+
+The grammar is closed — a routing condition, not a scripting surface:
+`true` | `false` | `<term> ==|!= <term>`, where a term is `${{ vars.<key> }}`,
+`${{ inputs.<key> }}` (a declared dispatch input), `${{ run.preserve_test_env }}`,
+or a literal. Comparison is exact string equality after resolution.
+Registration validates every ref against the declared `vars` map and
+`dispatch_inputs`, and rejects:
+
+- `when` on a verification or review-gate phase or its jobs — gates run;
+- `when` on an entry phase (no `depends_on`) — fresh cycles and recycle
+  landings need a defined start;
+- a phase whose every job is conditional — at least one job stays
+  unconditional so a launched phase always launches something (whole-phase
+  conditions belong on the phase-level `when`).
+
+Semantics:
+
+- **Phase-level skip**: a false phase condition synthesizes a `skipped`
+  attempt with the resolved condition as the reason, and the workflow
+  advances past it like a success. Every job whose condition is false when
+  its siblings all skip collapses to the same phase-level skip.
+- **Job-level skip**: a false job condition writes a synthesized `skipped`
+  job completion (pre-satisfying the expected-job set, so the phase
+  completes on launched siblings alone) and skipped job/step execution
+  records. No Job object, secret, or pod is ever created.
+- **Skipped outputs are empty**: downstream
+  `${{ phases.X.outputs.Y }}` refs against a phase with skipped legs resolve
+  to the empty string when the output was never published — consumers handle
+  absence, exactly like skipped-job outputs in GitHub Actions. Phases with
+  no skips keep the strict fail-closed behavior.
+- **Verdict-neutral**: a skipped job neither degrades a succeeding phase nor
+  masks a failing sibling.
+- `vars` is registration-owned workflow identity (part of the content-hashed
+  schema), not a per-dispatch knob; per-dispatch routing uses
+  `${{ inputs.* }}`.
+
 ## Verification Case Shapes
 
 The verification shape is selected by `constraints.verification.shape`.
@@ -428,11 +486,15 @@ Runtime behavior:
 
 The cleanup-execution split:
 
-- `cleanup_early` runs as a normal teardown phase. If the issue has
-  `preserve_test_env=true`, the runner emits conclusion `"skipped"` for the
-  env-destroy job; the phase still advances and the run history shows the
-  deliberate skip. With `preserve_test_env=false` (the default) the env is
-  torn down here, before the reviewer sees the touchpoint.
+- `cleanup_early` runs as a normal teardown phase, conditioned with
+  `when: "${{ run.preserve_test_env }} == 'false'"`. If the issue has
+  `preserve_test_env=true`, the condition evaluates false at dispatch and the
+  server synthesizes a `"skipped"` attempt — no Kubernetes Job is created;
+  the phase still advances and the run history shows the deliberate skip
+  attributed to the resolved condition. With `preserve_test_env=false` (the
+  default) the env is torn down here, before the reviewer sees the
+  touchpoint. The retired `skip_when_preserve_test_env` field is rejected at
+  registration with a pointer at this `when` form.
 - `cleanup_final` is the catch-all teardown phase after merge or abort. It
   always actually runs on those paths. When `cleanup_early` already destroyed
   the validation environment, `cleanup_final` is a no-op success that still

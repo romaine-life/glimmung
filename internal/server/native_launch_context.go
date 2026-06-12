@@ -11,34 +11,31 @@ type NativeJobDispatchRecorder interface {
 	RecordNativeJobsDispatched(ctx context.Context, project, runID, phase string, jobs map[string]string) error
 }
 
-func launchCommittedNativePhase(ctx context.Context, nativeLauncher NativeLauncher, req NativeLaunchRequest) ([]string, error) {
+func launchCommittedNativePhase(ctx context.Context, nativeLauncher NativeLauncher, req NativeLaunchRequest) ([]NativeLaunchedJob, error) {
 	launchCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), committedNativeLaunchTimeout)
 	defer cancel()
 	return nativeLauncher.LaunchNativePhase(launchCtx, req)
 }
 
-func recordLaunchedNativeJobs(ctx context.Context, store any, run RunReplayData, phase PhaseSpec, launched []string) error {
+func recordLaunchedNativeJobs(ctx context.Context, store any, run RunReplayData, phase PhaseSpec, launched []NativeLaunchedJob) error {
 	recorder, ok := store.(NativeJobDispatchRecorder)
 	if !ok || recorder == nil {
 		return nil
 	}
-	jobs := launchedNativeJobMap(phase, launched)
+	jobs := launchedNativeJobMap(launched)
 	if len(jobs) == 0 {
 		return nil
 	}
 	return recorder.RecordNativeJobsDispatched(ctx, run.Project, run.ID, phase.Name, jobs)
 }
 
-func launchedNativeJobMap(phase PhaseSpec, launched []string) map[string]string {
+func launchedNativeJobMap(launched []NativeLaunchedJob) map[string]string {
 	jobs := make(map[string]string, len(launched))
-	for i, job := range phase.Jobs {
-		if i >= len(launched) {
-			break
-		}
-		if job.ID == "" || launched[i] == "" {
+	for _, job := range launched {
+		if job.JobID == "" || job.K8sJobName == "" {
 			continue
 		}
-		jobs[job.ID] = launched[i]
+		jobs[job.JobID] = job.K8sJobName
 	}
 	return jobs
 }

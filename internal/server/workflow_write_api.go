@@ -12,6 +12,7 @@ import (
 	"github.com/romaine-life/glimmung/internal/domain/agentruntime"
 	"github.com/romaine-life/glimmung/internal/domain/budget"
 	"github.com/romaine-life/glimmung/internal/domain/phaserefs"
+	"github.com/romaine-life/glimmung/internal/domain/whenexpr"
 )
 
 const (
@@ -84,6 +85,9 @@ type WorkflowRegister struct {
 	Budget              budget.Config       `json:"budget"`
 	Constraints         WorkflowConstraints `json:"constraints,omitempty"`
 	DefaultRequirements map[string]any      `json:"default_requirements"`
+	// Vars is the registration-owned variable map consumed by `when`
+	// conditions. See Workflow.Vars for the contract.
+	Vars map[string]string `json:"vars,omitempty"`
 	// DispatchInputs declares the dispatch-time inputs the workflow needs.
 	// See Workflow.DispatchInputs for the contract; ValidateWorkflowRegister
 	// rejects any `${{ inputs.X }}` ref in checkout/extra_checkouts/workflow_ref
@@ -620,6 +624,13 @@ func ValidateWorkflowRegister(req WorkflowRegister) error {
 	if err := validateDispatchInputRefs(req.Name, req.Phases, declaredInputs); err != nil {
 		return err
 	}
+	if err := validateWorkflowVars(req.Name, req.Vars); err != nil {
+		return err
+	}
+	whenInputs := make(map[string]bool, len(declaredInputs))
+	for key := range declaredInputs {
+		whenInputs[key] = true
+	}
 	constraints := CanonicalWorkflowConstraints(req)
 	if err := validateWorkflowConstraints(req.Name, constraints); err != nil {
 		return err
@@ -686,15 +697,44 @@ func ValidateWorkflowRegister(req WorkflowRegister) error {
 			return ValidationError{Message: fmt.Sprintf("workflow %s phase %q purpose=%q cannot set run_on=%q; only teardown phases may run on failure paths", req.Name, name, purpose, runOn)}
 		}
 		if phase.SkipWhenPreserveTestEnv {
-			if purpose != PhasePurposeTeardown {
-				return ValidationError{Message: fmt.Sprintf("workflow %s phase %q sets skip_when_preserve_test_env but purpose is not teardown", req.Name, name)}
+			return ValidationError{Message: fmt.Sprintf("workflow %s phase %q uses retired field skip_when_preserve_test_env; declare when: \"${{ run.preserve_test_env }} == 'false'\" on the phase instead", req.Name, name)}
+		}
+		// Conditions skip declared legs; gates are not legs. A verification
+		// or review-gate phase that could evaluate itself away would bypass
+		// the gate it exists to be — gates run.
+		if strings.TrimSpace(phase.When) != "" {
+			if phase.Verify || purpose == PhasePurposeVerification || purpose == PhasePurposeReviewGate {
+				return ValidationError{Message: fmt.Sprintf("workflow %s phase %q (purpose=%q) cannot declare when; verification and review-gate phases always run", req.Name, name, purpose)}
 			}
-			if phase.Verify {
-				return ValidationError{Message: fmt.Sprintf("workflow %s phase %q cannot set both verify and skip_when_preserve_test_env", req.Name, name)}
+			// Entry phases (no depends_on) are dispatch targets for fresh
+			// cycles and recycle landings; a conditional entry would leave
+			// the run with no defined start.
+			if len(phase.DependsOn) == 0 {
+				return ValidationError{Message: fmt.Sprintf("workflow %s phase %q is an entry phase (no depends_on) and cannot declare when; entry phases always run", req.Name, name)}
 			}
-			if phase.EvidenceVerificationGate {
-				return ValidationError{Message: fmt.Sprintf("workflow %s phase %q cannot set both evidence_verification_gate and skip_when_preserve_test_env", req.Name, name)}
+			if err := whenexpr.Validate(phase.When, fmt.Sprintf("workflow %s phase %q", req.Name, name), req.Vars, whenInputs); err != nil {
+				return ValidationError{Message: err.Error()}
 			}
+		}
+		conditionalJobs := 0
+		for _, job := range phase.Jobs {
+			if strings.TrimSpace(job.When) == "" {
+				continue
+			}
+			conditionalJobs++
+			if phase.Verify || purpose == PhasePurposeVerification || purpose == PhasePurposeReviewGate {
+				return ValidationError{Message: fmt.Sprintf("workflow %s phase %q job %q (purpose=%q) cannot declare when; verification and review-gate jobs always run", req.Name, name, job.ID, purpose)}
+			}
+			if err := whenexpr.Validate(job.When, fmt.Sprintf("workflow %s phase %q job %q", req.Name, name, job.ID), req.Vars, whenInputs); err != nil {
+				return ValidationError{Message: err.Error()}
+			}
+		}
+		// At least one job per phase stays unconditional, so a dispatched
+		// phase always launches something and the completion callback path
+		// always has a real job to flip CompletionReady. Whole-phase
+		// conditionality is the phase-level when's job.
+		if len(phase.Jobs) > 0 && conditionalJobs == len(phase.Jobs) {
+			return ValidationError{Message: fmt.Sprintf("workflow %s phase %q declares when on every job; at least one job must be unconditional (use a phase-level when for whole-phase conditions)", req.Name, name)}
 		}
 		if purpose == PhasePurposeReviewGate {
 			reviewGateCount++
@@ -816,6 +856,21 @@ func ValidateWorkflowRegister(req WorkflowRegister) error {
 // and a non-required input must have a Default value (a non-required missing
 // value is a malformed spec — there is nothing to substitute and no contract
 // to enforce). Default is rendered as the substituted value as-is.
+// validateWorkflowVars enforces the vars-key grammar so `${{ vars.<key> }}`
+// refs in when conditions are unambiguous. Values are free-form strings.
+func validateWorkflowVars(workflowName string, vars map[string]string) error {
+	for key := range vars {
+		name := strings.TrimSpace(key)
+		if name == "" {
+			return ValidationError{Message: fmt.Sprintf("workflow %s vars declares an empty key", workflowName)}
+		}
+		if !runInputNamePattern.MatchString(name) {
+			return ValidationError{Message: fmt.Sprintf("workflow %s vars key %q is invalid; use letters, numbers, underscores, or hyphens, starting with a letter or underscore", workflowName, key)}
+		}
+	}
+	return nil
+}
+
 func validateDispatchInputs(workflowName string, inputs []DispatchInputSpec) (map[string]DispatchInputSpec, error) {
 	declared := map[string]DispatchInputSpec{}
 	for i, input := range inputs {
