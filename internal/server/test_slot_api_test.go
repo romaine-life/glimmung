@@ -82,7 +82,7 @@ func (p *fakeTestSlotPreparer) ActivateTestSlotRuntime(ctx context.Context, _ Le
 	return p.activateErr
 }
 
-func (p *fakeTestSlotPreparer) LaunchNativePhase(context.Context, NativeLaunchRequest) ([]string, error) {
+func (p *fakeTestSlotPreparer) LaunchNativePhase(context.Context, NativeLaunchRequest) ([]NativeLaunchedJob, error) {
 	return nil, nil
 }
 

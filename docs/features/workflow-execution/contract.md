@@ -40,6 +40,9 @@ after registration changes.
   behavior without replacing this contract.
 - Do not allow project-owned arbitrary gate jobs to stand in for the managed
   evidence gate.
+- Do not reintroduce `skip_when_preserve_test_env`; registration rejects the
+  retired field with a pointer at the
+  `when: "${{ run.preserve_test_env }} == 'false'"` replacement.
 - Do not delete historical schemas still referenced by run history.
 - Do not start a workflow-execution background reconciler (run queue,
   dispatch timeout, completion sweep, native Job inspection, etc.) outside
@@ -78,6 +81,17 @@ after registration changes.
   `verify-case-10`; every case job sets `timeout_seconds` at or below 600
   seconds, and unused slots complete successfully with no-op case results.
 - Jobs inside one phase launch in parallel and complete independently.
+- Phase- and job-level `when` conditions (closed grammar over registration
+  `vars`, declared dispatch inputs, and the closed run-fact set) are
+  evaluated server-side at dispatch. A false condition creates no Kubernetes
+  Job: the platform synthesizes durable skipped attempt/job/step records
+  attributed to the resolved condition. Skipped jobs pre-satisfy the
+  expected-job completion set, are verdict-neutral in phase aggregation
+  (never degrading success, never masking a sibling failure), and their
+  unpublished declared outputs resolve to empty strings in downstream input
+  substitution; phases with no skips keep fail-closed substitution.
+  Registration rejects `when` on verification and review-gate phases/jobs,
+  on entry phases, and on a phase whose every job is conditional.
 - A step-scoped fail-closed abort is represented by a typed `step_aborted`
   native event and a durable aborted step state. A failed or aborted job whose
   cause is step-scoped must not project with every step succeeded or
@@ -156,6 +170,9 @@ after registration changes.
 ## Acceptance Checks
 
 - Workflow shape changes include registration validation tests.
+- `when`/`vars` changes include grammar-validation tests, dispatch-behavior
+  tests for both phase-level and job-level skips, skip-neutral phase
+  aggregation tests, and skipped-output substitution tests.
 - Control-pin changes include tests for pin enforcement on re-registration,
   pinned-patch rejection, the closed pin-target grammar, and ledger/actor
   attribution on the write surface.

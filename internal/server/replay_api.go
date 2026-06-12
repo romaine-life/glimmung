@@ -70,6 +70,11 @@ type RunAttemptData struct {
 	Completed    bool
 	CarryForward bool
 	PhaseOutputs map[string]string
+	// HasSkippedJobs is true when any of this attempt's job completions was
+	// synthesized by a false job-level `when` condition (conclusion
+	// "skipped"). Downstream input substitution resolves the skipped leg's
+	// unpublished outputs to empty strings instead of failing closed.
+	HasSkippedJobs bool
 }
 
 // RunVerificationData holds the status and reasons from a verification result.

@@ -33,7 +33,7 @@ const (
 
 // NativeLauncher creates Kubernetes resources for native k8s_job phases.
 type NativeLauncher interface {
-	LaunchNativePhase(ctx context.Context, req NativeLaunchRequest) ([]string, error)
+	LaunchNativePhase(ctx context.Context, req NativeLaunchRequest) ([]NativeLaunchedJob, error)
 }
 
 // NativeJobStatusGetter exposes the terminal status of a previously launched
@@ -158,6 +158,20 @@ type NativeLaunchRequest struct {
 	Workflow Workflow
 	Phase    PhaseSpec
 	Run      RunReplayData
+	// SkipJobIDs names the phase jobs whose `when` condition evaluated
+	// false at dispatch (job ID -> resolution trace). The launcher creates
+	// no Kubernetes Job for them — the dispatch layer has already written
+	// their synthesized skipped records. Keyed by ID (not position) because
+	// the launcher re-canonicalizes the phase from the workflow schema.
+	SkipJobIDs map[string]string
+}
+
+// NativeLaunchedJob pairs a launched job's schema ID with the concrete
+// Kubernetes Job name. Typed (not positional) so conditionally skipped jobs
+// cannot shift the ID<->name mapping.
+type NativeLaunchedJob struct {
+	JobID      string
+	K8sJobName string
 }
 
 type KubernetesNativeLauncher struct {
@@ -184,7 +198,7 @@ func NewKubernetesNativeLauncher(settings Settings) *KubernetesNativeLauncher {
 	return &KubernetesNativeLauncher{Settings: settings}
 }
 
-func (l *KubernetesNativeLauncher) LaunchNativePhase(ctx context.Context, req NativeLaunchRequest) ([]string, error) {
+func (l *KubernetesNativeLauncher) LaunchNativePhase(ctx context.Context, req NativeLaunchRequest) ([]NativeLaunchedJob, error) {
 	req.Workflow = CanonicalWorkflow(req.Workflow)
 	if phase := phaseSpecByName(req.Workflow.Phases, req.Phase.Name); phase != nil {
 		req.Phase = *phase
@@ -216,10 +230,16 @@ func (l *KubernetesNativeLauncher) LaunchNativePhase(ctx context.Context, req Na
 	}
 	attemptIndex := nativeAttemptIndex(req)
 	attemptBase := compactResourceName("glim", runRefFromData(req.Run), attemptIndex)
-	launched := make([]string, 0, len(req.Phase.Jobs))
+	launched := make([]NativeLaunchedJob, 0, len(req.Phase.Jobs))
 	for _, job := range req.Phase.Jobs {
 		if strings.TrimSpace(job.ID) == "" {
 			return nil, fmt.Errorf("native phase %q has job with empty id", req.Phase.Name)
+		}
+		if _, skip := req.SkipJobIDs[job.ID]; skip {
+			// The job's `when` evaluated false at dispatch. Zero compute:
+			// no secret, no manifest, no Kubernetes Job. The dispatch layer
+			// owns the synthesized skipped records.
+			continue
 		}
 		jobName := nativeJobName(attemptBase, job.ID)
 		secretName := jobName + "-token"
@@ -233,7 +253,10 @@ func (l *KubernetesNativeLauncher) LaunchNativePhase(ctx context.Context, req Na
 		if err := l.createJob(ctx, nativeJobManifest(l.Settings, req, job, jobName, secretName, attemptBase, jobProxyRuntime)); err != nil {
 			return nil, err
 		}
-		launched = append(launched, jobName)
+		launched = append(launched, NativeLaunchedJob{JobID: job.ID, K8sJobName: jobName})
+	}
+	if len(launched) == 0 {
+		return nil, fmt.Errorf("native phase %q has no launchable jobs (every job skipped by when conditions); the dispatch layer must synthesize a skipped phase attempt instead of launching", req.Phase.Name)
 	}
 	return launched, nil
 }

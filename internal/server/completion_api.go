@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -13,6 +14,7 @@ import (
 	"github.com/romaine-life/glimmung/internal/domain/decision"
 	"github.com/romaine-life/glimmung/internal/domain/phaserefs"
 	"github.com/romaine-life/glimmung/internal/domain/publicids"
+	"github.com/romaine-life/glimmung/internal/domain/whenexpr"
 	"github.com/romaine-life/glimmung/internal/metrics"
 )
 
@@ -189,7 +191,8 @@ type RunCompletionStore interface {
 	ParkRunAtReviewGate(ctx context.Context, project, runID, phase, phaseKind, workflowFilename string) (int, error)
 	ReleaseReviewGate(ctx context.Context, project, runID, phase string, attemptIndex int) error
 	CancelReviewGate(ctx context.Context, project, runID, phase string, attemptIndex int, reason string) error
-	StampLatestAttemptSkipped(ctx context.Context, project, runID string) error
+	StampLatestAttemptSkipped(ctx context.Context, project, runID, reason string) error
+	RecordNativeJobsSkipped(ctx context.Context, project, runID, phase string, skipped map[string]string) error
 	CreateRecycleCycle(ctx context.Context, req CreateRecycleCycleRequest) (CreatedRun, error)
 	AppendRunAttempt(ctx context.Context, project, runID, phase, phaseKind, workflowFilename string) (int, error)
 	StartRunCycle(ctx context.Context, req StartRunCycleRequest) (int, error)
@@ -963,9 +966,6 @@ func phasePurpose(phase PhaseSpec) string {
 	if phase.Verify {
 		return PhasePurposeVerification
 	}
-	if phase.SkipWhenPreserveTestEnv {
-		return PhasePurposeTeardown
-	}
 	return PhasePurposeWork
 }
 
@@ -1025,19 +1025,31 @@ func dispatchForwardPhase(
 		}
 		return nil
 	}
-	// Skip-when-preserve: a teardown phase (typically cleanup_early)
-	// flagged with SkipWhenPreserveTestEnv is appended as a synthesized
-	// "skipped" attempt instead of launching its jobs, whenever the run's
-	// preserve_test_env snapshot is true. The attempt is durable so run
-	// history shows the deliberate skip. After stamping the skip we
-	// recursively dispatch the next ready phase — control flows forward
-	// through the workflow within this single handler invocation, so the
-	// touchpoint phase can run, then touchpoint_gate parks at review.
-	if targetPhase.SkipWhenPreserveTestEnv && run.PreserveTestEnv {
+	// Conditional legs: phase- and job-level `when` expressions evaluate
+	// HERE — server-side, before any Kubernetes Job exists — against the
+	// registration vars, the run's dispatch inputs, and the closed run-fact
+	// set. A false phase condition (or every job skipping) synthesizes a
+	// durable "skipped" attempt instead of launching anything; a false job
+	// condition writes a synthesized skipped job completion so the phase
+	// shape stays total while completion waits only on launched siblings.
+	// Zero compute is spent on a skipped leg (GitHub Actions `if:` parity).
+	// After stamping a phase skip we recursively dispatch the next ready
+	// phase — control flows forward through the workflow within this single
+	// handler invocation.
+	whenCtx := whenexpr.Context{
+		Vars:            wf.Vars,
+		Inputs:          run.RunInputs,
+		PreserveTestEnv: run.PreserveTestEnv,
+	}
+	phaseRuns, phaseSkipReason, skippedJobs, err := evaluatePhaseWhen(targetPhase, whenCtx)
+	if err != nil {
+		return err
+	}
+	if !phaseRuns {
 		if _, err := store.AppendRunAttempt(ctx, run.Project, run.ID, targetPhase.Name, phaseKind, workflowFilename); err != nil {
 			return fmt.Errorf("append skipped attempt: %w", err)
 		}
-		if err := store.StampLatestAttemptSkipped(ctx, run.Project, run.ID); err != nil {
+		if err := store.StampLatestAttemptSkipped(ctx, run.Project, run.ID, phaseSkipReason); err != nil {
 			return fmt.Errorf("stamp skipped attempt: %w", err)
 		}
 		updated, err := store.ReadRunForReplay(ctx, run.Project, run.ID)
@@ -1055,6 +1067,15 @@ func dispatchForwardPhase(
 	if err != nil {
 		return fmt.Errorf("append forward attempt: %w", err)
 	}
+	if len(skippedJobs) > 0 {
+		// Synthesized skipped completions are written before launch so the
+		// expected-job completion set is already satisfied for skipped jobs
+		// when the first real callback arrives — no race, no waiting on a
+		// Job that will never exist.
+		if err := store.RecordNativeJobsSkipped(ctx, run.Project, run.ID, targetPhase.Name, skippedJobs); err != nil {
+			return fmt.Errorf("record skipped jobs: %w", err)
+		}
+	}
 	lease, err := leaseForRunPhase(ctx, store, run, targetPhase.Name, newAttemptIdx, substituted)
 	if err != nil {
 		return fmt.Errorf("read lease for forward phase: %w", err)
@@ -1064,10 +1085,11 @@ func dispatchForwardPhase(
 	}
 	started := runWithAttempt(run, newAttemptIdx, targetPhase.Name)
 	launched, err := launchCommittedNativePhase(ctx, nativeLauncher, NativeLaunchRequest{
-		Lease:    lease,
-		Workflow: *wf,
-		Phase:    targetPhase,
-		Run:      started,
+		Lease:      lease,
+		Workflow:   *wf,
+		Phase:      targetPhase,
+		Run:        started,
+		SkipJobIDs: skippedJobs,
 	})
 	if err != nil {
 		return fmt.Errorf("native dispatch: %w", err)
@@ -1076,21 +1098,74 @@ func dispatchForwardPhase(
 	return nil
 }
 
+// evaluatePhaseWhen resolves the phase- and job-level when conditions for a
+// dispatch. Returns whether the phase runs at all (false when the phase
+// condition fails OR every job's condition fails), the phase-level skip
+// reason, and the per-job skip traces for jobs that stay declared-but-skipped
+// while siblings launch. Parse failures are schema-integrity errors:
+// registration validates the grammar, so a bad expression on a persisted
+// schema must fail loudly rather than silently running or skipping.
+func evaluatePhaseWhen(phase PhaseSpec, whenCtx whenexpr.Context) (bool, string, map[string]string, error) {
+	phaseExpr, err := whenexpr.Parse(phase.When)
+	if err != nil {
+		return false, "", nil, fmt.Errorf("phase %q when condition is invalid on the persisted schema: %w", phase.Name, err)
+	}
+	if ok, trace := phaseExpr.Eval(whenCtx); !ok {
+		return false, fmt.Sprintf("phase when condition: %s", trace), nil, nil
+	}
+	skipped := map[string]string{}
+	launchable := 0
+	for _, job := range phase.Jobs {
+		jobExpr, err := whenexpr.Parse(job.When)
+		if err != nil {
+			return false, "", nil, fmt.Errorf("phase %q job %q when condition is invalid on the persisted schema: %w", phase.Name, job.ID, err)
+		}
+		if ok, trace := jobExpr.Eval(whenCtx); !ok {
+			skipped[job.ID] = fmt.Sprintf("job when condition: %s", trace)
+			continue
+		}
+		launchable++
+	}
+	if len(phase.Jobs) > 0 && launchable == 0 {
+		jobIDs := make([]string, 0, len(skipped))
+		for jobID := range skipped {
+			jobIDs = append(jobIDs, jobID)
+		}
+		sort.Strings(jobIDs)
+		reasons := make([]string, 0, len(jobIDs))
+		for _, jobID := range jobIDs {
+			reasons = append(reasons, fmt.Sprintf("%s: %s", jobID, skipped[jobID]))
+		}
+		return false, "every job skipped by when conditions: " + strings.Join(reasons, "; "), nil, nil
+	}
+	if len(skipped) == 0 {
+		skipped = nil
+	}
+	return true, "", skipped, nil
+}
+
 func substituteCompletionPhaseInputs(phase PhaseSpec, run RunReplayData) (map[string]string, error) {
 	if len(phase.Inputs) == 0 {
 		return map[string]string{}, nil
 	}
 	priorOutputs := map[string]map[string]string{}
+	skippedPhases := map[string]bool{}
 	for _, attempt := range run.Attempts {
 		if len(attempt.PhaseOutputs) > 0 {
 			priorOutputs[attempt.Phase] = attempt.PhaseOutputs
+		}
+		// A whole-phase when-skip (conclusion skipped) or a partial skip
+		// (synthesized skipped job completions) relaxes substitution for
+		// that phase: the skipped leg's unpublished outputs resolve empty.
+		if attempt.Conclusion == "skipped" || attempt.HasSkippedJobs {
+			skippedPhases[attempt.Phase] = true
 		}
 	}
 	return phaserefs.Substitute(phaserefs.Phase{
 		Name:    phase.Name,
 		Inputs:  phase.Inputs,
 		Outputs: phase.Outputs,
-	}, priorOutputs)
+	}, priorOutputs, skippedPhases)
 }
 
 func leaseForRunPhase(ctx context.Context, store RunCompletionStore, run RunReplayData, phaseName string, attemptIndex int, phaseInputs map[string]string) (Lease, error) {
@@ -1233,12 +1308,31 @@ func dispatchRetry(
 		EntrypointPhase:      &targetPhase.Name,
 		TriggerSource:        map[string]any{"kind": "recycle_policy", "recycled_from_run_id": run.ID, "failing_phase": failingPhase},
 		RunInputs:            run.RunInputs,
+		PreserveTestEnv:      run.PreserveTestEnv,
 		EvidenceRequirements: run.EvidenceRequirements,
 		PriorVerification:    priorVerification,
 		Attempts: append(append([]RunAttemptData{}, recycle.CarryForwardAttempts...), RunAttemptData{
 			AttemptIndex: newAttemptIdx,
 			Phase:        targetPhase.Name,
 		}),
+	}
+	// Job-level when conditions apply on recycle exactly as on first
+	// dispatch: the new cycle re-evaluates against the same vars, the
+	// carried run inputs, and the parent's run facts. Registration
+	// guarantees a recycle landing phase (an entry phase) never declares a
+	// phase-level when and keeps at least one job unconditional.
+	_, _, skippedJobs, err := evaluatePhaseWhen(*targetPhase, whenexpr.Context{
+		Vars:            wf.Vars,
+		Inputs:          recycleRun.RunInputs,
+		PreserveTestEnv: recycleRun.PreserveTestEnv,
+	})
+	if err != nil {
+		return err
+	}
+	if len(skippedJobs) > 0 {
+		if err := store.RecordNativeJobsSkipped(ctx, recycleRun.Project, recycleRun.ID, targetPhase.Name, skippedJobs); err != nil {
+			return fmt.Errorf("record skipped jobs on recycle: %w", err)
+		}
 	}
 	lease, err := leaseForRunPhase(ctx, store, recycleRun, targetPhase.Name, newAttemptIdx, phaseInputs)
 	if err != nil {
@@ -1248,10 +1342,11 @@ func dispatchRetry(
 		return nativeLeaseNotClaimedError(lease)
 	}
 	launched, err := launchCommittedNativePhase(ctx, nativeLauncher, NativeLaunchRequest{
-		Lease:    lease,
-		Workflow: *wf,
-		Phase:    *targetPhase,
-		Run:      recycleRun,
+		Lease:      lease,
+		Workflow:   *wf,
+		Phase:      *targetPhase,
+		Run:        recycleRun,
+		SkipJobIDs: skippedJobs,
 	})
 	if err != nil {
 		return fmt.Errorf("native dispatch: %w", err)

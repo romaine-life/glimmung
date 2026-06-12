@@ -56,6 +56,10 @@ type fakeCompletionStore struct {
 	cancelGateErr      error
 	skippedStampCalls  int
 	skippedStampErr    error
+	skippedStampReason string
+	skippedJobsPhase   string
+	skippedJobs        map[string]string
+	skippedJobsErr     error
 
 	appendIdx   int
 	appendErr   error
@@ -213,9 +217,16 @@ func (s *fakeCompletionStore) CancelReviewGate(_ context.Context, _, _, phase st
 	return s.cancelGateErr
 }
 
-func (s *fakeCompletionStore) StampLatestAttemptSkipped(_ context.Context, _, _ string) error {
+func (s *fakeCompletionStore) StampLatestAttemptSkipped(_ context.Context, _, _, reason string) error {
 	s.skippedStampCalls++
+	s.skippedStampReason = reason
 	return s.skippedStampErr
+}
+
+func (s *fakeCompletionStore) RecordNativeJobsSkipped(_ context.Context, _, _, phase string, skipped map[string]string) error {
+	s.skippedJobsPhase = phase
+	s.skippedJobs = skipped
+	return s.skippedJobsErr
 }
 
 func (s *fakeCompletionStore) AppendRunAttempt(_ context.Context, _, _, phase, phaseKind, workflowFilename string) (int, error) {

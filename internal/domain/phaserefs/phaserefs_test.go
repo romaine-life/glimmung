@@ -124,7 +124,7 @@ func TestSubstituteResolvesInputs(t *testing.T) {
 		},
 	}
 
-	got, err := Substitute(phase, prior)
+	got, err := Substitute(phase, prior, nil)
 	if err != nil {
 		t.Fatalf("Substitute returned error: %v", err)
 	}
@@ -134,7 +134,7 @@ func TestSubstituteResolvesInputs(t *testing.T) {
 }
 
 func TestSubstituteEmptyInputsReturnsEmpty(t *testing.T) {
-	got, err := Substitute(Phase{Name: "a"}, map[string]map[string]string{})
+	got, err := Substitute(Phase{Name: "a"}, map[string]map[string]string{}, nil)
 	if err != nil {
 		t.Fatalf("Substitute returned error: %v", err)
 	}
@@ -172,7 +172,7 @@ func TestSubstituteRejectsRuntimeDrift(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := Substitute(tt.phase, tt.prior)
+			_, err := Substitute(tt.phase, tt.prior, nil)
 			if err == nil {
 				t.Fatal("expected substitution error")
 			}

@@ -49,6 +49,12 @@ type Workflow struct {
 	Budget              budget.Config       `json:"budget"`
 	Constraints         WorkflowConstraints `json:"constraints,omitempty"`
 	DefaultRequirements map[string]any      `json:"default_requirements"`
+	// Vars is the registration-owned variable map referenced by phase- and
+	// job-level `when` conditions (`${{ vars.<key> }}`). Vars are workflow
+	// identity, not per-dispatch knobs: they name durable facts about the
+	// shape (e.g. feature_type: effect) so conditions are reconstructable
+	// from the schema snapshot alone. Part of the content-hashed schema.
+	Vars map[string]string `json:"vars,omitempty"`
 	// DispatchInputs declares the dispatch-time inputs the workflow needs.
 	// Every `${{ inputs.X }}` reference inside a phase's WorkflowRef or any
 	// job's Checkout/ExtraCheckouts refs must name a declared input. The
@@ -147,13 +153,16 @@ type PhaseSpec struct {
 	EvidenceVerificationGate bool            `json:"evidence_verification_gate"`
 	DependsOn                []string        `json:"depends_on"`
 	Jobs                     []NativeJobSpec `json:"jobs"`
-	// SkipWhenPreserveTestEnv flags a teardown phase as conditional.
-	// When the originating Issue's preserve_test_env flag is true (and
-	// thus the Run's PreserveTestEnv snapshot is true), Glimmung
-	// synthesizes a "skipped" attempt for this phase instead of
-	// launching its jobs. The workflow advances past the skipped phase
-	// like a success. Used to gate the early teardown phase so the
-	// validation environment stays alive through the touchpoint gate.
+	// When is the phase-level run condition (whenexpr grammar). Evaluated
+	// server-side at dispatch against the registration vars, the run's
+	// dispatch inputs, and the closed run-fact set. False synthesizes a
+	// durable skipped attempt instead of launching any job — zero compute,
+	// GitHub-Actions `if:` parity. Empty means always run. Verification and
+	// review-gate phases may not declare one: gates run.
+	When string `json:"when,omitempty"`
+	// SkipWhenPreserveTestEnv is retired. It remains only so registration
+	// can reject stale callers with a precise error pointing at the `when`
+	// replacement (`when: "${{ run.preserve_test_env }} == 'false'"`).
 	SkipWhenPreserveTestEnv bool `json:"skip_when_preserve_test_env,omitempty"`
 }
 
@@ -178,6 +187,13 @@ type NativeJobSpec struct {
 	ExtraCheckouts   []NativeCheckoutSpec `json:"extra_checkouts,omitempty"`
 	WorkingDirectory string               `json:"working_directory,omitempty"`
 	Shell            string               `json:"shell,omitempty"`
+	// When is the job-level run condition (whenexpr grammar). Evaluated
+	// server-side at phase dispatch; false means this job's Kubernetes Job
+	// is never created — the platform writes a synthesized `skipped` job
+	// completion and skipped job/step execution records instead, and the
+	// phase completes on the launched siblings alone. The declared-but-
+	// skipped job keeps the workflow shape total and renders the toggle.
+	When string `json:"when,omitempty"`
 }
 
 type NativeStepSpec struct {
