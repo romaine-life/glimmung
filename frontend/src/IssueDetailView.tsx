@@ -219,6 +219,8 @@ type RunProjectionPhase = {
   }>;
   inner_jobs?: RunProjectionInnerJob[];
 };
+type RunProjectionJob = RunProjectionPhase["jobs"][number];
+type RunProjectionStep = RunProjectionJob["steps"][number];
 
 // RunProjectionInnerJob mirrors server.InnerJobRef — the child k8s Job
 // a phase script spawned in a slot namespace. See
@@ -2508,7 +2510,7 @@ function ProjectionInspector({
           </div>
         )}
         {selectedJob && phase.inner_jobs && phase.inner_jobs.length > 0 && (
-          <InnerJobsRow innerJobs={phase.inner_jobs.filter((ij) => ij.parent_job_id === selectedJob.id)} run={run} />
+          <InnerJobsRow innerJobs={phase.inner_jobs.filter((ij) => ij.parent_job_id === selectedJob.id)} job={selectedJob} run={run} />
         )}
         {repo && (
           <div>
@@ -2562,9 +2564,11 @@ function ProjectionInspector({
 // are one click away even though the child runs outside glimmung-runs.
 function InnerJobsRow({
   innerJobs,
+  job,
   run,
 }: {
   innerJobs: RunProjectionInnerJob[];
+  job: RunProjectionJob;
   run: RunProjectionRun;
 }) {
   const [detailsExpanded, setDetailsExpanded] = useState(false);
@@ -2577,10 +2581,10 @@ function InnerJobsRow({
     new Set(innerJobs.map((ij) => (ij.intent ?? "").trim()).filter(Boolean)),
   );
   const heading = intents.length === 1 ? `${intents[0].replace(/_/g, " ")}s` : "agents";
-  const summary = innerJobSummary(innerJobs, heading);
+  const summary = innerJobSummary(innerJobs, heading, job);
   const summaryPill = summary.failed > 0 ? "drain" : summary.active > 0 ? "busy" : summary.succeeded === innerJobs.length ? "free" : "pending";
   const longest = longestInnerJob(innerJobs);
-  const showCompactSummary = summary.allSucceeded;
+  const showCompactSummary = summary.allTerminal;
   const showDetails = !showCompactSummary || detailsExpanded;
   return (
     <div className="inner-jobs-summary">
@@ -2628,16 +2632,15 @@ function InnerJobsRow({
                     { from: ij.registered_at, to: ij.completed_at ?? undefined },
                     ij.namespace,
                   );
-                const state = (ij.state ?? "unknown").trim() || "unknown";
-                const pill = state === "succeeded" ? "free" : state === "failed" ? "drain" : "busy";
-                const duration = nativeDurationLabel(state, ij.registered_at, ij.completed_at ?? null);
+                const status = innerJobDisplayStatus(ij, job);
+                const duration = nativeDurationLabel(ij.state ?? "unknown", ij.registered_at, ij.completed_at ?? null);
                 const stepLabel = innerJobStepLabel(ij.parent_step_slug ?? null);
                 const agentLabel = innerJobAgentLabel(ij);
                 return (
                   <tr key={`${ij.namespace}/${ij.job_name}`}>
                     <td>
-                      <span className={`pill ${pill}`}>{state}</span>
-                      {ij.reason && <span className="mono dim inner-job-reason">{ij.reason}</span>}
+                      <span className={`pill ${status.pill}`}>{status.label}</span>
+                      {status.reason && <span className="mono dim inner-job-reason">{status.reason}</span>}
                     </td>
                     <td>
                       <span className="mono" title={`${ij.namespace}/${ij.job_name}`}>{agentLabel}</span>
@@ -2675,34 +2678,68 @@ function InnerJobsRow({
   );
 }
 
-function innerJobSummary(innerJobs: RunProjectionInnerJob[], heading: string): {
+function innerJobSummary(innerJobs: RunProjectionInnerJob[], heading: string, job: RunProjectionJob): {
   pillLabel: string;
   succeeded: number;
   failed: number;
   active: number;
-  allSucceeded: boolean;
+  allTerminal: boolean;
 } {
   let succeeded = 0;
   let failed = 0;
   let active = 0;
   for (const ij of innerJobs) {
-    const state = (ij.state ?? "unknown").trim();
+    const state = innerJobOutcomeState(ij, job);
     if (state === "succeeded") succeeded += 1;
-    else if (state === "failed") failed += 1;
+    else if (state === "failed" || state === "aborted") failed += 1;
     else active += 1;
   }
-  const parts = [`${innerJobs.length} ${heading}`];
-  if (succeeded > 0 || innerJobs.length > 1) parts.push(`${succeeded} succeeded`);
-  parts.push(`${failed} failed`);
+  const allTerminal = innerJobs.length > 0 && active === 0;
+  const parts = allTerminal ? [] : [`${innerJobs.length} ${heading}`];
+  if (succeeded > 0 || innerJobs.length > 1 || allTerminal) parts.push(`${succeeded} passed`);
+  if (failed > 0 || !allTerminal) parts.push(`${failed} failed`);
   if (active > 0) parts.push(`${active} active`);
-  const allSucceeded = innerJobs.length > 0 && succeeded === innerJobs.length;
   return {
-    pillLabel: allSucceeded ? `${succeeded}/${innerJobs.length} passed` : parts.join(" · "),
+    pillLabel: parts.join(" · "),
     succeeded,
     failed,
     active,
-    allSucceeded,
+    allTerminal,
   };
+}
+
+function innerJobDisplayStatus(innerJob: RunProjectionInnerJob, job: RunProjectionJob): {
+  label: string;
+  pill: "free" | "drain" | "busy" | "pending";
+  reason?: string | null;
+} {
+  const outcomeStep = innerJobOutcomeStep(innerJob, job);
+  const state = innerJobOutcomeState(innerJob, job);
+  const label = outcomeStep && state === "succeeded" ? "passed" : state;
+  return {
+    label,
+    pill: state === "succeeded" ? "free" : state === "failed" || state === "aborted" ? "drain" : state === "not_started" ? "pending" : "busy",
+    reason: outcomeStep?.reason ?? innerJob.reason ?? null,
+  };
+}
+
+function innerJobOutcomeState(innerJob: RunProjectionInnerJob, job: RunProjectionJob): string {
+  const outcomeStep = innerJobOutcomeStep(innerJob, job);
+  if (outcomeStep) return (outcomeStep.state ?? "unknown").trim() || "unknown";
+  return (innerJob.state ?? "unknown").trim() || "unknown";
+}
+
+function innerJobOutcomeStep(innerJob: RunProjectionInnerJob, job: RunProjectionJob): RunProjectionStep | null {
+  const parentSlug = innerJob.parent_step_slug?.trim();
+  if (!parentSlug) return null;
+  const parentStep = job.steps.find((step) => step.slug === parentSlug);
+  if (parentStep?.group) {
+    const emitStep = job.steps.find((step) => step.group === parentStep.group && step.slug.startsWith("emit-"));
+    if (emitStep) return emitStep;
+  }
+  const caseMatch = parentSlug.match(/case-(\d+)$/);
+  if (!caseMatch) return null;
+  return job.steps.find((step) => step.slug === `emit-case-${caseMatch[1]}`) ?? null;
 }
 
 function longestInnerJob(innerJobs: RunProjectionInnerJob[]): string | null {

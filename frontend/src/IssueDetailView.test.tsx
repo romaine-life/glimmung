@@ -1326,7 +1326,9 @@ describe("IssueDetailView run execution graph", () => {
               reason: "verification_failed",
               steps: [
                 { slug: "run-verification-case-01", title: "run-verification-case-01", state: "succeeded", group: "test-cases/case-01", group_title: "dev-paper-lanterns-default" },
+                { slug: "emit-case-01", title: "emit-case-01", state: "succeeded", exit_code: 0, group: "test-cases/case-01", group_title: "dev-paper-lanterns-default" },
                 { slug: "run-verification-case-02", title: "run-verification-case-02", state: "succeeded", group: "test-cases/case-02", group_title: "dev-paper-lanterns-alt" },
+                { slug: "emit-case-02", title: "emit-case-02", state: "succeeded", exit_code: 0, group: "test-cases/case-02", group_title: "dev-paper-lanterns-alt" },
                 { slug: "run-verification-case-03", title: "run-verification-case-03", state: "succeeded", group: "test-cases/case-03", group_title: "dev-paper-lanterns-release-pulse" },
                 { slug: "emit-case-03", title: "emit-case-03", state: "failed", reason: "exit_nonzero", exit_code: 1, group: "test-cases/case-03", group_title: "dev-paper-lanterns-release-pulse" },
               ],
@@ -1380,7 +1382,7 @@ describe("IssueDetailView run execution graph", () => {
 
     renderIssueDetail("/projects/ambience/issues/172/runs/7/cycles/1/phases/llm-verify/jobs/llm-verify/steps/emit-case-03");
 
-    expect(await screen.findByText("3/3 passed")).toBeInTheDocument();
+    expect(await screen.findByText("2 passed · 1 failed")).toBeInTheDocument();
     expect(screen.getByText(/longest vc3-2/)).toBeInTheDocument();
     expect(screen.queryByText(/vc1-2 ran/)).not.toBeInTheDocument();
     expect(screen.queryByRole("table", { name: "verification agents" })).not.toBeInTheDocument();
@@ -1390,6 +1392,8 @@ describe("IssueDetailView run execution graph", () => {
     expect(within(table).getByText("vc1-2")).toBeInTheDocument();
     expect(within(table).getByText("vc2-2")).toBeInTheDocument();
     expect(within(table).getByText("vc3-2")).toBeInTheDocument();
+    expect(within(table).getAllByText("passed")).toHaveLength(2);
+    expect(within(table).getByText("failed")).toBeInTheDocument();
     expect(within(table).getByText("case 01")).toBeInTheDocument();
     expect(within(table).getByText("case 03")).toBeInTheDocument();
     expect(within(table).getAllByRole("link", { name: "logs ↗" })).toHaveLength(3);
