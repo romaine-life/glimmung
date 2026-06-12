@@ -1304,6 +1304,102 @@ describe("IssueDetailView run execution graph", () => {
     expect(within(screen.getByLabelText("native job steps")).getByRole("button", { name: /emit-case-03/ })).toBeInTheDocument();
   });
 
+  it("summarizes spawned verification agents without stacking long job names", async () => {
+    const projectionWithInnerJobs = {
+      ...runProjection,
+      runs: [{
+        ...runProjection.runs[0],
+        phases: [
+          ...runProjection.runs[0].phases,
+          {
+            name: "llm-verify",
+            kind: "k8s_job",
+            state: "failed",
+            verify: true,
+            run_on: "success",
+            purpose: "work",
+            depends_on: ["agent-execute"],
+            jobs: [{
+              id: "llm-verify",
+              name: "LLM: Verify dynamic cases",
+              state: "failed",
+              reason: "verification_failed",
+              steps: [
+                { slug: "run-verification-case-01", title: "run-verification-case-01", state: "succeeded", group: "test-cases/case-01", group_title: "dev-paper-lanterns-default" },
+                { slug: "emit-case-01", title: "emit-case-01", state: "succeeded", exit_code: 0, group: "test-cases/case-01", group_title: "dev-paper-lanterns-default" },
+                { slug: "run-verification-case-02", title: "run-verification-case-02", state: "succeeded", group: "test-cases/case-02", group_title: "dev-paper-lanterns-alt" },
+                { slug: "emit-case-02", title: "emit-case-02", state: "succeeded", exit_code: 0, group: "test-cases/case-02", group_title: "dev-paper-lanterns-alt" },
+                { slug: "run-verification-case-03", title: "run-verification-case-03", state: "succeeded", group: "test-cases/case-03", group_title: "dev-paper-lanterns-release-pulse" },
+                { slug: "emit-case-03", title: "emit-case-03", state: "failed", reason: "exit_nonzero", exit_code: 1, group: "test-cases/case-03", group_title: "dev-paper-lanterns-release-pulse" },
+              ],
+            }],
+            attempts: [{
+              attempt_index: 2,
+              state: "failed",
+              conclusion: "failure",
+              verification_status: "fail",
+              decision: "retry",
+              log_archive_url: null,
+              evidence_refs: [],
+              job_completions: [],
+            }],
+            inner_jobs: [
+              { index: 1, completed_at: "2026-05-20T17:28:41.000Z" },
+              { index: 2, completed_at: "2026-05-20T17:29:03.000Z" },
+              { index: 3, completed_at: "2026-05-20T17:29:22.000Z" },
+            ].map(({ index, completed_at }) => ({
+              parent_job_id: "llm-verify",
+              parent_step_slug: `run-verification-case-0${index}`,
+              namespace: "ambience-slot-1",
+              job_name: `agent-cb5d677f-78b1-4b3f-af3a-23745d4c33d9-vc${index}-2`,
+              intent: "verification_agent",
+              label: "verification",
+              registered_at: "2026-05-20T17:24:10.000Z",
+              completed_at,
+              state: "succeeded",
+              log_archive_url: `https://grafana.example.test/vc${index}`,
+            })),
+          },
+        ],
+      }],
+    };
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url =
+        typeof input === "string"
+          ? new URL(input, "https://glimmung.test")
+          : input instanceof URL
+            ? input
+            : new URL(input.url);
+      if (url.pathname === "/v1/issues/by-number/ambience/172") return json(issueDetail);
+      if (url.pathname === "/v1/issues/by-number/ambience/172/graph") return json(issueGraph);
+      if (url.pathname === "/v1/projects/ambience/issues/172/runs/7/cycles/1/graph") return json(projectionWithInnerJobs);
+      if (url.pathname === "/v1/workflows") return json([]);
+      if (url.pathname === "/v1/projects/ambience/issues/172/runs/7.1/native/events") {
+        return json({ ...nativeEvents, attempt_index: 2, job_id: "llm-verify", events: [] });
+      }
+      throw new Error(`unhandled fetch ${url.pathname}`);
+    }));
+
+    renderIssueDetail("/projects/ambience/issues/172/runs/7/cycles/1/phases/llm-verify/jobs/llm-verify/steps/emit-case-03");
+
+    expect(await screen.findByText("2 passed · 1 failed")).toBeInTheDocument();
+    expect(screen.getByText(/longest vc3-2/)).toBeInTheDocument();
+    expect(screen.queryByText(/vc1-2 ran/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("table", { name: "verification agents" })).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "details" }));
+    const table = screen.getByRole("table", { name: "verification agents" });
+    expect(within(table).getByText("vc1-2")).toBeInTheDocument();
+    expect(within(table).getByText("vc2-2")).toBeInTheDocument();
+    expect(within(table).getByText("vc3-2")).toBeInTheDocument();
+    expect(within(table).getAllByText("passed")).toHaveLength(2);
+    expect(within(table).getByText("failed")).toBeInTheDocument();
+    expect(within(table).getByText("case 01")).toBeInTheDocument();
+    expect(within(table).getByText("case 03")).toBeInTheDocument();
+    expect(within(table).getAllByRole("link", { name: "logs ↗" })).toHaveLength(3);
+    expect(screen.queryByText("ambience-slot-1/agent-cb5d677f-78b1-4b3f-af3a-23745d4c33d9-vc1-2")).not.toBeInTheDocument();
+  });
+
   it("renders LLM native step JSON as a transcript while keeping raw logs available", async () => {
     const agentProjection = {
       ...runProjection,
