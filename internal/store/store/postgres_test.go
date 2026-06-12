@@ -818,7 +818,7 @@ func TestNormalizeWorkflowRegisterForProjectDefaultsToK8sJob(t *testing.T) {
 		Name:    "agent-run",
 		Phases: []server.PhaseSpec{
 			{Name: "prepare", Outputs: []string{server.IssueContractOutputKey}, Jobs: []server.NativeJobSpec{{ID: server.IssueContractJobID}}},
-			{Name: "test", Verify: true, DependsOn: []string{"prepare"}, Jobs: verificationCaseJobsForStoreTest()},
+			{Name: "test", Verify: true, RecyclePolicy: &server.RecyclePolicy{MaxAttempts: 1, On: []string{"verify_fail"}, LandsAt: "prepare"}, DependsOn: []string{"prepare"}, Jobs: verificationCaseJobsForStoreTest()},
 			{Name: "cleanup_early", RunOn: server.PhaseRunOnAlways, Purpose: server.PhasePurposeTeardown, SkipWhenPreserveTestEnv: true, DependsOn: []string{"test"}, Jobs: []server.NativeJobSpec{{ID: "cleanup-early"}}},
 			{Name: "touchpoint", RunOn: server.PhaseRunOnSuccess, Purpose: server.PhasePurposeReviewTouchpoint, DependsOn: []string{"cleanup_early"}, Jobs: []server.NativeJobSpec{{ID: "pr-touchpoint", Primitive: "pr_touchpoint"}}},
 			{Name: "touchpoint_gate", Kind: "k8s_job", Purpose: server.PhasePurposeReviewGate, DependsOn: []string{"touchpoint"}, Jobs: []server.NativeJobSpec{{ID: "pr-merge", Primitive: "pr_merge"}}},
@@ -843,7 +843,7 @@ func TestWorkflowDocPersistsCanonicalVerificationConstraints(t *testing.T) {
 		Name:    "agent-run",
 		Phases: []server.PhaseSpec{
 			{Name: "prepare", Outputs: []string{server.IssueContractOutputKey}, Jobs: []server.NativeJobSpec{{ID: server.IssueContractJobID}}},
-			{Name: "test", Verify: true, DependsOn: []string{"prepare"}, Jobs: verificationCaseJobsForStoreTest()},
+			{Name: "test", Verify: true, RecyclePolicy: &server.RecyclePolicy{MaxAttempts: 1, On: []string{"verify_fail"}, LandsAt: "prepare"}, DependsOn: []string{"prepare"}, Jobs: verificationCaseJobsForStoreTest()},
 			{Name: "cleanup_early", RunOn: server.PhaseRunOnAlways, Purpose: server.PhasePurposeTeardown, SkipWhenPreserveTestEnv: true, DependsOn: []string{"test"}, Jobs: []server.NativeJobSpec{{ID: "cleanup-early"}}},
 			{Name: "touchpoint", RunOn: server.PhaseRunOnSuccess, Purpose: server.PhasePurposeReviewTouchpoint, DependsOn: []string{"cleanup_early"}, Jobs: []server.NativeJobSpec{{ID: "pr-touchpoint", Primitive: "pr_touchpoint"}}},
 			{Name: "touchpoint_gate", Kind: "k8s_job", Purpose: server.PhasePurposeReviewGate, DependsOn: []string{"touchpoint"}, Jobs: []server.NativeJobSpec{{ID: "pr-merge", Primitive: "pr_merge"}}},
@@ -874,7 +874,7 @@ func TestWorkflowDocRoundTripsDispatchInputs(t *testing.T) {
 		Name:    "default",
 		Phases: []server.PhaseSpec{
 			{Name: "prepare", Outputs: []string{server.IssueContractOutputKey}, Jobs: []server.NativeJobSpec{{ID: server.IssueContractJobID, Checkout: &server.NativeCheckoutSpec{Ref: "${{ inputs.git_ref }}"}}}},
-			{Name: "test", Verify: true, DependsOn: []string{"prepare"}, Jobs: verificationCaseJobsForStoreTest()},
+			{Name: "test", Verify: true, RecyclePolicy: &server.RecyclePolicy{MaxAttempts: 1, On: []string{"verify_fail"}, LandsAt: "prepare"}, DependsOn: []string{"prepare"}, Jobs: verificationCaseJobsForStoreTest()},
 			{Name: "cleanup_early", RunOn: server.PhaseRunOnAlways, Purpose: server.PhasePurposeTeardown, SkipWhenPreserveTestEnv: true, DependsOn: []string{"test"}, Jobs: []server.NativeJobSpec{{ID: "cleanup-early"}}},
 			{Name: "touchpoint", RunOn: server.PhaseRunOnSuccess, Purpose: server.PhasePurposeReviewTouchpoint, DependsOn: []string{"cleanup_early"}, Jobs: []server.NativeJobSpec{{ID: "pr-touchpoint", Primitive: "pr_touchpoint"}}},
 			{Name: "touchpoint_gate", Kind: "k8s_job", Purpose: server.PhasePurposeReviewGate, DependsOn: []string{"touchpoint"}, Jobs: []server.NativeJobSpec{{ID: "pr-merge", Primitive: "pr_merge"}}},
@@ -961,7 +961,7 @@ func TestValidateWorkflowRegisterRejectsNonNativeKind(t *testing.T) {
 		Name:    "agent-run",
 		Phases: []server.PhaseSpec{
 			{Name: "prepare", Kind: "container"},
-			{Name: "test", Kind: "k8s_job", Verify: true, DependsOn: []string{"prepare"}},
+			{Name: "test", Kind: "k8s_job", Verify: true, RecyclePolicy: &server.RecyclePolicy{MaxAttempts: 1, On: []string{"verify_fail"}, LandsAt: "prepare"}, DependsOn: []string{"prepare"}},
 			{Name: "cleanup", Kind: "k8s_job", RunOn: server.PhaseRunOnAlways, Purpose: server.PhasePurposeTeardown, DependsOn: []string{"test"}},
 		},
 	}

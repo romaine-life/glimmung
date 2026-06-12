@@ -6,6 +6,7 @@ import { RunCancelAction, RUN_CANCEL_IDLE_STATE, runStateCanCancel, type AbortSt
 import { StyleguideView } from "./StyleguideView";
 import { PhaseGraph, type PhaseGraphJob, type PhaseGraphPhase, type PhaseGraphStep } from "./PhaseGraph";
 import { RecyclePolicyPanel } from "./RecyclePolicyPanel";
+import { WorkflowControlEvents } from "./WorkflowControlEvents";
 import { AgentRuntimePolicyFields } from "./AgentRuntimePolicyFields";
 import { workflowToPhaseGraphModel } from "./workflowGraphModel";
 import { authedFetch, currentAccount, initAuth, signIn, signOut, type Account } from "./auth";
@@ -150,6 +151,15 @@ type Workflow = {
   }>;
   metadata: Record<string, unknown>;
   created_at: string;
+  // Operator-owned control pins; pinned control values survive any
+  // re-registration. See RecyclePolicyPanel and the workflow-shape doc.
+  control_pins?: Record<string, ControlPin>;
+};
+
+type ControlPin = {
+  pinned_by?: string;
+  pinned_at?: string;
+  reason?: string;
 };
 
 type PhaseSpec = {
@@ -1285,6 +1295,8 @@ function ProjectWorkflowView({
       <WorkflowDefinitionGraph workflow={workflow} />
 
       <RecyclePolicyPanel workflow={workflow} signedIn={signedIn} isAdmin={isAdmin} />
+
+      <WorkflowControlEvents project={workflow.project} name={workflow.name} />
 
       <h2>Current work</h2>
       <CurrentWorkTable leases={currentWork} emptyText={`No active work for ${workflow.name}.`} />

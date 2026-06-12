@@ -11,16 +11,29 @@
 // which mints a new immutable workflow schema and moves the logical
 // pointer forward (in-flight runs keep the schema they started with).
 //
+// Operator control pins: a pinned lane is frozen — re-registration cannot
+// move it (the server enforces the pinned value into any incoming payload)
+// and the scale input here is disabled until an admin unpins it. Pins are
+// the durable answer to "I set max_attempts=1 and a later re-registration
+// silently put it back to 3".
+//
 // Kept structural so anything shaped like a workflow with phases + a pr
 // recycle policy can render through the project workflow view.
 
 import { useEffect, useMemo, useState } from "react";
 import { authedFetch } from "./auth";
+import { Pill } from "./ui/bits";
 
 export type RecyclePolicyLike = {
   max_attempts: number;
   on: string[];
   lands_at: string;
+};
+
+export type ControlPinLike = {
+  pinned_by?: string;
+  pinned_at?: string;
+  reason?: string;
 };
 
 export type RecyclePolicyPhase = {
@@ -33,6 +46,7 @@ export type RecyclePolicyWorkflow = {
   name: string;
   phases: RecyclePolicyPhase[];
   pr: { recycle_policy: RecyclePolicyLike | null };
+  control_pins?: Record<string, ControlPinLike>;
 };
 
 // Sentinel target for the workflow-level PR reject lane. Matches the Go
@@ -41,15 +55,23 @@ const PR_TARGET = "pr";
 const MIN_ATTEMPTS = 1;
 const MAX_ATTEMPTS = 20;
 
+// Control-pin target for a recycle lane; matches the Go server's
+// ControlPinTargetForRecyclePatch.
+function pinTargetFor(target: string): string {
+  return target === PR_TARGET ? "pr.recycle_policy" : `phases.${target}.recycle_policy`;
+}
+
 type Lane = {
   target: string; // phase name, or PR_TARGET
   label: string;
   trigger: string;
   landsAt: string;
   maxAttempts: number;
+  pin: ControlPinLike | null;
 };
 
 function lanesFromWorkflow(workflow: RecyclePolicyWorkflow): Lane[] {
+  const pins = workflow.control_pins ?? {};
   const lanes: Lane[] = [];
   for (const phase of workflow.phases) {
     const policy = phase.recycle_policy;
@@ -60,6 +82,7 @@ function lanesFromWorkflow(workflow: RecyclePolicyWorkflow): Lane[] {
       trigger: policy.on.join(" / ") || "—",
       landsAt: policy.lands_at,
       maxAttempts: policy.max_attempts,
+      pin: pins[pinTargetFor(phase.name)] ?? null,
     });
   }
   const prPolicy = workflow.pr.recycle_policy;
@@ -70,6 +93,7 @@ function lanesFromWorkflow(workflow: RecyclePolicyWorkflow): Lane[] {
       trigger: prPolicy.on.join(" / ") || "—",
       landsAt: prPolicy.lands_at,
       maxAttempts: prPolicy.max_attempts,
+      pin: pins[pinTargetFor(PR_TARGET)] ?? null,
     });
   }
   return lanes;
@@ -77,6 +101,13 @@ function lanesFromWorkflow(workflow: RecyclePolicyWorkflow): Lane[] {
 
 function draftsFromLanes(lanes: Lane[]): Record<string, string> {
   return Object.fromEntries(lanes.map((lane) => [lane.target, String(lane.maxAttempts)]));
+}
+
+function pinTitle(pin: ControlPinLike): string {
+  const parts = ["pinned"];
+  if (pin.pinned_by) parts.push(`by ${pin.pinned_by}`);
+  if (pin.reason) parts.push(`— ${pin.reason}`);
+  return parts.join(" ");
 }
 
 export function RecyclePolicyPanel({
@@ -94,6 +125,9 @@ export function RecyclePolicyPanel({
   const [drafts, setDrafts] = useState<Record<string, string>>(() => draftsFromLanes(lanes));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Per-lane pin flow state: "pin" shows the reason input, "unpin" the
+  // two-step confirm. Only one lane's flow is open at a time.
+  const [pinFlow, setPinFlow] = useState<{ target: string; mode: "pin" | "unpin"; reason: string } | null>(null);
 
   // Re-sync drafts to the latest workflow once a save settles or the
   // upstream definition changes underneath us (e.g. live SSE snapshot).
@@ -106,6 +140,7 @@ export function RecyclePolicyPanel({
   const changed = useMemo(
     () =>
       lanes.filter((lane) => {
+        if (lane.pin) return false;
         const draft = drafts[lane.target];
         if (draft === undefined) return false;
         const parsed = Number.parseInt(draft, 10);
@@ -149,6 +184,35 @@ export function RecyclePolicyPanel({
     }
   };
 
+  const applyPin = async (lane: Lane, mode: "pin" | "unpin", reason: string) => {
+    setSaving(true);
+    setError(null);
+    try {
+      const target = pinTargetFor(lane.target);
+      const path = `/v1/workflows/${encodeURIComponent(workflow.project)}/${encodeURIComponent(workflow.name)}/control-pins/${encodeURIComponent(target)}`;
+      const response = await authedFetch(path, {
+        method: mode === "pin" ? "PUT" : "DELETE",
+        ...(mode === "pin"
+          ? {
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(reason.trim() ? { reason: reason.trim() } : {}),
+            }
+          : {}),
+      });
+      if (!response.ok) {
+        const text = await response.text().catch(() => "");
+        setError(`${response.status} ${text || response.statusText}`);
+        return;
+      }
+      setPinFlow(null);
+      onSaved?.();
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setSaving(false);
+    }
+  };
+
   if (lanes.length === 0) {
     return (
       <section className="recycle-policy" aria-label="recycle policy">
@@ -173,19 +237,26 @@ export function RecyclePolicyPanel({
             <th>fires on</th>
             <th>lands at</th>
             <th>max attempts</th>
+            {canEdit && <th aria-label="pin actions" />}
           </tr>
         </thead>
         <tbody>
           {lanes.map((lane) => {
             const draft = drafts[lane.target] ?? String(lane.maxAttempts);
             const inputId = `recycle-attempts-${lane.target}`;
+            const flow = pinFlow?.target === lane.target ? pinFlow : null;
             return (
               <tr key={lane.target}>
                 <td className="mono">{lane.label}</td>
                 <td className="mono dim">{lane.trigger}</td>
                 <td className="mono dim">{lane.landsAt}</td>
                 <td>
-                  {canEdit ? (
+                  {lane.pin ? (
+                    <span title={pinTitle(lane.pin)}>
+                      <span className="mono">{lane.maxAttempts}</span>{" "}
+                      <Pill tone="info">pinned</Pill>
+                    </span>
+                  ) : canEdit ? (
                     <input
                       id={inputId}
                       aria-label={`${lane.label} max attempts`}
@@ -202,6 +273,67 @@ export function RecyclePolicyPanel({
                     <span className="mono">{lane.maxAttempts}</span>
                   )}
                 </td>
+                {canEdit && (
+                  <td className="recycle-pin-actions">
+                    {flow?.mode === "pin" ? (
+                      <span className="mono">
+                        <input
+                          aria-label={`${lane.label} pin reason`}
+                          type="text"
+                          placeholder="reason (optional)"
+                          value={flow.reason}
+                          disabled={saving}
+                          onChange={(event) =>
+                            setPinFlow({ target: lane.target, mode: "pin", reason: event.target.value })
+                          }
+                        />{" "}
+                        <button
+                          type="button"
+                          className="gb"
+                          disabled={saving}
+                          onClick={() => void applyPin(lane, "pin", flow.reason)}
+                        >
+                          pin
+                        </button>{" "}
+                        <button type="button" className="gb" disabled={saving} onClick={() => setPinFlow(null)}>
+                          keep
+                        </button>
+                      </span>
+                    ) : flow?.mode === "unpin" ? (
+                      <span className="mono">
+                        <button
+                          type="button"
+                          className="gb danger"
+                          disabled={saving}
+                          onClick={() => void applyPin(lane, "unpin", "")}
+                        >
+                          unpin?
+                        </button>{" "}
+                        <button type="button" className="gb" disabled={saving} onClick={() => setPinFlow(null)}>
+                          keep
+                        </button>
+                      </span>
+                    ) : lane.pin ? (
+                      <button
+                        type="button"
+                        className="gb"
+                        disabled={saving}
+                        onClick={() => setPinFlow({ target: lane.target, mode: "unpin", reason: "" })}
+                      >
+                        unpin
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        className="gb"
+                        disabled={saving}
+                        onClick={() => setPinFlow({ target: lane.target, mode: "pin", reason: "" })}
+                      >
+                        pin
+                      </button>
+                    )}
+                  </td>
+                )}
               </tr>
             );
           })}

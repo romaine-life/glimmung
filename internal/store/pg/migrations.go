@@ -744,6 +744,34 @@ var schemaMigrations = []string{
 	WHERE r.project = migrated.project
 	  AND r.id = migrated.id
 	  AND r.payload IS DISTINCT FROM migrated.payload`,
+
+	// ------------------------------------------------------------------
+	// Operator control pins + workflow control ledger.
+	//   - workflows.control_pins: operator-owned column, parallel to
+	//     projects.status — registration writes never touch it; only the
+	//     dedicated pin/unpin endpoints do. Registration enforces pinned
+	//     values into the authored payload before the schema hash is
+	//     computed, so the stored doc always reflects operator intent.
+	//   - workflow_control_events: append-only attribution ledger for every
+	//     control-plane write to a workflow (register, patch, pin, unpin,
+	//     delete). workflow_schemas cannot carry this history because schema
+	//     rows are content-addressed: re-registering a previously-seen shape
+	//     (e.g. a revert) reuses the existing row and would leave no trace of
+	//     who moved the pointer or which control values changed.
+	// ------------------------------------------------------------------
+	`ALTER TABLE workflows ADD COLUMN IF NOT EXISTS control_pins jsonb NOT NULL DEFAULT '{}'::jsonb`,
+	`CREATE TABLE IF NOT EXISTS workflow_control_events (
+		id                bigserial PRIMARY KEY,
+		project           text NOT NULL,
+		name              text NOT NULL,
+		action            text NOT NULL,
+		actor             text NOT NULL DEFAULT '',
+		schema_ref        text NOT NULL DEFAULT '',
+		detail            jsonb NOT NULL DEFAULT '{}'::jsonb,
+		created_at        timestamptz NOT NULL DEFAULT now()
+	)`,
+	`CREATE INDEX IF NOT EXISTS workflow_control_events_by_workflow
+		ON workflow_control_events (project, name, id DESC)`,
 }
 
 // cronJobs are scheduled after the table migrations succeed. Each

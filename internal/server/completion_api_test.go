@@ -1732,7 +1732,7 @@ func TestAllReadyDispatchTargetsHandlesLinearPhasesAndTeardown(t *testing.T) {
 	wf := &Workflow{Phases: []PhaseSpec{
 		{Name: "prepare"},
 		{Name: "work", DependsOn: []string{"prepare"}},
-		{Name: "verify", Verify: true, DependsOn: []string{"work"}},
+		{Name: "verify", Verify: true, RecyclePolicy: &RecyclePolicy{MaxAttempts: 1, On: []string{"verify_fail"}, LandsAt: "prepare"}, DependsOn: []string{"work"}},
 		{Name: "cleanup", RunOn: PhaseRunOnAlways, Purpose: PhasePurposeTeardown, DependsOn: []string{"verify"}},
 	}}
 	run := RunReplayData{Attempts: []RunAttemptData{{AttemptIndex: 0, Phase: "prepare", Completed: true, Decision: string(decision.Advance)}}}
@@ -1748,7 +1748,7 @@ func TestAllReadyDispatchTargetsHandlesLinearPhasesAndTeardown(t *testing.T) {
 func TestAllReadyDispatchTargetsAbortPathSkipsReviewPhases(t *testing.T) {
 	wf := &Workflow{Phases: []PhaseSpec{
 		{Name: "prepare"},
-		{Name: "verify", Verify: true, Purpose: PhasePurposeVerification, DependsOn: []string{"prepare"}},
+		{Name: "verify", Verify: true, RecyclePolicy: &RecyclePolicy{MaxAttempts: 1, On: []string{"verify_fail"}, LandsAt: "prepare"}, Purpose: PhasePurposeVerification, DependsOn: []string{"prepare"}},
 		{Name: "evidence-gate", EvidenceVerificationGate: true, Purpose: PhasePurposeEvidenceGate, DependsOn: []string{"verify"}},
 		{Name: "cleanup_early", RunOn: PhaseRunOnAlways, Purpose: PhasePurposeTeardown, DependsOn: []string{"evidence-gate"}},
 		{Name: "touchpoint", RunOn: PhaseRunOnSuccess, Purpose: PhasePurposeReviewTouchpoint, DependsOn: []string{"cleanup_early"}, Jobs: []NativeJobSpec{{ID: PRTouchpointJobID, Primitive: JobPrimitivePRTouchpoint}}},
@@ -1775,7 +1775,7 @@ func TestAllReadyDispatchTargetsUsesPhaseOrderNotDependencyDepth(t *testing.T) {
 		{Name: "prepare"},
 		{Name: "plan", DependsOn: []string{"prepare"}},
 		{Name: "implement", DependsOn: []string{"prepare"}},
-		{Name: "verify", Verify: true, DependsOn: []string{"plan", "implement"}},
+		{Name: "verify", Verify: true, RecyclePolicy: &RecyclePolicy{MaxAttempts: 1, On: []string{"verify_fail"}, LandsAt: "prepare"}, DependsOn: []string{"plan", "implement"}},
 		{Name: "cleanup", RunOn: PhaseRunOnAlways, Purpose: PhasePurposeTeardown, DependsOn: []string{"verify"}},
 	}}
 	run := RunReplayData{Attempts: []RunAttemptData{{AttemptIndex: 0, Phase: "prepare", Completed: true, Decision: string(decision.Advance)}}}
@@ -1939,7 +1939,7 @@ func TestNativeRunCompletedByCallbackTokenEvidenceGateRetryCarriesPriorOutputs(t
 				},
 				Jobs: []NativeJobSpec{{ID: "llm-work", Managed: true, Steps: []NativeStepSpec{{Slug: "run", Run: "true"}}}},
 			},
-			{Name: "llm-verify", Kind: "k8s_job", Verify: true, DependsOn: []string{"llm-work"}, Jobs: []NativeJobSpec{{ID: "llm-verify"}}},
+			{Name: "llm-verify", Kind: "k8s_job", Verify: true, RecyclePolicy: &RecyclePolicy{MaxAttempts: 1, On: []string{"verify_fail"}, LandsAt: "prepare"}, DependsOn: []string{"llm-work"}, Jobs: []NativeJobSpec{{ID: "llm-verify"}}},
 			{
 				Name:                     "evidence-gate",
 				Kind:                     "k8s_job",
@@ -2029,7 +2029,7 @@ func TestNativeRunCompletedByCallbackTokenEvidenceGateRetryCanRestartAtEnvPrep(t
 				},
 				Jobs: []NativeJobSpec{{ID: "llm-work", Managed: true, Steps: []NativeStepSpec{{Slug: "run", Run: "true"}}}},
 			},
-			{Name: "llm-verify", Kind: "k8s_job", Verify: true, DependsOn: []string{"llm-work"}, Jobs: []NativeJobSpec{{ID: "llm-verify"}}},
+			{Name: "llm-verify", Kind: "k8s_job", Verify: true, RecyclePolicy: &RecyclePolicy{MaxAttempts: 1, On: []string{"verify_fail"}, LandsAt: "prepare"}, DependsOn: []string{"llm-work"}, Jobs: []NativeJobSpec{{ID: "llm-verify"}}},
 			{
 				Name:                     "evidence-gate",
 				Kind:                     "k8s_job",

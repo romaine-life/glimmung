@@ -542,6 +542,61 @@ records. The graph UI projects from this ledger first, then uses raw native
 events as live detail. This keeps state names and colors stable even when a
 native job has not emitted logs yet.
 
+## Operator control pins and the control ledger
+
+Control values — recycle policies and the cost budget — are operator-owned
+dials. Registration replaces the workflow document wholesale, which
+historically meant any session re-registering for an unrelated reason could
+silently "normalize" a control back to a value the operator had deliberately
+changed (observed live: `llm-verify` `max_attempts` flipped 1→3 by a
+re-registration). Two mechanisms close this:
+
+**Control pins.** `workflows.control_pins` is an operator-owned column,
+parallel to `projects.status`: registration never writes it. A pin freezes
+the current value at one of a closed set of targets:
+
+```text
+budget
+pr.recycle_policy
+phases.<phase>.recycle_policy
+```
+
+- `PUT /v1/workflows/{project}/{name}/control-pins/{target}` (admin) pins the
+  CURRENT value, with an optional `{"reason": "..."}` body. Pins freeze what
+  is — value changes go through the ordinary patch surface first.
+- `DELETE /v1/workflows/{project}/{name}/control-pins/{target}` (admin)
+  releases it.
+- **Registration enforces pins**: a pinned target's incoming value is
+  discarded and the pinned value is written into the authored payload before
+  the schema hash is computed, so the stored document and every run snapshot
+  reflect operator intent. The override is loud — reported on the register
+  response (`pins_enforced`, `control_changes` with `action: pin_enforced`)
+  and recorded in the ledger. A pin whose target phase no longer exists in
+  the incoming registration rejects the registration (unpin first); pins
+  never silently evaporate.
+- **Patches against a pinned target are rejected** with the pinner, reason,
+  and the unpin remediation in the error. A patch states control intent
+  explicitly, so silently overriding it would make the call "appear to work".
+
+**The control ledger.** Every control-plane write — `register`, `patch`,
+`pin`, `unpin`, `delete` — appends one row to `workflow_control_events`:
+actor (the authenticated principal, refined by the `X-Glimmung-Actor` header
+trusted service callers forward, e.g. `svc:mcp-glimmung via tank-session:815`),
+resulting `schema_ref`, and a detail document carrying the control-field diff
+(`budget`, `pr.recycle_policy`, every phase recycle policy) for registrations
+or the target/reason for pin events. The ledger exists because
+`workflow_schemas` rows are content-addressed: re-registering a
+previously-seen shape (a revert) reuses the existing schema row and would
+otherwise leave no trace of who moved the pointer.
+`GET /v1/workflows/{project}/{name}/control-events` is a public read, and the
+workflow detail page renders the recent tail plus per-lane pin state.
+
+**Explicit verification recycle policy.** A `verify=true` phase must declare
+`recycle_policy` at registration; a missing policy is rejected naming the
+phase. Silence is not a policy: `max_attempts: 1` is the explicit way to run
+the verification gate with recycling off, and there is no platform-default
+attempt count for a registration to fall back to.
+
 ## Path-typed identity
 
 Entities are addressed by URL-shaped paths that match the HTTP

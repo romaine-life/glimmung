@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/romaine-life/glimmung/internal/domain/agentruntime"
@@ -72,7 +73,7 @@ type WorkflowRegisterStore interface {
 }
 
 type WorkflowDeleteStore interface {
-	DeleteWorkflow(ctx context.Context, project string, name string) (Workflow, error)
+	DeleteWorkflow(ctx context.Context, project string, name string, actor string) (Workflow, error)
 }
 
 type WorkflowRegister struct {
@@ -89,6 +90,10 @@ type WorkflowRegister struct {
 	// that does not name a declared input.
 	DispatchInputs []DispatchInputSpec `json:"dispatch_inputs,omitempty"`
 	Metadata       map[string]any      `json:"metadata"`
+	// Actor is the server-derived attribution string for this write. It is
+	// never decoded from the request body — the handler composes it from the
+	// authenticated admin identity plus the optional X-Glimmung-Actor header.
+	Actor string `json:"-"`
 }
 
 type WorkflowPatchStore interface {
@@ -115,6 +120,69 @@ type WorkflowPatchRequest struct {
 	// existing recycle policy are rejected: a count cannot conjure the
 	// structural `on`/`lands_at` a lane needs.
 	RecycleMaxAttempts []RecycleMaxAttemptsPatch `json:"recycle_max_attempts,omitempty"`
+	// Actor is the server-derived attribution string for this write; see
+	// WorkflowRegister.Actor.
+	Actor string `json:"-"`
+}
+
+// WorkflowControlPinRequest pins the CURRENT value at a control target.
+// Pinning does not set values — the existing patch surface does that — it
+// freezes what is live, so a pin is always an explicit operator act against
+// a value they can see.
+type WorkflowControlPinRequest struct {
+	Reason string `json:"reason,omitempty"`
+	Actor  string `json:"-"`
+}
+
+type WorkflowControlPinStore interface {
+	PinWorkflowControl(ctx context.Context, project, name, target string, req WorkflowControlPinRequest) (Workflow, error)
+	UnpinWorkflowControl(ctx context.Context, project, name, target, actor string) (Workflow, error)
+	ListWorkflowControlEvents(ctx context.Context, project, name string, limit int) ([]WorkflowControlEvent, error)
+}
+
+// Control pin target grammar. Pinnable controls are the guard-rail dials:
+// recycle lanes and the budget. The vocabulary is closed on purpose — a pin
+// on arbitrary payload paths would turn the pin document into a second
+// schema language.
+const (
+	ControlPinTargetBudget = "budget"
+	ControlPinTargetPR     = "pr.recycle_policy"
+)
+
+// ControlPinPhasePrefix + "<phase>" + ControlPinPhaseSuffix addresses a
+// phase's recycle policy, e.g. "phases.llm-verify.recycle_policy".
+const (
+	ControlPinPhasePrefix = "phases."
+	ControlPinPhaseSuffix = ".recycle_policy"
+)
+
+// ParseControlPinTarget validates a pin target and returns the phase name
+// when the target addresses a phase recycle policy (empty otherwise).
+func ParseControlPinTarget(target string) (phase string, err error) {
+	switch {
+	case target == ControlPinTargetBudget, target == ControlPinTargetPR:
+		return "", nil
+	case strings.HasPrefix(target, ControlPinPhasePrefix) && strings.HasSuffix(target, ControlPinPhaseSuffix):
+		phase = strings.TrimSuffix(strings.TrimPrefix(target, ControlPinPhasePrefix), ControlPinPhaseSuffix)
+		if strings.TrimSpace(phase) == "" {
+			return "", ValidationError{Message: fmt.Sprintf("control pin target %q names no phase", target)}
+		}
+		return phase, nil
+	default:
+		return "", ValidationError{Message: fmt.Sprintf(
+			"control pin target %q is not pinnable; targets are %q, %q, or %q<phase>%q",
+			target, ControlPinTargetBudget, ControlPinTargetPR, ControlPinPhasePrefix, ControlPinPhaseSuffix,
+		)}
+	}
+}
+
+// ControlPinTargetForRecyclePatch maps a recycle_max_attempts patch target
+// (phase name or the "pr" sentinel) to its control pin target.
+func ControlPinTargetForRecyclePatch(target string) string {
+	if target == RecyclePatchTargetPR {
+		return ControlPinTargetPR
+	}
+	return ControlPinPhasePrefix + target + ControlPinPhaseSuffix
 }
 
 // RecyclePatchTargetPR is the sentinel RecycleMaxAttemptsPatch.Target
@@ -196,6 +264,34 @@ func recycleLaneForTarget(reg *WorkflowRegister, target string) (*RecyclePolicy,
 	return nil, ValidationError{Message: fmt.Sprintf("recycle_max_attempts target phase %q does not exist", target)}
 }
 
+// ActorHeader is the optional caller-supplied attribution detail forwarded by
+// trusted service callers (the MCP server forwards its own caller's identity,
+// e.g. "tank-session:815"). It refines, never replaces, the authenticated
+// identity: the recorded actor is always anchored to the verified principal.
+const ActorHeader = "X-Glimmung-Actor"
+
+// requestActor composes the attribution string for a control-plane write from
+// the authenticated admin identity plus the optional forwarded actor detail.
+func requestActor(r *http.Request) string {
+	principal := ""
+	if user, ok := adminUser(r.Context()); ok {
+		principal = strings.TrimSpace(user.Sub)
+		if principal == "" {
+			principal = strings.TrimSpace(user.Email)
+		}
+		if actorEmail := strings.TrimSpace(user.ActorEmail); actorEmail != "" && actorEmail != principal {
+			principal += " for " + actorEmail
+		}
+	}
+	if forwarded := strings.TrimSpace(r.Header.Get(ActorHeader)); forwarded != "" {
+		if principal == "" {
+			return "(unverified) " + forwarded
+		}
+		return principal + " via " + forwarded
+	}
+	return principal
+}
+
 func registerWorkflow(store ReadStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		writer, ok := store.(WorkflowRegisterStore)
@@ -208,6 +304,7 @@ func registerWorkflow(store ReadStore) http.HandlerFunc {
 			writeProblem(w, http.StatusBadRequest, "invalid JSON body")
 			return
 		}
+		req.Actor = requestActor(r)
 		project, ok, err := lookupProject(r.Context(), store, req.Project)
 		if err != nil {
 			writeInternalError(w, r, err, "read project failed")
@@ -247,6 +344,7 @@ func patchWorkflow(store ReadStore) http.HandlerFunc {
 			writeProblem(w, http.StatusBadRequest, "invalid JSON body")
 			return
 		}
+		req.Actor = requestActor(r)
 
 		project := r.PathValue("project")
 		name := r.PathValue("name")
@@ -276,7 +374,7 @@ func deleteWorkflow(store ReadStore) http.HandlerFunc {
 		}
 		project := r.PathValue("project")
 		name := r.PathValue("name")
-		workflow, err := writer.DeleteWorkflow(r.Context(), project, name)
+		workflow, err := writer.DeleteWorkflow(r.Context(), project, name, requestActor(r))
 		if errors.Is(err, ErrNotFound) {
 			writeProblem(w, http.StatusNotFound, "workflow "+project+"."+name+" not found")
 			return
@@ -286,6 +384,103 @@ func deleteWorkflow(store ReadStore) http.HandlerFunc {
 			return
 		}
 		writeJSON(w, http.StatusOK, workflow)
+	}
+}
+
+func pinWorkflowControl(store ReadStore) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		pinner, ok := store.(WorkflowControlPinStore)
+		if !ok || pinner == nil {
+			writeProblem(w, http.StatusServiceUnavailable, "workflow control pins not configured")
+			return
+		}
+		var req WorkflowControlPinRequest
+		if r.Body != nil && r.ContentLength != 0 {
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				writeProblem(w, http.StatusBadRequest, "invalid JSON body")
+				return
+			}
+		}
+		req.Actor = requestActor(r)
+		project := r.PathValue("project")
+		name := r.PathValue("name")
+		target := r.PathValue("target")
+		if _, err := ParseControlPinTarget(target); err != nil {
+			writeProblem(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		workflow, err := pinner.PinWorkflowControl(r.Context(), project, name, target, req)
+		if errors.Is(err, ErrNotFound) {
+			writeProblem(w, http.StatusNotFound, "workflow "+project+"."+name+" not found")
+			return
+		}
+		if validationErr, ok := err.(ValidationError); ok {
+			writeProblem(w, http.StatusBadRequest, validationErr.Message)
+			return
+		}
+		if err != nil {
+			writeInternalError(w, r, err, "pin workflow control failed")
+			return
+		}
+		writeJSON(w, http.StatusOK, workflow)
+	}
+}
+
+func unpinWorkflowControl(store ReadStore) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		pinner, ok := store.(WorkflowControlPinStore)
+		if !ok || pinner == nil {
+			writeProblem(w, http.StatusServiceUnavailable, "workflow control pins not configured")
+			return
+		}
+		project := r.PathValue("project")
+		name := r.PathValue("name")
+		target := r.PathValue("target")
+		if _, err := ParseControlPinTarget(target); err != nil {
+			writeProblem(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		workflow, err := pinner.UnpinWorkflowControl(r.Context(), project, name, target, requestActor(r))
+		if errors.Is(err, ErrNotFound) {
+			writeProblem(w, http.StatusNotFound, "workflow "+project+"."+name+" not found")
+			return
+		}
+		if validationErr, ok := err.(ValidationError); ok {
+			writeProblem(w, http.StatusBadRequest, validationErr.Message)
+			return
+		}
+		if err != nil {
+			writeInternalError(w, r, err, "unpin workflow control failed")
+			return
+		}
+		writeJSON(w, http.StatusOK, workflow)
+	}
+}
+
+func listWorkflowControlEvents(store ReadStore) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		lister, ok := store.(WorkflowControlPinStore)
+		if !ok || lister == nil {
+			writeProblem(w, http.StatusServiceUnavailable, "workflow control events not configured")
+			return
+		}
+		project := r.PathValue("project")
+		name := r.PathValue("name")
+		limit := 50
+		if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
+			parsed, err := strconv.Atoi(raw)
+			if err != nil || parsed < 1 || parsed > 500 {
+				writeProblem(w, http.StatusBadRequest, "limit must be an integer in [1, 500]")
+				return
+			}
+			limit = parsed
+		}
+		events, err := lister.ListWorkflowControlEvents(r.Context(), project, name, limit)
+		if err != nil {
+			writeInternalError(w, r, err, "list workflow control events failed")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"events": events})
 	}
 }
 
@@ -463,6 +658,14 @@ func ValidateWorkflowRegister(req WorkflowRegister) error {
 		if phase.Verify {
 			if purpose != PhasePurposeVerification {
 				return ValidationError{Message: fmt.Sprintf("workflow %s phase %q has verify=true and must set purpose=%q", req.Name, name, PhasePurposeVerification)}
+			}
+			if phase.RecyclePolicy == nil {
+				// Silence is not a policy. The verify loop's retry budget is
+				// an operator-owned control; a verification phase that omits
+				// it would historically inherit whatever norm the registering
+				// agent assumed. Require the choice to be written down:
+				// max_attempts=1 runs the gate with recycling off.
+				return ValidationError{Message: fmt.Sprintf("workflow %s phase %q is a verification phase and must declare recycle_policy explicitly (max_attempts=1 disables recycling); implicit defaults are prohibited", req.Name, name)}
 			}
 			if err := validateVerificationJob(req.Name, phase, constraints.Verification); err != nil {
 				return err
