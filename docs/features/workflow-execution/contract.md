@@ -14,7 +14,11 @@ after registration changes.
 ## Sources Of Truth
 
 - Postgres `workflows` owns logical workflow registrations and current schema
-  pointers.
+  pointers. Its `control_pins` column is operator-owned: only the dedicated
+  pin/unpin endpoints write it, never registration.
+- Postgres `workflow_control_events` owns the append-only attribution ledger
+  for control-plane writes (register, patch, pin, unpin, delete) — schema
+  rows are content-addressed and cannot carry who-moved-the-pointer history.
 - Historical workflow schemas referenced by runs own projection for past
   cycles.
 - `docs/workflow-shape.md` owns required phases, linear topology, job
@@ -52,6 +56,17 @@ after registration changes.
 - Registration rejects invalid dependencies, duplicate phases, duplicate job
   IDs, invalid inputs, and unsupported executor kinds before they become a
   runtime contract.
+- A verification phase must declare `recycle_policy` explicitly; registration
+  rejects a nil policy naming the phase. There is no implicit platform
+  attempt count for silence to inherit.
+- Every workflow write flows through one choke point that enforces operator
+  control pins: a pinned target's incoming value is discarded in favor of the
+  pinned value before the schema hash is computed, the override is reported
+  on the response and ledger, and a pin whose target phase is absent from the
+  incoming registration rejects the registration. Patches naming a pinned
+  target are rejected with the pinner, reason, and unpin remediation. No
+  write path may mutate the workflow payload without minting a schema and a
+  ledger event.
 - A `verify=true` phase is a bounded verification phase whose concrete shape is
   selected by the persisted workflow constraint
   `constraints.verification.shape`. Supported shapes are `single_job`,
@@ -141,6 +156,9 @@ after registration changes.
 ## Acceptance Checks
 
 - Workflow shape changes include registration validation tests.
+- Control-pin changes include tests for pin enforcement on re-registration,
+  pinned-patch rejection, the closed pin-target grammar, and ledger/actor
+  attribution on the write surface.
 - Native launcher/callback changes include multi-job phase behavior when the
   change can affect phase completion.
 - Dispatch-input changes include tests for run persistence, native lease/env

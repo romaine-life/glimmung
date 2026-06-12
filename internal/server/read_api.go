@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -57,6 +58,53 @@ type Workflow struct {
 	DispatchInputs []DispatchInputSpec `json:"dispatch_inputs,omitempty"`
 	Metadata       map[string]any      `json:"metadata"`
 	CreatedAt      time.Time           `json:"created_at"`
+	// ControlPins is the operator-owned pin document for this workflow.
+	// Pinned control values survive any re-registration: the register path
+	// enforces them into the authored payload and reports the override.
+	// Populated from the workflows.control_pins column on row reads; never
+	// part of the content-hashed schema payload.
+	ControlPins map[string]ControlPin `json:"control_pins,omitempty"`
+	// ControlChanges and PinsEnforced are write-outcome fields populated
+	// only on register/patch/pin responses (omitted on plain reads): the
+	// control-field diff vs. the previous registration, and the pin targets
+	// whose incoming values were overridden by operator pins.
+	ControlChanges []ControlChange `json:"control_changes,omitempty"`
+	PinsEnforced   []string        `json:"pins_enforced,omitempty"`
+}
+
+// ControlPin freezes one control value on a workflow. Value is the canonical
+// JSON of the pinned control (a recycle policy object, or {"total": N} for
+// budget). PinnedBy/PinnedAt/Reason are attribution for the pin act itself.
+type ControlPin struct {
+	Value    json.RawMessage `json:"value"`
+	PinnedBy string          `json:"pinned_by,omitempty"`
+	PinnedAt time.Time       `json:"pinned_at,omitempty"`
+	Reason   string          `json:"reason,omitempty"`
+}
+
+// ControlChange is one entry in the control-field diff between the previous
+// and the new registration of a workflow. Action is "changed", "added",
+// "removed", or "pin_enforced" (the incoming value was discarded in favor of
+// the operator pin).
+type ControlChange struct {
+	Target string          `json:"target"`
+	Action string          `json:"action"`
+	From   json.RawMessage `json:"from,omitempty"`
+	To     json.RawMessage `json:"to,omitempty"`
+}
+
+// WorkflowControlEvent is one attribution-ledger entry: who performed which
+// control-plane write on a workflow, when, moving it to which schema, with
+// the control diff or pin detail attached.
+type WorkflowControlEvent struct {
+	ID        int64           `json:"id"`
+	Project   string          `json:"project"`
+	Name      string          `json:"name"`
+	Action    string          `json:"action"`
+	Actor     string          `json:"actor,omitempty"`
+	SchemaRef string          `json:"schema_ref,omitempty"`
+	Detail    json.RawMessage `json:"detail,omitempty"`
+	CreatedAt time.Time       `json:"created_at"`
 }
 
 // DispatchInputSpec declares one dispatch-time input on a workflow registration.

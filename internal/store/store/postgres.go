@@ -632,7 +632,7 @@ func (s *Store) ListWorkflows(ctx context.Context) ([]server.Workflow, error) {
 	}
 	out := make([]server.Workflow, 0, len(rows))
 	for _, row := range rows {
-		w, err := workflowFromPayload(row.Payload)
+		w, err := workflowFromRow(row)
 		if err != nil {
 			return nil, err
 		}
@@ -642,6 +642,15 @@ func (s *Store) ListWorkflows(ctx context.Context) ([]server.Workflow, error) {
 }
 
 func (s *Store) UpsertWorkflow(ctx context.Context, req server.WorkflowRegister) (server.Workflow, error) {
+	return s.upsertWorkflow(ctx, req, "register")
+}
+
+// upsertWorkflow is the single choke point every workflow write flows
+// through (register, patch — and via them, every MCP/dashboard mutation).
+// It loads the previous registration, enforces operator control pins onto
+// the incoming request, computes the control-field diff, and persists the
+// row + immutable schema + attribution ledger event in one transaction.
+func (s *Store) upsertWorkflow(ctx context.Context, req server.WorkflowRegister, action string) (server.Workflow, error) {
 	if _, err := s.pgProjects.Read(ctx, req.Project); err != nil {
 		if errors.Is(err, pgstore.ErrProjectNotFound) {
 			return server.Workflow{}, server.ValidationError{Message: "project " + req.Project + " does not exist; register it first"}
@@ -649,6 +658,34 @@ func (s *Store) UpsertWorkflow(ctx context.Context, req server.WorkflowRegister)
 		return server.Workflow{}, err
 	}
 	normalizeWorkflowRegister(&req)
+
+	var prev *server.WorkflowRegister
+	pins := map[string]server.ControlPin{}
+	prevRow, err := s.pgWorkflows.GetByName(ctx, req.Project, req.Name)
+	switch {
+	case err == nil:
+		var prevDoc workflowDoc
+		if err := json.Unmarshal(prevRow.Payload, &prevDoc); err != nil {
+			return server.Workflow{}, err
+		}
+		reg := workflowRegisterFromDoc(prevDoc)
+		prev = &reg
+		if parsed, err := controlPinsFromRow(prevRow); err != nil {
+			return server.Workflow{}, err
+		} else {
+			pins = parsed
+		}
+	case errors.Is(err, pgstore.ErrWorkflowNotFound):
+		// first registration: no pins, no diff baseline
+	default:
+		return server.Workflow{}, err
+	}
+
+	pinsEnforced, pinChanges, err := enforceControlPins(&req, pins)
+	if err != nil {
+		return server.Workflow{}, err
+	}
+
 	if err := validateWorkflowRegister(req); err != nil {
 		return server.Workflow{}, err
 	}
@@ -659,11 +696,20 @@ func (s *Store) UpsertWorkflow(ctx context.Context, req server.WorkflowRegister)
 	doc.SchemaRef = workflowSchemaRef(doc)
 	schemaDoc := workflowSchemaDocFromWorkflow(doc)
 
+	changes := append(controlChanges(prev, req), pinChanges...)
+
 	workflowPayload, err := json.Marshal(doc)
 	if err != nil {
 		return server.Workflow{}, err
 	}
 	schemaPayload, err := json.Marshal(schemaDoc)
+	if err != nil {
+		return server.Workflow{}, err
+	}
+	detail, err := json.Marshal(map[string]any{
+		"control_changes": changes,
+		"pins_enforced":   pinsEnforced,
+	})
 	if err != nil {
 		return server.Workflow{}, err
 	}
@@ -679,28 +725,91 @@ func (s *Store) UpsertWorkflow(ctx context.Context, req server.WorkflowRegister)
 			SchemaRef: doc.SchemaRef,
 			Payload:   schemaPayload,
 		},
+		pgstore.WorkflowControlEventRow{
+			Project:   req.Project,
+			Name:      req.Name,
+			Action:    action,
+			Actor:     req.Actor,
+			SchemaRef: doc.SchemaRef,
+			Detail:    detail,
+		},
 	)
 	if err != nil {
 		return server.Workflow{}, err
 	}
-	return workflowFromPayload(row.Payload)
+	workflow, err := workflowFromRow(row)
+	if err != nil {
+		return server.Workflow{}, err
+	}
+	workflow.ControlChanges = changes
+	workflow.PinsEnforced = pinsEnforced
+	return workflow, nil
 }
 
-func (s *Store) DeleteWorkflow(ctx context.Context, project string, name string) (server.Workflow, error) {
-	row, err := s.pgWorkflows.Delete(ctx, project, name)
+func (s *Store) DeleteWorkflow(ctx context.Context, project string, name string, actor string) (server.Workflow, error) {
+	row, err := s.pgWorkflows.Delete(ctx, project, name, pgstore.WorkflowControlEventRow{
+		Project: project,
+		Name:    name,
+		Action:  "delete",
+		Actor:   actor,
+	})
 	if errors.Is(err, pgstore.ErrWorkflowNotFound) {
 		return server.Workflow{}, server.ErrNotFound
 	}
 	if err != nil {
 		return server.Workflow{}, err
 	}
-	return workflowFromPayload(row.Payload)
+	return workflowFromRow(row)
 }
 
 func (s *Store) PatchWorkflow(ctx context.Context, project string, name string, req server.WorkflowPatchRequest) (server.Workflow, error) {
 	// Read the existing workflow, convert to a Register, apply patch,
-	// then run through UpsertWorkflow so the schema_ref recomputation
-	// stays in one place.
+	// then run through upsertWorkflow so the schema_ref recomputation
+	// and pin enforcement stay in one place.
+	row, err := s.pgWorkflows.GetByName(ctx, project, name)
+	if errors.Is(err, pgstore.ErrWorkflowNotFound) {
+		return server.Workflow{}, server.ErrNotFound
+	}
+	if err != nil {
+		return server.Workflow{}, err
+	}
+	var doc workflowDoc
+	if err := json.Unmarshal(row.Payload, &doc); err != nil {
+		return server.Workflow{}, err
+	}
+	pins, err := controlPinsFromRow(row)
+	if err != nil {
+		return server.Workflow{}, err
+	}
+	// A patch names control targets explicitly, so a pinned target is a
+	// hard rejection — silently enforcing the pin would mean the caller's
+	// stated intent "appeared to work" while doing nothing.
+	if req.BudgetTotal != nil {
+		if pin, ok := pins[server.ControlPinTargetBudget]; ok {
+			return server.Workflow{}, pinRejection(server.ControlPinTargetBudget, pin)
+		}
+	}
+	for _, patch := range req.RecycleMaxAttempts {
+		target := server.ControlPinTargetForRecyclePatch(strings.TrimSpace(patch.Target))
+		if pin, ok := pins[target]; ok {
+			return server.Workflow{}, pinRejection(target, pin)
+		}
+	}
+	reg := workflowRegisterFromDoc(doc)
+	if req.BudgetTotal != nil {
+		reg.Budget.Total = *req.BudgetTotal
+	}
+	if err := server.ApplyRecycleMaxAttemptsPatches(&reg, req.RecycleMaxAttempts); err != nil {
+		return server.Workflow{}, err
+	}
+	reg.Actor = req.Actor
+	return s.upsertWorkflow(ctx, reg, "patch")
+}
+
+// PinWorkflowControl freezes the CURRENT value at a control target. The pin
+// lives in the operator-owned control_pins column — registration cannot move
+// it, and patches against the target are rejected until it is unpinned.
+func (s *Store) PinWorkflowControl(ctx context.Context, project, name, target string, req server.WorkflowControlPinRequest) (server.Workflow, error) {
 	row, err := s.pgWorkflows.GetByName(ctx, project, name)
 	if errors.Is(err, pgstore.ErrWorkflowNotFound) {
 		return server.Workflow{}, server.ErrNotFound
@@ -713,13 +822,345 @@ func (s *Store) PatchWorkflow(ctx context.Context, project string, name string, 
 		return server.Workflow{}, err
 	}
 	reg := workflowRegisterFromDoc(doc)
-	if req.BudgetTotal != nil {
-		reg.Budget.Total = *req.BudgetTotal
-	}
-	if err := server.ApplyRecycleMaxAttemptsPatches(&reg, req.RecycleMaxAttempts); err != nil {
+	value, err := controlValueAt(reg, target)
+	if err != nil {
 		return server.Workflow{}, err
 	}
-	return s.UpsertWorkflow(ctx, reg)
+	pins, err := controlPinsFromRow(row)
+	if err != nil {
+		return server.Workflow{}, err
+	}
+	pins[target] = server.ControlPin{
+		Value:    value,
+		PinnedBy: req.Actor,
+		PinnedAt: time.Now().UTC(),
+		Reason:   strings.TrimSpace(req.Reason),
+	}
+	return s.writeControlPins(ctx, project, name, row.SchemaRef, pins, "pin", req.Actor, target, req.Reason)
+}
+
+// UnpinWorkflowControl releases a pinned control target. The release is an
+// explicit, attributed act — exactly what a silent re-registration is not.
+func (s *Store) UnpinWorkflowControl(ctx context.Context, project, name, target, actor string) (server.Workflow, error) {
+	row, err := s.pgWorkflows.GetByName(ctx, project, name)
+	if errors.Is(err, pgstore.ErrWorkflowNotFound) {
+		return server.Workflow{}, server.ErrNotFound
+	}
+	if err != nil {
+		return server.Workflow{}, err
+	}
+	pins, err := controlPinsFromRow(row)
+	if err != nil {
+		return server.Workflow{}, err
+	}
+	if _, ok := pins[target]; !ok {
+		return server.Workflow{}, server.ValidationError{Message: fmt.Sprintf("workflow %s.%s control %q is not pinned", project, name, target)}
+	}
+	delete(pins, target)
+	return s.writeControlPins(ctx, project, name, row.SchemaRef, pins, "unpin", actor, target, "")
+}
+
+func (s *Store) writeControlPins(ctx context.Context, project, name, schemaRef string, pins map[string]server.ControlPin, action, actor, target, reason string) (server.Workflow, error) {
+	pinsPayload, err := json.Marshal(pins)
+	if err != nil {
+		return server.Workflow{}, err
+	}
+	detailDoc := map[string]any{"target": target}
+	if strings.TrimSpace(reason) != "" {
+		detailDoc["reason"] = strings.TrimSpace(reason)
+	}
+	if pin, ok := pins[target]; ok && action == "pin" {
+		detailDoc["value"] = json.RawMessage(pin.Value)
+	}
+	detail, err := json.Marshal(detailDoc)
+	if err != nil {
+		return server.Workflow{}, err
+	}
+	row, err := s.pgWorkflows.UpdateControlPins(ctx, project, name, pinsPayload, pgstore.WorkflowControlEventRow{
+		Project:   project,
+		Name:      name,
+		Action:    action,
+		Actor:     actor,
+		SchemaRef: schemaRef,
+		Detail:    detail,
+	})
+	if errors.Is(err, pgstore.ErrWorkflowNotFound) {
+		return server.Workflow{}, server.ErrNotFound
+	}
+	if err != nil {
+		return server.Workflow{}, err
+	}
+	return workflowFromRow(row)
+}
+
+// ListWorkflowControlEvents returns the attribution ledger for one workflow,
+// newest first.
+func (s *Store) ListWorkflowControlEvents(ctx context.Context, project, name string, limit int) ([]server.WorkflowControlEvent, error) {
+	rows, err := s.pgWorkflows.ListControlEvents(ctx, project, name, limit)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]server.WorkflowControlEvent, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, server.WorkflowControlEvent{
+			ID:        row.ID,
+			Project:   row.Project,
+			Name:      row.Name,
+			Action:    row.Action,
+			Actor:     row.Actor,
+			SchemaRef: row.SchemaRef,
+			Detail:    json.RawMessage(row.Detail),
+			CreatedAt: row.CreatedAt,
+		})
+	}
+	return out, nil
+}
+
+// workflowFromRow converts a pg workflow row to the server Workflow,
+// attaching the operator-owned control pins from the row column.
+func workflowFromRow(row pgstore.WorkflowRow) (server.Workflow, error) {
+	workflow, err := workflowFromPayload(row.Payload)
+	if err != nil {
+		return server.Workflow{}, err
+	}
+	pins, err := controlPinsFromRow(row)
+	if err != nil {
+		return server.Workflow{}, err
+	}
+	if len(pins) > 0 {
+		workflow.ControlPins = pins
+	}
+	return workflow, nil
+}
+
+func controlPinsFromRow(row pgstore.WorkflowRow) (map[string]server.ControlPin, error) {
+	pins := map[string]server.ControlPin{}
+	if len(row.ControlPins) == 0 {
+		return pins, nil
+	}
+	if err := json.Unmarshal(row.ControlPins, &pins); err != nil {
+		return nil, fmt.Errorf("workflow %s.%s control_pins unmarshal: %w", row.Project, row.Name, err)
+	}
+	return pins, nil
+}
+
+func pinRejection(target string, pin server.ControlPin) server.ValidationError {
+	msg := fmt.Sprintf("control %q is pinned", target)
+	if pin.PinnedBy != "" {
+		msg += " by " + pin.PinnedBy
+	}
+	if pin.Reason != "" {
+		msg += " (" + pin.Reason + ")"
+	}
+	msg += "; unpin it first via DELETE /v1/workflows/{project}/{name}/control-pins/" + target
+	return server.ValidationError{Message: msg}
+}
+
+// controlValueAt returns the canonical JSON of the control value currently
+// live at a pin target. Pinning requires an existing value: a pin freezes
+// what is, it does not invent configuration.
+func controlValueAt(reg server.WorkflowRegister, target string) (json.RawMessage, error) {
+	phaseName, err := server.ParseControlPinTarget(target)
+	if err != nil {
+		return nil, err
+	}
+	switch {
+	case target == server.ControlPinTargetBudget:
+		return json.Marshal(reg.Budget)
+	case target == server.ControlPinTargetPR:
+		if reg.PR.RecyclePolicy == nil {
+			return nil, server.ValidationError{Message: "workflow has no pr.recycle_policy to pin"}
+		}
+		return json.Marshal(reg.PR.RecyclePolicy)
+	default:
+		for i := range reg.Phases {
+			if reg.Phases[i].Name == phaseName {
+				if reg.Phases[i].RecyclePolicy == nil {
+					return nil, server.ValidationError{Message: fmt.Sprintf("phase %q has no recycle_policy to pin", phaseName)}
+				}
+				return json.Marshal(reg.Phases[i].RecyclePolicy)
+			}
+		}
+		return nil, server.ValidationError{Message: fmt.Sprintf("phase %q does not exist", phaseName)}
+	}
+}
+
+// enforceControlPins overwrites pinned control targets in the incoming
+// register with their pinned values, reporting which pins fired. An incoming
+// payload can never move a pinned control — that is the entire point — but
+// the override is loud: it is returned on the response, recorded in the
+// ledger, and a pin whose target no longer exists rejects the registration
+// rather than silently evaporating.
+func enforceControlPins(req *server.WorkflowRegister, pins map[string]server.ControlPin) ([]string, []server.ControlChange, error) {
+	if len(pins) == 0 {
+		return nil, nil, nil
+	}
+	targets := make([]string, 0, len(pins))
+	for target := range pins {
+		targets = append(targets, target)
+	}
+	sort.Strings(targets)
+	enforced := []string{}
+	changes := []server.ControlChange{}
+	for _, target := range targets {
+		pin := pins[target]
+		phaseName, err := server.ParseControlPinTarget(target)
+		if err != nil {
+			return nil, nil, err
+		}
+		var incoming json.RawMessage
+		apply := func() error { return nil }
+		switch {
+		case target == server.ControlPinTargetBudget:
+			incoming, _ = json.Marshal(req.Budget)
+			apply = func() error {
+				var pinned budget.Config
+				if err := json.Unmarshal(pin.Value, &pinned); err != nil {
+					return fmt.Errorf("pin %q value unmarshal: %w", target, err)
+				}
+				req.Budget = pinned
+				return nil
+			}
+		case target == server.ControlPinTargetPR:
+			incoming, _ = json.Marshal(req.PR.RecyclePolicy)
+			apply = func() error {
+				var pinned server.RecyclePolicy
+				if err := json.Unmarshal(pin.Value, &pinned); err != nil {
+					return fmt.Errorf("pin %q value unmarshal: %w", target, err)
+				}
+				req.PR.RecyclePolicy = &pinned
+				return nil
+			}
+		default:
+			index := -1
+			for i := range req.Phases {
+				if req.Phases[i].Name == phaseName {
+					index = i
+					break
+				}
+			}
+			if index == -1 {
+				return nil, nil, server.ValidationError{Message: fmt.Sprintf(
+					"control %q is pinned but the incoming registration has no phase %q; unpin it first via DELETE /v1/workflows/{project}/{name}/control-pins/%s",
+					target, phaseName, target,
+				)}
+			}
+			incoming, _ = json.Marshal(req.Phases[index].RecyclePolicy)
+			apply = func() error {
+				var pinned server.RecyclePolicy
+				if err := json.Unmarshal(pin.Value, &pinned); err != nil {
+					return fmt.Errorf("pin %q value unmarshal: %w", target, err)
+				}
+				req.Phases[index].RecyclePolicy = &pinned
+				return nil
+			}
+		}
+		if err := apply(); err != nil {
+			return nil, nil, err
+		}
+		enforced = append(enforced, target)
+		if !jsonEqual(incoming, pin.Value) {
+			changes = append(changes, server.ControlChange{
+				Target: target,
+				Action: "pin_enforced",
+				From:   compactJSON(incoming),
+				To:     compactJSON(pin.Value),
+			})
+		}
+	}
+	return enforced, changes, nil
+}
+
+// controlChanges computes the control-field diff between the previous
+// registration and the incoming one: budget, the PR recycle lane, and every
+// phase recycle lane present on either side. This is the curated trust
+// surface — full structural diffs remain derivable from the immutable
+// schema rows.
+func controlChanges(prev *server.WorkflowRegister, next server.WorkflowRegister) []server.ControlChange {
+	if prev == nil {
+		return nil
+	}
+	changes := []server.ControlChange{}
+	appendChange := func(target string, from, to json.RawMessage) {
+		if jsonEqual(from, to) {
+			return
+		}
+		action := "changed"
+		fromNull := len(from) == 0 || string(from) == "null"
+		toNull := len(to) == 0 || string(to) == "null"
+		if fromNull && !toNull {
+			action = "added"
+		}
+		if !fromNull && toNull {
+			action = "removed"
+		}
+		changes = append(changes, server.ControlChange{
+			Target: target,
+			Action: action,
+			From:   compactJSON(from),
+			To:     compactJSON(to),
+		})
+	}
+
+	prevBudget, _ := json.Marshal(prev.Budget)
+	nextBudget, _ := json.Marshal(next.Budget)
+	appendChange(server.ControlPinTargetBudget, prevBudget, nextBudget)
+
+	prevPR, _ := json.Marshal(prev.PR.RecyclePolicy)
+	nextPR, _ := json.Marshal(next.PR.RecyclePolicy)
+	appendChange(server.ControlPinTargetPR, prevPR, nextPR)
+
+	policies := func(reg *server.WorkflowRegister) map[string]json.RawMessage {
+		out := map[string]json.RawMessage{}
+		if reg == nil {
+			return out
+		}
+		for i := range reg.Phases {
+			raw, _ := json.Marshal(reg.Phases[i].RecyclePolicy)
+			out[reg.Phases[i].Name] = raw
+		}
+		return out
+	}
+	prevPolicies := policies(prev)
+	nextPolicies := policies(&next)
+	names := map[string]struct{}{}
+	for name := range prevPolicies {
+		names[name] = struct{}{}
+	}
+	for name := range nextPolicies {
+		names[name] = struct{}{}
+	}
+	ordered := make([]string, 0, len(names))
+	for name := range names {
+		ordered = append(ordered, name)
+	}
+	sort.Strings(ordered)
+	for _, name := range ordered {
+		appendChange(server.ControlPinPhasePrefix+name+server.ControlPinPhaseSuffix, prevPolicies[name], nextPolicies[name])
+	}
+	return changes
+}
+
+func jsonEqual(a, b json.RawMessage) bool {
+	return string(compactJSON(a)) == string(compactJSON(b))
+}
+
+func compactJSON(raw json.RawMessage) json.RawMessage {
+	if len(raw) == 0 {
+		return nil
+	}
+	var value any
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return raw
+	}
+	out, err := json.Marshal(value)
+	if err != nil {
+		return raw
+	}
+	if string(out) == "null" {
+		return nil
+	}
+	return out
 }
 
 func (s *Store) ListLeases(ctx context.Context) ([]server.Lease, error) {
@@ -5157,7 +5598,7 @@ func (s *Store) GetWorkflowByName(ctx context.Context, project, name string) (*s
 	if err != nil {
 		return nil, err
 	}
-	w, err := workflowFromPayload(row.Payload)
+	w, err := workflowFromRow(row)
 	if err != nil {
 		return nil, err
 	}
@@ -8305,7 +8746,7 @@ func (s *Store) ListProjectWorkflows(ctx context.Context, project string) ([]ser
 	}
 	out := make([]server.Workflow, 0, len(rows))
 	for _, row := range rows {
-		w, err := workflowFromPayload(row.Payload)
+		w, err := workflowFromRow(row)
 		if err != nil {
 			return nil, err
 		}

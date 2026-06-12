@@ -183,7 +183,7 @@ func newDispatchTestHandler(store ReadStore, nativeLauncher NativeLauncher) http
 func gatedTestPhases() []PhaseSpec {
 	return []PhaseSpec{
 		{Name: "prepare", Kind: "k8s_job", WorkflowFilename: "k8s_job:prepare", Outputs: []string{IssueContractOutputKey}, Jobs: []NativeJobSpec{{ID: IssueContractJobID, Image: "runner:latest"}}},
-		{Name: "verify", Kind: "k8s_job", WorkflowFilename: "k8s_job:verify", DependsOn: []string{"prepare"}, Verify: true, Jobs: verificationCaseJobsForTest()},
+		{Name: "verify", Kind: "k8s_job", WorkflowFilename: "k8s_job:verify", DependsOn: []string{"prepare"}, Verify: true, RecyclePolicy: &RecyclePolicy{MaxAttempts: 1, On: []string{"verify_fail"}, LandsAt: "prepare"}, Jobs: verificationCaseJobsForTest()},
 		{Name: "cleanup_early", Kind: "k8s_job", WorkflowFilename: "k8s_job:cleanup_early", DependsOn: []string{"verify"}, RunOn: PhaseRunOnAlways, Purpose: PhasePurposeTeardown, SkipWhenPreserveTestEnv: true, Jobs: []NativeJobSpec{{ID: "cleanup", Image: "runner:latest"}}},
 		{Name: "touchpoint", Kind: "k8s_job", WorkflowFilename: "k8s_job:touchpoint", DependsOn: []string{"cleanup_early"}, RunOn: PhaseRunOnSuccess, Purpose: PhasePurposeReviewTouchpoint, Jobs: []NativeJobSpec{{ID: PRTouchpointJobID, Primitive: JobPrimitivePRTouchpoint, Managed: true}}},
 		{Name: "touchpoint_gate", Kind: "k8s_job", WorkflowFilename: "k8s_job:touchpoint_gate", Purpose: PhasePurposeReviewGate, DependsOn: []string{"touchpoint"}, Jobs: []NativeJobSpec{{ID: PRMergeJobID, Primitive: JobPrimitivePRMerge, Managed: true}}},

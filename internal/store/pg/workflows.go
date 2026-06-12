@@ -2,7 +2,6 @@ package pg
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -21,13 +20,19 @@ type WorkflowsStore struct {
 // WorkflowRow is the per-project, per-name workflow row. Payload stores the
 // phase graph, PR policy, budget, metadata, and other workflow fields as jsonb
 // so this package does not reimplement every sub-type marshaler.
+//
+// ControlPins is the operator-owned column (parallel to projects.status):
+// registration writes never touch it — only UpdateControlPins does — and
+// registration enforces pinned values into the authored payload before the
+// schema hash is computed.
 type WorkflowRow struct {
-	Project   string
-	Name      string
-	SchemaRef string
-	Payload   []byte // raw workflow JSON payload
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	Project     string
+	Name        string
+	SchemaRef   string
+	Payload     []byte // raw workflow JSON payload
+	ControlPins []byte // raw operator pin JSON document
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
 }
 
 // WorkflowSchemaRow is the immutable workflow-schema row keyed by
@@ -37,6 +42,23 @@ type WorkflowSchemaRow struct {
 	Project   string
 	SchemaRef string
 	Payload   []byte
+	CreatedAt time.Time
+}
+
+// WorkflowControlEventRow is one append-only attribution ledger entry for a
+// control-plane write to a workflow (register, patch, pin, unpin, delete).
+// The ledger exists because workflow_schemas rows are content-addressed:
+// re-registering a previously-seen shape (e.g. a revert) reuses the existing
+// schema row and would otherwise leave no durable trace of who moved the
+// pointer or what control values changed.
+type WorkflowControlEventRow struct {
+	ID        int64
+	Project   string
+	Name      string
+	Action    string
+	Actor     string
+	SchemaRef string
+	Detail    []byte
 	CreatedAt time.Time
 }
 
@@ -51,7 +73,7 @@ func (s *WorkflowsStore) List(ctx context.Context) ([]WorkflowRow, error) {
 	if s == nil || s.pool == nil {
 		return nil, nil
 	}
-	const sql = `SELECT project, name, schema_ref, payload, created_at, updated_at FROM workflows ORDER BY project, name`
+	const sql = `SELECT project, name, schema_ref, payload, control_pins, created_at, updated_at FROM workflows ORDER BY project, name`
 	rows, err := s.pool.Query(ctx, sql)
 	if err != nil {
 		return nil, fmt.Errorf("workflows: list: %w", err)
@@ -65,7 +87,7 @@ func (s *WorkflowsStore) ListByProject(ctx context.Context, project string) ([]W
 	if s == nil || s.pool == nil {
 		return nil, nil
 	}
-	const sql = `SELECT project, name, schema_ref, payload, created_at, updated_at FROM workflows WHERE project = $1 ORDER BY name`
+	const sql = `SELECT project, name, schema_ref, payload, control_pins, created_at, updated_at FROM workflows WHERE project = $1 ORDER BY name`
 	rows, err := s.pool.Query(ctx, sql, project)
 	if err != nil {
 		return nil, fmt.Errorf("workflows: list by project: %w", err)
@@ -80,7 +102,7 @@ func (s *WorkflowsStore) GetByName(ctx context.Context, project, name string) (W
 	if s == nil || s.pool == nil {
 		return WorkflowRow{}, fmt.Errorf("workflows store not configured")
 	}
-	const sql = `SELECT project, name, schema_ref, payload, created_at, updated_at FROM workflows WHERE project = $1 AND name = $2`
+	const sql = `SELECT project, name, schema_ref, payload, control_pins, created_at, updated_at FROM workflows WHERE project = $1 AND name = $2`
 	rows, err := s.pool.Query(ctx, sql, project, name)
 	if err != nil {
 		return WorkflowRow{}, fmt.Errorf("workflows: get by name: %w", err)
@@ -109,10 +131,11 @@ func (s *WorkflowsStore) GetSchemaByRef(ctx context.Context, project, schemaRef 
 }
 
 // Upsert creates or updates a workflow row inside a transaction that
-// also writes the corresponding workflow_schemas row idempotently.
-// CreatedAt is preserved on update (the ON CONFLICT DO UPDATE doesn't
-// touch created_at).
-func (s *WorkflowsStore) Upsert(ctx context.Context, row WorkflowRow, schema WorkflowSchemaRow) (WorkflowRow, error) {
+// also writes the corresponding workflow_schemas row idempotently and
+// appends the attribution ledger event for the write. CreatedAt is
+// preserved on update, and control_pins is deliberately NOT in the
+// ON CONFLICT update set: registration cannot move operator pins.
+func (s *WorkflowsStore) Upsert(ctx context.Context, row WorkflowRow, schema WorkflowSchemaRow, event WorkflowControlEventRow) (WorkflowRow, error) {
 	if s == nil || s.pool == nil {
 		return WorkflowRow{}, fmt.Errorf("workflows store not configured")
 	}
@@ -138,7 +161,7 @@ func (s *WorkflowsStore) Upsert(ctx context.Context, row WorkflowRow, schema Wor
 		  SET schema_ref = EXCLUDED.schema_ref,
 		      payload    = EXCLUDED.payload,
 		      updated_at = now()
-		RETURNING project, name, schema_ref, payload, created_at, updated_at
+		RETURNING project, name, schema_ref, payload, control_pins, created_at, updated_at
 	`
 	rows, err := tx.Query(ctx, upsertSQL, row.Project, row.Name, row.SchemaRef, row.Payload)
 	if err != nil {
@@ -149,86 +172,132 @@ func (s *WorkflowsStore) Upsert(ctx context.Context, row WorkflowRow, schema Wor
 	if scanErr != nil {
 		return WorkflowRow{}, scanErr
 	}
+	if err := insertControlEvent(ctx, tx, event); err != nil {
+		return WorkflowRow{}, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return WorkflowRow{}, fmt.Errorf("workflows: commit upsert: %w", err)
 	}
 	return out, nil
 }
 
-// Delete removes a workflow row and returns its prior state. The
-// workflow_schemas row is NOT removed because run history may
-// reference it by schema_ref.
-func (s *WorkflowsStore) Delete(ctx context.Context, project, name string) (WorkflowRow, error) {
-	if s == nil || s.pool == nil {
-		return WorkflowRow{}, fmt.Errorf("workflows store not configured")
-	}
-	const sql = `
-		DELETE FROM workflows WHERE project = $1 AND name = $2
-		RETURNING project, name, schema_ref, payload, created_at, updated_at
-	`
-	rows, err := s.pool.Query(ctx, sql, project, name)
-	if err != nil {
-		return WorkflowRow{}, fmt.Errorf("workflows: delete: %w", err)
-	}
-	defer rows.Close()
-	if !rows.Next() {
-		return WorkflowRow{}, ErrWorkflowNotFound
-	}
-	return scanWorkflowRow(rows)
-}
-
-// PatchPayload mutates the workflow row's jsonb payload via mutate
-// inside a SELECT FOR UPDATE transaction. The mutator may modify the
-// map in place; the result is serialized back to jsonb.
-func (s *WorkflowsStore) PatchPayload(ctx context.Context, project, name string, mutate func(payload map[string]any) error) (WorkflowRow, error) {
+// UpdateControlPins replaces the operator-owned control_pins column inside a
+// transaction that also appends the pin/unpin ledger event. The authored
+// payload and schema pointer are untouched.
+func (s *WorkflowsStore) UpdateControlPins(ctx context.Context, project, name string, pins []byte, event WorkflowControlEventRow) (WorkflowRow, error) {
 	if s == nil || s.pool == nil {
 		return WorkflowRow{}, fmt.Errorf("workflows store not configured")
 	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
-		return WorkflowRow{}, fmt.Errorf("workflows: begin patch: %w", err)
+		return WorkflowRow{}, fmt.Errorf("workflows: begin pins update: %w", err)
 	}
 	defer tx.Rollback(ctx)
 
-	const selectSQL = `SELECT payload FROM workflows WHERE project = $1 AND name = $2 FOR UPDATE`
-	var payloadBytes []byte
-	if err := tx.QueryRow(ctx, selectSQL, project, name).Scan(&payloadBytes); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return WorkflowRow{}, ErrWorkflowNotFound
-		}
-		return WorkflowRow{}, fmt.Errorf("workflows: select for patch: %w", err)
-	}
-
-	var payload map[string]any
-	if err := json.Unmarshal(payloadBytes, &payload); err != nil {
-		return WorkflowRow{}, fmt.Errorf("workflows: unmarshal payload: %w", err)
-	}
-	if err := mutate(payload); err != nil {
-		return WorkflowRow{}, err
-	}
-	newPayload, err := json.Marshal(payload)
-	if err != nil {
-		return WorkflowRow{}, fmt.Errorf("workflows: marshal patched payload: %w", err)
-	}
-
 	const updateSQL = `
-		UPDATE workflows SET payload = $3, updated_at = now()
+		UPDATE workflows SET control_pins = $3, updated_at = now()
 		WHERE project = $1 AND name = $2
-		RETURNING project, name, schema_ref, payload, created_at, updated_at
+		RETURNING project, name, schema_ref, payload, control_pins, created_at, updated_at
 	`
-	rows, err := tx.Query(ctx, updateSQL, project, name, newPayload)
+	rows, err := tx.Query(ctx, updateSQL, project, name, pins)
 	if err != nil {
-		return WorkflowRow{}, fmt.Errorf("workflows: update patched: %w", err)
+		return WorkflowRow{}, fmt.Errorf("workflows: update pins: %w", err)
 	}
-	out, scanErr := scanWorkflowFirstRow(rows)
+	out, scanErr := scanWorkflowFirstRowNotFound(rows)
 	rows.Close()
 	if scanErr != nil {
 		return WorkflowRow{}, scanErr
 	}
+	if err := insertControlEvent(ctx, tx, event); err != nil {
+		return WorkflowRow{}, err
+	}
 	if err := tx.Commit(ctx); err != nil {
-		return WorkflowRow{}, fmt.Errorf("workflows: commit patch: %w", err)
+		return WorkflowRow{}, fmt.Errorf("workflows: commit pins update: %w", err)
 	}
 	return out, nil
+}
+
+// ListControlEvents returns the newest ledger entries for one workflow,
+// newest first, capped at limit.
+func (s *WorkflowsStore) ListControlEvents(ctx context.Context, project, name string, limit int) ([]WorkflowControlEventRow, error) {
+	if s == nil || s.pool == nil {
+		return nil, nil
+	}
+	const sql = `
+		SELECT id, project, name, action, actor, schema_ref, detail, created_at
+		FROM workflow_control_events
+		WHERE project = $1 AND name = $2
+		ORDER BY id DESC
+		LIMIT $3
+	`
+	rows, err := s.pool.Query(ctx, sql, project, name, limit)
+	if err != nil {
+		return nil, fmt.Errorf("workflows: list control events: %w", err)
+	}
+	defer rows.Close()
+	out := []WorkflowControlEventRow{}
+	for rows.Next() {
+		var row WorkflowControlEventRow
+		if err := rows.Scan(&row.ID, &row.Project, &row.Name, &row.Action, &row.Actor, &row.SchemaRef, &row.Detail, &row.CreatedAt); err != nil {
+			return nil, fmt.Errorf("workflows: scan control event: %w", err)
+		}
+		out = append(out, row)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("workflows: iterate control events: %w", err)
+	}
+	return out, nil
+}
+
+// Delete removes a workflow row and returns its prior state, appending the
+// delete ledger event in the same transaction. The workflow_schemas rows are
+// NOT removed because run history may reference them by schema_ref; the
+// control-event ledger likewise survives so attribution outlives the row.
+func (s *WorkflowsStore) Delete(ctx context.Context, project, name string, event WorkflowControlEventRow) (WorkflowRow, error) {
+	if s == nil || s.pool == nil {
+		return WorkflowRow{}, fmt.Errorf("workflows store not configured")
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return WorkflowRow{}, fmt.Errorf("workflows: begin delete: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	const sql = `
+		DELETE FROM workflows WHERE project = $1 AND name = $2
+		RETURNING project, name, schema_ref, payload, control_pins, created_at, updated_at
+	`
+	rows, err := tx.Query(ctx, sql, project, name)
+	if err != nil {
+		return WorkflowRow{}, fmt.Errorf("workflows: delete: %w", err)
+	}
+	out, scanErr := scanWorkflowFirstRowNotFound(rows)
+	rows.Close()
+	if scanErr != nil {
+		return WorkflowRow{}, scanErr
+	}
+	if err := insertControlEvent(ctx, tx, event); err != nil {
+		return WorkflowRow{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return WorkflowRow{}, fmt.Errorf("workflows: commit delete: %w", err)
+	}
+	return out, nil
+}
+
+func insertControlEvent(ctx context.Context, tx pgx.Tx, event WorkflowControlEventRow) error {
+	detail := event.Detail
+	if len(detail) == 0 {
+		detail = []byte(`{}`)
+	}
+	const sql = `
+		INSERT INTO workflow_control_events (project, name, action, actor, schema_ref, detail, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, now())
+	`
+	if _, err := tx.Exec(ctx, sql, event.Project, event.Name, event.Action, event.Actor, event.SchemaRef, detail); err != nil {
+		return fmt.Errorf("workflows: insert control event: %w", err)
+	}
+	return nil
 }
 
 func scanWorkflowRows(rows pgx.Rows) ([]WorkflowRow, error) {
@@ -248,7 +317,7 @@ func scanWorkflowRows(rows pgx.Rows) ([]WorkflowRow, error) {
 
 func scanWorkflowRow(rows pgx.Rows) (WorkflowRow, error) {
 	var row WorkflowRow
-	if err := rows.Scan(&row.Project, &row.Name, &row.SchemaRef, &row.Payload, &row.CreatedAt, &row.UpdatedAt); err != nil {
+	if err := rows.Scan(&row.Project, &row.Name, &row.SchemaRef, &row.Payload, &row.ControlPins, &row.CreatedAt, &row.UpdatedAt); err != nil {
 		return WorkflowRow{}, fmt.Errorf("workflows: scan: %w", err)
 	}
 	return row, nil
@@ -261,9 +330,11 @@ func scanWorkflowFirstRow(rows pgx.Rows) (WorkflowRow, error) {
 	return scanWorkflowRow(rows)
 }
 
-func nullableTime(t time.Time) any {
-	if t.IsZero() {
-		return nil
+// scanWorkflowFirstRowNotFound maps an empty result to ErrWorkflowNotFound —
+// for statements whose WHERE clause targets one existing row.
+func scanWorkflowFirstRowNotFound(rows pgx.Rows) (WorkflowRow, error) {
+	if !rows.Next() {
+		return WorkflowRow{}, ErrWorkflowNotFound
 	}
-	return t
+	return scanWorkflowRow(rows)
 }

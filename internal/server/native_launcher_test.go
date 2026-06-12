@@ -547,7 +547,7 @@ func TestLaunchNativePhaseResolvesProviderAPIProxyForVerificationPhase(t *testin
 		Workflow: Workflow{Name: "default"},
 		Phase: PhaseSpec{
 			Name:   "llm-verify",
-			Verify: true,
+			Verify: true, RecyclePolicy: &RecyclePolicy{MaxAttempts: 1, On: []string{"verify_fail"}, LandsAt: "prepare"},
 			Jobs: []NativeJobSpec{{
 				ID:      "llm-verify",
 				Managed: true,
