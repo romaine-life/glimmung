@@ -257,4 +257,32 @@ describe("overview KPI click redirection", () => {
     expect(testTab).toBeInTheDocument();
     expect(testTab?.textContent).toBe("test");
   });
+
+  it("routes clicking the active leases KPI card container to /leases", async () => {
+    window.history.pushState({}, "", "/?mock=1");
+    installMockFetch();
+
+    const { container } = render(
+      <MemoryRouter initialEntries={["/"]}>
+        <App />
+      </MemoryRouter>,
+    );
+
+    const kpis = container.querySelectorAll(".kpis .card.kpi");
+    const leasesKpi = kpis[0];
+    expect(leasesKpi).toBeDefined();
+
+    // In a real browser, the absolute positioned .card-link-overlay covers the entire card area
+    // and receives the click. In JSDOM we click the overlay Link directly.
+    const overlay = leasesKpi.querySelector(".card-link-overlay");
+    expect(overlay).not.toBeNull();
+    await userEvent.click(overlay!);
+
+    // It should navigate to /leases
+    await waitFor(() => {
+      const heading = container.querySelector("h1.display");
+      expect(heading).toBeInTheDocument();
+      expect(heading?.textContent).toBe("Leases");
+    });
+  });
 });

@@ -42,7 +42,8 @@ export function Overview() {
       </div>
 
       <div className="kpis">
-        <div className="card kpi">
+        <div className="card kpi clickable">
+          <Link to="/leases" className="card-link-overlay" aria-label="Active leases" />
           <div className="kpi-label">Active leases</div>
           <div className="kpi-val">{leases.length}</div>
           <div className="kpi-foot">
