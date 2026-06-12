@@ -1380,7 +1380,12 @@ describe("IssueDetailView run execution graph", () => {
 
     renderIssueDetail("/projects/ambience/issues/172/runs/7/cycles/1/phases/llm-verify/jobs/llm-verify/steps/emit-case-03");
 
-    expect(await screen.findByText("3 verification agents · 3 succeeded · 0 failed")).toBeInTheDocument();
+    expect(await screen.findByText("3/3 passed")).toBeInTheDocument();
+    expect(screen.getByText(/longest vc3-2/)).toBeInTheDocument();
+    expect(screen.queryByText(/vc1-2 ran/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("table", { name: "verification agents" })).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "details" }));
     const table = screen.getByRole("table", { name: "verification agents" });
     expect(within(table).getByText("vc1-2")).toBeInTheDocument();
     expect(within(table).getByText("vc2-2")).toBeInTheDocument();

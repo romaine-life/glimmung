@@ -2567,6 +2567,7 @@ function InnerJobsRow({
   innerJobs: RunProjectionInnerJob[];
   run: RunProjectionRun;
 }) {
+  const [detailsExpanded, setDetailsExpanded] = useState(false);
   if (!innerJobs.length) return null;
   // These are backed by k8s Jobs, but "job" is already a first-class
   // workflow construct — surfacing the cluster primitive as a second kind
@@ -2578,77 +2579,95 @@ function InnerJobsRow({
   const heading = intents.length === 1 ? `${intents[0].replace(/_/g, " ")}s` : "agents";
   const summary = innerJobSummary(innerJobs, heading);
   const summaryPill = summary.failed > 0 ? "drain" : summary.active > 0 ? "busy" : summary.succeeded === innerJobs.length ? "free" : "pending";
+  const longest = longestInnerJob(innerJobs);
+  const showCompactSummary = summary.allSucceeded;
+  const showDetails = !showCompactSummary || detailsExpanded;
   return (
     <div className="inner-jobs-summary">
       <div className="inner-jobs-summary-head">
         <span className="key">{heading}</span>
-        <span className={`pill ${summaryPill}`}>{summary.label}</span>
+        <span className={`pill ${summaryPill}`}>{summary.pillLabel}</span>
+        {showCompactSummary && longest && (
+          <span className="mono dim inner-jobs-longest">longest {longest}</span>
+        )}
+        {showCompactSummary && (
+          <button
+            type="button"
+            className="link inner-jobs-details-toggle"
+            aria-expanded={showDetails}
+            onClick={() => setDetailsExpanded((open) => !open)}
+          >
+            {showDetails ? "hide details" : "details"}
+          </button>
+        )}
       </div>
-      <div className="inner-jobs-table-wrap">
-        <table className="inner-jobs-table" aria-label={heading}>
-          <thead>
-            <tr>
-              <th scope="col">status</th>
-              <th scope="col">agent</th>
-              <th scope="col">step</th>
-              <th scope="col">duration</th>
-              <th scope="col">logs</th>
-            </tr>
-          </thead>
-          <tbody>
-        {innerJobs.map((ij) => {
-          // Prefer the durable URL the reconciler stamped on
-          // termination (it covers the child's full life window with
-          // the canonical reconciler-time bounds). Fall back to the
-          // client-built Loki link while the child is still active or
-          // when the reconciler hasn't observed it yet.
-          const lokiUrl =
-            ij.log_archive_url ??
-            lokiExploreUrl(
-              currentConfig(),
-              ij.job_name,
-              { from: ij.registered_at, to: ij.completed_at ?? undefined },
-              ij.namespace,
-            );
-          const state = (ij.state ?? "unknown").trim() || "unknown";
-          const pill = state === "succeeded" ? "free" : state === "failed" ? "drain" : "busy";
-          const duration = nativeDurationLabel(state, ij.registered_at, ij.completed_at ?? null);
-          const stepLabel = innerJobStepLabel(ij.parent_step_slug ?? null);
-          const agentLabel = innerJobAgentLabel(ij);
-          return (
-            <tr key={`${ij.namespace}/${ij.job_name}`}>
-              <td>
-                <span className={`pill ${pill}`}>{state}</span>
-                {ij.reason && <span className="mono dim inner-job-reason">{ij.reason}</span>}
-              </td>
-              <td>
-                <span className="mono" title={`${ij.namespace}/${ij.job_name}`}>{agentLabel}</span>
-              </td>
-              <td>
-                <span className="mono dim">{stepLabel}</span>
-              </td>
-              <td>
-                <span className="mono dim">{duration ?? "—"}</span>
-              </td>
-              <td>
-                {lokiUrl && (
-                  <a
-                    href={lokiUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="link"
-                    title={`open ${ij.namespace}/${ij.job_name} logs in Grafana Explore`}
-                  >
-                    logs ↗
-                  </a>
-                )}
-              </td>
-            </tr>
-          );
-        })}
-          </tbody>
-        </table>
-      </div>
+      {showDetails && (
+        <div className="inner-jobs-table-wrap">
+          <table className="inner-jobs-table" aria-label={heading}>
+            <thead>
+              <tr>
+                <th scope="col">status</th>
+                <th scope="col">agent</th>
+                <th scope="col">step</th>
+                <th scope="col">duration</th>
+                <th scope="col">logs</th>
+              </tr>
+            </thead>
+            <tbody>
+              {innerJobs.map((ij) => {
+                // Prefer the durable URL the reconciler stamped on
+                // termination (it covers the child's full life window with
+                // the canonical reconciler-time bounds). Fall back to the
+                // client-built Loki link while the child is still active or
+                // when the reconciler hasn't observed it yet.
+                const lokiUrl =
+                  ij.log_archive_url ??
+                  lokiExploreUrl(
+                    currentConfig(),
+                    ij.job_name,
+                    { from: ij.registered_at, to: ij.completed_at ?? undefined },
+                    ij.namespace,
+                  );
+                const state = (ij.state ?? "unknown").trim() || "unknown";
+                const pill = state === "succeeded" ? "free" : state === "failed" ? "drain" : "busy";
+                const duration = nativeDurationLabel(state, ij.registered_at, ij.completed_at ?? null);
+                const stepLabel = innerJobStepLabel(ij.parent_step_slug ?? null);
+                const agentLabel = innerJobAgentLabel(ij);
+                return (
+                  <tr key={`${ij.namespace}/${ij.job_name}`}>
+                    <td>
+                      <span className={`pill ${pill}`}>{state}</span>
+                      {ij.reason && <span className="mono dim inner-job-reason">{ij.reason}</span>}
+                    </td>
+                    <td>
+                      <span className="mono" title={`${ij.namespace}/${ij.job_name}`}>{agentLabel}</span>
+                    </td>
+                    <td>
+                      <span className="mono dim">{stepLabel}</span>
+                    </td>
+                    <td>
+                      <span className="mono dim">{duration ?? "—"}</span>
+                    </td>
+                    <td>
+                      {lokiUrl && (
+                        <a
+                          href={lokiUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="link"
+                          title={`open ${ij.namespace}/${ij.job_name} logs in Grafana Explore`}
+                        >
+                          logs ↗
+                        </a>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
       {/* run.started_at is referenced only so the prop is typed; the
           inner job's registered_at is the authoritative start. */}
       <span style={{ display: "none" }}>{run.started_at}</span>
@@ -2657,10 +2676,11 @@ function InnerJobsRow({
 }
 
 function innerJobSummary(innerJobs: RunProjectionInnerJob[], heading: string): {
-  label: string;
+  pillLabel: string;
   succeeded: number;
   failed: number;
   active: number;
+  allSucceeded: boolean;
 } {
   let succeeded = 0;
   let failed = 0;
@@ -2675,12 +2695,35 @@ function innerJobSummary(innerJobs: RunProjectionInnerJob[], heading: string): {
   if (succeeded > 0 || innerJobs.length > 1) parts.push(`${succeeded} succeeded`);
   parts.push(`${failed} failed`);
   if (active > 0) parts.push(`${active} active`);
+  const allSucceeded = innerJobs.length > 0 && succeeded === innerJobs.length;
   return {
-    label: parts.join(" · "),
+    pillLabel: allSucceeded ? `${succeeded}/${innerJobs.length} passed` : parts.join(" · "),
     succeeded,
     failed,
     active,
+    allSucceeded,
   };
+}
+
+function longestInnerJob(innerJobs: RunProjectionInnerJob[]): string | null {
+  let longest: { label: string; ms: number } | null = null;
+  for (const ij of innerJobs) {
+    const started = Date.parse(ij.registered_at);
+    const completed = ij.completed_at ? Date.parse(ij.completed_at) : NaN;
+    if (!Number.isFinite(started) || !Number.isFinite(completed) || completed < started) continue;
+    const ms = completed - started;
+    if (!longest || ms > longest.ms) {
+      longest = {
+        label: `${innerJobAgentLabel(ij)} ${innerJobShortDuration(ij) ?? ""}`.trim(),
+        ms,
+      };
+    }
+  }
+  return longest?.label ?? null;
+}
+
+function innerJobShortDuration(innerJob: RunProjectionInnerJob): string | null {
+  return nativeDurationLabel(innerJob.state ?? "unknown", innerJob.registered_at, innerJob.completed_at ?? null)?.replace(/^ran\s+/, "") ?? null;
 }
 
 function innerJobAgentLabel(innerJob: RunProjectionInnerJob): string {

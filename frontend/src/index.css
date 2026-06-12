@@ -2704,6 +2704,16 @@ h2 .inline-action,
   gap: 6px 10px;
   margin-bottom: 6px;
 }
+.inner-jobs-longest {
+  font-size: 0.78rem;
+}
+.inner-jobs-details-toggle {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+}
 .inner-jobs-table-wrap {
   overflow-x: auto;
 }
