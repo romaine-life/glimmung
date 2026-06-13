@@ -1,4 +1,4 @@
-import { mkdir, rename, stat, writeFile } from "node:fs/promises";
+import { mkdir, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -37,6 +37,8 @@ const height = Number(readArg("--height", "720"));
 const click = readArg("--click");
 const triggerUrl = readArg("--trigger-url");
 const triggerDelayMs = Number(readArg("--trigger-delay-ms", "500"));
+const readySelector = readArg("--ready-selector");
+const startDelayMs = Number(readArg("--start-delay-ms", "500"));
 const manifest = readArg("--manifest");
 
 if (!url) {
@@ -56,14 +58,35 @@ const browser = await chromium.launch({ headless: true });
 try {
   const context = await browser.newContext({
     viewport: { width, height },
-    recordVideo: {
-      dir: videoDir,
-      size: { width, height },
-    },
   });
   const page = await context.newPage();
-  await page.goto(url, { waitUntil: "domcontentloaded" });
+
+  // Navigate and wait for the page to actually render BEFORE recording starts.
+  //
+  // We deliberately do not use context.recordVideo: it begins recording the
+  // instant the context is created — before navigation — so every clip opened
+  // with the white about:blank pre-navigation frame (Playwright #27253). For
+  // evidence videos that blank lead is the first thing a reviewer sees.
+  // page.screencast (Playwright >= 1.59) lets us start recording only once real
+  // content is painted, so frame 0 is genuine evidence rather than a white shell.
+  //
+  // The readiness gate intentionally avoids networkidle: the dashboard holds an
+  // open SSE stream, so the page never goes network-idle. Callers that know a
+  // content selector pass --ready-selector for the strongest signal; otherwise a
+  // short settle (--start-delay-ms) lets the SPA mount and paint.
+  await page.goto(url, { waitUntil: "load" });
   await page.locator("body").waitFor({ state: "visible", timeout: 30000 });
+  if (readySelector) {
+    await page.locator(readySelector).waitFor({ state: "visible", timeout: 30000 });
+  }
+  if (startDelayMs > 0) {
+    await page.waitForTimeout(startDelayMs);
+  }
+
+  // Record straight to the output path; screencast.stop() finalizes the webm.
+  await page.screencast.start({ path: out, size: { width, height } });
+  const startedAt = Date.now();
+
   if (click) {
     await page.locator(click).click();
   }
@@ -75,12 +98,11 @@ try {
     }
   }
   await page.waitForTimeout(waitMs);
-  const video = page.video();
+
+  await page.screencast.stop();
+  const durationMs = Date.now() - startedAt;
   await context.close();
-  const recordedPath = await video.path();
-  if (path.resolve(recordedPath) !== out) {
-    await rename(recordedPath, out);
-  }
+
   const info = await stat(out);
   if (info.size <= 0) {
     throw new Error(`captured video is empty: ${out}`);
@@ -91,7 +113,7 @@ try {
     label: path.basename(out, path.extname(out)),
     content_type: "video/webm",
     size_bytes: info.size,
-    duration_ms: waitMs,
+    duration_ms: durationMs,
     width,
     height,
     url,

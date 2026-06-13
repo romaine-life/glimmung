@@ -102,9 +102,12 @@ RUN mkdir -p -m 755 /etc/apt/keyrings \
     && apt-retry install gh \
     && rm -rf /var/lib/apt/lists/*
 
+# Pin Playwright explicitly: capture-video.mjs records evidence via the
+# page.screencast API, which requires Playwright >= 1.59. An unpinned install
+# also let the recorder's Playwright version float with every image rebuild.
 RUN npm install -g @openai/codex @anthropic-ai/claude-code \
     && mkdir -p /opt/glimmung-runner \
-    && npm install --prefix /opt/glimmung-runner playwright \
+    && npm install --prefix /opt/glimmung-runner playwright@1.60.0 \
     && npx --prefix /opt/glimmung-runner playwright install --with-deps chromium \
     && chmod -R a+rX /ms-playwright /opt/glimmung-runner \
     && npm cache clean --force \
