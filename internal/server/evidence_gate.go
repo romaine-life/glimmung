@@ -113,31 +113,31 @@ fi
 
 func CanonicalWorkflow(wf Workflow) Workflow {
 	for i := range wf.Phases {
-		wf.Phases[i] = CanonicalNativePhase(wf.Phases[i])
+		wf.Phases[i] = CanonicalRunnerPhase(wf.Phases[i])
 	}
 	return wf
 }
 
-// CanonicalNativePhase returns the runtime phase shape Glimmung actually
+// CanonicalRunnerPhase returns the runtime phase shape Glimmung actually
 // launches. Evidence gates are a Glimmung-owned primitive, so any project-
 // supplied container details are replaced with the managed gate runner while
 // preserving a stable job id when one was already registered.
-func CanonicalNativePhase(phase PhaseSpec) PhaseSpec {
+func CanonicalRunnerPhase(phase PhaseSpec) PhaseSpec {
 	if phase.EvidenceVerificationGate {
-		phase.Jobs = []NativeJobSpec{canonicalEvidenceGateJob(phase)}
+		phase.Jobs = []RunnerJobSpec{canonicalEvidenceGateJob(phase)}
 		return phase
 	}
 	for i := range phase.Jobs {
-		phase.Jobs[i] = CanonicalNativeJob(phase.Jobs[i])
+		phase.Jobs[i] = CanonicalRunnerJob(phase.Jobs[i])
 	}
 	return phase
 }
 
-func CanonicalNativePhaseJobs(phase PhaseSpec) []NativeJobSpec {
-	return CanonicalNativePhase(phase).Jobs
+func CanonicalRunnerPhaseJobs(phase PhaseSpec) []RunnerJobSpec {
+	return CanonicalRunnerPhase(phase).Jobs
 }
 
-func CanonicalNativeJob(job NativeJobSpec) NativeJobSpec {
+func CanonicalRunnerJob(job RunnerJobSpec) RunnerJobSpec {
 	switch strings.TrimSpace(job.Primitive) {
 	case JobPrimitivePRTouchpoint:
 		return canonicalPRTouchpointJob(&job)
@@ -148,7 +148,7 @@ func CanonicalNativeJob(job NativeJobSpec) NativeJobSpec {
 	}
 }
 
-func canonicalEvidenceGateJob(phase PhaseSpec) NativeJobSpec {
+func canonicalEvidenceGateJob(phase PhaseSpec) RunnerJobSpec {
 	jobID := EvidenceGateJobID
 	name := "Evidence verification gate"
 	timeout := 60
@@ -165,12 +165,12 @@ func canonicalEvidenceGateJob(phase PhaseSpec) NativeJobSpec {
 		}
 	}
 	title := "Evaluate verification verdict"
-	return NativeJobSpec{
+	return RunnerJobSpec{
 		ID:             jobID,
 		Name:           &name,
 		Managed:        true,
 		TimeoutSeconds: &timeout,
-		Steps: []NativeStepSpec{{
+		Steps: []RunnerStepSpec{{
 			Slug:  EvidenceGateStepSlug,
 			Title: &title,
 			Type:  "run",
@@ -180,7 +180,7 @@ func canonicalEvidenceGateJob(phase PhaseSpec) NativeJobSpec {
 	}
 }
 
-func canonicalPRMergeJob(existing *NativeJobSpec) NativeJobSpec {
+func canonicalPRMergeJob(existing *RunnerJobSpec) RunnerJobSpec {
 	jobID := PRMergeJobID
 	name := "PR merge"
 	timeout := 120
@@ -196,13 +196,13 @@ func canonicalPRMergeJob(existing *NativeJobSpec) NativeJobSpec {
 		}
 	}
 	title := "Idempotently merge the touchpoint PR"
-	return NativeJobSpec{
+	return RunnerJobSpec{
 		ID:             jobID,
 		Name:           &name,
 		Primitive:      JobPrimitivePRMerge,
 		Managed:        true,
 		TimeoutSeconds: &timeout,
-		Steps: []NativeStepSpec{{
+		Steps: []RunnerStepSpec{{
 			Slug:  PRMergeStepSlug,
 			Title: &title,
 			Type:  "run",
@@ -212,7 +212,7 @@ func canonicalPRMergeJob(existing *NativeJobSpec) NativeJobSpec {
 	}
 }
 
-func canonicalPRTouchpointJob(existing *NativeJobSpec) NativeJobSpec {
+func canonicalPRTouchpointJob(existing *RunnerJobSpec) RunnerJobSpec {
 	jobID := PRTouchpointJobID
 	name := "PR touchpoint"
 	timeout := 120
@@ -228,13 +228,13 @@ func canonicalPRTouchpointJob(existing *NativeJobSpec) NativeJobSpec {
 		}
 	}
 	title := "Ensure PR touchpoint"
-	return NativeJobSpec{
+	return RunnerJobSpec{
 		ID:             jobID,
 		Name:           &name,
 		Primitive:      JobPrimitivePRTouchpoint,
 		Managed:        true,
 		TimeoutSeconds: &timeout,
-		Steps: []NativeStepSpec{{
+		Steps: []RunnerStepSpec{{
 			Slug:  PRTouchpointStepSlug,
 			Title: &title,
 			Type:  "run",

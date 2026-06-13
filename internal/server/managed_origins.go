@@ -15,7 +15,7 @@ import (
 
 // ManagedOriginReconciler keeps auth.romaine.life's managed_origin table
 // in sync with each project's slot wildcard. The wildcard is derived
-// mechanically from `native_standby_dns.record_base` — there's no per-
+// mechanically from `runner_standby_dns.record_base` — there's no per-
 // project wildcard config; the slot DNS shape is the single source of
 // truth. Opt-in is `managed_auth_origins.enabled` in project metadata.
 //
@@ -42,7 +42,7 @@ type ProjectManagedAuthOriginStatusWriter interface {
 
 // ManagedAuthOriginStatus is persisted on the project's metadata under
 // `managed_auth_origins_status` after each reconciliation, mirroring the
-// shape used for `native_standby_workload_identity_status`.
+// shape used for `runner_standby_workload_identity_status`.
 type ManagedAuthOriginStatus struct {
 	State            string   `json:"state"`
 	Endpoint         string   `json:"endpoint,omitempty"`
@@ -90,7 +90,7 @@ func (s ManagedOriginService) ReconcileManagedOrigins(ctx context.Context, proje
 		return status, nil
 	}
 	if recordBase == "" {
-		err := errors.New("managed_auth_origins.enabled requires native_standby_dns.record_base")
+		err := errors.New("managed_auth_origins.enabled requires runner_standby_dns.record_base")
 		return s.failed(status, err), err
 	}
 	if projectKey == "" {
@@ -229,7 +229,7 @@ func (s ManagedOriginService) readToken() (string, error) {
 }
 
 // managedAuthOriginsFromProject extracts the opt-in flag, derives the slot
-// wildcard base (`native_standby_dns.record_base`), and resolves the project
+// wildcard base (`runner_standby_dns.record_base`), and resolves the project
 // key to use in the auth admin URL.
 //
 // Both snake_case (canonical) and camelCase (legacy) metadata keys are
@@ -244,7 +244,7 @@ func managedAuthOriginsFromProject(project Project) (enabled bool, recordBase, p
 	}
 	enabled = true
 
-	standby, ok := mapFromMap(project.Metadata, "native_standby_dns")
+	standby, ok := mapFromMap(project.Metadata, "runner_standby_dns")
 	if !ok {
 		standby, _ = mapFromMap(project.Metadata, "nativeStandbyDns")
 	}

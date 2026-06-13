@@ -26,7 +26,7 @@ Glimmung is a Go service with a Vite + React dashboard:
 - `k8s/` - prod Helm chart. ArgoCD-synced from main. Plus `k8s/issue/`, the
   per-issue validation chart whose Deployment, Service, and HTTPRoute are named
   after the release.
-- `tofu/` - Postgres, Glimmung-owned managed identities, native-runner artifact
+- `tofu/` - Postgres, Glimmung-owned managed identities, runner artifact
   storage, Entra app reg.
 - `Dockerfile` - multi-stage: node frontend build -> Go backend.
 

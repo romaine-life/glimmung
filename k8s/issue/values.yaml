@@ -79,7 +79,7 @@ postgres:
   user: glimmung-identity
 
 # The wildcard XListenerSet that per-install HTTPRoutes attach to. Production
-# and per-issue releases install in `glimmung`; native test slots install into
+# and per-issue releases install in `glimmung`; runner test slots install into
 # slot namespaces and attach back to this shared listener.
 attachListenerSet: glimmung-wildcard
 attachListenerSetNamespace: glimmung
@@ -90,7 +90,7 @@ attachListenerSetNamespace: glimmung
 gatewayName: main
 gatewayNamespace: envoy-gateway-system
 
-# Surfaced for cleanup-by-label. The native workflow sets
+# Surfaced for cleanup-by-label. The runner workflow sets
 # --set prNumber=<N> after the PR opens so the cleanup workflow
 # (agent-pr-cleanup.yml) can find releases by label and uninstall them.
 prNumber: ""

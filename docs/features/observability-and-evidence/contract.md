@@ -1,6 +1,6 @@
 # Observability And Evidence Contract
 
-This contract applies to native event logs, structured server logs, route and
+This contract applies to runner event logs, structured server logs, route and
 workflow diagnostics, run reports, screenshot/evidence capture, live smoke
 checks, metrics, and operator-facing debug paths.
 
@@ -14,7 +14,7 @@ half-updated dashboard.
 ## Sources Of Truth
 
 - RunReports own factual per-run evidence surfaced to reviewers.
-- Native run events own hot phase/job/step telemetry and log references.
+- Runner run events own hot phase/job/step telemetry and log references.
 - Structured server logs own per-event diagnostic detail.
 - Route inventory tests, workflow validation tests, and live smoke tests own
   executable contract checks.
@@ -39,7 +39,7 @@ half-updated dashboard.
 
 - Every contracted feature has evidence that maps to the invariant it could
   break.
-- Native jobs emit enough ordered events to reconstruct what ran and why it
+- Runner jobs emit enough ordered events to reconstruct what ran and why it
   passed, failed, waited, or timed out.
 - RunReports surface validation URL, typed evidence artifacts, attempt
   summaries, cost, and terminal state when those facts exist.
@@ -84,7 +84,7 @@ half-updated dashboard.
 
 - PR evidence names the exact test, route, log, metric, screenshot, run report,
   or runtime observation that proves each affected contract.
-- New native event shapes include tests or fixture evidence for projection.
+- New runner event shapes include tests or fixture evidence for projection.
 - New metrics or debug paths avoid unbounded labels and document their failure
   mode.
 - Screenshot-page changes update `frontend/screenshot-pages.json`.

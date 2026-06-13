@@ -20,7 +20,7 @@ type fakeProjectScalerStore struct {
 	name         string
 	count        int
 	slotStatuses []TestEnvironmentSlotStatus
-	wiStatus     *NativeWorkloadIdentityStatus
+	wiStatus     *RunnerWorkloadIdentityStatus
 	statusErr    error
 	leaseErr     error
 	err          error
@@ -51,16 +51,16 @@ func (s *fakeProjectScalerStore) SetProjectTestEnvironmentCount(_ context.Contex
 	if s.project.Metadata == nil {
 		s.project.Metadata = map[string]any{}
 	}
-	standby, _ := s.project.Metadata["native_standby_dns"].(map[string]any)
+	standby, _ := s.project.Metadata["runner_standby_dns"].(map[string]any)
 	if standby == nil {
 		standby = map[string]any{}
 	}
 	standby["count"] = count
 	standby["slots"] = pruneFakeTestSlots(standby["slots"], count)
-	s.project.Metadata["native_standby_dns"] = standby
-	if workloadIdentity, ok := s.project.Metadata["native_standby_workload_identity"].(map[string]any); ok {
+	s.project.Metadata["runner_standby_dns"] = standby
+	if workloadIdentity, ok := s.project.Metadata["runner_standby_workload_identity"].(map[string]any); ok {
 		workloadIdentity["count"] = count
-		s.project.Metadata["native_standby_workload_identity"] = workloadIdentity
+		s.project.Metadata["runner_standby_workload_identity"] = workloadIdentity
 	}
 	return s.project, nil
 }
@@ -71,7 +71,7 @@ func (s *fakeProjectScalerStore) SetProjectTestEnvironmentSlotStatus(_ context.C
 	if s.project.Metadata == nil {
 		s.project.Metadata = map[string]any{}
 	}
-	standby, _ := s.project.Metadata["native_standby_dns"].(map[string]any)
+	standby, _ := s.project.Metadata["runner_standby_dns"].(map[string]any)
 	if standby == nil {
 		standby = map[string]any{}
 	}
@@ -91,7 +91,7 @@ func (s *fakeProjectScalerStore) SetProjectTestEnvironmentSlotStatus(_ context.C
 		slots = append(slots, testSlotStatusMap(status))
 	}
 	standby["slots"] = slots
-	s.project.Metadata["native_standby_dns"] = standby
+	s.project.Metadata["runner_standby_dns"] = standby
 	return s.project, nil
 }
 
@@ -165,21 +165,21 @@ func pruneFakeTestSlots(raw any, count int) []any {
 	return pruned
 }
 
-func (s *fakeProjectScalerStore) SetProjectNativeWorkloadIdentityStatus(_ context.Context, project string, status NativeWorkloadIdentityStatus) (Project, error) {
+func (s *fakeProjectScalerStore) SetProjectRunnerWorkloadIdentityStatus(_ context.Context, project string, status RunnerWorkloadIdentityStatus) (Project, error) {
 	if s.statusErr != nil {
 		return Project{}, s.statusErr
 	}
 	s.wiStatus = &status
-	s.project.Metadata["native_standby_workload_identity_status"] = status
+	s.project.Metadata["runner_standby_workload_identity_status"] = status
 	return s.project, nil
 }
 
-type fakeNativeWorkloadIdentityReconciler struct {
-	status NativeWorkloadIdentityStatus
+type fakeRunnerWorkloadIdentityReconciler struct {
+	status RunnerWorkloadIdentityStatus
 	err    error
 }
 
-func (r fakeNativeWorkloadIdentityReconciler) ReconcileNativeWorkloadIdentities(context.Context, Project) (NativeWorkloadIdentityStatus, error) {
+func (r fakeRunnerWorkloadIdentityReconciler) ReconcileRunnerWorkloadIdentities(context.Context, Project) (RunnerWorkloadIdentityStatus, error) {
 	return r.status, r.err
 }
 
@@ -200,7 +200,7 @@ func TestScaleProjectTestEnvironmentsUpdatesCount(t *testing.T) {
 		Name:       "ambience",
 		GitHubRepo: "romaine-life/ambience",
 		Metadata: map[string]any{
-			"native_standby_dns": map[string]any{"count": float64(3)},
+			"runner_standby_dns": map[string]any{"count": float64(3)},
 		},
 		CreatedAt: created,
 	}}
@@ -216,7 +216,7 @@ func TestScaleProjectTestEnvironmentsUpdatesCount(t *testing.T) {
 	if store.name != "ambience" || store.count != 3 {
 		t.Fatalf("name=%q count=%d", store.name, store.count)
 	}
-	if project.Metadata["native_standby_dns"] == nil {
+	if project.Metadata["runner_standby_dns"] == nil {
 		t.Fatalf("metadata=%#v", project.Metadata)
 	}
 }
@@ -227,8 +227,8 @@ func TestScaleProjectTestEnvironmentsPersistsWorkloadIdentityStatus(t *testing.T
 		Name:       "tank",
 		GitHubRepo: "romaine-life/tank-operator",
 		Metadata: map[string]any{
-			"native_standby_dns": map[string]any{"count": float64(4)},
-			"native_standby_workload_identity": map[string]any{
+			"runner_standby_dns": map[string]any{"count": float64(4)},
+			"runner_standby_workload_identity": map[string]any{
 				"enabled": true,
 				"count":   float64(4),
 			},
@@ -239,10 +239,10 @@ func TestScaleProjectTestEnvironmentsPersistsWorkloadIdentityStatus(t *testing.T
 		store,
 		fakeAdminAuthenticator{user: auth.User{Sub: "admin"}},
 		nil,
-		fakeNativeWorkloadIdentityReconciler{status: NativeWorkloadIdentityStatus{
-			State:        NativeWorkloadIdentityStatusOK,
+		fakeRunnerWorkloadIdentityReconciler{status: RunnerWorkloadIdentityStatus{
+			State:        RunnerWorkloadIdentityStatusOK,
 			DesiredCount: 6,
-			ManagedCredentials: []NativeWorkloadIdentityCredentialStatus{{
+			ManagedCredentials: []RunnerWorkloadIdentityCredentialStatus{{
 				IdentityName:   "tank-session-identity",
 				CredentialName: "tank-slot-1-session",
 				Subject:        "system:serviceaccount:tank-slot-1-sessions:tank-slot-1-session",
@@ -255,14 +255,14 @@ func TestScaleProjectTestEnvironmentsPersistsWorkloadIdentityStatus(t *testing.T
 	var project Project
 	patchJSON(t, handler, "/v1/projects/tank/test-environments/count", `{"count":6}`, &project)
 
-	if store.wiStatus == nil || store.wiStatus.State != NativeWorkloadIdentityStatusOK {
+	if store.wiStatus == nil || store.wiStatus.State != RunnerWorkloadIdentityStatusOK {
 		t.Fatalf("status=%#v", store.wiStatus)
 	}
-	standbyWI := project.Metadata["native_standby_workload_identity"].(map[string]any)
+	standbyWI := project.Metadata["runner_standby_workload_identity"].(map[string]any)
 	if count, ok := positiveIntFromMap(standbyWI, "count"); !ok || count != 6 {
 		t.Fatalf("workload identity count=%#v", standbyWI["count"])
 	}
-	if project.Metadata["native_standby_workload_identity_status"] == nil {
+	if project.Metadata["runner_standby_workload_identity_status"] == nil {
 		t.Fatalf("metadata=%#v", project.Metadata)
 	}
 }
@@ -277,7 +277,7 @@ func TestScaleProjectTestEnvironmentsDoesNotWarmSynchronously(t *testing.T) {
 		Name:       "tank",
 		GitHubRepo: "romaine-life/tank-operator",
 		Metadata: map[string]any{
-			"native_standby_dns": map[string]any{
+			"runner_standby_dns": map[string]any{
 				"count":       float64(2),
 				"slot_prefix": "tank-slot",
 			},
@@ -304,7 +304,7 @@ func TestScaleProjectTestEnvironmentsDoesNotWarmSynchronously(t *testing.T) {
 	if len(store.slotStatuses) != 0 {
 		t.Fatalf("PATCH count must not write slot statuses: %#v", store.slotStatuses)
 	}
-	standby := project.Metadata["native_standby_dns"].(map[string]any)
+	standby := project.Metadata["runner_standby_dns"].(map[string]any)
 	if count, ok := positiveIntFromMap(standby, "count"); !ok || count != 2 {
 		t.Fatalf("count=%v, want 2", standby["count"])
 	}
@@ -320,7 +320,7 @@ func TestScaleProjectTestEnvironmentsDeprovisionsRemovedSlots(t *testing.T) {
 		Name:       "tank",
 		GitHubRepo: "romaine-life/tank-operator",
 		Metadata: map[string]any{
-			"native_standby_dns": map[string]any{
+			"runner_standby_dns": map[string]any{
 				"count":       float64(3),
 				"slot_prefix": "tank-slot",
 				"slots": []any{
@@ -356,7 +356,7 @@ func TestScaleProjectTestEnvironmentsDeprovisionsRemovedSlots(t *testing.T) {
 	if preparer.preliminaries || preparer.activated {
 		t.Fatal("scale down should not warm or activate removed slots")
 	}
-	standby := updated.Metadata["native_standby_dns"].(map[string]any)
+	standby := updated.Metadata["runner_standby_dns"].(map[string]any)
 	slots := standby["slots"].([]any)
 	if len(slots) != 1 {
 		t.Fatalf("slots=%#v", slots)
@@ -370,7 +370,7 @@ func TestScaleProjectTestEnvironmentsRejectsRemovingActiveSlot(t *testing.T) {
 		Name:       "tank",
 		GitHubRepo: "romaine-life/tank-operator",
 		Metadata: map[string]any{
-			"native_standby_dns": map[string]any{
+			"runner_standby_dns": map[string]any{
 				"count":       float64(3),
 				"slot_prefix": "tank-slot",
 				"slots": []any{
@@ -390,8 +390,8 @@ func TestScaleProjectTestEnvironmentsRejectsRemovingActiveSlot(t *testing.T) {
 			State:       "claimed",
 			Metadata: map[string]any{
 				"test_slot_checkout": true,
-				"native_slot_index":  "3",
-				"native_slot_name":   "tank-slot-3",
+				"runner_slot_index":  "3",
+				"runner_slot_name":   "tank-slot-3",
 			},
 			RequestedAt: now,
 		}},
@@ -427,7 +427,7 @@ func TestScaleProjectTestEnvironmentsRequiresLeaseVisibilityWhenRemovingSlots(t 
 		Name:       "tank",
 		GitHubRepo: "romaine-life/tank-operator",
 		Metadata: map[string]any{
-			"native_standby_dns": map[string]any{
+			"runner_standby_dns": map[string]any{
 				"count": float64(2),
 				"slots": []any{
 					map[string]any{"slot_index": float64(1), "slot_name": "tank-slot-1", "state": "ready"},

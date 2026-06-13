@@ -18,7 +18,7 @@ type TestEnvironmentRepairResponse struct {
 	URL       *string `json:"url,omitempty"`
 }
 
-func repairProjectTestEnvironment(store ReadStore, preparer TestSlotPreparer, minter NativeGitHubTokenMinter) http.HandlerFunc {
+func repairProjectTestEnvironment(store ReadStore, preparer TestSlotPreparer, minter RunnerGitHubTokenMinter) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if preparer == nil {
 			writeProblem(w, http.StatusServiceUnavailable, "test-slot preparer not configured")
@@ -143,8 +143,8 @@ func configuredSlotIndexForName(projectName string, project Project, slotName st
 // activeTestSlotLeaseForSlot reports whether a live lease is currently
 // holding the slot, so repair can refuse to revalidate capacity that is in
 // use. "Live" is any non-terminal lease (claimed or active) referencing the
-// slot — both test-slot checkout leases and native run leases (env-prep and
-// later phases reserve a slot with a non-checkout native lease). A terminal
+// slot — both test-slot checkout leases and runner run leases (env-prep and
+// later phases reserve a slot with a non-checkout runner lease). A terminal
 // (released/expired) lease never matches: its reservation is an orphan that
 // repair is allowed to clear, not a live hold it must protect.
 func activeTestSlotLeaseForSlot(ctx context.Context, store StateStore, project Project, projectName string, slotIndex int, slotName string) (Lease, bool, error) {
@@ -166,10 +166,10 @@ func activeTestSlotLeaseForSlot(ctx context.Context, store StateStore, project P
 			continue
 		}
 		matchesIndex := false
-		if index := nativeSlotIndexFromMetadata(lease.Metadata); index != nil && *index == slotIndex {
+		if index := runnerSlotIndexFromMetadata(lease.Metadata); index != nil && *index == slotIndex {
 			matchesIndex = true
 		}
-		if matchesIndex || nativeSlotNameMatches(lease.Metadata, slotName) {
+		if matchesIndex || runnerSlotNameMatches(lease.Metadata, slotName) {
 			return lease, true, nil
 		}
 	}

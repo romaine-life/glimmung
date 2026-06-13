@@ -168,11 +168,11 @@ func main() {
 	ghClient := buildGitHubClient(settings)
 	workloadIdentityClient, err := azureclient.NewWorkloadIdentityClient()
 	if err != nil {
-		log.Printf("native workload identity reconciler disabled: %v", err)
+		log.Printf("runner workload identity reconciler disabled: %v", err)
 	}
-	workloadIdentities := server.NativeWorkloadIdentityService{
+	workloadIdentities := server.RunnerWorkloadIdentityService{
 		Client:                  workloadIdentityClient,
-		Issuer:                  settings.NativeWorkloadIdentityIssuer,
+		Issuer:                  settings.RunnerWorkloadIdentityIssuer,
 		ServiceAccountTokenPath: settings.K8sSATokenPath,
 	}
 	// Glimmung-owned auth.romaine.life slot origin reconciler. Uses a
@@ -182,10 +182,10 @@ func main() {
 		AuthBaseURL:             settings.AuthRomaineLifeBaseURL,
 		ServiceAccountTokenPath: settings.AuthRomaineLifeTokenPath,
 	}
-	nativeLauncher := server.NewKubernetesNativeLauncher(settings)
+	runLauncher := server.NewKubernetesRunLauncher(settings)
 	if store != nil && settings.ControlPlaneLoopsEnabled {
 		// One-shot slot-storage cleanup: copy any project's embedded
-		// `metadata.native_standby_dns.slots[]` array into `slots`, then
+		// `metadata.runner_standby_dns.slots[]` array into `slots`, then
 		// strip the embedded array before readiness goes live.
 		//
 		// Like schema migrations and the config-schema backfill, this mutates
@@ -235,10 +235,10 @@ func main() {
 		} else {
 			log.Printf("stale-lease expiry sweep ok: expired=%d", expired)
 		}
-		server.StartSignalDrainReconciler(context.Background(), rt, nativeLauncher, log.Printf)
-		server.StartRunQueueReconciler(context.Background(), rt, nativeLauncher, log.Printf)
-		server.StartRunDispatchTimeoutReconciler(context.Background(), settings, rt, nativeLauncher, log.Printf)
-		server.StartNativeJobWatcher(context.Background(), settings, rt, nativeLauncher, log.Printf)
+		server.StartSignalDrainReconciler(context.Background(), rt, runLauncher, log.Printf)
+		server.StartRunQueueReconciler(context.Background(), rt, runLauncher, log.Printf)
+		server.StartRunDispatchTimeoutReconciler(context.Background(), settings, rt, runLauncher, log.Printf)
+		server.StartRunnerJobWatcher(context.Background(), settings, rt, runLauncher, log.Printf)
 		if ghClient != nil {
 			// One-shot recovery sweep at startup: re-arm per-lease TTL
 			// timers, resume in-flight warming/activating/cleaning work, and
@@ -246,14 +246,14 @@ func main() {
 			// yet. After this returns, the test-slot lifecycle is purely
 			// event-driven — HTTP handlers and per-lease AfterFunc timers,
 			// no polling loop.
-			go server.RecoverInFlightTestSlots(context.Background(), rt, nativeLauncher, ghClient, log.Printf)
+			go server.RecoverInFlightTestSlots(context.Background(), rt, runLauncher, ghClient, log.Printf)
 		}
 	}
 	addr := ":" + settings.Port
 
 	srv := &http.Server{
 		Addr:              addr,
-		Handler:           server.NewWithReconcilers(settings, rt, authenticator, ghClient, workloadIdentities, managedOrigins, nativeLauncher, artifacts),
+		Handler:           server.NewWithReconcilers(settings, rt, authenticator, ghClient, workloadIdentities, managedOrigins, runLauncher, artifacts),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 

@@ -46,7 +46,7 @@ func (m *migrationFakeStore) StripProjectTestEnvironmentSlotsArray(_ context.Con
 			continue
 		}
 		md := m.projects[i].Metadata
-		if standby, ok := md["native_standby_dns"].(map[string]any); ok {
+		if standby, ok := md["runner_standby_dns"].(map[string]any); ok {
 			delete(standby, "slots")
 		}
 	}
@@ -58,7 +58,7 @@ func tankOperatorLegacyProject() Project {
 		ID:   "tank-operator",
 		Name: "tank-operator",
 		Metadata: map[string]any{
-			"native_standby_dns": map[string]any{
+			"runner_standby_dns": map[string]any{
 				"count": 10,
 				"slots": []any{
 					map[string]any{
@@ -171,7 +171,7 @@ func TestTranslateLegacyState(t *testing.T) {
 }
 
 func TestReadLegacyProjectSlotsHandlesMissingArray(t *testing.T) {
-	project := Project{Metadata: map[string]any{"native_standby_dns": map[string]any{"count": 5}}}
+	project := Project{Metadata: map[string]any{"runner_standby_dns": map[string]any{"count": 5}}}
 	if got := readLegacyProjectSlots(project); len(got) != 0 {
 		t.Fatalf("len=%d, want 0", len(got))
 	}

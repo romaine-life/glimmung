@@ -108,7 +108,7 @@ func TestRetiredSlotSymbolsStayDeleted(t *testing.T) {
 			b.WriteString(h.symbol)
 			b.WriteString("\n")
 		}
-		b.WriteString("\nThese names belonged to the embedded `project.metadata.native_standby_dns.slots[]` shape that the slot-storage rework retired. See docs/test-slot-lifecycle.md.")
+		b.WriteString("\nThese names belonged to the embedded `project.metadata.runner_standby_dns.slots[]` shape that the slot-storage rework retired. See docs/test-slot-lifecycle.md.")
 		t.Fatal(b.String())
 	}
 }

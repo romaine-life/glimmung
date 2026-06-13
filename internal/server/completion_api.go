@@ -170,7 +170,7 @@ func NormalizeJobTerminalReason(reason string) string {
 	return JobTerminalReasonUnknown
 }
 
-type NativeJobCompletionResult struct {
+type RunnerJobCompletionResult struct {
 	Run             RunReplayData
 	PhaseComplete   bool
 	CompletionReady bool
@@ -194,7 +194,7 @@ type RunCompletionStore interface {
 	ReleaseReviewGate(ctx context.Context, project, runID, phase string, attemptIndex int) error
 	CancelReviewGate(ctx context.Context, project, runID, phase string, attemptIndex int, reason string) error
 	StampLatestAttemptSkipped(ctx context.Context, project, runID, reason string) error
-	RecordNativeJobsSkipped(ctx context.Context, project, runID, phase string, skipped map[string]string) error
+	RecordRunnerJobsSkipped(ctx context.Context, project, runID, phase string, skipped map[string]string) error
 	CreateRecycleCycle(ctx context.Context, req CreateRecycleCycleRequest) (CreatedRun, error)
 	AppendRunAttempt(ctx context.Context, project, runID, phase, phaseKind, workflowFilename string) (int, error)
 	StartRunCycle(ctx context.Context, req StartRunCycleRequest) (int, error)
@@ -202,8 +202,8 @@ type RunCompletionStore interface {
 	CancelLeaseByRef(ctx context.Context, project, ref string) (CancelLeaseResult, error)
 }
 
-type NativeJobCompletionStore interface {
-	RecordNativeJobCompletion(ctx context.Context, project, runID string, p CompletionPayload) (NativeJobCompletionResult, error)
+type RunnerJobCompletionStore interface {
+	RecordRunnerJobCompletion(ctx context.Context, project, runID string, p CompletionPayload) (RunnerJobCompletionResult, error)
 }
 
 // TouchpointDecision is a human reviewer's durable decision on a run's
@@ -230,8 +230,8 @@ type TouchpointDecision struct {
 	DecidedAt time.Time
 }
 
-// NativeRunCompletedRequest is the body for POST /run-callbacks/{token}/native/completed.
-type NativeRunCompletedRequest struct {
+// RunnerCompletedRequest is the body for POST /run-callbacks/{token}/run/completed.
+type RunnerCompletedRequest struct {
 	JobID               *string            `json:"job_id"`
 	Conclusion          string             `json:"conclusion"`
 	AttemptIndex        *int               `json:"attempt_index,omitempty"`
@@ -244,8 +244,8 @@ type NativeRunCompletedRequest struct {
 	Outputs             map[string]string  `json:"outputs"`
 }
 
-// nativeRunCompletedByCallbackToken handles POST /v1/run-callbacks/{callback_token}/native/completed.
-func nativeRunCompletedByCallbackToken(store ReadStore, nativeLauncher NativeLauncher) http.HandlerFunc {
+// runnerCompletedByCallbackToken handles POST /v1/run-callbacks/{callback_token}/run/completed.
+func runnerCompletedByCallbackToken(store ReadStore, runLauncher RunLauncher) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		completionStore, ok := store.(RunCompletionStore)
 		if !ok || completionStore == nil {
@@ -263,7 +263,7 @@ func nativeRunCompletedByCallbackToken(store ReadStore, nativeLauncher NativeLau
 			return
 		}
 
-		var req NativeRunCompletedRequest
+		var req RunnerCompletedRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			writeProblem(w, http.StatusBadRequest, "invalid request body")
 			return
@@ -278,18 +278,18 @@ func nativeRunCompletedByCallbackToken(store ReadStore, nativeLauncher NativeLau
 		}
 
 		payload := completionPayloadFromNative(req)
-		jobStore, ok := store.(NativeJobCompletionStore)
+		jobStore, ok := store.(RunnerJobCompletionStore)
 		if !ok || jobStore == nil {
-			writeProblem(w, http.StatusServiceUnavailable, "native job completion store not configured")
+			writeProblem(w, http.StatusServiceUnavailable, "runner job completion store not configured")
 			return
 		}
-		jobResult, err := jobStore.RecordNativeJobCompletion(r.Context(), project, runID, payload)
+		jobResult, err := jobStore.RecordRunnerJobCompletion(r.Context(), project, runID, payload)
 		if errors.Is(err, ErrNotFound) {
 			writeProblem(w, http.StatusNotFound, "run not found")
 			return
 		}
 		if errors.Is(err, ErrConflict) {
-			writeProblem(w, http.StatusConflict, "native job completion conflict")
+			writeProblem(w, http.StatusConflict, "runner job completion conflict")
 			return
 		}
 		var validationErr ValidationError
@@ -298,7 +298,7 @@ func nativeRunCompletedByCallbackToken(store ReadStore, nativeLauncher NativeLau
 			return
 		}
 		if err != nil {
-			writeInternalError(w, r, err, "record native job completion failed")
+			writeInternalError(w, r, err, "record runner job completion failed")
 			return
 		}
 		// Bounded-cardinality terminal counter. Runner-driven
@@ -323,7 +323,7 @@ func nativeRunCompletedByCallbackToken(store ReadStore, nativeLauncher NativeLau
 			return
 		}
 
-		result := processRunCompletion(r.Context(), w, r, completionStore, nativeLauncher, project, runID, jobResult.PhasePayload)
+		result := processRunCompletion(r.Context(), w, r, completionStore, runLauncher, project, runID, jobResult.PhasePayload)
 		if result != nil {
 			phaseComplete := true
 			result.PhaseComplete = &phaseComplete
@@ -337,7 +337,7 @@ func nativeRunCompletedByCallbackToken(store ReadStore, nativeLauncher NativeLau
 
 // --- shared completion path ---
 
-func completionPayloadFromNative(req NativeRunCompletedRequest) CompletionPayload {
+func completionPayloadFromNative(req RunnerCompletedRequest) CompletionPayload {
 	p := CompletionPayload{
 		JobID:               req.JobID,
 		Conclusion:          req.Conclusion,
@@ -459,14 +459,14 @@ func stringSliceFromVerification(raw any) []string {
 	return out
 }
 
-// processRunCompletion is the shared decision-engine path for native completions.
+// processRunCompletion is the shared decision-engine path for runner completions.
 // Returns the RunCallbackResult to write, or nil if it already wrote an error response.
 func processRunCompletion(
 	ctx context.Context,
 	w http.ResponseWriter,
 	r *http.Request,
 	store RunCompletionStore,
-	nativeLauncher NativeLauncher,
+	runLauncher RunLauncher,
 	project, runID string,
 	payload CompletionPayload,
 ) *RunCallbackResult {
@@ -539,10 +539,10 @@ func processRunCompletion(
 	// 7. Route on decision.
 	switch verdict {
 	case decision.Retry:
-		err := dispatchRetry(ctx, store, nativeLauncher, run, wf, lastAttempt.Phase)
+		err := dispatchRetry(ctx, store, runLauncher, run, wf, lastAttempt.Phase)
 		if err != nil {
 			abortReason := fmt.Sprintf("retry_dispatch_failed: %s", err)
-			return abortRunWithWorkflowCleanup(ctx, w, r, store, nativeLauncher, run, wf, runRef, decision.AbortMalformed, abortReason)
+			return abortRunWithWorkflowCleanup(ctx, w, r, store, runLauncher, run, wf, runRef, decision.AbortMalformed, abortReason)
 		}
 		return &RunCallbackResult{RunRef: runRef, Decision: &verdictStr}
 
@@ -550,9 +550,9 @@ func processRunCompletion(
 		targets := allReadyDispatchTargets(wf, run, verdict)
 		if len(targets) > 0 {
 			for _, target := range targets {
-				if err := dispatchForwardPhase(ctx, store, nativeLauncher, run, wf, target); err != nil {
+				if err := dispatchForwardPhase(ctx, store, runLauncher, run, wf, target); err != nil {
 					abortReason := fmt.Sprintf("forward_dispatch_failed: %s", err)
-					return abortRunWithWorkflowCleanup(ctx, w, r, store, nativeLauncher, run, wf, runRef, decision.AbortMalformed, abortReason)
+					return abortRunWithWorkflowCleanup(ctx, w, r, store, runLauncher, run, wf, runRef, decision.AbortMalformed, abortReason)
 				}
 			}
 			verdictStr = "advance_phase"
@@ -574,7 +574,7 @@ func processRunCompletion(
 				writeInternalError(w, r, err, "mark run aborted failed")
 				return nil
 			}
-			advancePlaybooksForTerminalRun(ctx, store, nativeLauncher, project, runID)
+			advancePlaybooksForTerminalRun(ctx, store, runLauncher, project, runID)
 			return &RunCallbackResult{
 				RunRef:            runRef,
 				Decision:          &verdictStr,
@@ -590,7 +590,7 @@ func processRunCompletion(
 		// primitive in the touchpoint phase should have set run.PRNumber.
 		if run.PRNumber == nil || *run.PRNumber < 1 {
 			abortReason := "PR primitive: touchpoint job completed without linking a PR"
-			return markRunAborted(ctx, w, r, store, nativeLauncher, run, runRef, decision.AbortMalformed, abortReason)
+			return markRunAborted(ctx, w, r, store, runLauncher, run, runRef, decision.AbortMalformed, abortReason)
 		}
 		state := "passed"
 		result, err := store.SetRunTerminalState(ctx, project, runID, state, nil)
@@ -598,7 +598,7 @@ func processRunCompletion(
 			writeInternalError(w, r, err, "mark run terminal failed")
 			return nil
 		}
-		advancePlaybooksForTerminalRun(ctx, store, nativeLauncher, project, runID)
+		advancePlaybooksForTerminalRun(ctx, store, runLauncher, project, runID)
 		if state == "passed" {
 			// A gated run reached terminal "passed" by going through the
 			// touchpoint_gate (the only way a gated workflow advances is
@@ -619,9 +619,9 @@ func processRunCompletion(
 		targets := allReadyDispatchTargets(wf, run, verdict)
 		if len(targets) > 0 {
 			for _, target := range targets {
-				if err := dispatchForwardPhase(ctx, store, nativeLauncher, run, wf, target); err != nil {
+				if err := dispatchForwardPhase(ctx, store, runLauncher, run, wf, target); err != nil {
 					abortReason := fmt.Sprintf("teardown_dispatch_failed: %s", err)
-					return markRunAborted(ctx, w, r, store, nativeLauncher, run, runRef, decision.AbortMalformed, abortReason)
+					return markRunAborted(ctx, w, r, store, runLauncher, run, runRef, decision.AbortMalformed, abortReason)
 				}
 			}
 			verdictStr = "advance_phase"
@@ -640,7 +640,7 @@ func processRunCompletion(
 			writeInternalError(w, r, err, "mark run aborted failed")
 			return nil
 		}
-		advancePlaybooksForTerminalRun(ctx, store, nativeLauncher, project, runID)
+		advancePlaybooksForTerminalRun(ctx, store, runLauncher, project, runID)
 		return &RunCallbackResult{
 			RunRef:            runRef,
 			Decision:          &verdictStr,
@@ -676,7 +676,7 @@ func abortRunWithWorkflowCleanup(
 	w http.ResponseWriter,
 	r *http.Request,
 	store RunCompletionStore,
-	nativeLauncher NativeLauncher,
+	runLauncher RunLauncher,
 	run RunReplayData,
 	wf *Workflow,
 	runRef string,
@@ -688,8 +688,8 @@ func abortRunWithWorkflowCleanup(
 		targets := allReadyDispatchTargets(wf, run, verdict)
 		if len(targets) > 0 {
 			for _, target := range targets {
-				if err := dispatchForwardPhase(ctx, store, nativeLauncher, run, wf, target); err != nil {
-					return markRunAborted(ctx, w, r, store, nativeLauncher, run, runRef, decision.AbortMalformed, abortReason+"; cleanup_dispatch_failed: "+err.Error())
+				if err := dispatchForwardPhase(ctx, store, runLauncher, run, wf, target); err != nil {
+					return markRunAborted(ctx, w, r, store, runLauncher, run, runRef, decision.AbortMalformed, abortReason+"; cleanup_dispatch_failed: "+err.Error())
 				}
 			}
 			decisionStr := "advance_phase"
@@ -699,7 +699,7 @@ func abortRunWithWorkflowCleanup(
 			return &RunCallbackResult{RunRef: runRef, Decision: &verdictStr}
 		}
 	}
-	return markRunAborted(ctx, w, r, store, nativeLauncher, run, runRef, verdict, abortReason)
+	return markRunAborted(ctx, w, r, store, runLauncher, run, runRef, verdict, abortReason)
 }
 
 func markRunAborted(
@@ -707,7 +707,7 @@ func markRunAborted(
 	w http.ResponseWriter,
 	r *http.Request,
 	store RunCompletionStore,
-	nativeLauncher NativeLauncher,
+	runLauncher RunLauncher,
 	run RunReplayData,
 	runRef string,
 	verdict decision.RunDecision,
@@ -719,7 +719,7 @@ func markRunAborted(
 		writeInternalError(w, r, err, "mark run aborted failed")
 		return nil
 	}
-	advancePlaybooksForTerminalRun(ctx, store, nativeLauncher, run.Project, run.ID)
+	advancePlaybooksForTerminalRun(ctx, store, runLauncher, run.Project, run.ID)
 	verdictStr := string(verdict)
 	return &RunCallbackResult{
 		RunRef:            runRef,
@@ -766,7 +766,7 @@ func closeIssueOnGatedTerminal(ctx context.Context, store RunCompletionStore, wf
 	})
 }
 
-func advancePlaybooksForTerminalRun(ctx context.Context, store RunCompletionStore, nativeLauncher NativeLauncher, project, runID string) {
+func advancePlaybooksForTerminalRun(ctx context.Context, store RunCompletionStore, runLauncher RunLauncher, project, runID string) {
 	pbStore, ok := store.(PlaybookRunStore)
 	if !ok || pbStore == nil {
 		return
@@ -775,7 +775,7 @@ func advancePlaybooksForTerminalRun(ctx context.Context, store RunCompletionStor
 	if !ok || readStore == nil {
 		return
 	}
-	dispatcher, ok := playbookEntryDispatcher(readStore, nativeLauncher)
+	dispatcher, ok := playbookEntryDispatcher(readStore, runLauncher)
 	if !ok {
 		return
 	}
@@ -1022,16 +1022,16 @@ func isAbortDecision(value string) bool {
 func dispatchForwardPhase(
 	ctx context.Context,
 	store RunCompletionStore,
-	nativeLauncher NativeLauncher,
+	runLauncher RunLauncher,
 	run RunReplayData,
 	wf *Workflow,
 	targetPhase PhaseSpec,
 ) error {
-	if nativeLauncher == nil {
-		return fmt.Errorf("no native launcher configured")
+	if runLauncher == nil {
+		return fmt.Errorf("no run launcher configured")
 	}
 	phaseKind := workflowPhaseKind(targetPhase.Kind)
-	if err := validateNativeWorkflowKind(phaseKind); err != nil {
+	if err := validateRunnerWorkflowKind(phaseKind); err != nil {
 		return err
 	}
 	workflowFilename := targetPhase.WorkflowFilename
@@ -1085,7 +1085,7 @@ func dispatchForwardPhase(
 			return fmt.Errorf("re-read run after skip: %w", err)
 		}
 		for _, next := range allReadyDispatchTargets(wf, updated, decision.Advance) {
-			if err := dispatchForwardPhase(ctx, store, nativeLauncher, updated, wf, next); err != nil {
+			if err := dispatchForwardPhase(ctx, store, runLauncher, updated, wf, next); err != nil {
 				return err
 			}
 		}
@@ -1100,7 +1100,7 @@ func dispatchForwardPhase(
 		// expected-job completion set is already satisfied for skipped jobs
 		// when the first real callback arrives — no race, no waiting on a
 		// Job that will never exist.
-		if err := store.RecordNativeJobsSkipped(ctx, run.Project, run.ID, targetPhase.Name, skippedJobs); err != nil {
+		if err := store.RecordRunnerJobsSkipped(ctx, run.Project, run.ID, targetPhase.Name, skippedJobs); err != nil {
 			return fmt.Errorf("record skipped jobs: %w", err)
 		}
 	}
@@ -1109,10 +1109,10 @@ func dispatchForwardPhase(
 		return fmt.Errorf("read lease for forward phase: %w", err)
 	}
 	if lease.State != "claimed" {
-		return nativeLeaseNotClaimedError(lease)
+		return runnerLeaseNotClaimedError(lease)
 	}
 	started := runWithAttempt(run, newAttemptIdx, targetPhase.Name)
-	launched, err := launchCommittedNativePhase(ctx, nativeLauncher, NativeLaunchRequest{
+	launched, err := launchCommittedPhase(ctx, runLauncher, RunLaunchRequest{
 		Lease:      lease,
 		Workflow:   *wf,
 		Phase:      targetPhase,
@@ -1120,9 +1120,9 @@ func dispatchForwardPhase(
 		SkipJobIDs: skippedJobs,
 	})
 	if err != nil {
-		return fmt.Errorf("native dispatch: %w", err)
+		return fmt.Errorf("runner dispatch: %w", err)
 	}
-	_ = recordLaunchedNativeJobs(ctx, store, started, targetPhase, launched)
+	_ = recordLaunchedRunnerJobs(ctx, store, started, targetPhase, launched)
 	return nil
 }
 
@@ -1219,7 +1219,7 @@ func leaseForRunPhase(ctx context.Context, store RunCompletionStore, run RunRepl
 	if branch := workContextBranch(run, metadata); branch != "" {
 		metadata["work_context_branch"] = branch
 	}
-	metadata["native_k8s"] = true
+	metadata["runner_k8s"] = true
 	if run.CallbackToken != nil && *run.CallbackToken != "" {
 		metadata["run_callback_token"] = *run.CallbackToken
 	}
@@ -1236,17 +1236,17 @@ func leaseForRunPhase(ctx context.Context, store RunCompletionStore, run RunRepl
 	return lease, nil
 }
 
-// dispatchRetry appends a new attempt and launches the native retry phase.
+// dispatchRetry appends a new attempt and launches the runner retry phase.
 func dispatchRetry(
 	ctx context.Context,
 	store RunCompletionStore,
-	nativeLauncher NativeLauncher,
+	runLauncher RunLauncher,
 	run RunReplayData,
 	wf *Workflow,
 	failingPhase string,
 ) error {
-	if nativeLauncher == nil {
-		return fmt.Errorf("no native launcher configured")
+	if runLauncher == nil {
+		return fmt.Errorf("no run launcher configured")
 	}
 	// Find the target phase from the recycle policy.
 	var targetPhase *PhaseSpec
@@ -1277,7 +1277,7 @@ func dispatchRetry(
 	}
 
 	phaseKind := workflowPhaseKind(targetPhase.Kind)
-	if err := validateNativeWorkflowKind(phaseKind); err != nil {
+	if err := validateRunnerWorkflowKind(phaseKind); err != nil {
 		return err
 	}
 	workflowFilename := targetPhase.WorkflowFilename
@@ -1358,7 +1358,7 @@ func dispatchRetry(
 		return err
 	}
 	if len(skippedJobs) > 0 {
-		if err := store.RecordNativeJobsSkipped(ctx, recycleRun.Project, recycleRun.ID, targetPhase.Name, skippedJobs); err != nil {
+		if err := store.RecordRunnerJobsSkipped(ctx, recycleRun.Project, recycleRun.ID, targetPhase.Name, skippedJobs); err != nil {
 			return fmt.Errorf("record skipped jobs on recycle: %w", err)
 		}
 	}
@@ -1367,9 +1367,9 @@ func dispatchRetry(
 		return fmt.Errorf("read lease for retry: %w", err)
 	}
 	if lease.State != "claimed" {
-		return nativeLeaseNotClaimedError(lease)
+		return runnerLeaseNotClaimedError(lease)
 	}
-	launched, err := launchCommittedNativePhase(ctx, nativeLauncher, NativeLaunchRequest{
+	launched, err := launchCommittedPhase(ctx, runLauncher, RunLaunchRequest{
 		Lease:      lease,
 		Workflow:   *wf,
 		Phase:      *targetPhase,
@@ -1377,9 +1377,9 @@ func dispatchRetry(
 		SkipJobIDs: skippedJobs,
 	})
 	if err != nil {
-		return fmt.Errorf("native dispatch: %w", err)
+		return fmt.Errorf("runner dispatch: %w", err)
 	}
-	_ = recordLaunchedNativeJobs(ctx, store, recycleRun, *targetPhase, launched)
+	_ = recordLaunchedRunnerJobs(ctx, store, recycleRun, *targetPhase, launched)
 	return nil
 }
 

@@ -8,13 +8,13 @@
 #
 # Glimmung-owned identities live in the `glimmung` resource group:
 # - `glimmung-identity` for the API/dashboard pod
-# - `glimmung-native-runner-identity` for native Kubernetes runner Jobs
+# - `glimmung-runner-identity` for runner Kubernetes runner Jobs
 # - `glimmung-provider-api-proxy-identity` for provider OAuth proxy KV writeback
 #
 # Federated credentials use exact-match subjects. The API/dashboard pod
 # remains on `system:serviceaccount:glimmung:infra-shared` to avoid a
-# chart/service-account rename in this infra slice. Native runner Jobs use
-# `system:serviceaccount:glimmung-runs:glimmung-native-runner`.
+# chart/service-account rename in this infra slice. Runner Jobs use
+# `system:serviceaccount:glimmung-runs:glimmung-runner`.
 # ============================================================================
 
 data "azurerm_resource_group" "infra" {
@@ -37,8 +37,8 @@ resource "azurerm_user_assigned_identity" "glimmung_dedicated" {
   location            = azurerm_resource_group.glimmung.location
 }
 
-resource "azurerm_user_assigned_identity" "native_runner" {
-  name                = "glimmung-native-runner-identity"
+resource "azurerm_user_assigned_identity" "runner" {
+  name                = "glimmung-runner-identity"
   resource_group_name = azurerm_resource_group.glimmung.name
   location            = azurerm_resource_group.glimmung.location
 }
@@ -58,13 +58,13 @@ resource "azurerm_federated_identity_credential" "glimmung_dedicated" {
   subject             = "system:serviceaccount:glimmung:infra-shared"
 }
 
-resource "azurerm_federated_identity_credential" "native_runner" {
-  name                = "aks-glimmung-native-runner"
+resource "azurerm_federated_identity_credential" "runner" {
+  name                = "aks-glimmung-runner"
   resource_group_name = azurerm_resource_group.glimmung.name
-  parent_id           = azurerm_user_assigned_identity.native_runner.id
+  parent_id           = azurerm_user_assigned_identity.runner.id
   audience            = ["api://AzureADTokenExchange"]
   issuer              = local.aks_oidc_issuer_url
-  subject             = "system:serviceaccount:glimmung-runs:glimmung-native-runner"
+  subject             = "system:serviceaccount:glimmung-runs:glimmung-runner"
 }
 
 resource "azurerm_federated_identity_credential" "provider_api_proxy" {
@@ -76,19 +76,19 @@ resource "azurerm_federated_identity_credential" "provider_api_proxy" {
   subject             = "system:serviceaccount:glimmung-runs:glimmung-provider-api-proxy"
 }
 
-resource "azurerm_role_assignment" "native_runner_acr_push" {
+resource "azurerm_role_assignment" "runner_acr_push" {
   scope                = data.azurerm_container_registry.romaine.id
   role_definition_name = "AcrPush"
-  principal_id         = azurerm_user_assigned_identity.native_runner.principal_id
+  principal_id         = azurerm_user_assigned_identity.runner.principal_id
 }
 
-# Native app runners use `az acr build` for validation images because the
+# Runner app jobs use `az acr build` for validation images because the
 # Kubernetes job does not have a Docker daemon. AcrPush covers direct image
 # push/pull, but ACR Tasks are management-plane operations on the registry.
-resource "azurerm_role_assignment" "native_runner_acr_build_contributor" {
+resource "azurerm_role_assignment" "runner_acr_build_contributor" {
   scope                = data.azurerm_container_registry.romaine.id
   role_definition_name = "Contributor"
-  principal_id         = azurerm_user_assigned_identity.native_runner.principal_id
+  principal_id         = azurerm_user_assigned_identity.runner.principal_id
 }
 
 resource "azurerm_role_assignment" "glimmung_dedicated_subscription_contributor" {
@@ -129,9 +129,9 @@ output "glimmung_dedicated_identity_client_id" {
   description = "client_id of the Glimmung-owned glimmung-identity. Pin this into k8s/values.yaml."
 }
 
-output "glimmung_native_runner_identity_client_id" {
-  value       = azurerm_user_assigned_identity.native_runner.client_id
-  description = "client_id of glimmung-native-runner-identity. Use for the glimmung-runs runner ServiceAccount annotation."
+output "glimmung_runner_identity_client_id" {
+  value       = azurerm_user_assigned_identity.runner.client_id
+  description = "client_id of glimmung-runner-identity. Use for the glimmung-runs runner ServiceAccount annotation."
 }
 
 output "glimmung_provider_api_proxy_identity_client_id" {

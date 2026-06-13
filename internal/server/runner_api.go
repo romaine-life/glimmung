@@ -11,18 +11,18 @@ import (
 	"github.com/romaine-life/glimmung/internal/metrics"
 )
 
-// NativeRunStore handles native k8s_job runner event recording and status.
-type NativeRunStore interface {
-	// GetNativeRunStatusByID returns the run state for the native runner.
-	GetNativeRunStatusByID(ctx context.Context, project, runID string) (NativeRunStatusResponse, error)
-	// RecordNativeEventByID writes one idempotent native event. The store resolves attempt context from the run doc.
-	RecordNativeEventByID(ctx context.Context, project, runID string, req NativeRunEventRequest) (NativeRunEventResult, error)
-	// ListNativeEventsByID returns ordered native events for a run with optional filters.
-	ListNativeEventsByID(ctx context.Context, project, runID string, attemptIndex *int, jobID *string, stepSlug *string, afterSeq *int, limit *int) (NativeRunLogsResponse, error)
+// RunnerStore handles runner k8s_job runner event recording and status.
+type RunnerStore interface {
+	// GetRunnerStatusByID returns the run state for the runner.
+	GetRunnerStatusByID(ctx context.Context, project, runID string) (RunnerStatusResponse, error)
+	// RecordRunnerEventByID writes one idempotent runner event. The store resolves attempt context from the run doc.
+	RecordRunnerEventByID(ctx context.Context, project, runID string, req RunnerEventRequest) (RunnerEventResult, error)
+	// ListRunnerEventsByID returns ordered runner events for a run with optional filters.
+	ListRunnerEventsByID(ctx context.Context, project, runID string, attemptIndex *int, jobID *string, stepSlug *string, afterSeq *int, limit *int) (RunnerLogsResponse, error)
 }
 
-// NativeRunEventRequest is the body for POST /native/events.
-type NativeRunEventRequest struct {
+// RunnerEventRequest is the body for POST /run/events.
+type RunnerEventRequest struct {
 	JobID        string         `json:"job_id"`
 	Seq          int            `json:"seq"`
 	Event        string         `json:"event"`
@@ -33,16 +33,16 @@ type NativeRunEventRequest struct {
 	Metadata     map[string]any `json:"metadata"`
 }
 
-// NativeRunEventResult is the response for POST /native/events.
-type NativeRunEventResult struct {
+// RunnerEventResult is the response for POST /run/events.
+type RunnerEventResult struct {
 	RunRef   string `json:"run_ref"`
 	JobID    string `json:"job_id"`
 	Seq      int    `json:"seq"`
 	Accepted bool   `json:"accepted"`
 }
 
-// NativeRunStatusResponse is the response for GET /native/status.
-type NativeRunStatusResponse struct {
+// RunnerStatusResponse is the response for GET /run/status.
+type RunnerStatusResponse struct {
 	Project           string     `json:"project"`
 	RunRef            string     `json:"run_ref"`
 	State             string     `json:"state"`
@@ -52,8 +52,8 @@ type NativeRunStatusResponse struct {
 	CancelReason      *string    `json:"cancel_reason"`
 }
 
-// NativeRunLogEvent is one event record in a native run log stream.
-type NativeRunLogEvent struct {
+// RunnerLogEvent is one event record in a runner run log stream.
+type RunnerLogEvent struct {
 	Project      string         `json:"project"`
 	RunRef       string         `json:"run_ref"`
 	AttemptIndex int            `json:"attempt_index"`
@@ -68,20 +68,20 @@ type NativeRunLogEvent struct {
 	CreatedAt    string         `json:"created_at"`
 }
 
-// NativeRunLogsResponse is the response for GET /native/events.
-type NativeRunLogsResponse struct {
-	Project      string              `json:"project"`
-	RunRef       string              `json:"run_ref"`
-	AttemptIndex *int                `json:"attempt_index"`
-	JobID        *string             `json:"job_id"`
-	Events       []NativeRunLogEvent `json:"events"`
-	ArchiveURL   *string             `json:"archive_url"`
+// RunnerLogsResponse is the response for GET /run/events.
+type RunnerLogsResponse struct {
+	Project      string           `json:"project"`
+	RunRef       string           `json:"run_ref"`
+	AttemptIndex *int             `json:"attempt_index"`
+	JobID        *string          `json:"job_id"`
+	Events       []RunnerLogEvent `json:"events"`
+	ArchiveURL   *string          `json:"archive_url"`
 }
 
-// nativeRunEventsByNumber handles GET /v1/projects/{project}/issues/{issue_number}/runs/{run_number}/native/events
-func nativeRunEventsByNumber(store ReadStore) http.HandlerFunc {
+// runnerEventsByNumber handles GET /v1/projects/{project}/issues/{issue_number}/runs/{run_number}/run/events
+func runnerEventsByNumber(store ReadStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		nativeStore, mutStore, ok := requireNativeStores(w, store)
+		runnerStore, mutStore, ok := requireRunnerStores(w, store)
 		if !ok {
 			return
 		}
@@ -89,21 +89,21 @@ func nativeRunEventsByNumber(store ReadStore) http.HandlerFunc {
 		if !ok {
 			return
 		}
-		resp, err := nativeStore.ListNativeEventsByID(r.Context(), project, runID,
+		resp, err := runnerStore.ListRunnerEventsByID(r.Context(), project, runID,
 			parseOptionalIntQuery(r, "attempt_index"),
 			parseOptionalStringQuery(r, "job_id"),
 			parseOptionalStringQuery(r, "step_slug"),
 			parseOptionalIntQuery(r, "after_seq"),
 			parseOptionalIntQuery(r, "limit"),
 		)
-		writeNativeLogsOrError(w, r, resp, err)
+		writeRunnerLogsOrError(w, r, resp, err)
 	}
 }
 
-// nativeRunEventWriteByNumber handles POST /v1/projects/{project}/issues/{issue_number}/runs/{run_number}/native/events
-func nativeRunEventWriteByNumber(store ReadStore) http.HandlerFunc {
+// runnerEventWriteByNumber handles POST /v1/projects/{project}/issues/{issue_number}/runs/{run_number}/run/events
+func runnerEventWriteByNumber(store ReadStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		nativeStore, mutStore, ok := requireNativeStores(w, store)
+		runnerStore, mutStore, ok := requireRunnerStores(w, store)
 		if !ok {
 			return
 		}
@@ -111,14 +111,14 @@ func nativeRunEventWriteByNumber(store ReadStore) http.HandlerFunc {
 		if !ok {
 			return
 		}
-		postNativeEvent(w, r, nativeStore, project, runID)
+		postRunnerEvent(w, r, runnerStore, project, runID)
 	}
 }
 
-// nativeRunEventWriteByCallbackToken handles POST /v1/run-callbacks/{callback_token}/native/events
-func nativeRunEventWriteByCallbackToken(store ReadStore) http.HandlerFunc {
+// runnerEventWriteByCallbackToken handles POST /v1/run-callbacks/{callback_token}/run/events
+func runnerEventWriteByCallbackToken(store ReadStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		nativeStore, mutStore, ok := requireNativeStores(w, store)
+		runnerStore, mutStore, ok := requireRunnerStores(w, store)
 		if !ok {
 			return
 		}
@@ -126,14 +126,14 @@ func nativeRunEventWriteByCallbackToken(store ReadStore) http.HandlerFunc {
 		if !ok {
 			return
 		}
-		postNativeEvent(w, r, nativeStore, project, runID)
+		postRunnerEvent(w, r, runnerStore, project, runID)
 	}
 }
 
-// nativeRunStatusByNumber handles GET /v1/projects/{project}/issues/{issue_number}/runs/{run_number}/native/status
-func nativeRunStatusByNumber(store ReadStore) http.HandlerFunc {
+// runnerStatusByNumber handles GET /v1/projects/{project}/issues/{issue_number}/runs/{run_number}/run/status
+func runnerStatusByNumber(store ReadStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		nativeStore, mutStore, ok := requireNativeStores(w, store)
+		runnerStore, mutStore, ok := requireRunnerStores(w, store)
 		if !ok {
 			return
 		}
@@ -141,14 +141,14 @@ func nativeRunStatusByNumber(store ReadStore) http.HandlerFunc {
 		if !ok {
 			return
 		}
-		getNativeStatus(w, r, nativeStore, project, runID)
+		getRunnerStatus(w, r, runnerStore, project, runID)
 	}
 }
 
-// nativeRunStatusByCallbackToken handles GET /v1/run-callbacks/{callback_token}/native/status
-func nativeRunStatusByCallbackToken(store ReadStore) http.HandlerFunc {
+// runnerStatusByCallbackToken handles GET /v1/run-callbacks/{callback_token}/run/status
+func runnerStatusByCallbackToken(store ReadStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		nativeStore, mutStore, ok := requireNativeStores(w, store)
+		runnerStore, mutStore, ok := requireRunnerStores(w, store)
 		if !ok {
 			return
 		}
@@ -156,16 +156,16 @@ func nativeRunStatusByCallbackToken(store ReadStore) http.HandlerFunc {
 		if !ok {
 			return
 		}
-		getNativeStatus(w, r, nativeStore, project, runID)
+		getRunnerStatus(w, r, runnerStore, project, runID)
 	}
 }
 
 // --- shared helpers ---
 
-func requireNativeStores(w http.ResponseWriter, store ReadStore) (NativeRunStore, RunMutationStore, bool) {
-	nativeStore, ok := store.(NativeRunStore)
-	if !ok || nativeStore == nil {
-		writeProblem(w, http.StatusServiceUnavailable, "native run store not configured")
+func requireRunnerStores(w http.ResponseWriter, store ReadStore) (RunnerStore, RunMutationStore, bool) {
+	runnerStore, ok := store.(RunnerStore)
+	if !ok || runnerStore == nil {
+		writeProblem(w, http.StatusServiceUnavailable, "runner run store not configured")
 		return nil, nil, false
 	}
 	mutStore, ok := store.(RunMutationStore)
@@ -173,7 +173,7 @@ func requireNativeStores(w http.ResponseWriter, store ReadStore) (NativeRunStore
 		writeProblem(w, http.StatusServiceUnavailable, "run store not configured")
 		return nil, nil, false
 	}
-	return nativeStore, mutStore, true
+	return runnerStore, mutStore, true
 }
 
 func resolveRunByNumber(w http.ResponseWriter, r *http.Request, mutStore RunMutationStore) (runID, project string, ok bool) {
@@ -210,8 +210,8 @@ func resolveRunByCallbackToken(w http.ResponseWriter, r *http.Request, mutStore 
 	return runID, project, true
 }
 
-func postNativeEvent(w http.ResponseWriter, r *http.Request, store NativeRunStore, project, runID string) {
-	var req NativeRunEventRequest
+func postRunnerEvent(w http.ResponseWriter, r *http.Request, store RunnerStore, project, runID string) {
+	var req RunnerEventRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeProblem(w, http.StatusBadRequest, "invalid request body")
 		return
@@ -228,7 +228,7 @@ func postNativeEvent(w http.ResponseWriter, r *http.Request, store NativeRunStor
 		writeProblem(w, http.StatusBadRequest, "event required")
 		return
 	}
-	result, err := store.RecordNativeEventByID(r.Context(), project, runID, req)
+	result, err := store.RecordRunnerEventByID(r.Context(), project, runID, req)
 	if errors.Is(err, ErrNotFound) {
 		writeProblem(w, http.StatusNotFound, "run not found")
 		return
@@ -243,7 +243,7 @@ func postNativeEvent(w http.ResponseWriter, r *http.Request, store NativeRunStor
 		return
 	}
 	if err != nil {
-		writeInternalError(w, r, err, "record native event failed")
+		writeInternalError(w, r, err, "record runner event failed")
 		return
 	}
 	// Bounded-cardinality metric for inner-Job registrations
@@ -258,30 +258,30 @@ func postNativeEvent(w http.ResponseWriter, r *http.Request, store NativeRunStor
 	writeJSON(w, http.StatusOK, result)
 }
 
-func getNativeStatus(w http.ResponseWriter, r *http.Request, store NativeRunStore, project, runID string) {
-	resp, err := store.GetNativeRunStatusByID(r.Context(), project, runID)
+func getRunnerStatus(w http.ResponseWriter, r *http.Request, store RunnerStore, project, runID string) {
+	resp, err := store.GetRunnerStatusByID(r.Context(), project, runID)
 	if errors.Is(err, ErrNotFound) {
 		writeProblem(w, http.StatusNotFound, "run not found")
 		return
 	}
 	if errors.Is(err, ErrConflict) {
-		writeProblem(w, http.StatusConflict, "latest attempt is not a native k8s_job")
+		writeProblem(w, http.StatusConflict, "latest attempt is not a runner k8s_job")
 		return
 	}
 	if err != nil {
-		writeInternalError(w, r, err, "get native run status failed")
+		writeInternalError(w, r, err, "get runner run status failed")
 		return
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
 
-func writeNativeLogsOrError(w http.ResponseWriter, r *http.Request, resp NativeRunLogsResponse, err error) {
+func writeRunnerLogsOrError(w http.ResponseWriter, r *http.Request, resp RunnerLogsResponse, err error) {
 	if errors.Is(err, ErrNotFound) {
 		writeProblem(w, http.StatusNotFound, "run not found")
 		return
 	}
 	if err != nil {
-		writeInternalError(w, r, err, "list native events failed")
+		writeInternalError(w, r, err, "list runner events failed")
 		return
 	}
 	writeJSON(w, http.StatusOK, resp)

@@ -1,8 +1,8 @@
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
-  name: glimmung-native-launcher
-  namespace: {{ .Values.nativeRunner.namespace }}
+  name: glimmung-run-launcher
+  namespace: {{ .Values.runner.namespace }}
 rules:
   - apiGroups: ["batch"]
     resources: ["jobs"]
@@ -23,12 +23,12 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: glimmung-native-launcher
-  namespace: {{ .Values.nativeRunner.namespace }}
+  name: glimmung-run-launcher
+  namespace: {{ .Values.runner.namespace }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
-  name: glimmung-native-launcher
+  name: glimmung-run-launcher
 subjects:
   - kind: ServiceAccount
     name: {{ .Values.serviceAccount }}

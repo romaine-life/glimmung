@@ -11,7 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// RunEventsStore is the Postgres-backed event log for glimmung's native
+// RunEventsStore is the Postgres-backed event log for glimmung's runner
 // runner.
 //
 // Idempotent insert uses `INSERT ... ON CONFLICT DO NOTHING` against the
@@ -25,7 +25,7 @@ type RunEventsStore struct {
 	pool *pgxpool.Pool
 }
 
-// RunEventRow is the row shape used to insert/return native runner events.
+// RunEventRow is the row shape used to insert/return runner events.
 type RunEventRow struct {
 	RunID        string
 	AttemptIndex int
@@ -44,7 +44,7 @@ type RunEventRow struct {
 // ErrRunEventConflict signals that an event with the same primary key
 // already exists in the table but with a different payload. Mirrors the
 // Store behavior (server.ErrConflict) which the public API
-// (RecordNativeEventByID) propagates to its caller.
+// (RecordRunnerEventByID) propagates to its caller.
 var ErrRunEventConflict = errors.New("run event conflict: same primary key, different payload")
 
 // NewRunEventsStore returns a RunEventsStore backed by pool. The pool's
@@ -59,7 +59,7 @@ func NewRunEventsStore(pool *pgxpool.Pool) *RunEventsStore {
 //   - created=false, err=ErrRunEventConflict → same PK, different payload
 //   - created=false, err=<other> → pool / serialization error
 //
-// Callers that need to mutate other state (e.g. Store.applyNative
+// Callers that need to mutate other state (e.g. Store.applyRunner
 // EventExecutionState) should gate that work on `created == true`.
 func (s *RunEventsStore) Insert(ctx context.Context, row RunEventRow) (bool, error) {
 	if s == nil || s.pool == nil {

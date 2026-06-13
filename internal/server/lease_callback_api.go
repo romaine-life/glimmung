@@ -70,7 +70,7 @@ func heartbeatLeaseByCallbackToken(store ReadStore) http.HandlerFunc {
 	}
 }
 
-func releaseLeaseByCallbackToken(store ReadStore, preparer TestSlotPreparer, minter NativeGitHubTokenMinter) http.HandlerFunc {
+func releaseLeaseByCallbackToken(store ReadStore, preparer TestSlotPreparer, minter RunnerGitHubTokenMinter) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		callbackStore, ok := store.(LeaseCallbackReleaseStore)
 		if !ok || callbackStore == nil {
@@ -120,7 +120,7 @@ func releaseLeaseByCallbackToken(store ReadStore, preparer TestSlotPreparer, min
 	}
 }
 
-func releaseTestSlotLeaseByCallback(w http.ResponseWriter, r *http.Request, store ReadStore, preparer TestSlotPreparer, minter NativeGitHubTokenMinter, lease Lease) {
+func releaseTestSlotLeaseByCallback(w http.ResponseWriter, r *http.Request, store ReadStore, preparer TestSlotPreparer, minter RunnerGitHubTokenMinter, lease Lease) {
 	if lease.State == "released" || lease.State == "expired" {
 		writeJSON(w, http.StatusOK, leaseToPublic(lease))
 		return

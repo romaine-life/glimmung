@@ -274,7 +274,7 @@ const runtimeContext = {
   },
 };
 
-const nativeEvents = {
+const runnerEvents = {
   project: "ambience",
   run_ref: "ambience#172/runs/7.1",
   attempt_index: 0,
@@ -298,7 +298,7 @@ const nativeEvents = {
   ],
 };
 
-const agentNativeEvents = {
+const agentRunnerEvents = {
   project: "ambience",
   run_ref: "ambience#172/runs/7.1",
   attempt_index: 0,
@@ -917,7 +917,7 @@ describe("IssueDetailView run execution graph", () => {
       if (url.pathname === "/v1/issues/by-number/ambience/172/graph") return json(issueGraph);
       if (url.pathname === "/v1/projects/ambience/issues/172/runs/7/cycles/1/graph") return json(runProjection);
       if (url.pathname === "/v1/workflows") return json([]);
-      if (url.pathname === "/v1/projects/ambience/issues/172/runs/7.1/native/events") return json(nativeEvents);
+      if (url.pathname === "/v1/projects/ambience/issues/172/runs/7.1/run/events") return json(runnerEvents);
       throw new Error(`unhandled fetch ${url.pathname}`);
     }));
 
@@ -934,16 +934,16 @@ describe("IssueDetailView run execution graph", () => {
         "/projects/ambience/issues/172/runs/7/cycles/1/phases/env-prep/jobs/env-prep",
       );
     });
-    expect(await screen.findByText("native job inspector")).toBeInTheDocument();
+    expect(await screen.findByText("runner job inspector")).toBeInTheDocument();
     const runPanelMeta = document.querySelector(".run-panel-meta");
     expect(runPanelMeta).not.toBeNull();
     expect(within(runPanelMeta as HTMLElement).queryByText(/^attempt$/)).not.toBeInTheDocument();
     expect(within(runPanelMeta as HTMLElement).getByText(/^duration$/)).toBeInTheDocument();
     expect(within(runPanelMeta as HTMLElement).getByText(/elapsed$/)).toBeInTheDocument();
-    expect(within(screen.getByLabelText("native job steps")).getAllByText(/elapsed/).length).toBeGreaterThanOrEqual(2);
+    expect(within(screen.getByLabelText("runner job steps")).getAllByText(/elapsed/).length).toBeGreaterThanOrEqual(2);
     expect(await screen.findByText("Click a step to see its logs.")).toBeInTheDocument();
     expect(screen.queryByText(/cloning repo/)).not.toBeInTheDocument();
-    expect(within(screen.getByLabelText("native job steps")).getByRole("button", { name: /Build validation image/ })).toBeInTheDocument();
+    expect(within(screen.getByLabelText("runner job steps")).getByRole("button", { name: /Build validation image/ })).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("button", { name: /Build validation image/ }));
     await waitFor(() => {
@@ -965,11 +965,11 @@ describe("IssueDetailView run execution graph", () => {
       if (url.pathname === "/v1/issues/by-number/ambience/172/graph") return json(issueGraph);
       if (url.pathname === "/v1/projects/ambience/issues/172/runs/7/cycles/1/graph") return json(abortedProjection());
       if (url.pathname === "/v1/workflows") return json([]);
-      if (url.pathname === "/v1/projects/ambience/issues/172/runs/7.1/native/events") {
+      if (url.pathname === "/v1/projects/ambience/issues/172/runs/7.1/run/events") {
         return json({
-          ...nativeEvents,
+          ...runnerEvents,
           events: [{
-            ...nativeEvents.events[0],
+            ...runnerEvents.events[0],
             seq: 4,
             event: "step_aborted",
             step_slug: "probe-mod-set",
@@ -999,7 +999,7 @@ describe("IssueDetailView run execution graph", () => {
       if (url.pathname === "/v1/issues/by-number/ambience/172/graph") return json(issueGraph);
       if (url.pathname === "/v1/projects/ambience/issues/172/runs/7/cycles/1/graph") return json(runProjection);
       if (url.pathname === "/v1/workflows") return json([]);
-      if (url.pathname === "/v1/projects/ambience/issues/172/runs/7.1/native/events") return json(nativeEvents);
+      if (url.pathname === "/v1/projects/ambience/issues/172/runs/7.1/run/events") return json(runnerEvents);
       throw new Error(`unhandled fetch ${url.pathname}`);
     }));
 
@@ -1015,7 +1015,7 @@ describe("IssueDetailView run execution graph", () => {
         "/projects/ambience/issues/172/runs/7/cycles/1/phases/env-prep",
       );
     });
-    expect(await screen.findByText("native job inspector")).toBeInTheDocument();
+    expect(await screen.findByText("runner job inspector")).toBeInTheDocument();
   });
 
   it("surfaces completed job cost in the selected job log section", async () => {
@@ -1050,7 +1050,7 @@ describe("IssueDetailView run execution graph", () => {
       if (url.pathname === "/v1/issues/by-number/ambience/172/graph") return json(issueGraph);
       if (url.pathname === "/v1/projects/ambience/issues/172/runs/7/cycles/1/graph") return json(selectedProjection);
       if (url.pathname === "/v1/workflows") return json([]);
-      if (url.pathname === "/v1/projects/ambience/issues/172/runs/7.1/native/events") return json(nativeEvents);
+      if (url.pathname === "/v1/projects/ambience/issues/172/runs/7.1/run/events") return json(runnerEvents);
       throw new Error(`unhandled fetch ${url.pathname}`);
     }));
 
@@ -1064,7 +1064,7 @@ describe("IssueDetailView run execution graph", () => {
 
     expect(await screen.findByText("job cost")).toBeInTheDocument();
     expect(screen.getAllByText("$2.3456").length).toBeGreaterThanOrEqual(2);
-    expect(within(screen.getByLabelText("native job steps")).getByText("ran 6m 0s")).toBeInTheDocument();
+    expect(within(screen.getByLabelText("runner job steps")).getByText("ran 6m 0s")).toBeInTheDocument();
   });
 
   it("links selected dynamic verification case evidence from the step detail", async () => {
@@ -1156,8 +1156,8 @@ describe("IssueDetailView run execution graph", () => {
       if (url.pathname === "/v1/issues/by-number/ambience/172/graph") return json(issueGraph);
       if (url.pathname === "/v1/projects/ambience/issues/172/runs/7/cycles/1/graph") return json(evidenceProjection);
       if (url.pathname === "/v1/workflows") return json([]);
-      if (url.pathname === "/v1/projects/ambience/issues/172/runs/7.1/native/events") {
-        return json({ ...nativeEvents, attempt_index: 2, job_id: "llm-verify", events: [] });
+      if (url.pathname === "/v1/projects/ambience/issues/172/runs/7.1/run/events") {
+        return json({ ...runnerEvents, attempt_index: 2, job_id: "llm-verify", events: [] });
       }
       throw new Error(`unhandled fetch ${url.pathname}`);
     }));
@@ -1165,12 +1165,12 @@ describe("IssueDetailView run execution graph", () => {
     renderIssueDetail("/projects/ambience/issues/172/runs/7/cycles/1/phases/llm-verify/jobs/llm-verify/steps/emit-case-03");
 
     const evidenceStrip = await screen.findByLabelText("step evidence");
-    expect(evidenceStrip.closest(".native-log-content")).toBeTruthy();
+    expect(evidenceStrip.closest(".runner-log-content")).toBeTruthy();
     expect(evidenceStrip.querySelector("video")).toHaveAttribute(
       "src",
       "/v1/artifacts/runs/ambience/run-7/videos/dev-paper-lanterns-release-pulse.webm",
     );
-    expect(evidenceStrip.querySelector("video")?.closest(".native-evidence-item")).toHaveClass("failed");
+    expect(evidenceStrip.querySelector("video")?.closest(".runner-evidence-item")).toHaveClass("failed");
     expect(within(evidenceStrip).getByRole("img", { name: "dev paper lanterns release pulse decoded frame" })).toHaveAttribute(
       "src",
       "/v1/artifacts/runs/ambience/run-7/screenshots/dev-paper-lanterns-release-pulse-frame.png",
@@ -1260,8 +1260,8 @@ describe("IssueDetailView run execution graph", () => {
       if (url.pathname === "/v1/issues/by-number/ambience/172/graph") return json(issueGraph);
       if (url.pathname === "/v1/projects/ambience/issues/172/runs/7/cycles/1/graph") return json(evidenceProjection);
       if (url.pathname === "/v1/workflows") return json([]);
-      if (url.pathname === "/v1/projects/ambience/issues/172/runs/7.1/native/events") {
-        return json({ ...nativeEvents, attempt_index: 2, job_id: "llm-verify", events: [] });
+      if (url.pathname === "/v1/projects/ambience/issues/172/runs/7.1/run/events") {
+        return json({ ...runnerEvents, attempt_index: 2, job_id: "llm-verify", events: [] });
       }
       throw new Error(`unhandled fetch ${url.pathname}`);
     }));
@@ -1269,23 +1269,23 @@ describe("IssueDetailView run execution graph", () => {
     renderIssueDetail("/projects/ambience/issues/172/runs/7/cycles/1/phases/llm-verify/jobs/llm-verify");
 
     expect(await screen.findByText("Click a step to see its logs.")).toBeInTheDocument();
-    const logContent = document.querySelector(".native-log-content");
+    const logContent = document.querySelector(".runner-log-content");
     expect(logContent).not.toBeNull();
     expect(within(logContent as HTMLElement).queryByLabelText("step evidence")).not.toBeInTheDocument();
 
     const collected = await screen.findByLabelText("collected test evidence");
-    expect(collected.closest(".native-log-content")).toBe(logContent);
+    expect(collected.closest(".runner-log-content")).toBe(logContent);
     expect(within(collected).getByText("Collected test evidence:")).toBeInTheDocument();
     expect(within(collected).getByRole("img", { name: "dev paper lanterns default frame" })).toHaveAttribute(
       "src",
       "/v1/artifacts/runs/ambience/run-7/screenshots/dev-paper-lanterns-default-frame.png",
     );
-    expect(within(collected).getByRole("img", { name: "dev paper lanterns default frame" }).closest(".native-evidence-item")).toHaveClass("passed");
+    expect(within(collected).getByRole("img", { name: "dev paper lanterns default frame" }).closest(".runner-evidence-item")).toHaveClass("passed");
     expect(within(collected).getByRole("link", { name: "video: dev paper lanterns release pulse 10s" })).toHaveAttribute(
       "href",
       "/v1/artifacts/runs/ambience/run-7/videos/dev-paper-lanterns-release-pulse.webm",
     );
-    expect(within(collected).getByRole("link", { name: "video: dev paper lanterns release pulse 10s" }).closest(".native-evidence-item")).toHaveClass("failed");
+    expect(within(collected).getByRole("link", { name: "video: dev paper lanterns release pulse 10s" }).closest(".runner-evidence-item")).toHaveClass("failed");
 
     await userEvent.click(screen.getByRole("button", { name: "view evidence for dev-paper-lanterns-release-pulse" }));
 
@@ -1293,15 +1293,15 @@ describe("IssueDetailView run execution graph", () => {
       "/projects/ambience/issues/172/runs/7/cycles/1/phases/llm-verify/jobs/llm-verify",
     );
     const testSetEvidence = await screen.findByLabelText("test set evidence");
-    expect(testSetEvidence.closest(".native-log-content")).toBe(logContent);
+    expect(testSetEvidence.closest(".runner-log-content")).toBe(logContent);
     expect(within(logContent as HTMLElement).getByText("Click a step to see its logs.")).toBeInTheDocument();
     expect(within(testSetEvidence).getByRole("link", { name: "video: dev paper lanterns release pulse 10s" })).toHaveAttribute(
       "href",
       "/v1/artifacts/runs/ambience/run-7/videos/dev-paper-lanterns-release-pulse.webm",
     );
-    expect(within(testSetEvidence).getByRole("link", { name: "video: dev paper lanterns release pulse 10s" }).closest(".native-evidence-item")).toHaveClass("failed");
+    expect(within(testSetEvidence).getByRole("link", { name: "video: dev paper lanterns release pulse 10s" }).closest(".runner-evidence-item")).toHaveClass("failed");
     expect(within(testSetEvidence).queryByText("frame: dev paper lanterns default frame")).not.toBeInTheDocument();
-    expect(within(screen.getByLabelText("native job steps")).getByRole("button", { name: /emit-case-03/ })).toBeInTheDocument();
+    expect(within(screen.getByLabelText("runner job steps")).getByRole("button", { name: /emit-case-03/ })).toBeInTheDocument();
   });
 
   it("summarizes spawned verification agents without stacking long job names", async () => {
@@ -1374,8 +1374,8 @@ describe("IssueDetailView run execution graph", () => {
       if (url.pathname === "/v1/issues/by-number/ambience/172/graph") return json(issueGraph);
       if (url.pathname === "/v1/projects/ambience/issues/172/runs/7/cycles/1/graph") return json(projectionWithInnerJobs);
       if (url.pathname === "/v1/workflows") return json([]);
-      if (url.pathname === "/v1/projects/ambience/issues/172/runs/7.1/native/events") {
-        return json({ ...nativeEvents, attempt_index: 2, job_id: "llm-verify", events: [] });
+      if (url.pathname === "/v1/projects/ambience/issues/172/runs/7.1/run/events") {
+        return json({ ...runnerEvents, attempt_index: 2, job_id: "llm-verify", events: [] });
       }
       throw new Error(`unhandled fetch ${url.pathname}`);
     }));
@@ -1400,7 +1400,7 @@ describe("IssueDetailView run execution graph", () => {
     expect(screen.queryByText("ambience-slot-1/agent-cb5d677f-78b1-4b3f-af3a-23745d4c33d9-vc1-2")).not.toBeInTheDocument();
   });
 
-  it("renders LLM native step JSON as a transcript while keeping raw logs available", async () => {
+  it("renders LLM runner step JSON as a transcript while keeping raw logs available", async () => {
     const agentProjection = {
       ...runProjection,
       runs: [{
@@ -1460,14 +1460,14 @@ describe("IssueDetailView run execution graph", () => {
       if (url.pathname === "/v1/issues/by-number/ambience/172/graph") return json(agentGraph);
       if (url.pathname === "/v1/projects/ambience/issues/172/runs/7/cycles/1/graph") return json(agentProjection);
       if (url.pathname === "/v1/workflows") return json([]);
-      if (url.pathname === "/v1/projects/ambience/issues/172/runs/7.1/native/events") return json(agentNativeEvents);
+      if (url.pathname === "/v1/projects/ambience/issues/172/runs/7.1/run/events") return json(agentRunnerEvents);
       throw new Error(`unhandled fetch ${url.pathname}`);
     }));
 
     renderIssueDetail("/projects/ambience/issues/172/runs/7/cycles/1/phases/agent-execute/jobs/agent/steps/run-agent");
 
     expect(await screen.findByLabelText("agent transcript")).toBeInTheDocument();
-    expect(screen.getByRole("group", { name: "native log view" })).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "runner log view" })).toBeInTheDocument();
     expect(screen.getByText("I will inspect the file.")).toBeInTheDocument();
     expect(screen.getAllByText("Read").length).toBeGreaterThanOrEqual(1);
     const reasoningSummary = screen.getByText("reasoning signature").closest("summary");
@@ -1498,21 +1498,21 @@ describe("IssueDetailView run execution graph", () => {
     const agentProjection = activeAgentProjection();
     const agentGraph = { ...issueGraph, projection: agentProjection };
     const noisyAgentEvents = {
-      ...agentNativeEvents,
+      ...agentRunnerEvents,
       events: [
         {
-          ...agentNativeEvents.events[0],
+          ...agentRunnerEvents.events[0],
           seq: 0,
           message: "{",
           metadata: { stream: "stdout" },
         },
         {
-          ...agentNativeEvents.events[0],
+          ...agentRunnerEvents.events[0],
           seq: 1,
           message: "  \"namespace\": \"ambience-slot-2\",",
           metadata: { stream: "stdout" },
         },
-        ...agentNativeEvents.events.map((event) => ({ ...event, seq: event.seq + 10 })),
+        ...agentRunnerEvents.events.map((event) => ({ ...event, seq: event.seq + 10 })),
       ],
     };
 
@@ -1527,7 +1527,7 @@ describe("IssueDetailView run execution graph", () => {
       if (url.pathname === "/v1/issues/by-number/ambience/172/graph") return json(agentGraph);
       if (url.pathname === "/v1/projects/ambience/issues/172/runs/7/cycles/1/graph") return json(agentProjection);
       if (url.pathname === "/v1/workflows") return json([]);
-      if (url.pathname === "/v1/projects/ambience/issues/172/runs/7.1/native/events") return json(noisyAgentEvents);
+      if (url.pathname === "/v1/projects/ambience/issues/172/runs/7.1/run/events") return json(noisyAgentEvents);
       throw new Error(`unhandled fetch ${url.pathname}`);
     }));
 
@@ -1548,8 +1548,8 @@ describe("IssueDetailView run execution graph", () => {
   it("keeps non-agent steps in an LLM job on the raw terminal view", async () => {
     const agentProjection = activeAgentProjection();
     const agentGraph = { ...issueGraph, projection: agentProjection };
-    const checkoutNativeEvents = {
-      ...agentNativeEvents,
+    const checkoutRunnerEvents = {
+      ...agentRunnerEvents,
       events: [{
         project: "ambience",
         run_ref: "ambience#172/runs/7.1",
@@ -1577,7 +1577,7 @@ describe("IssueDetailView run execution graph", () => {
       if (url.pathname === "/v1/issues/by-number/ambience/172/graph") return json(agentGraph);
       if (url.pathname === "/v1/projects/ambience/issues/172/runs/7/cycles/1/graph") return json(agentProjection);
       if (url.pathname === "/v1/workflows") return json([]);
-      if (url.pathname === "/v1/projects/ambience/issues/172/runs/7.1/native/events") return json(checkoutNativeEvents);
+      if (url.pathname === "/v1/projects/ambience/issues/172/runs/7.1/run/events") return json(checkoutRunnerEvents);
       throw new Error(`unhandled fetch ${url.pathname}`);
     }));
 
@@ -1587,17 +1587,17 @@ describe("IssueDetailView run execution graph", () => {
       element?.tagName === "PRE" && content.includes("$ step checkout")
     ))).toBeInTheDocument();
     expect(screen.queryByLabelText("agent transcript")).not.toBeInTheDocument();
-    expect(screen.queryByRole("group", { name: "native log view" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: "runner log view" })).not.toBeInTheDocument();
     expect(screen.getByText((content, element) => (
       element?.tagName === "PRE" && content.includes("{")
     ))).toBeInTheDocument();
   });
 
-  it("pages native events in fixed batches without accumulating prior rows", async () => {
+  it("pages runner events in fixed batches without accumulating prior rows", async () => {
     const agentProjection = activeAgentProjection();
     const agentGraph = { ...issueGraph, projection: agentProjection };
     const firstPageEvents = {
-      ...agentNativeEvents,
+      ...agentRunnerEvents,
       events: Array.from({ length: 200 }, (_, index) => {
         const seq = index + 1;
         return agentPageEvent(seq, [{
@@ -1609,7 +1609,7 @@ describe("IssueDetailView run execution graph", () => {
       }),
     };
     const secondPageEvents = {
-      ...agentNativeEvents,
+      ...agentRunnerEvents,
       events: [
         agentPageEvent(201, [{ type: "text", text: "Readable line on the second batch." }]),
       ],
@@ -1627,7 +1627,7 @@ describe("IssueDetailView run execution graph", () => {
       if (url.pathname === "/v1/issues/by-number/ambience/172/graph") return json(agentGraph);
       if (url.pathname === "/v1/projects/ambience/issues/172/runs/7/cycles/1/graph") return json(agentProjection);
       if (url.pathname === "/v1/workflows") return json([]);
-      if (url.pathname === "/v1/projects/ambience/issues/172/runs/7.1/native/events") {
+      if (url.pathname === "/v1/projects/ambience/issues/172/runs/7.1/run/events") {
         eventSearches.push(url.search);
         return json(url.searchParams.get("after_seq") === "200" ? secondPageEvents : firstPageEvents);
       }
@@ -1703,12 +1703,12 @@ describe("IssueDetailView run execution graph", () => {
         "/projects/ambience/issues/172/runs/7/cycles/1/phases/agent-execute/jobs/agent",
       );
     });
-    expect(await screen.findByText("native job inspector")).toBeInTheDocument();
+    expect(await screen.findByText("runner job inspector")).toBeInTheDocument();
     expect(screen.getByText("planned")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Checkout workspace/ })).toBeInTheDocument();
     expect(screen.getByText("Click a step to see its logs.")).toBeInTheDocument();
 
-    await userEvent.click(within(screen.getByLabelText("native job steps")).getByRole("button", { name: /Run agent/ }));
+    await userEvent.click(within(screen.getByLabelText("runner job steps")).getByRole("button", { name: /Run agent/ }));
     await waitFor(() => {
       expect(screen.getByTestId("path")).toHaveTextContent(
         "/projects/ambience/issues/172/runs/7/cycles/1/phases/agent-execute/jobs/agent/steps/run-agent",

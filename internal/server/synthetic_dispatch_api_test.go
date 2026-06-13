@@ -33,10 +33,10 @@ func (s *fakeSyntheticCopyDispatchStore) ReadRunForReplay(_ context.Context, _ s
 	return s.sourceRun, nil
 }
 
-func newSyntheticDispatchTestHandler(store ReadStore, nativeLauncher NativeLauncher) http.Handler {
+func newSyntheticDispatchTestHandler(store ReadStore, runLauncher RunLauncher) http.Handler {
 	adminAuthenticator := fakeAdminAuthenticator{user: auth.User{Sub: "admin"}}
 	mux := http.NewServeMux()
-	mux.Handle("POST /v1/runs/synthetic-dispatch", requireAdmin(adminAuthenticator, http.HandlerFunc(syntheticDispatchRunHandler(Settings{}, store, nativeLauncher))))
+	mux.Handle("POST /v1/runs/synthetic-dispatch", requireAdmin(adminAuthenticator, http.HandlerFunc(syntheticDispatchRunHandler(Settings{}, store, runLauncher))))
 	return mux
 }
 
@@ -45,7 +45,7 @@ func TestSyntheticDispatchStartsAtRequestedPhaseWithSuppliedOutputs(t *testing.T
 	store.wf.Phases[1].Inputs = map[string]string{
 		"issue_contract": "${{ phases.prepare.outputs.issue_contract }}",
 	}
-	launcher := &fakeNativeLauncher{}
+	launcher := &fakeRunLauncher{}
 	body, _ := json.Marshal(SyntheticDispatchRequest{
 		Project:      "proj",
 		IssueNumber:  7,
@@ -114,7 +114,7 @@ func TestSyntheticDispatchCopiesSelectedPhaseOutputsFromPriorRun(t *testing.T) {
 			}},
 		},
 	}
-	launcher := &fakeNativeLauncher{}
+	launcher := &fakeRunLauncher{}
 	body, _ := json.Marshal(SyntheticDispatchRequest{
 		Project:      "proj",
 		IssueNumber:  7,
@@ -186,7 +186,7 @@ func TestSyntheticDispatchRejectsCopiedPhaseAtOrAfterStart(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/v1/runs/synthetic-dispatch", bytes.NewReader(body))
 	req.Header.Set("Authorization", "Bearer admin")
 
-	newSyntheticDispatchTestHandler(store, &fakeNativeLauncher{}).ServeHTTP(rec, req)
+	newSyntheticDispatchTestHandler(store, &fakeRunLauncher{}).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
@@ -212,7 +212,7 @@ func TestSyntheticDispatchRejectsMissingSlotLease(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/v1/runs/synthetic-dispatch", bytes.NewReader(body))
 	req.Header.Set("Authorization", "Bearer admin")
 
-	newSyntheticDispatchTestHandler(store, &fakeNativeLauncher{}).ServeHTTP(rec, req)
+	newSyntheticDispatchTestHandler(store, &fakeRunLauncher{}).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
@@ -246,7 +246,7 @@ func TestSyntheticDispatchRejectsUnsatisfiedStartInputs(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/v1/runs/synthetic-dispatch", bytes.NewReader(body))
 	req.Header.Set("Authorization", "Bearer admin")
 
-	newSyntheticDispatchTestHandler(store, &fakeNativeLauncher{}).ServeHTTP(rec, req)
+	newSyntheticDispatchTestHandler(store, &fakeRunLauncher{}).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())

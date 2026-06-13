@@ -14,9 +14,9 @@ import (
 // filter the dispatcher uses. It only returns indices whose state is
 // `provisioned` and which fall inside the project's declared 1..count
 // bound. The function exists so the contract is testable without a
-// database round trip; nativeReadySlots exercises the pg-backed callsite.
+// database round trip; runnerReadySlots exercises the pg-backed callsite.
 //
-// The bug this fix repairs (PR #518 left nativeReadySlots reading
+// The bug this fix repairs (PR #518 left runnerReadySlots reading
 // project metadata that #518 stopped populating) means the production
 // observation before the fix was "0 ready slots, every checkout 503s,
 // glimmung_unavailable_total ticks". The fixture cases below pin the
@@ -97,7 +97,7 @@ func TestSelectAvailableNativeSlotUsesProjectLocalClaims(t *testing.T) {
 		return leaseDoc{
 			Project:  project,
 			State:    "claimed",
-			Metadata: map[string]any{"native_slot_index": strconv.Itoa(slot)},
+			Metadata: map[string]any{"runner_slot_index": strconv.Itoa(slot)},
 		}
 	}
 	cases := []struct {
@@ -150,7 +150,7 @@ func TestSelectAvailableNativeSlotUsesProjectLocalClaims(t *testing.T) {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			got := selectAvailableNativeSlot("ambience", tc.ready, tc.claimed)
+			got := selectAvailableRunnerSlot("ambience", tc.ready, tc.claimed)
 			if tc.want == nil {
 				if got != nil {
 					t.Fatalf("got %v, want nil", *got)

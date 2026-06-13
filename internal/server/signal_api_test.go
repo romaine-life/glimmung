@@ -123,7 +123,7 @@ func (s *fakeSignalDrainStore) RecordTouchpointDecision(_ context.Context, proje
 	return nil
 }
 
-func (s *fakeSignalDrainStore) RecordNativeJobsSkipped(_ context.Context, _, _, _ string, _ map[string]string) error {
+func (s *fakeSignalDrainStore) RecordRunnerJobsSkipped(_ context.Context, _, _, _ string, _ map[string]string) error {
 	return nil
 }
 
@@ -179,12 +179,12 @@ func (s *fakeSignalDrainStore) GetWorkflowByName(context.Context, string, string
 		Project: "glimmung",
 		Name:    "agent",
 		Phases: []PhaseSpec{
-			{Name: "prepare", Kind: "k8s_job", Outputs: []string{"issue_contract"}, Jobs: []NativeJobSpec{{ID: "issue-contract"}}},
+			{Name: "prepare", Kind: "k8s_job", Outputs: []string{"issue_contract"}, Jobs: []RunnerJobSpec{{ID: "issue-contract"}}},
 			{Name: "impl", Kind: "k8s_job", Verify: true, RecyclePolicy: &RecyclePolicy{MaxAttempts: 1, On: []string{"verify_fail"}, LandsAt: "prepare"}, DependsOn: []string{"prepare"}, Jobs: verificationCaseJobsForTest()},
-			{Name: "cleanup_early", Kind: "k8s_job", RunOn: PhaseRunOnAlways, Purpose: PhasePurposeTeardown, When: "${{ run.preserve_test_env }} == 'false'", DependsOn: []string{"impl"}, Jobs: []NativeJobSpec{{ID: "cleanup-early"}}},
-			{Name: "touchpoint", Kind: "k8s_job", RunOn: PhaseRunOnSuccess, Purpose: PhasePurposeReviewTouchpoint, DependsOn: []string{"cleanup_early"}, Jobs: []NativeJobSpec{{ID: "pr-touchpoint", Primitive: JobPrimitivePRTouchpoint, Managed: true}}},
-			{Name: "touchpoint_gate", Kind: "k8s_job", Purpose: PhasePurposeReviewGate, DependsOn: []string{"touchpoint"}, Jobs: []NativeJobSpec{{ID: "pr-merge", Primitive: JobPrimitivePRMerge, Managed: true}}},
-			{Name: "cleanup_final", Kind: "k8s_job", RunOn: PhaseRunOnAlways, Purpose: PhasePurposeTeardown, DependsOn: []string{"touchpoint_gate"}, Jobs: []NativeJobSpec{{ID: "cleanup-final"}}},
+			{Name: "cleanup_early", Kind: "k8s_job", RunOn: PhaseRunOnAlways, Purpose: PhasePurposeTeardown, When: "${{ run.preserve_test_env }} == 'false'", DependsOn: []string{"impl"}, Jobs: []RunnerJobSpec{{ID: "cleanup-early"}}},
+			{Name: "touchpoint", Kind: "k8s_job", RunOn: PhaseRunOnSuccess, Purpose: PhasePurposeReviewTouchpoint, DependsOn: []string{"cleanup_early"}, Jobs: []RunnerJobSpec{{ID: "pr-touchpoint", Primitive: JobPrimitivePRTouchpoint, Managed: true}}},
+			{Name: "touchpoint_gate", Kind: "k8s_job", Purpose: PhasePurposeReviewGate, DependsOn: []string{"touchpoint"}, Jobs: []RunnerJobSpec{{ID: "pr-merge", Primitive: JobPrimitivePRMerge, Managed: true}}},
+			{Name: "cleanup_final", Kind: "k8s_job", RunOn: PhaseRunOnAlways, Purpose: PhasePurposeTeardown, DependsOn: []string{"touchpoint_gate"}, Jobs: []RunnerJobSpec{{ID: "cleanup-final"}}},
 		},
 		PR: PrPrimitive{RecyclePolicy: &RecyclePolicy{MaxAttempts: 3, LandsAt: "impl"}},
 	}, nil
@@ -232,12 +232,12 @@ func (s *fakeSignalDrainStore) StartRunCycle(context.Context, StartRunCycleReque
 
 func (s *fakeSignalDrainStore) AcquireLease(context.Context, LeaseAcquireRequest) (Lease, error) {
 	one := 1
-	return Lease{Project: "glimmung", LeaseNumber: &one, Host: stringPtr("native-k8s"), State: "claimed", Metadata: map[string]any{"native_k8s": true, "native_slot_name": "slot-1"}}, nil
+	return Lease{Project: "glimmung", LeaseNumber: &one, Host: stringPtr("runner-k8s"), State: "claimed", Metadata: map[string]any{"runner_k8s": true, "runner_slot_name": "slot-1"}}, nil
 }
 
 func (s *fakeSignalDrainStore) ReadLeaseByRef(context.Context, string, string) (Lease, error) {
 	one := 1
-	return Lease{Project: "glimmung", LeaseNumber: &one, Host: stringPtr("native-k8s"), State: "claimed", Metadata: map[string]any{"native_k8s": true, "native_slot_name": "slot-1"}}, nil
+	return Lease{Project: "glimmung", LeaseNumber: &one, Host: stringPtr("runner-k8s"), State: "claimed", Metadata: map[string]any{"runner_k8s": true, "runner_slot_name": "slot-1"}}, nil
 }
 
 func (s *fakeSignalDrainStore) CancelLeaseByRef(context.Context, string, string) (CancelLeaseResult, error) {
@@ -265,13 +265,13 @@ func TestDrainSignalsDispatchesRequestChangesTriage(t *testing.T) {
 		EnqueuedAt: time.Now(),
 	}}}
 
-	launcher := &fakeNativeLauncher{}
+	launcher := &fakeRunLauncher{}
 	result, err := DrainSignals(context.Background(), store, launcher, 10)
 	if err != nil {
 		t.Fatalf("DrainSignals: %v", err)
 	}
 	if !launcher.called {
-		t.Fatal("expected native launcher to be called")
+		t.Fatal("expected run launcher to be called")
 	}
 	if result.Processed != 1 || store.processedDecision != triageDispatch {
 		t.Fatalf("result=%#v decision=%q", result, store.processedDecision)

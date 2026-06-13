@@ -105,7 +105,7 @@ type runnerConfig struct {
 	AgentRuntime        agentruntime.Snapshot
 }
 
-type nativeRunner struct {
+type runner struct {
 	cfg                runnerConfig
 	client             *http.Client
 	seq                int
@@ -120,7 +120,7 @@ type nativeRunner struct {
 	costErr            error
 }
 
-type nativeEventRequest struct {
+type runnerEventRequest struct {
 	JobID        string         `json:"job_id"`
 	Seq          int            `json:"seq"`
 	Event        string         `json:"event"`
@@ -210,7 +210,7 @@ func main() {
 		log.Printf("configure runner: %v", err)
 		os.Exit(1)
 	}
-	r := &nativeRunner{
+	r := &runner{
 		cfg:     cfg,
 		client:  &http.Client{Timeout: 30 * time.Second},
 		outputs: map[string]string{},
@@ -228,7 +228,7 @@ func main() {
 	signalCtx, stopSignals := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stopSignals()
 	if err := r.run(signalCtx); err != nil {
-		log.Printf("native runner failed: %v", err)
+		log.Printf("runner failed: %v", err)
 		os.Exit(1)
 	}
 }
@@ -281,7 +281,7 @@ func runnerConfigFromEnv() (runnerConfig, error) {
 	}, nil
 }
 
-func (r *nativeRunner) run(ctx context.Context) error {
+func (r *runner) run(ctx context.Context) error {
 	if err := os.MkdirAll(r.cfg.Workspace, 0o755); err != nil {
 		_ = r.completeOrShutdown(ctx, "failure", "create workspace: "+err.Error())
 		return err
@@ -372,7 +372,7 @@ type dynamicCase struct {
 	Label string
 }
 
-func (r *nativeRunner) runDynamicStepBlock(ctx context.Context, block []stepSpec) error {
+func (r *runner) runDynamicStepBlock(ctx context.Context, block []stepSpec) error {
 	if len(block) == 0 {
 		return nil
 	}
@@ -504,7 +504,7 @@ func dynamicPlannedStepMetadata(steps []stepSpec) []map[string]any {
 	return out
 }
 
-func (r *nativeRunner) dynamicCasesForGroup(group string, maxItems int) ([]dynamicCase, error) {
+func (r *runner) dynamicCasesForGroup(group string, maxItems int) ([]dynamicCase, error) {
 	keys := dynamicCaseOutputKeys(group)
 	for _, key := range keys.jsonKeys {
 		raw := strings.TrimSpace(r.outputs[key])
@@ -635,7 +635,7 @@ func dynamicCaseLabel(item any, index int) string {
 // has set it to a non-empty value, signalling a fail-closed abort. Outputs
 // are only written on the main goroutine (publishOutputs runs synchronously
 // after each step), so an unlocked read here is race-free.
-func (r *nativeRunner) requestedAbortReason() string {
+func (r *runner) requestedAbortReason() string {
 	return strings.TrimSpace(r.outputs[decision.AbortReasonOutputKey])
 }
 
@@ -643,7 +643,7 @@ func (r *nativeRunner) requestedAbortReason() string {
 // has been cancelled. NotifyContext cancels its returned context on the
 // first SIGTERM/SIGINT, so this is the precise distinction between
 // "child step failed on its own" and "we're being torn down."
-func (r *nativeRunner) shutdownRequested(ctx context.Context) bool {
+func (r *runner) shutdownRequested(ctx context.Context) bool {
 	return ctx.Err() != nil
 }
 
@@ -658,7 +658,7 @@ func (r *nativeRunner) shutdownRequested(ctx context.Context) bool {
 // to main() which exits non-zero. The Job's pod is already terminating;
 // the exit code is mostly cosmetic but a clean non-zero is correct
 // shape for "the runner was killed before it could finish its work."
-func (r *nativeRunner) completeShutdown(_ context.Context, summary string) error {
+func (r *runner) completeShutdown(_ context.Context, summary string) error {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownCompleteBudget)
 	defer cancel()
 	_ = r.postEvent(shutdownCtx, "runner_failed", nil, summary, nil, nil)
@@ -673,14 +673,14 @@ func (r *nativeRunner) completeShutdown(_ context.Context, summary string) error
 // completeOrShutdown picks the right conclusion based on whether the
 // supplied context has already been cancelled. Used for early-init
 // failures where we don't yet know if SIGTERM raced the failure.
-func (r *nativeRunner) completeOrShutdown(ctx context.Context, conclusion, summary string) error {
+func (r *runner) completeOrShutdown(ctx context.Context, conclusion, summary string) error {
 	if r.shutdownRequested(ctx) {
 		return r.completeShutdown(ctx, summary)
 	}
 	return r.complete(ctx, conclusion, summary)
 }
 
-func (r *nativeRunner) runStep(ctx context.Context, step stepSpec) error {
+func (r *runner) runStep(ctx context.Context, step stepSpec) error {
 	slug := strings.TrimSpace(step.Slug)
 	if slug == "" {
 		return errors.New("step slug required")
@@ -764,11 +764,11 @@ func stepEventMetadata(step stepSpec) map[string]any {
 	return metadata
 }
 
-func (r *nativeRunner) executeStep(ctx context.Context, step stepSpec, outputFile, completionFile string) (int, error) {
+func (r *runner) executeStep(ctx context.Context, step stepSpec, outputFile, completionFile string) (int, error) {
 	return r.executeStepWithEnv(ctx, step, outputFile, completionFile, os.Environ())
 }
 
-func (r *nativeRunner) executeStepWithEnv(ctx context.Context, step stepSpec, outputFile, completionFile string, baseEnv []string) (int, error) {
+func (r *runner) executeStepWithEnv(ctx context.Context, step stepSpec, outputFile, completionFile string, baseEnv []string) (int, error) {
 	workdir := firstNonEmpty(step.WorkingDirectory, r.cfg.Job.WorkingDirectory, r.cfg.Workspace)
 	if err := os.MkdirAll(workdir, 0o755); err != nil {
 		return 1, err
@@ -812,7 +812,7 @@ func (r *nativeRunner) executeStepWithEnv(ctx context.Context, step stepSpec, ou
 	return 1, waitErr
 }
 
-func (r *nativeRunner) executeAgentStep(ctx context.Context, step stepSpec, outputFile, completionFile string) (int, error) {
+func (r *runner) executeAgentStep(ctx context.Context, step stepSpec, outputFile, completionFile string) (int, error) {
 	workdir := firstNonEmpty(step.WorkingDirectory, r.cfg.Job.WorkingDirectory, r.cfg.Workspace)
 	if err := os.MkdirAll(workdir, 0o755); err != nil {
 		return 1, err
@@ -886,7 +886,7 @@ func (r *nativeRunner) executeAgentStep(ctx context.Context, step stepSpec, outp
 // mintAgentGithubTokenFile mints the repo-scoped agent GitHub token through
 // the run callback (runner-side — the agent never sees the mint URL) and
 // writes it to a 0600 file for GITHUB_TOKEN_FILE consumption.
-func (r *nativeRunner) mintAgentGithubTokenFile(ctx context.Context) (string, error) {
+func (r *runner) mintAgentGithubTokenFile(ctx context.Context) (string, error) {
 	if r.cfg.GitHubAgentTokenURL == "" {
 		return "", errors.New("GLIMMUNG_GITHUB_AGENT_TOKEN_URL is not configured")
 	}
@@ -997,7 +997,7 @@ func agentStepBaseEnv(base []string) []string {
 	return filtered
 }
 
-func (r *nativeRunner) agentPrompt(workdir string, step stepSpec, spec agentStepSpec, slot string, profile agentruntime.ResolvedProfile) (string, error) {
+func (r *runner) agentPrompt(workdir string, step stepSpec, spec agentStepSpec, slot string, profile agentruntime.ResolvedProfile) (string, error) {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# Glimmung agent task\n\n")
 	fmt.Fprintf(&b, "- run: %s\n", strings.TrimSpace(os.Getenv("GLIMMUNG_RUN_REF")))
@@ -1193,7 +1193,7 @@ func shellCommand(shell, script string) (string, []string) {
 	}
 }
 
-func (r *nativeRunner) streamLogs(ctx context.Context, wg *sync.WaitGroup, stepSlug, stream string, reader io.Reader) {
+func (r *runner) streamLogs(ctx context.Context, wg *sync.WaitGroup, stepSlug, stream string, reader io.Reader) {
 	defer wg.Done()
 	scanner := bufio.NewScanner(reader)
 	scanner.Buffer(make([]byte, 0, 64*1024), maxScannerTokenBytes)
@@ -1206,7 +1206,7 @@ func (r *nativeRunner) streamLogs(ctx context.Context, wg *sync.WaitGroup, stepS
 		case evidenceTarStartMarker:
 			suppressEvidenceTar = true
 			suppressedEvidenceLines = 0
-			r.forwardLogLine(ctx, stepSlug, stream, evidenceTarStartMarker+" payload omitted from native runner logs")
+			r.forwardLogLine(ctx, stepSlug, stream, evidenceTarStartMarker+" payload omitted from runner logs")
 			continue
 		case evidenceTarEndMarker:
 			if suppressEvidenceTar {
@@ -1223,7 +1223,7 @@ func (r *nativeRunner) streamLogs(ctx context.Context, wg *sync.WaitGroup, stepS
 		r.forwardLogLine(ctx, stepSlug, stream, line)
 	}
 	if suppressEvidenceTar {
-		r.forwardLogLine(ctx, stepSlug, stream, fmt.Sprintf("unterminated evidence tar payload omitted from native runner logs after %d lines", suppressedEvidenceLines))
+		r.forwardLogLine(ctx, stepSlug, stream, fmt.Sprintf("unterminated evidence tar payload omitted from runner logs after %d lines", suppressedEvidenceLines))
 	}
 	if err := scanner.Err(); err != nil {
 		msg := "log stream read failed: " + err.Error()
@@ -1234,7 +1234,7 @@ func (r *nativeRunner) streamLogs(ctx context.Context, wg *sync.WaitGroup, stepS
 	}
 }
 
-func (r *nativeRunner) forwardLogLine(ctx context.Context, stepSlug, stream, line string) {
+func (r *runner) forwardLogLine(ctx context.Context, stepSlug, stream, line string) {
 	if line == "" {
 		line = " "
 	}
@@ -1249,7 +1249,7 @@ func (r *nativeRunner) forwardLogLine(ctx context.Context, stepSlug, stream, lin
 	r.postLogEvent(ctx, stepSlug, stream, line)
 }
 
-func (r *nativeRunner) postLogEvent(ctx context.Context, stepSlug, stream, line string) {
+func (r *runner) postLogEvent(ctx context.Context, stepSlug, stream, line string) {
 	if r.cfg.EventsURL == "" {
 		return
 	}
@@ -1278,7 +1278,7 @@ func sanitizeForwardedLogLine(line string) string {
 	return line[:maxForwardedLogBytes] + fmt.Sprintf("... [truncated %d bytes]", omitted)
 }
 
-func (r *nativeRunner) publishOutputs(ctx context.Context, stepSlug string, outputs map[string]string) error {
+func (r *runner) publishOutputs(ctx context.Context, stepSlug string, outputs map[string]string) error {
 	keys := make([]string, 0, len(outputs))
 	for key := range outputs {
 		keys = append(keys, key)
@@ -1301,7 +1301,7 @@ func (r *nativeRunner) publishOutputs(ctx context.Context, stepSlug string, outp
 	return nil
 }
 
-func (r *nativeRunner) prepareCheckouts(ctx context.Context) error {
+func (r *runner) prepareCheckouts(ctx context.Context) error {
 	if r.cfg.Job.Checkout != nil {
 		if err := r.checkout(ctx, *r.cfg.Job.Checkout); err != nil {
 			return err
@@ -1315,7 +1315,7 @@ func (r *nativeRunner) prepareCheckouts(ctx context.Context) error {
 	return nil
 }
 
-func (r *nativeRunner) checkout(ctx context.Context, checkout checkoutSpec) error {
+func (r *runner) checkout(ctx context.Context, checkout checkoutSpec) error {
 	token, err := r.githubToken(ctx)
 	if err != nil {
 		return err
@@ -1349,7 +1349,7 @@ func (r *nativeRunner) checkout(ctx context.Context, checkout checkoutSpec) erro
 	return nil
 }
 
-func (r *nativeRunner) githubToken(ctx context.Context) (githubTokenResult, error) {
+func (r *runner) githubToken(ctx context.Context) (githubTokenResult, error) {
 	if r.githubTokenCache != nil {
 		return *r.githubTokenCache, nil
 	}
@@ -1391,7 +1391,7 @@ func shellSingleQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", `'\''`) + "'"
 }
 
-func (r *nativeRunner) nextSeq() int {
+func (r *runner) nextSeq() int {
 	r.mu.Lock()
 	r.seq++
 	seq := r.seq
@@ -1399,14 +1399,14 @@ func (r *nativeRunner) nextSeq() int {
 	return seq
 }
 
-func (r *nativeRunner) postEvent(ctx context.Context, event string, stepSlug *string, message string, exitCode *int, metadata map[string]any) error {
+func (r *runner) postEvent(ctx context.Context, event string, stepSlug *string, message string, exitCode *int, metadata map[string]any) error {
 	if r.cfg.EventsURL == "" {
 		return nil
 	}
 	return r.postEventWithSeq(ctx, r.nextSeq(), event, stepSlug, message, exitCode, metadata)
 }
 
-func (r *nativeRunner) postEventWithSeq(ctx context.Context, seq int, event string, stepSlug *string, message string, exitCode *int, metadata map[string]any) error {
+func (r *runner) postEventWithSeq(ctx context.Context, seq int, event string, stepSlug *string, message string, exitCode *int, metadata map[string]any) error {
 	if r.cfg.EventsURL == "" {
 		return nil
 	}
@@ -1414,7 +1414,7 @@ func (r *nativeRunner) postEventWithSeq(ctx context.Context, seq int, event stri
 	if message != "" {
 		messagePtr = &message
 	}
-	req := nativeEventRequest{
+	req := runnerEventRequest{
 		JobID:        r.cfg.JobID,
 		Seq:          seq,
 		Event:        event,
@@ -1427,7 +1427,7 @@ func (r *nativeRunner) postEventWithSeq(ctx context.Context, seq int, event stri
 	return r.postJSON(ctx, r.cfg.EventsURL, req, nil)
 }
 
-func (r *nativeRunner) complete(ctx context.Context, conclusion, summary string) error {
+func (r *runner) complete(ctx context.Context, conclusion, summary string) error {
 	if r.cfg.CompletedURL == "" {
 		return nil
 	}
@@ -1474,7 +1474,7 @@ func (r *nativeRunner) complete(ctx context.Context, conclusion, summary string)
 	return r.postJSON(ctx, r.cfg.CompletedURL, req, nil)
 }
 
-func (r *nativeRunner) observeLogCost(ctx context.Context, stepSlug, line string) {
+func (r *runner) observeLogCost(ctx context.Context, stepSlug, line string) {
 	profile, ok := r.usageProfile()
 	if !ok {
 		if _, observed, _ := agentcost.FromJSONLogLine(line, agentcost.Rate{}); observed {
@@ -1534,7 +1534,7 @@ func (r *nativeRunner) observeLogCost(ctx context.Context, stepSlug, line string
 // runner_warning events with the parse error so the operator knows
 // the registration was attempted but rejected. The pipeline does not
 // fail.
-func (r *nativeRunner) observeInnerJobMarker(ctx context.Context, stepSlug, line string) {
+func (r *runner) observeInnerJobMarker(ctx context.Context, stepSlug, line string) {
 	if !strings.HasPrefix(line, innerjob.Marker) {
 		return
 	}
@@ -1549,25 +1549,25 @@ func (r *nativeRunner) observeInnerJobMarker(ctx context.Context, stepSlug, line
 	_ = r.postEvent(ctx, "inner_job_registered", &stepSlug, "", nil, reg.Metadata())
 }
 
-func (r *nativeRunner) observedCostUSD() float64 {
+func (r *runner) observedCostUSD() float64 {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.costUSD
 }
 
-func (r *nativeRunner) observedAgentUsage() []agentUsage {
+func (r *runner) observedAgentUsage() []agentUsage {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return append([]agentUsage(nil), r.agentUsage...)
 }
 
-func (r *nativeRunner) observedCostError() error {
+func (r *runner) observedCostError() error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.costErr
 }
 
-func (r *nativeRunner) recordCostError(err error) {
+func (r *runner) recordCostError(err error) {
 	if err == nil {
 		return
 	}
@@ -1578,7 +1578,7 @@ func (r *nativeRunner) recordCostError(err error) {
 	r.mu.Unlock()
 }
 
-func (r *nativeRunner) setActiveUsageProfile(profile agentruntime.ResolvedProfile) func() {
+func (r *runner) setActiveUsageProfile(profile agentruntime.ResolvedProfile) func() {
 	r.mu.Lock()
 	previous := r.activeUsageProfile
 	current := profile
@@ -1591,7 +1591,7 @@ func (r *nativeRunner) setActiveUsageProfile(profile agentruntime.ResolvedProfil
 	}
 }
 
-func (r *nativeRunner) usageProfile() (agentruntime.ResolvedProfile, bool) {
+func (r *runner) usageProfile() (agentruntime.ResolvedProfile, bool) {
 	r.mu.Lock()
 	active := r.activeUsageProfile
 	if active != nil {
@@ -1603,7 +1603,7 @@ func (r *nativeRunner) usageProfile() (agentruntime.ResolvedProfile, bool) {
 	return r.cfg.AgentRuntime.ProfileForSlot(agentruntime.DefaultSlot)
 }
 
-func (r *nativeRunner) collectCompletionMetadata(path string, step stepSpec) error {
+func (r *runner) collectCompletionMetadata(path string, step stepSpec) error {
 	raw, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
@@ -1646,12 +1646,12 @@ func (r *nativeRunner) collectCompletionMetadata(path string, step stepSpec) err
 	return nil
 }
 
-func (r *nativeRunner) dynamicCaseFailed(index int) bool {
+func (r *runner) dynamicCaseFailed(index int) bool {
 	_, _, failed := r.dynamicCaseFailure(index)
 	return failed
 }
 
-func (r *nativeRunner) dynamicCaseFailureForStep(step stepSpec) (string, string, bool) {
+func (r *runner) dynamicCaseFailureForStep(step stepSpec) (string, string, bool) {
 	index, err := strconv.Atoi(strings.TrimSpace(step.Env["GLIMMUNG_DYNAMIC_CASE_INDEX"]))
 	if err != nil || index <= 0 {
 		return "", "", false
@@ -1659,7 +1659,7 @@ func (r *nativeRunner) dynamicCaseFailureForStep(step stepSpec) (string, string,
 	return r.dynamicCaseFailure(index)
 }
 
-func (r *nativeRunner) dynamicCaseFailure(index int) (string, string, bool) {
+func (r *runner) dynamicCaseFailure(index int) (string, string, bool) {
 	if index <= 0 {
 		return "", "", false
 	}
@@ -1886,7 +1886,7 @@ func evidenceArtifactKey(item evidenceArtifact) string {
 	return strings.TrimSpace(item.Kind) + "\x00" + ref
 }
 
-func (r *nativeRunner) postJSON(ctx context.Context, url string, body any, out any) error {
+func (r *runner) postJSON(ctx context.Context, url string, body any, out any) error {
 	payload, err := json.Marshal(body)
 	if err != nil {
 		return err

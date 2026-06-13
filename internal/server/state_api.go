@@ -388,7 +388,7 @@ func leaseToPublic(lease Lease) LeasePublic {
 // the leased slot's Playwright pod.
 func leaseToPublicForState(settings Settings, lease Lease) LeasePublic {
 	public := leaseToPublic(lease)
-	if slotName, ok := stringFromMap(lease.Metadata, "native_slot_name"); ok {
+	if slotName, ok := stringFromMap(lease.Metadata, "runner_slot_name"); ok {
 		public.PlaywrightWSEndpoint = PlaywrightWSEndpointFor(settings, slotName)
 	}
 	return public
@@ -401,7 +401,7 @@ func LeasePublicRefFromLease(lease Lease) string {
 
 func leasePublicRef(lease Lease) string {
 	slotName := ""
-	if value, ok := stringFromMap(lease.Metadata, "native_slot_name"); ok {
+	if value, ok := stringFromMap(lease.Metadata, "runner_slot_name"); ok {
 		slotName = strings.TrimSpace(value)
 	}
 	return publicids.LeaseRef(lease.Project, slotName, lease.LeaseNumber)
@@ -448,10 +448,10 @@ func testEnvironmentsFromSnapshot(
 
 	claimedByProject := map[string]map[int]Lease{}
 	for _, lease := range active {
-		if !boolFromMap(lease.Metadata, "test_slot_checkout") && !boolFromMap(lease.Metadata, "native_k8s") {
+		if !boolFromMap(lease.Metadata, "test_slot_checkout") && !boolFromMap(lease.Metadata, "runner_k8s") {
 			continue
 		}
-		slotIndex, ok := positiveIntFromMap(lease.Metadata, "native_slot_index")
+		slotIndex, ok := positiveIntFromMap(lease.Metadata, "runner_slot_index")
 		if !ok {
 			continue
 		}
@@ -678,7 +678,7 @@ func legacyHistoryFromEntries(entries []SlotHistoryEntry) []TestSlotReturnHistor
 
 func projectTestSlotCount(_ Settings, project Project) int {
 	metadata := project.Metadata
-	if standbyDNS, ok := mapFromMap(metadata, "native_standby_dns"); ok {
+	if standbyDNS, ok := mapFromMap(metadata, "runner_standby_dns"); ok {
 		if count, ok := positiveIntFromMap(standbyDNS, "count"); ok {
 			return count
 		}
@@ -688,7 +688,7 @@ func projectTestSlotCount(_ Settings, project Project) int {
 
 // The legacy slot-status readers (testEnvironmentSlot* and the supporting
 // pointer/history helpers) that used to walk
-// project.metadata.native_standby_dns.slots have been removed. The
+// project.metadata.runner_standby_dns.slots have been removed. The
 // slot-storage rework split slot state into its own table and the boot
 // migration strips the embedded array.
 // Production reads go through SlotStore.GetSlot / ListSlotsByProject;
@@ -697,7 +697,7 @@ func projectTestSlotCount(_ Settings, project Project) int {
 
 func testEnvironmentName(project string, slotIndex int, projectDoc Project, _ Lease) string {
 	prefix := firstNonEmpty(projectDoc.Name, projectDoc.ID, project)
-	if standbyDNS, ok := mapFromMap(projectDoc.Metadata, "native_standby_dns"); ok {
+	if standbyDNS, ok := mapFromMap(projectDoc.Metadata, "runner_standby_dns"); ok {
 		if value, ok := stringFromMap(standbyDNS, "slot_prefix"); ok && strings.TrimSpace(value) != "" {
 			prefix = strings.Trim(strings.TrimSpace(value), ".")
 		}

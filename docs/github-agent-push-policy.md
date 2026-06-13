@@ -1,6 +1,6 @@
 # GitHub Agent Push & CI Access Policy
 
-Native implementation agents use ordinary Git and GitHub muscle memory:
+Runner implementation agents use ordinary Git and GitHub muscle memory:
 
 ```sh
 git add -A
@@ -34,10 +34,10 @@ App installation first, then widen the requested set.
 > "push-policy token" instead of a real GitHub token. That is **retired**: the
 > agent owns the token; the proxy holds no credentials. Do not reintroduce it.
 
-The token is minted by `POST /v1/run-callbacks/{callback_token}/native/github-agent-token`
-(`writeNativeGitHubAgentToken` → `RepositoryInstallationToken(repo, permissions)`).
+The token is minted by `POST /v1/run-callbacks/{callback_token}/run/github-agent-token`
+(`writeRunnerGitHubAgentToken` → `RepositoryInstallationToken(repo, permissions)`).
 For glimmung-managed `type: agent` steps, the step opts in with
-`agent.github_token: true` in the workflow registration; the native runner
+`agent.github_token: true` in the workflow registration; the runner
 mints the token before starting the agent, writes it to a 0600 file, and
 hands the agent subprocess `GITHUB_TOKEN_FILE` +
 `GITHUB_CREDENTIAL_USERNAME=x-access-token` with git credentials configured
@@ -110,13 +110,13 @@ git proxy (push) and the egress gateway (`api.github.com`).
 
 ## Implementation
 
-- glimmung `internal/server/native_github_token_api.go` — repo-scoped agent token
+- glimmung `internal/server/run_github_token_api.go` — repo-scoped agent token
   mint (`contents:write, metadata:read, checks:read`).
-- glimmung `cmd/glimmung-native-runner` — `agentStepBaseEnv` strips callback/token
+- glimmung `cmd/glimmung-runner` — `agentStepBaseEnv` strips callback/token
   URLs from the agent subprocess; installs the git credential.
 - glimmung `k8s/templates/agent-egress-gateway.yaml` — the egress Gateway + Backend
   + TLSRoute; `k8s/templates/provider-api-proxy.yaml` — the git policy proxy
   (`glimmung_api_proxy.github_proxy`).
-- ambience `scripts/glimmung-native/{implement.sh,agent-ci-feedback.sh,lib.sh}` +
+- ambience `scripts/glimmung-runner/{implement.sh,agent-ci-feedback.sh,lib.sh}` +
   `mcp/ambience_preview/ops.py` — branch/draft-PR setup, the per-run egress
   NetworkPolicy + hostAliases, and the agent's CI-feedback script.

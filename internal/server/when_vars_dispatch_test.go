@@ -21,15 +21,15 @@ func TestDispatchRunRoundTripsVarsAndSkipsConditionalEntryJob(t *testing.T) {
 		if store.wf.Phases[i].Name != "prepare" {
 			continue
 		}
-		store.wf.Phases[i].Jobs = []NativeJobSpec{
-			{ID: "env-prep", Steps: []NativeStepSpec{{Slug: "run", Type: "run", Run: "true"}}},
-			{ID: "issue-contract", When: "${{ vars.issue_contract }} == 'on'", Steps: []NativeStepSpec{{Slug: "run", Type: "run", Run: "true"}}},
+		store.wf.Phases[i].Jobs = []RunnerJobSpec{
+			{ID: "env-prep", Steps: []RunnerStepSpec{{Slug: "run", Type: "run", Run: "true"}}},
+			{ID: "issue-contract", When: "${{ vars.issue_contract }} == 'on'", Steps: []RunnerStepSpec{{Slug: "run", Type: "run", Run: "true"}}},
 		}
 	}
 	// resolveDispatchWorkflow takes the ListProjectWorkflows path for a
 	// nameless dispatch; keep that copy in sync with the mutated fixture.
 	store.workflows = []Workflow{*store.wf}
-	launcher := &fakeNativeLauncher{}
+	launcher := &fakeRunLauncher{}
 	rec := httptest.NewRecorder()
 	newDispatchTestHandler(store, launcher).ServeHTTP(rec, dispatchRequest("proj", 1))
 	if rec.Code != http.StatusOK {
@@ -39,7 +39,7 @@ func TestDispatchRunRoundTripsVarsAndSkipsConditionalEntryJob(t *testing.T) {
 		t.Fatalf("state=%q", result.State)
 	}
 	if !launcher.called {
-		t.Fatal("native launcher was not called")
+		t.Fatal("run launcher was not called")
 	}
 	trace, ok := launcher.req.SkipJobIDs["issue-contract"]
 	if !ok {

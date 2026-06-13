@@ -6,7 +6,7 @@
 //
 // PR #518 split slot state into its own durable collection/table. PR #525 added
 // the cancel-await activation contract + error→cleaning recovery. The
-// embedded `project.metadata.native_standby_dns.slots[]` array became a
+// embedded `project.metadata.runner_standby_dns.slots[]` array became a
 // dead field, stripped at boot by MigrateProjectSlotsIntoCollection.
 //
 // Five compat layers survived that cutover. Per tank-operator
@@ -234,7 +234,7 @@ const required = [
   // --- PR #525 native_launcher reorder ---
   {
     id: "return-deletes-installer-first",
-    file: "internal/server/native_launcher.go",
+    file: "internal/server/run_launcher.go",
     name: "ReturnTestSlotRuntime deletes installer Job before slot-namespace resources",
     // The installer Job is the durable K8s-side producer of slot-namespace
     // workloads (via helm-install). It must be deleted before
@@ -245,7 +245,7 @@ const required = [
   },
   {
     id: "wait-installer-pods-helper",
-    file: "internal/server/native_launcher.go",
+    file: "internal/server/run_launcher.go",
     name: "waitForInstallerPodsTerminated helper (installer-pod drain between Job delete and runtime delete)",
     pattern: /func\s+\([^)]+\)\s+waitForInstallerPodsTerminated\s*\(/,
   },

@@ -149,4 +149,3 @@ func (s *PlaybooksStore) PatchPayload(ctx context.Context, project, name string,
 	}
 	return out, nil
 }
-

@@ -1,7 +1,7 @@
 # Issues And Runs Contract
 
 This contract applies to Glimmung issues, run dispatch, run/cycle numbering,
-locks, verify-loop retry, native callbacks, abort/failure state, and run
+locks, verify-loop retry, runner callbacks, abort/failure state, and run
 history projection.
 
 ## Product Model
@@ -22,7 +22,7 @@ browser memory.
   runtime defaults before dispatch. Each layer must say `inherit` or
   `override`; executor images and CLI defaults are not sources of truth.
 - Postgres `locks` owns issue and PR mutual exclusion.
-- Native job callbacks to `/v1/run-callbacks/{callback_token}/native/completed`
+- Runner job callbacks to `/v1/run-callbacks/{callback_token}/run/completed`
   own job completion input.
 - `docs/workflow-shape.md` owns run/cycle identity, workflow schema snapshots,
   and verify/recycle model.
@@ -36,7 +36,7 @@ browser memory.
   creates a new Run, and recycle policy creates a new Cycle.
 - Do not store path strings as canonical IDs when they can be computed from
   typed entity identity.
-- Do not keep retired callback routes, route aliases, or tests for native
+- Do not keep retired callback routes, route aliases, or tests for runner
   failure endpoints.
 
 ## Live Behavior
@@ -47,7 +47,7 @@ browser memory.
   issue policy before creating run state, then snapshots the resolved default
   and slot profiles onto the Run and initial lease.
 - Dispatch serializes active work per issue with the issue lock.
-- No native work starts without a claimed lease or the configured admission
+- No runner work starts without a claimed lease or the configured admission
   state for queued runs.
 - Job completion callbacks include `job_id`; phase completion waits for every
   registered job in the phase.
@@ -77,7 +77,7 @@ browser memory.
 - Typed terminal observations for dispatch failures must include stable phase
   identity, job identity when known, `step_slug=dispatch`, and the normalized
   reason (`dispatch_failed` or `dispatch_timeout`).
-- Native event inspection should let an operator map hot job events back to
+- Runner event inspection should let an operator map hot job events back to
   run, cycle, phase, job, and step.
 - Lock contention and duplicate dispatch attempts should be logged or surfaced
   clearly enough to distinguish user contention from a stuck run.

@@ -1,4 +1,4 @@
-# Project-Native Runner Architecture
+# Project-Runner Architecture
 
 Status: initial prototype implemented in Glimmung.
 
@@ -10,7 +10,7 @@ workflows. It follows the repository policies in
 
 ## Decision
 
-Glimmung owns project workflow schemas, native runner execution, callback
+Glimmung owns project workflow schemas, runner execution, callback
 protocol, durable state, output storage, cleanup semantics, and run history.
 Consumer repositories remain normal source repositories. Runtime dispatch reads
 Glimmung's database row; repos do not need Glimmung workflow files or
@@ -30,9 +30,9 @@ but the v1 runtime contract should already be owned by Glimmung end to end.
 - Do not make repo YAML the workflow source of truth.
 - Do not require projects to add repo-owned workflow files.
 - Do not restore GitHub Actions, GitLab CI, or Azure DevOps as the executor.
-- Do not make each repo maintain its own native callback shell library.
+- Do not make each repo maintain its own runner callback shell library.
 - Do not use git as the runtime workflow database.
-- Do not reintroduce retired callback routes such as `/native/failed`.
+- Do not reintroduce retired callback routes such as `/run/failed`.
 
 ## Core Model
 
@@ -74,7 +74,7 @@ The runner owns:
 - event emission
 - step wrapping
 - completion callbacks
-- failure reporting through `/native/completed`
+- failure reporting through `/run/completed`
 - output persistence
 - artifact upload
 - checkout token handling
@@ -97,7 +97,7 @@ fresh shell/process with a shared job workspace/filesystem. The default working
 directory is `/workspace`; job-level and step-level overrides are allowed.
 
 Default failure behavior is fail-fast. A non-zero step exits the job, records
-the failed step, and reports the job through the normal native completion
+the failed step, and reports the job through the normal runner completion
 contract. `allow_failure` can be added later when a concrete workflow needs it.
 
 A step may also short-circuit the phase **without** a non-zero process exit by
@@ -167,7 +167,7 @@ screenshots[]
 ```
 
 For implementation branches, `work_context_branch` is the branch contract
-handed to native jobs and `branch_name` is the durable output consumed by
+handed to runner jobs and `branch_name` is the durable output consumed by
 review touchpoints. When a lease carries a `work_context_id`, Glimmung derives
 the concrete branch as `glimmung/<work_context_id>` and stamps that value into
 `work_context_branch` for every later phase. Step scripts must not mix a
@@ -252,7 +252,7 @@ The current registered workflows use three different runner patterns:
 - Glimmung embeds callback shell directly in the database workflow row.
 
 The prototype should migrate away from all three as settled patterns. The
-target is one Glimmung-owned runner contract with project-native step commands.
+target is one Glimmung-owned runner contract with project-runner step commands.
 
 ## Prototype Target
 
@@ -266,7 +266,7 @@ The first coherent prototype should:
 5. Persist step events, logs, outputs, artifacts, and job completion through
    Glimmung-owned APIs.
 6. Validate duplicate output rejection.
-7. Validate failure completion through `/native/completed`.
+7. Validate failure completion through `/run/completed`.
 8. Migrate one project workflow, preferably Ambience, onto the shared runner.
 9. Re-run a real issue workflow and verify the run graph, outputs, cleanup, and
    report surfaces from durable state.
@@ -287,7 +287,7 @@ The current prototype adds a managed `k8s_job` path owned by Glimmung:
 
 The launcher passes the durable job spec to the runner in
 `GLIMMUNG_RUNNER_JOB_SPEC`, and the runner posts step events, log events,
-`phase_output_set` events, and terminal job completion through Glimmung native
+`phase_output_set` events, and terminal job completion through Glimmung runner
 callback APIs.
 
 The runner is also the owner of observed agent cost for managed jobs. When a
@@ -302,7 +302,7 @@ that reparses logs during completion. Positive `verification.cost_usd` can
 still supply the cost for verifier artifacts, but a zero verification cost does
 not erase a positive runner-observed cost. Historical runs completed before
 this contract can be repaired with the operator command
-`glimmung-repair-native-costs`, which copies the already durable native usage
+`glimmung-repair-runner-costs`, which copies the already durable runner usage
 facts into the run ledger instead of adding a read-time fallback.
 
 Step commands set phase outputs by appending either `key=value` lines or JSON

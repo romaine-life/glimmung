@@ -1,6 +1,6 @@
 # Test Slots Contract
 
-This contract applies to native test-slot capacity, slot provisioning,
+This contract applies to runner test-slot capacity, slot provisioning,
 checkout, activation, return, lease TTL, slot-local Playwright, and test-slot
 hot swap.
 
@@ -95,8 +95,8 @@ running, cleaning, and available explicit.
   callback releases, AfterFunc timers killed with the previous process,
   pre-test-slot-lifecycle lease shapes). The sweep is gated by
   `Settings.ControlPlaneLoopsEnabled` so slot processes never run it. After
-  terminalizing such a lease, the sweep also releases any native slot
-  reservation the lease still pinned (`native_k8s` and not a test-slot
+  terminalizing such a lease, the sweep also releases any runner slot
+  reservation the lease still pinned (`runner_k8s` and not a test-slot
   checkout): terminalizing the lease row alone leaves the slot's
   `active_lease_ref` set, stranding the slot in `provisioned` outside the
   available pool forever. Reservation release is best-effort and logged; a
@@ -104,7 +104,7 @@ running, cleaning, and available explicit.
   admin repair. See `server.ExpireStaleLeases`.
 - Admin repair may retry preliminary-resource errors, but cleanup-error slots
   remain on the runtime cleanup path. Repair refuses any slot a live
-  (`claimed`/`active`) lease still holds — checkout lease or native run lease
+  (`claimed`/`active`) lease still holds — checkout lease or runner run lease
   alike — but a slot whose `active_lease_ref` points only at a terminal
   (`released`/`expired`) lease is an orphaned reservation: repair clears the
   stale ref as it walks the slot back to `provisioned`, returning the slot to

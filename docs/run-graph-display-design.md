@@ -16,7 +16,7 @@ Issue
   -> Touchpoint
 ```
 
-The executor behind a phase is a native Kubernetes job. The user-facing graph
+The executor behind a phase is a runner Kubernetes job. The user-facing graph
 is Glimmung's explanation of agent work, review evidence, and next decisions.
 
 ## Terminology
@@ -32,8 +32,8 @@ Issue          -> Issue / origin
 Run            -> User/reviewer intent
 Cycle          -> One durable execution record / ledger row
 Workflow phase -> Phase
-Native job -> Job
-Native step -> Step
+Runner job -> Job
+Runner step -> Step
 Attempt        -> Display counter or executor-level retry attribute only
 Report         -> Touchpoint / evidence, depending on context
 ```
@@ -254,7 +254,7 @@ Middle: phase graph / timeline
 Bottom: selected phase/job/step inspector
 ```
 
-For native job execution, the inspector should be large enough that the
+For runner job execution, the inspector should be large enough that the
 terminal log is useful without requiring immediate full-screen expansion.
 On desktop, the step list plus log viewer should be the dominant lower
 surface. On mobile, the step list can stack above the log.
@@ -297,7 +297,7 @@ without requiring live data.
 Add portfolio rows for at least:
 
 - simple two-phase run,
-- native job with step list and selected terminal log,
+- runner job with step list and selected terminal log,
 - failed step with log output,
 - phase recycle/retry,
 - cycle run created by recycle/retry,
@@ -335,15 +335,15 @@ cycle of the issue, whose canonical address is `6.1`. Stale ledger-form deep
 links resolve to nothing rather than to a different run cycle.
 
 The projection is separate from storage and separate from any executor's
-native model. The execution UI renders from this projection, not from generic
+runner model. The execution UI renders from this projection, not from generic
 graph `nodes` / `edges` metadata.
 
 Each projected Run carries a `topology` object derived from the workflow
 schema referenced by that run or cycle. Execution fields such as phase, job,
 step state, logs, evidence, and cost are then painted onto that topology. Cost
 comes from the durable run completion ledger; projection code does not reparse
-native log lines to infer completion cost. Historical zero-cost rows are
-repaired into the ledger with `glimmung-repair-native-costs` while the durable
+runner log lines to infer completion cost. Historical zero-cost rows are
+repaired into the ledger with `glimmung-repair-runner-costs` while the durable
 events still exist.
 Recycle/request-changes arrows belong to topology, not to execution status,
 so the run execution surface does not need a separate metadata fallback to
@@ -445,24 +445,24 @@ Signal
 The graph state vocabulary is closed: `not_started`, `skipped`, `dispatching`,
 `active`, `succeeded`, and `failed`. `pending` and vague terminal `completed`
 are not graph states. `reason` is required only for `failed`; otherwise it is
-null/absent. External native values are translated at ingestion/projection
+null/absent. External runner values are translated at ingestion/projection
 boundaries into this vocabulary, while raw Kubernetes or runner details belong
 in inspector/debug fields.
 
 Run cycles persist this vocabulary as phase/job/step execution records.
-Projection reads those records first so an unreported native job can still be
+Projection reads those records first so an unreported runner job can still be
 clicked, inspected, and shown as `dispatching` or `failed` without relying on a
 best-effort log scrape. `dispatch_timeout` is a normal failed reason: it turns
 the affected phase/job red and skips later unstarted phases.
 
-Native job completions are job-scoped in the run attempt record so the
+Runner job completions are job-scoped in the run attempt record so the
 projection can show one sibling job as complete while the phase waits for the
 remaining jobs.
 
 GitHub Check Runs are intentionally not part of this contract. Glimmung
 keeps run state canonical in the issue workspace and syndicates PR URLs as
 Touchpoint evidence; adding GitHub Check Runs should be a separate product
-issue if GitHub-native status boxes become necessary.
+issue if GitHub-runner status boxes become necessary.
 
 ## Refactor Sequence
 

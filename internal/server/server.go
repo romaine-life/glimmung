@@ -45,30 +45,30 @@ type Settings struct {
 	GrafanaBaseURL string
 	// GrafanaLokiDatasource is the datasource name (or UID) the Explore
 	// link should target. Grafana resolves a name to a UID; both work.
-	GrafanaLokiDatasource              string
-	StaticDir                          string
-	StaticOverrideDir                  string
-	ArtifactsStorageAccount            string
-	ArtifactsContainer                 string
-	NativeRunnerNamespace              string
-	NativeRunnerServiceAccount         string
-	NativeRunnerNamespaceRole          string
-	NativeRunnerCallbackBaseURL        string
-	NativeRunnerJobTTLSeconds          int
-	NativeRunnerImage                  string
-	NativeRunnerEntrypoint             string
-	ProviderAPIProxyNamespace          string
-	ProviderAPIProxyCASecret           string
-	ProviderAPIProxyCABundlePath       string
-	ProviderAPIProxyClaudeService      string
-	ProviderAPIProxyCodexService       string
-	ProviderAPIProxyGitHubService      string
-	NativeRunnerPlaywrightEnabled      bool
-	NativeRunnerPlaywrightImage        string
-	NativeRunnerPlaywrightPort         string
-	NativeRunnerDispatchTimeoutSeconds int
-	AgentRuntimeConfigJSON             string
-	NativeWorkloadIdentityIssuer       string
+	GrafanaLokiDatasource         string
+	StaticDir                     string
+	StaticOverrideDir             string
+	ArtifactsStorageAccount       string
+	ArtifactsContainer            string
+	RunnerNamespace               string
+	RunnerServiceAccount          string
+	RunnerNamespaceRole           string
+	RunnerCallbackBaseURL         string
+	RunnerJobTTLSeconds           int
+	RunnerImage                   string
+	RunnerEntrypoint              string
+	ProviderAPIProxyNamespace     string
+	ProviderAPIProxyCASecret      string
+	ProviderAPIProxyCABundlePath  string
+	ProviderAPIProxyClaudeService string
+	ProviderAPIProxyCodexService  string
+	ProviderAPIProxyGitHubService string
+	RunnerPlaywrightEnabled       bool
+	RunnerPlaywrightImage         string
+	RunnerPlaywrightPort          string
+	RunnerDispatchTimeoutSeconds  int
+	AgentRuntimeConfigJSON        string
+	RunnerWorkloadIdentityIssuer  string
 	// AuthRomaineLifeBaseURL is the base URL of the auth.romaine.life
 	// admin API used by ManagedOriginService. Empty disables the
 	// reconciler; only useful for local dev / smoke runs.
@@ -149,33 +149,33 @@ func SettingsFromEnv() Settings {
 			"romaineglimmungartifacts",
 		),
 		ArtifactsContainer: envOrDefault("ARTIFACTS_CONTAINER", "artifacts"),
-		NativeRunnerNamespace: envOrDefault(
-			"NATIVE_RUNNER_NAMESPACE",
+		RunnerNamespace: envOrDefault(
+			"RUNNER_NAMESPACE",
 			"glimmung-runs",
 		),
-		NativeRunnerServiceAccount: envOrDefault(
-			"NATIVE_RUNNER_SERVICE_ACCOUNT",
-			"glimmung-native-runner",
+		RunnerServiceAccount: envOrDefault(
+			"RUNNER_SERVICE_ACCOUNT",
+			"glimmung-runner",
 		),
-		NativeRunnerNamespaceRole: envOrDefault(
-			"NATIVE_RUNNER_NAMESPACE_ROLE",
+		RunnerNamespaceRole: envOrDefault(
+			"RUNNER_NAMESPACE_ROLE",
 			"cluster-admin",
 		),
-		NativeRunnerCallbackBaseURL: envOrDefault(
-			"NATIVE_RUNNER_CALLBACK_BASE_URL",
+		RunnerCallbackBaseURL: envOrDefault(
+			"RUNNER_CALLBACK_BASE_URL",
 			"http://glimmung.glimmung.svc.cluster.local",
 		),
-		NativeRunnerJobTTLSeconds: envIntOrDefault(
-			"NATIVE_RUNNER_JOB_TTL_SECONDS",
+		RunnerJobTTLSeconds: envIntOrDefault(
+			"RUNNER_JOB_TTL_SECONDS",
 			259200,
 		),
-		NativeRunnerImage: envOrDefault(
-			"NATIVE_RUNNER_IMAGE",
-			"romainecr.azurecr.io/glimmung-native-runner:native-runner",
+		RunnerImage: envOrDefault(
+			"RUNNER_IMAGE",
+			"romainecr.azurecr.io/glimmung-runner:runner",
 		),
-		NativeRunnerEntrypoint: envOrDefault(
-			"NATIVE_RUNNER_ENTRYPOINT",
-			"/app/glimmung-native-runner",
+		RunnerEntrypoint: envOrDefault(
+			"RUNNER_ENTRYPOINT",
+			"/app/glimmung-runner",
 		),
 		ProviderAPIProxyNamespace: envOrDefault(
 			"PROVIDER_API_PROXY_NAMESPACE",
@@ -201,27 +201,27 @@ func SettingsFromEnv() Settings {
 			"PROVIDER_API_PROXY_GITHUB_SERVICE",
 			"github-git-policy-proxy",
 		),
-		NativeRunnerPlaywrightEnabled: envBoolOrDefault(
-			"NATIVE_RUNNER_PLAYWRIGHT_ENABLED",
+		RunnerPlaywrightEnabled: envBoolOrDefault(
+			"RUNNER_PLAYWRIGHT_ENABLED",
 			true,
 		),
-		NativeRunnerPlaywrightImage: envOrDefault(
-			"NATIVE_RUNNER_PLAYWRIGHT_IMAGE",
+		RunnerPlaywrightImage: envOrDefault(
+			"RUNNER_PLAYWRIGHT_IMAGE",
 			"romainecr.azurecr.io/glimmung-slot-playwright:playwright-1.56.1",
 		),
-		NativeRunnerPlaywrightPort: envOrDefault(
-			"NATIVE_RUNNER_PLAYWRIGHT_PORT",
+		RunnerPlaywrightPort: envOrDefault(
+			"RUNNER_PLAYWRIGHT_PORT",
 			"3000",
 		),
-		NativeRunnerDispatchTimeoutSeconds: envIntOrDefault(
-			"NATIVE_RUNNER_DISPATCH_TIMEOUT_SECONDS",
+		RunnerDispatchTimeoutSeconds: envIntOrDefault(
+			"RUNNER_DISPATCH_TIMEOUT_SECONDS",
 			defaultRunDispatchTimeoutSeconds,
 		),
 		AgentRuntimeConfigJSON: firstNonEmpty(
 			os.Getenv("GLIMMUNG_AGENT_RUNTIME_CONFIG_JSON"),
 			os.Getenv("GLIMMUNG_AGENT_RUNTIME_CONFIG"),
 		),
-		NativeWorkloadIdentityIssuer: os.Getenv("NATIVE_WORKLOAD_IDENTITY_ISSUER"),
+		RunnerWorkloadIdentityIssuer: os.Getenv("RUNNER_WORKLOAD_IDENTITY_ISSUER"),
 		AuthRomaineLifeBaseURL: envOrDefault(
 			"AUTH_ROMAINE_LIFE_BASE_URL",
 			defaultAuthURL,
@@ -253,36 +253,36 @@ func NewWithStore(settings Settings, store ReadStore) http.Handler {
 }
 
 // NewWithGitHubClient extends NewWithDependencies with an optional GitHub client
-// for native token minting and PR operations.
+// for runner token minting and PR operations.
 func NewWithGitHubClient(settings Settings, store ReadStore, authResolver AuthResolver, ghClient any, artifactStores ...ArtifactStore) http.Handler {
 	return newHandler(settings, store, authResolver, ghClient, nil, artifactStores...)
 }
 
-func NewWithRuntimeClients(settings Settings, store ReadStore, authResolver AuthResolver, ghClient any, nativeLauncher NativeLauncher, artifactStores ...ArtifactStore) http.Handler {
-	return newHandlerWithReconcilers(settings, store, authResolver, ghClient, nil, nil, nativeLauncher, artifactStores...)
+func NewWithRuntimeClients(settings Settings, store ReadStore, authResolver AuthResolver, ghClient any, runLauncher RunLauncher, artifactStores ...ArtifactStore) http.Handler {
+	return newHandlerWithReconcilers(settings, store, authResolver, ghClient, nil, nil, runLauncher, artifactStores...)
 }
 
-func NewWithRuntimeReconcilers(settings Settings, store ReadStore, authResolver AuthResolver, ghClient any, workloadIdentities NativeWorkloadIdentityReconciler, nativeLauncher NativeLauncher, artifactStores ...ArtifactStore) http.Handler {
-	return newHandlerWithReconcilers(settings, store, authResolver, ghClient, workloadIdentities, nil, nativeLauncher, artifactStores...)
+func NewWithRuntimeReconcilers(settings Settings, store ReadStore, authResolver AuthResolver, ghClient any, workloadIdentities RunnerWorkloadIdentityReconciler, runLauncher RunLauncher, artifactStores ...ArtifactStore) http.Handler {
+	return newHandlerWithReconcilers(settings, store, authResolver, ghClient, workloadIdentities, nil, runLauncher, artifactStores...)
 }
 
 // NewWithReconcilers extends NewWithRuntimeReconcilers with the
 // managed-auth-origins reconciler (glimmung#142 stage 2). Existing callers
 // keep working through NewWithRuntimeReconcilers (which passes nil for the
 // origins reconciler); new wiring in cmd/glimmung-go uses this.
-func NewWithReconcilers(settings Settings, store ReadStore, authResolver AuthResolver, ghClient any, workloadIdentities NativeWorkloadIdentityReconciler, managedOrigins ManagedOriginReconciler, nativeLauncher NativeLauncher, artifactStores ...ArtifactStore) http.Handler {
-	return newHandlerWithReconcilers(settings, store, authResolver, ghClient, workloadIdentities, managedOrigins, nativeLauncher, artifactStores...)
+func NewWithReconcilers(settings Settings, store ReadStore, authResolver AuthResolver, ghClient any, workloadIdentities RunnerWorkloadIdentityReconciler, managedOrigins ManagedOriginReconciler, runLauncher RunLauncher, artifactStores ...ArtifactStore) http.Handler {
+	return newHandlerWithReconcilers(settings, store, authResolver, ghClient, workloadIdentities, managedOrigins, runLauncher, artifactStores...)
 }
 
 func NewWithDependencies(settings Settings, store ReadStore, authResolver AuthResolver, artifactStores ...ArtifactStore) http.Handler {
 	return newHandler(settings, store, authResolver, nil, nil, artifactStores...)
 }
 
-func newHandler(settings Settings, store ReadStore, authResolver AuthResolver, ghClient any, nativeLauncher NativeLauncher, artifactStores ...ArtifactStore) http.Handler {
-	return newHandlerWithReconcilers(settings, store, authResolver, ghClient, nil, nil, nativeLauncher, artifactStores...)
+func newHandler(settings Settings, store ReadStore, authResolver AuthResolver, ghClient any, runLauncher RunLauncher, artifactStores ...ArtifactStore) http.Handler {
+	return newHandlerWithReconcilers(settings, store, authResolver, ghClient, nil, nil, runLauncher, artifactStores...)
 }
 
-func newHandlerWithReconcilers(settings Settings, store ReadStore, authResolver AuthResolver, ghClient any, workloadIdentities NativeWorkloadIdentityReconciler, managedOrigins ManagedOriginReconciler, nativeLauncher NativeLauncher, artifactStores ...ArtifactStore) http.Handler {
+func newHandlerWithReconcilers(settings Settings, store ReadStore, authResolver AuthResolver, ghClient any, workloadIdentities RunnerWorkloadIdentityReconciler, managedOrigins ManagedOriginReconciler, runLauncher RunLauncher, artifactStores ...ArtifactStore) http.Handler {
 	var artifactStore ArtifactStore
 	if len(artifactStores) > 0 {
 		artifactStore = artifactStores[0]
@@ -294,16 +294,16 @@ func newHandlerWithReconcilers(settings Settings, store ReadStore, authResolver 
 		SetInspectionSweepArtifactWriter(nil)
 		SetRunReconcilerArtifactWriter(nil)
 	}
-	var nativeTokenMinter NativeGitHubTokenMinter
-	if m, ok := ghClient.(NativeGitHubTokenMinter); ok {
-		nativeTokenMinter = m
+	var runnerTokenMinter RunnerGitHubTokenMinter
+	if m, ok := ghClient.(RunnerGitHubTokenMinter); ok {
+		runnerTokenMinter = m
 	}
 	var prClient PullRequestClient
 	if c, ok := ghClient.(PullRequestClient); ok {
 		prClient = c
 	}
 	var testSlotPreparer TestSlotPreparer
-	if p, ok := nativeLauncher.(TestSlotPreparer); ok {
+	if p, ok := runLauncher.(TestSlotPreparer); ok {
 		testSlotPreparer = p
 	}
 	// Remote-host execution primitives (docs/remote-host-execution.md).
@@ -393,11 +393,11 @@ func newHandlerWithReconcilers(settings Settings, store ReadStore, authResolver 
 	)
 	mux.Handle(
 		"PATCH /v1/projects/{project}/test-environments/count",
-		requireAdmin(adminAuthenticator, http.HandlerFunc(scaleProjectTestEnvironments(store, workloadIdentities, managedOrigins, testSlotPreparer, nativeTokenMinter))),
+		requireAdmin(adminAuthenticator, http.HandlerFunc(scaleProjectTestEnvironments(store, workloadIdentities, managedOrigins, testSlotPreparer, runnerTokenMinter))),
 	)
 	mux.Handle(
 		"POST /v1/projects/{project}/test-environments/{slot_name}/repair",
-		requireAdmin(adminAuthenticator, http.HandlerFunc(repairProjectTestEnvironment(store, testSlotPreparer, nativeTokenMinter))),
+		requireAdmin(adminAuthenticator, http.HandlerFunc(repairProjectTestEnvironment(store, testSlotPreparer, runnerTokenMinter))),
 	)
 	mux.HandleFunc("GET /v1/workflows", listWorkflows(store))
 	mux.Handle("POST /v1/workflows", requireAdmin(adminAuthenticator, http.HandlerFunc(registerWorkflow(store))))
@@ -408,20 +408,20 @@ func newHandlerWithReconcilers(settings Settings, store ReadStore, authResolver 
 	mux.HandleFunc("GET /v1/workflows/{project}/{name}/control-events", listWorkflowControlEvents(store))
 	mux.HandleFunc("GET /v1/lease-callbacks/{callback_token}", readLeaseByCallbackToken(store))
 	mux.HandleFunc("POST /v1/lease-callbacks/{callback_token}/heartbeat", heartbeatLeaseByCallbackToken(store))
-	mux.HandleFunc("POST /v1/lease-callbacks/{callback_token}/release", releaseLeaseByCallbackToken(store, testSlotPreparer, nativeTokenMinter))
+	mux.HandleFunc("POST /v1/lease-callbacks/{callback_token}/release", releaseLeaseByCallbackToken(store, testSlotPreparer, runnerTokenMinter))
 	mux.HandleFunc("GET /v1/state", stateSnapshot(settings, store))
 	mux.HandleFunc("GET /v1/projects/{project}/test-environments/{slot_name}", testEnvironmentStatus(settings, store))
 	mux.HandleFunc("GET /v1/events", stateEvents(settings, store))
 	mux.Handle("POST /v1/signals", requireAdmin(adminAuthenticator, http.HandlerFunc(createSignal(store))))
-	mux.Handle("POST /v1/signals/drain", requireAdmin(adminAuthenticator, http.HandlerFunc(drainSignalsHandler(store, nativeLauncher))))
+	mux.Handle("POST /v1/signals/drain", requireAdmin(adminAuthenticator, http.HandlerFunc(drainSignalsHandler(store, runLauncher))))
 	mux.HandleFunc("GET /v1/portfolio/elements", listPortfolioElements(store))
 	mux.Handle("POST /v1/portfolio/elements", requireAdmin(adminAuthenticator, http.HandlerFunc(upsertPortfolioElement(store))))
-	mux.Handle("POST /v1/portfolio/elements/dispatch", requireAdmin(adminAuthenticator, http.HandlerFunc(dispatchPortfolioElements(store, nativeLauncher))))
+	mux.Handle("POST /v1/portfolio/elements/dispatch", requireAdmin(adminAuthenticator, http.HandlerFunc(dispatchPortfolioElements(store, runLauncher))))
 	mux.Handle("PATCH /v1/portfolio/elements/{project}/{element_ref}", requireAdmin(adminAuthenticator, http.HandlerFunc(patchPortfolioElement(store))))
-	mux.Handle("POST /v1/playbooks/{project}/{playbook_ref}/run", requireAdmin(adminAuthenticator, http.HandlerFunc(runPlaybook(store, nativeLauncher))))
+	mux.Handle("POST /v1/playbooks/{project}/{playbook_ref}/run", requireAdmin(adminAuthenticator, http.HandlerFunc(runPlaybook(store, runLauncher))))
 	mux.Handle("POST /v1/playbooks/{project}/{playbook_ref}/entries/{entry_id}/gate", requireAdmin(adminAuthenticator, http.HandlerFunc(patchPlaybookEntryGate(store))))
 	mux.Handle("POST /v1/leases/cancel", requireAdmin(adminAuthenticator, http.HandlerFunc(cancelLeaseByRef(store))))
-	mux.Handle("PATCH /v1/leases/ttl", requireAdmin(adminAuthenticator, http.HandlerFunc(updateLeaseTTLByRef(store, testSlotPreparer, nativeTokenMinter))))
+	mux.Handle("PATCH /v1/leases/ttl", requireAdmin(adminAuthenticator, http.HandlerFunc(updateLeaseTTLByRef(store, testSlotPreparer, runnerTokenMinter))))
 	mux.Handle("PATCH /v1/test-slots/default-ttl", requireAdmin(adminAuthenticator, http.HandlerFunc(updateTestLeaseDefaultTTL(store))))
 	mux.Handle("PATCH /v1/test-slots/hot-swap-min-ttl", requireAdmin(adminAuthenticator, http.HandlerFunc(updateTestLeaseHotSwapMinTTL(store))))
 	mux.Handle("POST /v1/projects/{project}/issues/{issue_number}/runs/{run_number}/abort", requireAdmin(adminAuthenticator, http.HandlerFunc(abortRunByNumber(store))))
@@ -429,19 +429,19 @@ func newHandlerWithReconcilers(settings Settings, store ReadStore, authResolver 
 	mux.Handle("POST /v1/projects/{project}/issues/{issue_number}/runs/{run_number}/cycles/{cycle_number}/touchpoint/finalize", requireAdmin(adminAuthenticator, http.HandlerFunc(finalizeRunCycleTouchpointByNumber(store, prClient, artifactStore))))
 	mux.Handle("POST /v1/projects/{project}/issues/{issue_number}/runs/{run_number}/touchpoint/merge", requireAdmin(adminAuthenticator, http.HandlerFunc(mergeRunTouchpointByNumber(store, prClient))))
 	mux.Handle("POST /v1/projects/{project}/issues/{issue_number}/runs/{run_number}/cycles/{cycle_number}/touchpoint/merge", requireAdmin(adminAuthenticator, http.HandlerFunc(mergeRunCycleTouchpointByNumber(store, prClient))))
-	mux.HandleFunc("GET /v1/projects/{project}/issues/{issue_number}/runs/{run_number}/native/events", nativeRunEventsByNumber(store))
-	mux.HandleFunc("POST /v1/projects/{project}/issues/{issue_number}/runs/{run_number}/native/events", nativeRunEventWriteByNumber(store))
-	mux.HandleFunc("POST /v1/run-callbacks/{callback_token}/native/events", nativeRunEventWriteByCallbackToken(store))
-	mux.HandleFunc("GET /v1/projects/{project}/issues/{issue_number}/runs/{run_number}/native/status", nativeRunStatusByNumber(store))
-	mux.HandleFunc("GET /v1/run-callbacks/{callback_token}/native/status", nativeRunStatusByCallbackToken(store))
-	mux.HandleFunc("POST /v1/projects/{project}/issues/{issue_number}/runs/{run_number}/native/github-token", nativeGitHubTokenByNumber(store, nativeTokenMinter))
-	mux.HandleFunc("POST /v1/run-callbacks/{callback_token}/native/github-token", nativeGitHubTokenByCallbackToken(store, nativeTokenMinter))
-	mux.HandleFunc("POST /v1/run-callbacks/{callback_token}/native/github-agent-token", nativeGitHubAgentTokenByCallbackToken(store, nativeTokenMinter))
-	mux.HandleFunc("POST /v1/run-callbacks/{callback_token}/native/pr-touchpoint", nativePRTouchpointByCallbackToken(store, prClient, artifactStore))
-	mux.HandleFunc("POST /v1/run-callbacks/{callback_token}/native/pr-merge", nativePRMergeByCallbackToken(store, prClient))
-	mux.HandleFunc("POST /v1/run-callbacks/{callback_token}/native/ssh-cert", mintRunCallbackSSHCert(store, sshCertExchanger))
-	mux.HandleFunc("POST /v1/run-callbacks/{callback_token}/native/tailscale-authkey", mintRunCallbackTailscaleAuthKey(store, tailscaleAuthKeyMinter))
-	mux.HandleFunc("POST /v1/run-callbacks/{callback_token}/native/completed", nativeRunCompletedByCallbackToken(store, nativeLauncher))
+	mux.HandleFunc("GET /v1/projects/{project}/issues/{issue_number}/runs/{run_number}/run/events", runnerEventsByNumber(store))
+	mux.HandleFunc("POST /v1/projects/{project}/issues/{issue_number}/runs/{run_number}/run/events", runnerEventWriteByNumber(store))
+	mux.HandleFunc("POST /v1/run-callbacks/{callback_token}/run/events", runnerEventWriteByCallbackToken(store))
+	mux.HandleFunc("GET /v1/projects/{project}/issues/{issue_number}/runs/{run_number}/run/status", runnerStatusByNumber(store))
+	mux.HandleFunc("GET /v1/run-callbacks/{callback_token}/run/status", runnerStatusByCallbackToken(store))
+	mux.HandleFunc("POST /v1/projects/{project}/issues/{issue_number}/runs/{run_number}/run/github-token", runnerGitHubTokenByNumber(store, runnerTokenMinter))
+	mux.HandleFunc("POST /v1/run-callbacks/{callback_token}/run/github-token", runnerGitHubTokenByCallbackToken(store, runnerTokenMinter))
+	mux.HandleFunc("POST /v1/run-callbacks/{callback_token}/run/github-agent-token", runnerGitHubAgentTokenByCallbackToken(store, runnerTokenMinter))
+	mux.HandleFunc("POST /v1/run-callbacks/{callback_token}/run/pr-touchpoint", runnerPRTouchpointByCallbackToken(store, prClient, artifactStore))
+	mux.HandleFunc("POST /v1/run-callbacks/{callback_token}/run/pr-merge", runnerPRMergeByCallbackToken(store, prClient))
+	mux.HandleFunc("POST /v1/run-callbacks/{callback_token}/run/ssh-cert", mintRunCallbackSSHCert(store, sshCertExchanger))
+	mux.HandleFunc("POST /v1/run-callbacks/{callback_token}/run/tailscale-authkey", mintRunCallbackTailscaleAuthKey(store, tailscaleAuthKeyMinter))
+	mux.HandleFunc("POST /v1/run-callbacks/{callback_token}/run/completed", runnerCompletedByCallbackToken(store, runLauncher))
 	if stateStore, ok := store.(StateStore); ok {
 		if inspectionStore, ok := store.(SlotInspectionStore); ok {
 			var artifactWriter ArtifactWriter
@@ -471,10 +471,10 @@ func newHandlerWithReconcilers(settings Settings, store ReadStore, authResolver 
 			)
 		}
 	}
-	mux.Handle("POST /v1/test-slots/checkout", requireAdmin(adminAuthenticator, http.HandlerFunc(checkoutTestSlot(settings, store, testSlotPreparer, nativeTokenMinter))))
-	mux.Handle("POST /v1/test-slots/return", requireAdmin(adminAuthenticator, http.HandlerFunc(returnTestSlot(store, testSlotPreparer, nativeTokenMinter))))
-	mux.Handle("POST /v1/test-slots/extend", requireAdmin(adminAuthenticator, http.HandlerFunc(extendTestSlotLease(store, testSlotPreparer, nativeTokenMinter))))
-	mux.Handle("POST /v1/test-slots/hot-swap-history", requireAdmin(adminAuthenticator, http.HandlerFunc(appendTestSlotHotSwapHistory(store, testSlotPreparer, nativeTokenMinter))))
+	mux.Handle("POST /v1/test-slots/checkout", requireAdmin(adminAuthenticator, http.HandlerFunc(checkoutTestSlot(settings, store, testSlotPreparer, runnerTokenMinter))))
+	mux.Handle("POST /v1/test-slots/return", requireAdmin(adminAuthenticator, http.HandlerFunc(returnTestSlot(store, testSlotPreparer, runnerTokenMinter))))
+	mux.Handle("POST /v1/test-slots/extend", requireAdmin(adminAuthenticator, http.HandlerFunc(extendTestSlotLease(store, testSlotPreparer, runnerTokenMinter))))
+	mux.Handle("POST /v1/test-slots/hot-swap-history", requireAdmin(adminAuthenticator, http.HandlerFunc(appendTestSlotHotSwapHistory(store, testSlotPreparer, runnerTokenMinter))))
 	// /v1/test-slots/apply-hot-swap — developer-driven build-and-swap.
 	// Sync UX per docs/test-slot-hot-swap.md. The performer wraps
 	// ApplyHotSwap with a real httpK8sJobClient that talks to the k8s
@@ -485,10 +485,10 @@ func newHandlerWithReconcilers(settings Settings, store ReadStore, authResolver 
 	applyPerformer := func(ctx context.Context, opts ApplyHotSwapOptions) (ApplyHotSwapResult, error) {
 		return ApplyHotSwap(ctx, k8sClient, opts)
 	}
-	mux.Handle("POST /v1/test-slots/apply-hot-swap", requireAdmin(adminAuthenticator, http.HandlerFunc(applyTestSlotHotSwap(store, testSlotPreparer, nativeTokenMinter, applyPerformer))))
+	mux.Handle("POST /v1/test-slots/apply-hot-swap", requireAdmin(adminAuthenticator, http.HandlerFunc(applyTestSlotHotSwap(store, testSlotPreparer, runnerTokenMinter, applyPerformer))))
 	mux.Handle("POST /v1/projects/{project}/issues/{issue_number}/runs/{run_number}/replay", requireAdmin(adminAuthenticator, http.HandlerFunc(replayRunDecisionByNumber(store))))
-	mux.Handle("POST /v1/runs/dispatch", requireAdmin(adminAuthenticator, http.HandlerFunc(dispatchRunHandler(settings, store, nativeLauncher))))
-	mux.Handle("POST /v1/runs/synthetic-dispatch", requireAdmin(adminAuthenticator, http.HandlerFunc(syntheticDispatchRunHandler(settings, store, nativeLauncher))))
+	mux.Handle("POST /v1/runs/dispatch", requireAdmin(adminAuthenticator, http.HandlerFunc(dispatchRunHandler(settings, store, runLauncher))))
+	mux.Handle("POST /v1/runs/synthetic-dispatch", requireAdmin(adminAuthenticator, http.HandlerFunc(syntheticDispatchRunHandler(settings, store, runLauncher))))
 	mux.HandleFunc("POST /v1/webhook/github", githubWebhook(settings))
 	// Per-run OpenGraph image: public, unauthenticated PNG card matching
 	// the SPA's run-URL shape so unfurlers (Discord, Slack, etc.) get a
@@ -549,7 +549,7 @@ func readStoreReady(ctx context.Context, store ReadStore) (ready bool) {
 //
 // The Grafana fields ship the cluster Grafana base URL and the Loki
 // datasource name so the run-report UI can render Explore deep-links from
-// each native-phase step row. Without them, operators have no signal in
+// each runner-phase step row. Without them, operators have no signal in
 // the dashboard that step logs exist in Loki — the data is durable, the
 // discovery path was not.
 func publicConfig(settings Settings) http.HandlerFunc {
@@ -559,7 +559,7 @@ func publicConfig(settings Settings) http.HandlerFunc {
 			"tank_operator_base_url":  strings.TrimRight(settings.TankOperatorBaseURL, "/"),
 			"grafana_base_url":        strings.TrimRight(settings.GrafanaBaseURL, "/"),
 			"grafana_loki_datasource": strings.TrimSpace(settings.GrafanaLokiDatasource),
-			"native_runner_namespace": strings.TrimSpace(settings.NativeRunnerNamespace),
+			"runner_namespace":        strings.TrimSpace(settings.RunnerNamespace),
 			"agent_runtime":           agentRuntimeConfigForSettings(settings),
 		})
 	}

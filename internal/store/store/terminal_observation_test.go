@@ -18,7 +18,7 @@ func TestTerminalObservationNamesProducerJobAndStep(t *testing.T) {
 				Phase:        "llm-work",
 				Conclusion:   stringPtrValue("failure"),
 				Decision:     &abortDecision,
-				JobCompletions: map[string]nativeJobCompletionDoc{
+				JobCompletions: map[string]runnerJobCompletionDoc{
 					"llm-test-plan": {JobID: "llm-test-plan", Conclusion: "success"},
 					"llm-implement": {JobID: "llm-implement", Conclusion: "failure", TerminalReason: "job_failed"},
 				},
@@ -67,7 +67,7 @@ func TestTerminalObservationDoesNotNameZeroExitStep(t *testing.T) {
 			Phase:        "llm-work",
 			Conclusion:   stringPtrValue("failure"),
 			Decision:     &abortDecision,
-			JobCompletions: map[string]nativeJobCompletionDoc{
+			JobCompletions: map[string]runnerJobCompletionDoc{
 				"llm-implement": {JobID: "llm-implement", Conclusion: "failure", TerminalReason: "job_failed"},
 			},
 		}},
@@ -111,7 +111,7 @@ func TestTerminalObservationKeepsOriginalAbortThroughCleanup(t *testing.T) {
 				Phase:        "llm-work",
 				Conclusion:   stringPtrValue("failure"),
 				Decision:     &abortDecision,
-				JobCompletions: map[string]nativeJobCompletionDoc{
+				JobCompletions: map[string]runnerJobCompletionDoc{
 					"llm-implement": {JobID: "llm-implement", Conclusion: "failure"},
 				},
 			},
@@ -157,7 +157,7 @@ func TestTerminalObservationSkipsFailedTeardownAttempt(t *testing.T) {
 				Phase:        "llm-verify",
 				Conclusion:   stringPtrValue("failure"),
 				Decision:     &verifyAbort,
-				JobCompletions: map[string]nativeJobCompletionDoc{
+				JobCompletions: map[string]runnerJobCompletionDoc{
 					"llm-verify": {JobID: "llm-verify", Conclusion: "failure", TerminalReason: "verification_failed"},
 				},
 			},
@@ -166,7 +166,7 @@ func TestTerminalObservationSkipsFailedTeardownAttempt(t *testing.T) {
 				Phase:        "cleanup_early",
 				Conclusion:   stringPtrValue("timed_out"),
 				Decision:     &teardownAbort,
-				JobCompletions: map[string]nativeJobCompletionDoc{
+				JobCompletions: map[string]runnerJobCompletionDoc{
 					"env-destroy": {JobID: "env-destroy", Conclusion: "timed_out", TerminalReason: "backoff_exceeded"},
 				},
 			},
@@ -217,7 +217,7 @@ func TestTerminalObservationNamesVerifierContractMissing(t *testing.T) {
 
 func TestTerminalObservationNamesDispatchFailureAsDispatchStep(t *testing.T) {
 	abortDecision := string(decision.AbortMalformed)
-	abortReason := `forward_dispatch_failed: native lease state is "released" for ambience-slot-3, want claimed`
+	abortReason := `forward_dispatch_failed: runner lease state is "released" for ambience-slot-3, want claimed`
 	doc := runDoc{
 		Attempts: []attemptDoc{{
 			AttemptIndex: 1,

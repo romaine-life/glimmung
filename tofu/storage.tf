@@ -1,4 +1,4 @@
-# Private Glimmung artifact storage for native runner logs, evidence, issue
+# Private Glimmung artifact storage for runner logs, evidence, issue
 # attachments, and Report artifacts. Public users should access these objects
 # through Glimmung, not raw Blob URLs.
 
@@ -38,15 +38,15 @@ resource "azurerm_role_assignment" "glimmung_dedicated_artifacts_blob_contributo
   principal_id         = azurerm_user_assigned_identity.glimmung_dedicated.principal_id
 }
 
-resource "azurerm_role_assignment" "native_runner_artifacts_blob_contributor" {
+resource "azurerm_role_assignment" "runner_artifacts_blob_contributor" {
   scope                = azurerm_storage_container.artifacts.id
   role_definition_name = "Storage Blob Data Contributor"
-  principal_id         = azurerm_user_assigned_identity.native_runner.principal_id
+  principal_id         = azurerm_user_assigned_identity.runner.principal_id
 }
 
 output "glimmung_artifacts_storage_account" {
   value       = azurerm_storage_account.artifacts.name
-  description = "Private storage account for Glimmung native-runner logs, evidence, issues, and Reports."
+  description = "Private storage account for Glimmung runner logs, evidence, issues, and Reports."
 }
 
 output "glimmung_artifacts_container" {

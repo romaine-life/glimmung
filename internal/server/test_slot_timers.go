@@ -30,7 +30,7 @@ var testSlotLeaseTimers sync.Map // map[string]*time.Timer keyed by LeasePublicR
 // deadline already in the past fires on the next scheduler tick.
 //
 // Call only for `claimed` test-slot leases with TTLSeconds > 0.
-func armLeaseExpiryTimer(store ReadStore, preparer TestSlotPreparer, minter NativeGitHubTokenMinter, project Project, lease Lease, logf func(string, ...any)) {
+func armLeaseExpiryTimer(store ReadStore, preparer TestSlotPreparer, minter RunnerGitHubTokenMinter, project Project, lease Lease, logf func(string, ...any)) {
 	if preparer == nil {
 		return
 	}
@@ -84,7 +84,7 @@ func cancelLeaseExpiryTimer(leaseRef string) {
 // database arbitrates — exactly one pod's etag-conditional write succeeds
 // and the others get ErrPreconditionFailed back, which means "another
 // replica already won, my work is done."
-func fireLeaseExpiry(store ReadStore, preparer TestSlotPreparer, minter NativeGitHubTokenMinter, project Project, lease Lease, logf func(string, ...any)) {
+func fireLeaseExpiry(store ReadStore, preparer TestSlotPreparer, minter RunnerGitHubTokenMinter, project Project, lease Lease, logf func(string, ...any)) {
 	ref := LeasePublicRefFromLease(lease)
 	testSlotLeaseTimers.Delete(ref)
 

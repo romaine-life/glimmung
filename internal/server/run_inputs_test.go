@@ -44,7 +44,7 @@ func TestSyntheticDispatchResolvesDeclaredGitRefDefault(t *testing.T) {
 	store.wf.Phases[1].Inputs = map[string]string{
 		"issue_contract": "${{ phases.prepare.outputs.issue_contract }}",
 	}
-	launcher := &fakeNativeLauncher{}
+	launcher := &fakeRunLauncher{}
 	body, _ := json.Marshal(SyntheticDispatchRequest{
 		Project:      "proj",
 		IssueNumber:  7,
@@ -97,7 +97,7 @@ func TestSyntheticDispatchRejectsUnsatisfiableRequiredInput(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/v1/runs/synthetic-dispatch", bytes.NewReader(body))
 	req.Header.Set("Authorization", "Bearer admin")
 
-	newSyntheticDispatchTestHandler(store, &fakeNativeLauncher{}).ServeHTTP(rec, req)
+	newSyntheticDispatchTestHandler(store, &fakeRunLauncher{}).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("status=%d body=%s, want 422", rec.Code, rec.Body.String())

@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-type NativeGitHubTokenMinter interface {
+type RunnerGitHubTokenMinter interface {
 	InstallationToken(ctx context.Context) (string, error)
 	RepositoryInstallationToken(ctx context.Context, repo string, permissions map[string]string) (string, error)
 }
@@ -23,11 +23,11 @@ func positivePathInt(w http.ResponseWriter, r *http.Request, name string) (int, 
 	return value, true
 }
 
-type NativeGitHubTokenResult struct {
+type RunnerGitHubTokenResult struct {
 	Token string `json:"token"`
 }
 
-type NativeGitHubAgentTokenResult struct {
+type RunnerGitHubAgentTokenResult struct {
 	Token string `json:"token"`
 	Repo  string `json:"repo"`
 }
@@ -36,7 +36,7 @@ type runNumberResolver interface {
 	ReadRunByNumber(ctx context.Context, project string, issueNumber int, runNumber string) (string, error)
 }
 
-func nativeGitHubTokenByCallbackToken(store ReadStore, minter NativeGitHubTokenMinter) http.HandlerFunc {
+func runnerGitHubTokenByCallbackToken(store ReadStore, minter RunnerGitHubTokenMinter) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if minter == nil {
 			writeProblem(w, http.StatusServiceUnavailable, "GitHub token minter not configured")
@@ -56,11 +56,11 @@ func nativeGitHubTokenByCallbackToken(store ReadStore, minter NativeGitHubTokenM
 			writeInternalError(w, r, err, "read run by callback token failed")
 			return
 		}
-		writeNativeGitHubToken(w, r, completionStore, minter, project, runID)
+		writeRunnerGitHubToken(w, r, completionStore, minter, project, runID)
 	}
 }
 
-func nativeGitHubAgentTokenByCallbackToken(store ReadStore, minter NativeGitHubTokenMinter) http.HandlerFunc {
+func runnerGitHubAgentTokenByCallbackToken(store ReadStore, minter RunnerGitHubTokenMinter) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if minter == nil {
 			writeProblem(w, http.StatusServiceUnavailable, "GitHub token minter not configured")
@@ -80,11 +80,11 @@ func nativeGitHubAgentTokenByCallbackToken(store ReadStore, minter NativeGitHubT
 			writeInternalError(w, r, err, "read run by callback token failed")
 			return
 		}
-		writeNativeGitHubAgentToken(w, r, completionStore, minter, project, runID)
+		writeRunnerGitHubAgentToken(w, r, completionStore, minter, project, runID)
 	}
 }
 
-func nativeGitHubTokenByNumber(store ReadStore, minter NativeGitHubTokenMinter) http.HandlerFunc {
+func runnerGitHubTokenByNumber(store ReadStore, minter RunnerGitHubTokenMinter) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if minter == nil {
 			writeProblem(w, http.StatusServiceUnavailable, "GitHub token minter not configured")
@@ -113,11 +113,11 @@ func nativeGitHubTokenByNumber(store ReadStore, minter NativeGitHubTokenMinter) 
 			writeInternalError(w, r, err, "read run failed")
 			return
 		}
-		writeNativeGitHubToken(w, r, completionStore, minter, r.PathValue("project"), runID)
+		writeRunnerGitHubToken(w, r, completionStore, minter, r.PathValue("project"), runID)
 	}
 }
 
-func writeNativeGitHubToken(w http.ResponseWriter, r *http.Request, store RunCompletionStore, minter NativeGitHubTokenMinter, project, runID string) {
+func writeRunnerGitHubToken(w http.ResponseWriter, r *http.Request, store RunCompletionStore, minter RunnerGitHubTokenMinter, project, runID string) {
 	run, err := store.ReadRunForReplay(r.Context(), project, runID)
 	if errors.Is(err, ErrNotFound) {
 		writeProblem(w, http.StatusNotFound, "run not found")
@@ -136,10 +136,10 @@ func writeNativeGitHubToken(w http.ResponseWriter, r *http.Request, store RunCom
 		writeProblem(w, http.StatusBadGateway, "mint GitHub token failed")
 		return
 	}
-	writeJSON(w, http.StatusOK, NativeGitHubTokenResult{Token: token})
+	writeJSON(w, http.StatusOK, RunnerGitHubTokenResult{Token: token})
 }
 
-func writeNativeGitHubAgentToken(w http.ResponseWriter, r *http.Request, store RunCompletionStore, minter NativeGitHubTokenMinter, project, runID string) {
+func writeRunnerGitHubAgentToken(w http.ResponseWriter, r *http.Request, store RunCompletionStore, minter RunnerGitHubTokenMinter, project, runID string) {
 	run, err := store.ReadRunForReplay(r.Context(), project, runID)
 	if errors.Is(err, ErrNotFound) {
 		writeProblem(w, http.StatusNotFound, "run not found")
@@ -176,7 +176,7 @@ func writeNativeGitHubAgentToken(w http.ResponseWriter, r *http.Request, store R
 		writeProblem(w, http.StatusBadGateway, "mint repo-scoped GitHub token failed")
 		return
 	}
-	writeJSON(w, http.StatusOK, NativeGitHubAgentTokenResult{
+	writeJSON(w, http.StatusOK, RunnerGitHubAgentTokenResult{
 		Token: token,
 		Repo:  repo,
 	})

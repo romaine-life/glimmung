@@ -141,7 +141,7 @@ func TestCompleteDispatchTimedOutPhaseUsesCompletionPathForCleanup(t *testing.T)
 		tokenRunID:         "r1",
 		tokenProject:       "proj",
 		appendIdx:          1,
-		nativeExpectedJobs: []string{"env-prep"},
+		runnerExpectedJobs: []string{"env-prep"},
 		leaseResult:        Lease{Project: "proj", LeaseNumber: intPtr(1), State: "claimed", Metadata: map[string]any{}},
 	}
 	store.run = &RunReplayData{
@@ -157,12 +157,12 @@ func TestCompleteDispatchTimedOutPhaseUsesCompletionPathForCleanup(t *testing.T)
 		Project: "proj",
 		Name:    "wf",
 		Phases: []PhaseSpec{
-			{Name: "env-prep", Kind: "k8s_job", Jobs: []NativeJobSpec{{ID: "env-prep"}}},
-			{Name: "cleanup", Kind: "k8s_job", RunOn: PhaseRunOnAlways, Purpose: PhasePurposeTeardown, DependsOn: []string{"env-prep"}, Jobs: []NativeJobSpec{{ID: "cleanup"}}},
+			{Name: "env-prep", Kind: "k8s_job", Jobs: []RunnerJobSpec{{ID: "env-prep"}}},
+			{Name: "cleanup", Kind: "k8s_job", RunOn: PhaseRunOnAlways, Purpose: PhasePurposeTeardown, DependsOn: []string{"env-prep"}, Jobs: []RunnerJobSpec{{ID: "cleanup"}}},
 		},
 		Budget: budget.Config{Total: 25},
 	}
-	launcher := &fakeNativeLauncher{}
+	launcher := &fakeRunLauncher{}
 	run := RunReport{
 		ID:      "r1",
 		Project: "proj",
@@ -179,28 +179,28 @@ func TestCompleteDispatchTimedOutPhaseUsesCompletionPathForCleanup(t *testing.T)
 		t.Fatalf("completeDispatchTimedOutPhase: %v", err)
 	}
 	if !completed {
-		t.Fatal("timeout should have been completed through native completion")
+		t.Fatal("timeout should have been completed through runner completion")
 	}
 	if !launcher.called || launcher.req.Phase.Name != "cleanup" {
-		t.Fatalf("native launch=%#v", launcher.req)
+		t.Fatalf("runner launch=%#v", launcher.req)
 	}
 }
 
-// fakeJobStatusGetter satisfies NativeJobStatusGetter for reconciler tests.
+// fakeJobStatusGetter satisfies RunnerJobStatusGetter for reconciler tests.
 type fakeJobStatusGetter struct {
-	statuses map[string]NativeJobStatus
+	statuses map[string]RunnerJobStatus
 	calls    int
 	err      error
 }
 
-func (f *fakeJobStatusGetter) GetNativeJobStatus(_ context.Context, _, name string) (NativeJobStatus, error) {
+func (f *fakeJobStatusGetter) GetRunnerJobStatus(_ context.Context, _, name string) (RunnerJobStatus, error) {
 	f.calls++
 	if f.err != nil {
-		return NativeJobStatus{}, f.err
+		return RunnerJobStatus{}, f.err
 	}
 	status, ok := f.statuses[name]
 	if !ok {
-		return NativeJobStatus{Found: false}, nil
+		return RunnerJobStatus{Found: false}, nil
 	}
 	return status, nil
 }
@@ -211,7 +211,7 @@ func TestExpireFailedActiveJobsSynthesizesTimedOutCompletion(t *testing.T) {
 		tokenRunID:         "r1",
 		tokenProject:       "proj",
 		appendIdx:          1,
-		nativeExpectedJobs: []string{"llm-verify"},
+		runnerExpectedJobs: []string{"llm-verify"},
 		leaseResult:        Lease{Project: "proj", LeaseNumber: intPtr(1), State: "claimed", Metadata: map[string]any{}},
 	}
 	store.run = &RunReplayData{
@@ -227,23 +227,23 @@ func TestExpireFailedActiveJobsSynthesizesTimedOutCompletion(t *testing.T) {
 		Project: "proj",
 		Name:    "wf",
 		Phases: []PhaseSpec{
-			{Name: "llm-verify", Kind: "k8s_job", Jobs: []NativeJobSpec{{ID: "llm-verify"}}},
-			{Name: "cleanup", Kind: "k8s_job", RunOn: PhaseRunOnAlways, Purpose: PhasePurposeTeardown, DependsOn: []string{"llm-verify"}, Jobs: []NativeJobSpec{{ID: "env-destroy"}}},
+			{Name: "llm-verify", Kind: "k8s_job", Jobs: []RunnerJobSpec{{ID: "llm-verify"}}},
+			{Name: "cleanup", Kind: "k8s_job", RunOn: PhaseRunOnAlways, Purpose: PhasePurposeTeardown, DependsOn: []string{"llm-verify"}, Jobs: []RunnerJobSpec{{ID: "env-destroy"}}},
 		},
 		Budget: budget.Config{Total: 25},
 	}
-	launcher := &fakeNativeLauncher{}
+	launcher := &fakeRunLauncher{}
 	now := time.Date(2026, 5, 28, 18, 30, 0, 0, time.UTC)
 	terminal := now.Add(-5 * time.Minute)
 	jobName := "glim-proj-170-runs-1-1-2-llm-verify"
 	statusGetter := &fakeJobStatusGetter{
-		statuses: map[string]NativeJobStatus{
+		statuses: map[string]RunnerJobStatus{
 			jobName: {
 				Found:              true,
 				Failed:             1,
 				LastTransitionTime: terminal,
 				CompletionTime:     time.Time{},
-				Conditions: []NativeJobCondition{
+				Conditions: []RunnerJobCondition{
 					{Type: "Failed", Status: "True", Reason: "BackoffLimitExceeded", Message: "Job has reached the specified backoff limit", LastTransitionTime: terminal},
 				},
 			},
@@ -278,10 +278,10 @@ func TestExpireFailedActiveJobsSynthesizesTimedOutCompletion(t *testing.T) {
 	if statusGetter.calls != 1 {
 		t.Fatalf("status getter calls=%d, want 1", statusGetter.calls)
 	}
-	if got := store.nativeCompletions["llm-verify"]; got.Conclusion != "timed_out" {
+	if got := store.runnerCompletions["llm-verify"]; got.Conclusion != "timed_out" {
 		t.Fatalf("conclusion=%q, want timed_out", got.Conclusion)
 	}
-	if got := store.nativeCompletions["llm-verify"]; got.TerminalReason != JobTerminalReasonBackoffExceeded {
+	if got := store.runnerCompletions["llm-verify"]; got.TerminalReason != JobTerminalReasonBackoffExceeded {
 		t.Fatalf("terminal_reason=%q, want %q", got.TerminalReason, JobTerminalReasonBackoffExceeded)
 	}
 	if !launcher.called || launcher.req.Phase.Name != "cleanup" {
@@ -294,18 +294,18 @@ func TestEvaluateActiveJobFailureMapsK8sReasonToEnum(t *testing.T) {
 	terminal := now.Add(-2 * time.Minute)
 	cases := []struct {
 		name           string
-		status         NativeJobStatus
+		status         RunnerJobStatus
 		wantReady      bool
 		wantConclusion string
 		wantTerminal   string
 	}{
 		{
 			name: "DeadlineExceeded maps to deadline_exceeded",
-			status: NativeJobStatus{
+			status: RunnerJobStatus{
 				Found:              true,
 				Failed:             1,
 				LastTransitionTime: terminal,
-				Conditions: []NativeJobCondition{
+				Conditions: []RunnerJobCondition{
 					{Type: "Failed", Status: "True", Reason: "DeadlineExceeded", LastTransitionTime: terminal},
 				},
 			},
@@ -315,11 +315,11 @@ func TestEvaluateActiveJobFailureMapsK8sReasonToEnum(t *testing.T) {
 		},
 		{
 			name: "BackoffLimitExceeded maps to backoff_exceeded",
-			status: NativeJobStatus{
+			status: RunnerJobStatus{
 				Found:              true,
 				Failed:             1,
 				LastTransitionTime: terminal,
-				Conditions: []NativeJobCondition{
+				Conditions: []RunnerJobCondition{
 					{Type: "Failed", Status: "True", Reason: "BackoffLimitExceeded", LastTransitionTime: terminal},
 				},
 			},
@@ -329,7 +329,7 @@ func TestEvaluateActiveJobFailureMapsK8sReasonToEnum(t *testing.T) {
 		},
 		{
 			name: "Job TTL-collected maps to pod_gone",
-			status: NativeJobStatus{
+			status: RunnerJobStatus{
 				Found: false,
 			},
 			wantReady:      true,
@@ -338,12 +338,12 @@ func TestEvaluateActiveJobFailureMapsK8sReasonToEnum(t *testing.T) {
 		},
 		{
 			name: "Completed-but-callback-lost maps to callback_lost",
-			status: NativeJobStatus{
+			status: RunnerJobStatus{
 				Found:              true,
 				Succeeded:          1,
 				CompletionTime:     terminal,
 				LastTransitionTime: terminal,
-				Conditions: []NativeJobCondition{
+				Conditions: []RunnerJobCondition{
 					{Type: "Complete", Status: "True", LastTransitionTime: terminal},
 				},
 			},
@@ -354,7 +354,7 @@ func TestEvaluateActiveJobFailureMapsK8sReasonToEnum(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			getter := &fakeJobStatusGetter{statuses: map[string]NativeJobStatus{"job": tc.status}}
+			getter := &fakeJobStatusGetter{statuses: map[string]RunnerJobStatus{"job": tc.status}}
 			ready, conclusion, terminal, _, err := evaluateActiveJobFailure(context.Background(), getter, "glimmung-runs", "job", time.Minute, now)
 			if err != nil {
 				t.Fatalf("evaluateActiveJobFailure: %v", err)
@@ -394,12 +394,12 @@ func TestExpireFailedActiveJobsRespectsGracePeriod(t *testing.T) {
 	recent := now.Add(-10 * time.Second)
 	jobName := "glim-proj-170-runs-1-1-2-llm-verify"
 	statusGetter := &fakeJobStatusGetter{
-		statuses: map[string]NativeJobStatus{
+		statuses: map[string]RunnerJobStatus{
 			jobName: {
 				Found:              true,
 				Failed:             1,
 				LastTransitionTime: recent,
-				Conditions: []NativeJobCondition{
+				Conditions: []RunnerJobCondition{
 					{Type: "Failed", Status: "True", Reason: "BackoffLimitExceeded", LastTransitionTime: recent},
 				},
 			},
@@ -420,14 +420,14 @@ func TestExpireFailedActiveJobsRespectsGracePeriod(t *testing.T) {
 		}},
 	}
 
-	count, err := ExpireFailedActiveJobs(context.Background(), listStore, &fakeNativeLauncher{}, statusGetter, "glimmung-runs", nil, time.Minute, now)
+	count, err := ExpireFailedActiveJobs(context.Background(), listStore, &fakeRunLauncher{}, statusGetter, "glimmung-runs", nil, time.Minute, now)
 	if err != nil {
 		t.Fatalf("ExpireFailedActiveJobs: %v", err)
 	}
 	if count != 0 {
 		t.Fatalf("expected grace period to defer completion; count=%d", count)
 	}
-	if _, ok := store.nativeCompletions["llm-verify"]; ok {
+	if _, ok := store.runnerCompletions["llm-verify"]; ok {
 		t.Fatal("did not expect a synthetic completion within the grace period")
 	}
 }
@@ -438,7 +438,7 @@ func TestExpireFailedActiveJobsIgnoresActiveAndSucceededJobs(t *testing.T) {
 		tokenRunID:         "r1",
 		tokenProject:       "proj",
 		appendIdx:          1,
-		nativeExpectedJobs: []string{"already-done", "still-running"},
+		runnerExpectedJobs: []string{"already-done", "still-running"},
 		leaseResult:        Lease{Project: "proj", LeaseNumber: intPtr(1), State: "claimed", Metadata: map[string]any{}},
 	}
 	store.run = &RunReplayData{
@@ -454,15 +454,15 @@ func TestExpireFailedActiveJobsIgnoresActiveAndSucceededJobs(t *testing.T) {
 		Project: "proj",
 		Name:    "wf",
 		Phases: []PhaseSpec{
-			{Name: "llm-verify", Kind: "k8s_job", Jobs: []NativeJobSpec{{ID: "already-done"}, {ID: "still-running"}}},
-			{Name: "cleanup", Kind: "k8s_job", RunOn: PhaseRunOnAlways, Purpose: PhasePurposeTeardown, DependsOn: []string{"llm-verify"}, Jobs: []NativeJobSpec{{ID: "env-destroy"}}},
+			{Name: "llm-verify", Kind: "k8s_job", Jobs: []RunnerJobSpec{{ID: "already-done"}, {ID: "still-running"}}},
+			{Name: "cleanup", Kind: "k8s_job", RunOn: PhaseRunOnAlways, Purpose: PhasePurposeTeardown, DependsOn: []string{"llm-verify"}, Jobs: []RunnerJobSpec{{ID: "env-destroy"}}},
 		},
 		Budget: budget.Config{Total: 25},
 	}
 	now := time.Date(2026, 5, 28, 18, 30, 0, 0, time.UTC)
 	terminal := now.Add(-5 * time.Minute)
 	statusGetter := &fakeJobStatusGetter{
-		statuses: map[string]NativeJobStatus{
+		statuses: map[string]RunnerJobStatus{
 			"glim-proj-still-running": {
 				Found:  true,
 				Active: 1,
@@ -471,7 +471,7 @@ func TestExpireFailedActiveJobsIgnoresActiveAndSucceededJobs(t *testing.T) {
 				Found:          true,
 				Succeeded:      1,
 				CompletionTime: terminal,
-				Conditions: []NativeJobCondition{
+				Conditions: []RunnerJobCondition{
 					{Type: "Complete", Status: "True", LastTransitionTime: terminal},
 				},
 			},
@@ -495,7 +495,7 @@ func TestExpireFailedActiveJobsIgnoresActiveAndSucceededJobs(t *testing.T) {
 		}},
 	}
 
-	count, err := ExpireFailedActiveJobs(context.Background(), listStore, &fakeNativeLauncher{}, statusGetter, "glimmung-runs", nil, time.Minute, now)
+	count, err := ExpireFailedActiveJobs(context.Background(), listStore, &fakeRunLauncher{}, statusGetter, "glimmung-runs", nil, time.Minute, now)
 	if err != nil {
 		t.Fatalf("ExpireFailedActiveJobs: %v", err)
 	}
@@ -504,7 +504,7 @@ func TestExpireFailedActiveJobsIgnoresActiveAndSucceededJobs(t *testing.T) {
 	if count != 1 {
 		t.Fatalf("count=%d, want 1 (succeeded-without-callback)", count)
 	}
-	got, ok := store.nativeCompletions["already-done"]
+	got, ok := store.runnerCompletions["already-done"]
 	if !ok {
 		t.Fatal("expected synthetic completion for already-done")
 	}
@@ -513,7 +513,7 @@ func TestExpireFailedActiveJobsIgnoresActiveAndSucceededJobs(t *testing.T) {
 	}
 }
 
-func TestParseNativeJobStatusExtractsConditions(t *testing.T) {
+func TestParseRunnerJobStatusExtractsConditions(t *testing.T) {
 	raw := map[string]any{
 		"status": map[string]any{
 			"active":         0,
@@ -538,7 +538,7 @@ func TestParseNativeJobStatusExtractsConditions(t *testing.T) {
 			},
 		},
 	}
-	status := parseNativeJobStatus(raw)
+	status := parseRunnerJobStatus(raw)
 	if !status.Found {
 		t.Fatal("expected Found=true")
 	}
@@ -563,7 +563,7 @@ func TestParseNativeJobStatusExtractsConditions(t *testing.T) {
 // drive the reconciler's per-project scan. We only need the ListProjects and
 // ListProjectRuns methods to satisfy RunDispatchTimeoutStore; the rest is
 // inherited via embedding so the type also satisfies RunCompletionStore and
-// NativeJobCompletionStore.
+// RunnerJobCompletionStore.
 type runReportListStore struct {
 	*fakeCompletionStore
 	runs []RunReport
@@ -601,12 +601,12 @@ func (s *runReportListStore) AbortRunByID(_ context.Context, project, runID, rea
 	return s.fakeCompletionStore.AbortRunByID(context.Background(), project, runID, reason)
 }
 
-// innerJobEventStore is a minimal NativeRunStore stand-in for the
+// innerJobEventStore is a minimal RunnerStore stand-in for the
 // inner-job watcher tests. It records events that were submitted plus
 // fakes ErrConflict on idempotency-key collision.
 type innerJobEventStore struct {
 	*runReportListStore
-	events    []NativeRunEventRequest
+	events    []RunnerEventRequest
 	idSeen    map[string]bool
 	recordErr error
 }
@@ -615,17 +615,17 @@ func newInnerJobEventStore(store *runReportListStore) *innerJobEventStore {
 	return &innerJobEventStore{runReportListStore: store, idSeen: map[string]bool{}}
 }
 
-func (s *innerJobEventStore) GetNativeRunStatusByID(_ context.Context, _, _ string) (NativeRunStatusResponse, error) {
-	return NativeRunStatusResponse{}, nil
+func (s *innerJobEventStore) GetRunnerStatusByID(_ context.Context, _, _ string) (RunnerStatusResponse, error) {
+	return RunnerStatusResponse{}, nil
 }
 
-func (s *innerJobEventStore) ListNativeEventsByID(_ context.Context, _, _ string, _ *int, _ *string, _ *string, _ *int, _ *int) (NativeRunLogsResponse, error) {
-	return NativeRunLogsResponse{}, nil
+func (s *innerJobEventStore) ListRunnerEventsByID(_ context.Context, _, _ string, _ *int, _ *string, _ *string, _ *int, _ *int) (RunnerLogsResponse, error) {
+	return RunnerLogsResponse{}, nil
 }
 
-func (s *innerJobEventStore) RecordNativeEventByID(_ context.Context, project, runID string, req NativeRunEventRequest) (NativeRunEventResult, error) {
+func (s *innerJobEventStore) RecordRunnerEventByID(_ context.Context, project, runID string, req RunnerEventRequest) (RunnerEventResult, error) {
 	if s.recordErr != nil {
-		return NativeRunEventResult{}, s.recordErr
+		return RunnerEventResult{}, s.recordErr
 	}
 	jobID := ""
 	if req.JobID != "" {
@@ -633,11 +633,11 @@ func (s *innerJobEventStore) RecordNativeEventByID(_ context.Context, project, r
 	}
 	key := project + "::" + runID + "::" + jobID + "::" + strconvItoa(req.Seq)
 	if s.idSeen[key] {
-		return NativeRunEventResult{}, ErrConflict
+		return RunnerEventResult{}, ErrConflict
 	}
 	s.idSeen[key] = true
 	s.events = append(s.events, req)
-	return NativeRunEventResult{Accepted: true, JobID: req.JobID, Seq: req.Seq}, nil
+	return RunnerEventResult{Accepted: true, JobID: req.JobID, Seq: req.Seq}, nil
 }
 
 func strconvItoa(n int) string {
@@ -668,13 +668,13 @@ func TestExpireInnerJobTerminationsEmitsForTerminalSucceededJob(t *testing.T) {
 	now := time.Date(2026, 5, 29, 1, 30, 0, 0, time.UTC)
 	terminal := now.Add(-5 * time.Minute)
 	statusGetter := &fakeJobStatusGetter{
-		statuses: map[string]NativeJobStatus{
+		statuses: map[string]RunnerJobStatus{
 			"agent-ve-2": {
 				Found:              true,
 				Succeeded:          1,
 				CompletionTime:     terminal,
 				LastTransitionTime: terminal,
-				Conditions: []NativeJobCondition{
+				Conditions: []RunnerJobCondition{
 					{Type: "Complete", Status: "True", LastTransitionTime: terminal},
 				},
 			},
@@ -740,12 +740,12 @@ func TestExpireInnerJobTerminationsEmitsForFailedConditionWithMappedReason(t *te
 	now := time.Date(2026, 5, 29, 1, 30, 0, 0, time.UTC)
 	terminal := now.Add(-5 * time.Minute)
 	statusGetter := &fakeJobStatusGetter{
-		statuses: map[string]NativeJobStatus{
+		statuses: map[string]RunnerJobStatus{
 			"agent-stuck": {
 				Found:              true,
 				Failed:             1,
 				LastTransitionTime: terminal,
-				Conditions: []NativeJobCondition{
+				Conditions: []RunnerJobCondition{
 					{Type: "Failed", Status: "True", Reason: "DeadlineExceeded", LastTransitionTime: terminal},
 				},
 			},
@@ -793,7 +793,7 @@ func TestExpireInnerJobTerminationsSkipsAlreadyTerminatedAndStillActive(t *testi
 	store := &fakeCompletionStore{tokenRunID: "r1", tokenProject: "proj"}
 	now := time.Date(2026, 5, 29, 1, 30, 0, 0, time.UTC)
 	statusGetter := &fakeJobStatusGetter{
-		statuses: map[string]NativeJobStatus{
+		statuses: map[string]RunnerJobStatus{
 			"still-running": {Found: true, Active: 1},
 		},
 	}
@@ -886,7 +886,7 @@ func TestExpireFailedActiveJobsStampsLogArchiveURLOnPayload(t *testing.T) {
 		tokenRunID:         "r1",
 		tokenProject:       "proj",
 		appendIdx:          1,
-		nativeExpectedJobs: []string{"llm-verify"},
+		runnerExpectedJobs: []string{"llm-verify"},
 		leaseResult:        Lease{Project: "proj", LeaseNumber: intPtr(1), State: "claimed", Metadata: map[string]any{}},
 	}
 	store.run = &RunReplayData{
@@ -902,22 +902,22 @@ func TestExpireFailedActiveJobsStampsLogArchiveURLOnPayload(t *testing.T) {
 		Project: "proj",
 		Name:    "wf",
 		Phases: []PhaseSpec{
-			{Name: "llm-verify", Kind: "k8s_job", Jobs: []NativeJobSpec{{ID: "llm-verify"}}},
-			{Name: "cleanup", Kind: "k8s_job", RunOn: PhaseRunOnAlways, Purpose: PhasePurposeTeardown, DependsOn: []string{"llm-verify"}, Jobs: []NativeJobSpec{{ID: "env-destroy"}}},
+			{Name: "llm-verify", Kind: "k8s_job", Jobs: []RunnerJobSpec{{ID: "llm-verify"}}},
+			{Name: "cleanup", Kind: "k8s_job", RunOn: PhaseRunOnAlways, Purpose: PhasePurposeTeardown, DependsOn: []string{"llm-verify"}, Jobs: []RunnerJobSpec{{ID: "env-destroy"}}},
 		},
 		Budget: budget.Config{Total: 25},
 	}
-	launcher := &fakeNativeLauncher{}
+	launcher := &fakeRunLauncher{}
 	now := time.Date(2026, 5, 28, 18, 30, 0, 0, time.UTC)
 	terminal := now.Add(-5 * time.Minute)
 	jobName := "glim-proj-170-runs-1-1-2-llm-verify"
 	statusGetter := &fakeJobStatusGetter{
-		statuses: map[string]NativeJobStatus{
+		statuses: map[string]RunnerJobStatus{
 			jobName: {
 				Found:              true,
 				Failed:             1,
 				LastTransitionTime: terminal,
-				Conditions: []NativeJobCondition{
+				Conditions: []RunnerJobCondition{
 					{Type: "Failed", Status: "True", Reason: "BackoffLimitExceeded", LastTransitionTime: terminal},
 				},
 			},
@@ -949,7 +949,7 @@ func TestExpireFailedActiveJobsStampsLogArchiveURLOnPayload(t *testing.T) {
 	if count != 1 {
 		t.Fatalf("count=%d, want 1", count)
 	}
-	got, ok := store.nativeCompletions["llm-verify"]
+	got, ok := store.runnerCompletions["llm-verify"]
 	if !ok {
 		t.Fatal("expected synthetic completion")
 	}
@@ -965,13 +965,13 @@ func TestBuildInnerJobTerminationStampsLogArchiveURL(t *testing.T) {
 	now := time.Date(2026, 5, 29, 1, 30, 0, 0, time.UTC)
 	terminal := now.Add(-5 * time.Minute)
 	statusGetter := &fakeJobStatusGetter{
-		statuses: map[string]NativeJobStatus{
+		statuses: map[string]RunnerJobStatus{
 			"agent-ve-2": {
 				Found:              true,
 				Succeeded:          1,
 				CompletionTime:     terminal,
 				LastTransitionTime: terminal,
-				Conditions: []NativeJobCondition{
+				Conditions: []RunnerJobCondition{
 					{Type: "Complete", Status: "True", LastTransitionTime: terminal},
 				},
 			},
@@ -1008,14 +1008,14 @@ func TestBuildInnerJobTerminationStampsLogArchiveURL(t *testing.T) {
 	}
 }
 
-// fakeJobLogsFetcher returns canned bytes for GetNativeJobLogs.
+// fakeJobLogsFetcher returns canned bytes for GetRunnerJobLogs.
 type fakeJobLogsFetcher struct {
 	body  []byte
 	err   error
 	calls int
 }
 
-func (f *fakeJobLogsFetcher) GetNativeJobLogs(_ context.Context, _, _ string, _ int64) ([]byte, error) {
+func (f *fakeJobLogsFetcher) GetRunnerJobLogs(_ context.Context, _, _ string, _ int64) ([]byte, error) {
 	f.calls++
 	if f.err != nil {
 		return nil, f.err
@@ -1086,13 +1086,13 @@ func TestBuildInnerJobTerminationPrefersArtifactOverGrafanaURL(t *testing.T) {
 	now := time.Date(2026, 5, 29, 1, 30, 0, 0, time.UTC)
 	terminal := now.Add(-5 * time.Minute)
 	statusGetter := &fakeJobStatusGetter{
-		statuses: map[string]NativeJobStatus{
+		statuses: map[string]RunnerJobStatus{
 			"agent-ve-2": {
 				Found:              true,
 				Succeeded:          1,
 				CompletionTime:     terminal,
 				LastTransitionTime: terminal,
-				Conditions: []NativeJobCondition{
+				Conditions: []RunnerJobCondition{
 					{Type: "Complete", Status: "True", LastTransitionTime: terminal},
 				},
 			},
@@ -1129,13 +1129,13 @@ func TestBuildInnerJobTerminationFallsBackToGrafanaWhenCaptureFails(t *testing.T
 	now := time.Date(2026, 5, 29, 1, 30, 0, 0, time.UTC)
 	terminal := now.Add(-5 * time.Minute)
 	statusGetter := &fakeJobStatusGetter{
-		statuses: map[string]NativeJobStatus{
+		statuses: map[string]RunnerJobStatus{
 			"agent-ve-2": {
 				Found:              true,
 				Succeeded:          1,
 				CompletionTime:     terminal,
 				LastTransitionTime: terminal,
-				Conditions: []NativeJobCondition{
+				Conditions: []RunnerJobCondition{
 					{Type: "Complete", Status: "True", LastTransitionTime: terminal},
 				},
 			},

@@ -1,6 +1,6 @@
 # Inner-Job Observation Contract
 
-Native phase scripts sometimes spawn *child* Kubernetes Jobs in a different
+Runner phase scripts sometimes spawn *child* Kubernetes Jobs in a different
 namespace from the runner. Today Glimmung sees only the outer Job. When the
 child hangs, fails silently, or has its logs buried, the outer phase looks
 healthy until its `activeDeadlineSeconds` finally trips — and there is no
@@ -21,7 +21,7 @@ This document is the staged plan for closing that visibility gap.
 - **Children are first-class.** A phase that spawns inner k8s Jobs registers
   them with Glimmung. They show up in the run report alongside the outer Job,
   not as a footnote.
-- **Registration is event-driven.** The native runner already streams the
+- **Registration is event-driven.** The runner already streams the
   child script's stdout. We piggy-back on that channel rather than introducing
   a parallel control plane.
 - **Detection is k8s-Watch-based, not Glimmung-process-aware.** Once
@@ -55,7 +55,7 @@ accidentally.
 
 The runner parses the embedded JSON, validates the shape (required:
 `namespace`, `job_name`; optional: `intent`, `label`, `selector`), and emits a
-`native event` with `event_type="inner_job_registered"` and the payload as
+`runner event` with `event_type="inner_job_registered"` and the payload as
 metadata. Existing `EventsURL` callback path is reused — no new endpoint.
 
 `intent` is a bounded enum: `verification_agent`, `helper`, `tooling`,
@@ -69,7 +69,7 @@ queries still find it.
 ### Stage 1: events-only (this PR)
 
 - Runner emits `inner_job_registered` events.
-- Server accepts the new event type, stores it on the existing native_run_events
+- Server accepts the new event type, stores it on the existing runner_events
   table, no schema migration.
 - Run-report API surfaces inner Jobs as `inner_jobs[]` on `RunPhaseExecution`,
   populated by scanning event records at read time.
@@ -79,13 +79,13 @@ queries still find it.
 - `glimmung_run_inner_jobs_registered_total{intent}` counter — bounded labels.
 
 This leaves the system in a coherent state: every child Job that has ever
-been registered is queryable through the existing native event stream, and the
+been registered is queryable through the existing runner event stream, and the
 dashboard shows what was launched even when the outer pod was killed before
 the child terminated.
 
 ### Stage 2: durable child status (follow-up PR)
 
-- New table `native_run_inner_jobs` keyed on (run_id, attempt_index,
+- New table `runner_inner_jobs` keyed on (run_id, attempt_index,
   parent_job_id, namespace, child_job_name).
 - Watcher loop (same shape as `ExpireFailedActiveJobs`) reads each child Job's
   `.status.conditions[]`, stamps Complete/Failed back onto the row.
@@ -122,7 +122,7 @@ There is no remaining outstanding piece in the inner-Job contract.
 
 ## Schema additions (Stage 1)
 
-### Native event
+### Runner event
 
 New `event` enum value: `inner_job_registered`.
 
@@ -154,7 +154,7 @@ type InnerJobRef struct {
 }
 ```
 
-Populated by scanning the run's native events for `inner_job_registered`
+Populated by scanning the run's runner events for `inner_job_registered`
 records.
 
 ### Metric

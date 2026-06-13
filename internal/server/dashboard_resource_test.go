@@ -61,9 +61,9 @@ func TestDashboardURLServesRunReportJSON(t *testing.T) {
 	if res.CanonicalURL != stepPath {
 		t.Fatalf("canonical=%q", res.CanonicalURL)
 	}
-	events := res.Links["native_events"]
+	events := res.Links["runner_events"]
 	if !strings.Contains(events, "job_id=llm-verify") || !strings.Contains(events, "step_slug=run-verification") {
-		t.Fatalf("native_events link=%q", events)
+		t.Fatalf("runner_events link=%q", events)
 	}
 	if res.Links["run_report"] != "/v1/projects/ambience/issues/168/runs/9.1/report" {
 		t.Fatalf("run_report link=%q", res.Links["run_report"])

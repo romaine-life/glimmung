@@ -1,15 +1,15 @@
-name: build native-runner
+name: build runner
 
 on:
   push:
     branches: [main]
     paths:
-      - 'cmd/glimmung-native-runner/**'
-      - 'native-runner/Dockerfile'
+      - 'cmd/glimmung-runner/**'
+      - 'runner/Dockerfile'
       - 'go.mod'
       - 'go.sum'
       - 'internal/**'
-      - '.github/workflows/native-runner-build.yaml'
+      - '.github/workflows/runner-build.yaml'
   workflow_dispatch:
     inputs:
       git_ref:
@@ -22,7 +22,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: native-runner-build
+  group: runner-build
   cancel-in-progress: true
 
 jobs:
@@ -31,8 +31,8 @@ jobs:
     environment: ${{ github.ref == 'refs/heads/main' && 'prod' || 'dev' }}
     env:
       REGISTRY: romainecr.azurecr.io
-      IMAGE: glimmung-native-runner
-      VERSION_TAG: native-runner
+      IMAGE: glimmung-runner
+      VERSION_TAG: runner
     steps:
       - uses: actions/checkout@v4
         with:
@@ -80,10 +80,10 @@ jobs:
         run: |
           set -euo pipefail
           output="$(scripts/image-fingerprint.sh \
-            --image native-runner \
-            --dockerfile native-runner/Dockerfile \
+            --image runner \
+            --dockerfile runner/Dockerfile \
             --context . \
-            --paths 'native-runner/Dockerfile go.mod go.sum cmd/glimmung-native-runner internal')"
+            --paths 'runner/Dockerfile go.mod go.sum cmd/glimmung-runner internal')"
           printf '%s\n' "${output}"
           alias_tag="$(printf '%s\n' "${output}" | awk -F= '$1 == "proof_tag" { print $2 }')"
           echo "fingerprint=$(printf '%s\n' "${output}" | awk -F= '$1 == "fingerprint" { print $2 }')" >> "${GITHUB_OUTPUT}"
@@ -104,7 +104,7 @@ jobs:
             echo "Found reusable image ${REGISTRY}/${IMAGE}:${ALIAS_TAG}"
           else
             echo "exists=false" >>"${GITHUB_OUTPUT}"
-            echo "No reusable image found for native-runner fingerprint ${{ steps.fingerprint.outputs.fingerprint }}"
+            echo "No reusable image found for runner fingerprint ${{ steps.fingerprint.outputs.fingerprint }}"
           fi
 
       - name: Build and push image
@@ -112,20 +112,20 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: native-runner/Dockerfile
+          file: runner/Dockerfile
           push: true
           tags: |
             ${{ env.REGISTRY }}/${{ env.IMAGE }}:${{ env.ALIAS_TAG }}
             ${{ env.REGISTRY }}/${{ env.IMAGE }}:${{ env.VERSION_TAG }}
-          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE }}-build-cache:native-runner
-          cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE }}-build-cache:native-runner,mode=max
+          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE }}-build-cache:runner
+          cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE }}-build-cache:runner,mode=max
 
-      - name: Bump chart native runner image
+      - name: Bump chart runner image
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: |
           image="${REGISTRY}/${IMAGE}:${ALIAS_TAG}"
           bump() {
-            sed -i -E "/^nativeRunner:/,/^artifacts:/ s|^(  image: ).*$|\1${image}|" k8s/values.yaml
+            sed -i -E "/^runner:/,/^artifacts:/ s|^(  image: ).*$|\1${image}|" k8s/values.yaml
           }
           bump
           if git diff --quiet k8s/values.yaml; then
@@ -136,7 +136,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add k8s/values.yaml
-          git commit -m "chart: bump native runner image to fingerprint ${ALIAS_TAG} [skip ci]"
+          git commit -m "chart: bump runner image to fingerprint ${ALIAS_TAG} [skip ci]"
           for i in 1 2 3; do
             if git push origin HEAD:main; then exit 0; fi
             git fetch origin main

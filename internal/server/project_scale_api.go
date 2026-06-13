@@ -68,7 +68,7 @@ type TestSlotReturnHistoryEntry struct {
 	CleanupStarted  bool      `json:"cleanup_started"`
 }
 
-func scaleProjectTestEnvironments(store ReadStore, workloadIdentities NativeWorkloadIdentityReconciler, managedOrigins ManagedOriginReconciler, preparer TestSlotPreparer, minter NativeGitHubTokenMinter) http.HandlerFunc {
+func scaleProjectTestEnvironments(store ReadStore, workloadIdentities RunnerWorkloadIdentityReconciler, managedOrigins ManagedOriginReconciler, preparer TestSlotPreparer, minter RunnerGitHubTokenMinter) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		scaler, ok := store.(ProjectTestEnvironmentScaler)
 		if !ok || scaler == nil {
@@ -115,7 +115,7 @@ func scaleProjectTestEnvironments(store ReadStore, workloadIdentities NativeWork
 			}
 			if len(activeRemoved) > 0 {
 				lease := activeRemoved[0]
-				slotName := nativeSlotNameFromMetadata(lease.Metadata)
+				slotName := runnerSlotNameFromMetadata(lease.Metadata)
 				name := LeasePublicRefFromLease(lease)
 				if slotName != nil && strings.TrimSpace(*slotName) != "" {
 					name = strings.TrimSpace(*slotName)
@@ -135,14 +135,14 @@ func scaleProjectTestEnvironments(store ReadStore, workloadIdentities NativeWork
 			return
 		}
 		if workloadIdentities != nil {
-			status, err := workloadIdentities.ReconcileNativeWorkloadIdentities(r.Context(), updated)
-			if status.State != "" && status.State != NativeWorkloadIdentityStatusSkipped {
-				statusWriter, ok := store.(ProjectNativeWorkloadIdentityStatusWriter)
+			status, err := workloadIdentities.ReconcileRunnerWorkloadIdentities(r.Context(), updated)
+			if status.State != "" && status.State != RunnerWorkloadIdentityStatusSkipped {
+				statusWriter, ok := store.(ProjectRunnerWorkloadIdentityStatusWriter)
 				if !ok || statusWriter == nil {
 					writeProblem(w, http.StatusServiceUnavailable, "project workload identity status store not configured")
 					return
 				}
-				persisted, persistErr := statusWriter.SetProjectNativeWorkloadIdentityStatus(r.Context(), project, status)
+				persisted, persistErr := statusWriter.SetProjectRunnerWorkloadIdentityStatus(r.Context(), project, status)
 				if persistErr != nil {
 					writeInternalError(w, r, persistErr, "record workload identity status failed")
 					return
@@ -156,7 +156,7 @@ func scaleProjectTestEnvironments(store ReadStore, workloadIdentities NativeWork
 		}
 		// Reconcile glimmung-owned auth.romaine.life slot origins. The
 		// wildcard is invariant under scale (it's derived from
-		// native_standby_dns.record_base, not from count), but running
+		// runner_standby_dns.record_base, not from count), but running
 		// reconciliation here gives operators an idempotent self-heal:
 		// re-issuing the same scale call retries a failed origin upsert.
 		// Failure surfaces on the project's managed_auth_origins_status
@@ -245,15 +245,15 @@ func activeTestSlotLeasesAboveCount(ctx context.Context, store ReadStore, projec
 		if !projectNames[lease.Project] {
 			continue
 		}
-		slotIndex := nativeSlotIndexFromMetadata(lease.Metadata)
+		slotIndex := runnerSlotIndexFromMetadata(lease.Metadata)
 		if slotIndex == nil || *slotIndex <= count {
 			continue
 		}
 		active = append(active, lease)
 	}
 	sort.SliceStable(active, func(i, j int) bool {
-		left := nativeSlotIndexFromMetadata(active[i].Metadata)
-		right := nativeSlotIndexFromMetadata(active[j].Metadata)
+		left := runnerSlotIndexFromMetadata(active[i].Metadata)
+		right := runnerSlotIndexFromMetadata(active[j].Metadata)
 		if left != nil && right != nil && *left != *right {
 			return *left < *right
 		}
@@ -289,17 +289,17 @@ func findProjectByKey(ctx context.Context, store ReadStore, key string) (Project
 }
 
 func testEnvironmentWarmupLease(project Project, slotIndex int, slotName string) Lease {
-	host := "native-k8s"
+	host := "runner-k8s"
 	return Lease{
 		Project: firstNonEmpty(project.Name, project.ID),
 		Host:    &host,
 		State:   "warming",
 		Metadata: map[string]any{
 			"test_slot_checkout":        true,
-			"native_k8s":                true,
-			"native_slot_index":         strconv.Itoa(slotIndex),
-			"native_slot_name":          slotName,
-			"native_sessions_namespace": testSlotSessionsNamespace(slotName, project),
+			"runner_k8s":                true,
+			"runner_slot_index":         strconv.Itoa(slotIndex),
+			"runner_slot_name":          slotName,
+			"runner_sessions_namespace": testSlotSessionsNamespace(slotName, project),
 		},
 	}
 }
@@ -307,7 +307,7 @@ func testEnvironmentWarmupLease(project Project, slotIndex int, slotName string)
 func testEnvironmentSlotsAboveCount(project Project, count int) []TestEnvironmentSlotStatus {
 	removed := make([]TestEnvironmentSlotStatus, 0)
 	projectName := firstNonEmpty(project.Name, project.ID)
-	if standbyDNS, ok := mapFromMap(project.Metadata, "native_standby_dns"); ok {
+	if standbyDNS, ok := mapFromMap(project.Metadata, "runner_standby_dns"); ok {
 		for _, slot := range mapSliceFromAnySlice(anySlice(standbyDNS["slots"])) {
 			index, ok := positiveIntFromMap(slot, "slot_index")
 			if !ok {
@@ -389,7 +389,7 @@ func mergeRemovedSlots(a, b []TestEnvironmentSlotStatus) []TestEnvironmentSlotSt
 }
 
 func testEnvironmentSlotState(project Project, slotIndex int) string {
-	if standbyDNS, ok := mapFromMap(project.Metadata, "native_standby_dns"); ok {
+	if standbyDNS, ok := mapFromMap(project.Metadata, "runner_standby_dns"); ok {
 		for _, slot := range mapSliceFromAnySlice(anySlice(standbyDNS["slots"])) {
 			n, ok := positiveIntFromMap(slot, "slot_index")
 			if !ok {

@@ -95,8 +95,8 @@ dependencies between them. Each job is its own k8s Job; each
 emits its own completion callback; the phase is "complete"
 when all jobs have completed.
 
-The native completion contract is enforced at
-`POST /v1/run-callbacks/{callback_token}/native/completed`: the payload must
+The runner completion contract is enforced at
+`POST /v1/run-callbacks/{callback_token}/run/completed`: the payload must
 include `job_id`. Managed runner payloads include positive `cost_usd` and
 `agent_usage` when the runner observes provider usage events such as Codex
 `turn.completed.usage`; the runner prices those tokens from the Run's
@@ -104,9 +104,9 @@ snapshotted agent runtime profile. Missing pricing for an observed usage event
 is a runner error, not a silent zero-cost completion. Glimmung records each job
 completion independently, returns a `wait_jobs` response while sibling jobs are
 still pending, and runs the phase decision path only on the transition where
-the final registered job completes. This is the only native terminal callback.
+the final registered job completes. This is the only runner terminal callback.
 Failed jobs report through the same endpoint with a non-`success`
-`conclusion`; the retired `/native/failed` callback must not be reintroduced or
+`conclusion`; the retired `/run/failed` callback must not be reintroduced or
 required by runner images.
 
 Because jobs in a phase are strictly parallel, **a job can never
@@ -119,7 +119,7 @@ design — pipeline shape is determined by phases, not by job DAGs.
 
 ## Managed agent steps
 
-Managed native jobs can declare `type: agent` steps. The workflow owns where an
+Managed runner jobs can declare `type: agent` steps. The workflow owns where an
 agent is needed and which logical slot it occupies; Glimmung owns selection of
 the concrete provider/model at dispatch time.
 
@@ -147,14 +147,14 @@ Agent runtime policy resolves in this order:
 
 Each decision is explicit: `mode: inherit` keeps the current value from the
 previous layer, while `mode: override` names a profile. Dispatch snapshots the
-resolved runtime onto the Run before any native work starts. The runner consumes
+resolved runtime onto the Run before any runner work starts. The runner consumes
 only that snapshot through `GLIMMUNG_AGENT_RUNTIME_JSON`; changing global,
 project, or issue defaults later does not mutate an in-flight or historical
 run. This keeps agent selection containerized: a workflow inserts an agent step
 without forking the workflow per model/provider.
 
 Every runtime profile includes an explicit pricing catalog snapshot. Cost
-telemetry is derived from token usage observed during native execution and that
+telemetry is derived from token usage observed during runner execution and that
 snapshotted pricing, then persisted on job completions, attempts, and run
 reports. Provider-emitted `total_cost_usd` result lines are not a live
 contract.
@@ -366,7 +366,7 @@ runs, but new workflow registrations reject it.
 ## PR touchpoint primitive
 
 Every Glimmung workflow ends in a human-reviewed PR — there is no opt-out.
-Workflows must declare exactly one native job with `primitive: pr_touchpoint`,
+Workflows must declare exactly one runner job with `primitive: pr_touchpoint`,
 and that job must live in a `purpose: review_touchpoint`, `run_on: success`
 phase. Review touchpoints are not teardown; when verification aborts the run,
 Glimmung runs only teardown phases and then terminates the run as aborted.
@@ -384,7 +384,7 @@ phases:
 ```
 
 The job is Glimmung-supplied. Registration canonicalizes the declared job into
-the managed native runner step that calls Glimmung's PR/touchpoint finalizer.
+the managed runner step that calls Glimmung's PR/touchpoint finalizer.
 The workflow owns the placement and job id; Glimmung owns the implementation.
 The historical PR opt-out toggle was deleted: there was no documented product
 scenario for PR-less workflows and per migration-policy unused toggles are
@@ -556,7 +556,7 @@ the run is created. Project checkouts must expose the canonical `git_ref`
 input and set every primary `checkout.ref` to `${{ inputs.git_ref }}`. A phase
 with a project checkout must leave `workflow_ref` blank (normalized to the same
 template) or set it to `${{ inputs.git_ref }}` explicitly. Every other
-`${{ inputs.X }}` reference inside a native `checkout.ref`,
+`${{ inputs.X }}` reference inside a runner `checkout.ref`,
 `extra_checkouts[].ref`, or phase `workflow_ref` must be backed by a declared
 input — registration is rejected at the `ValidateWorkflowRegister` boundary
 otherwise. The contract is symmetric: a dispatch payload that sends an input
@@ -566,7 +566,7 @@ silently flow into `Run.RunInputs`.
 ```yaml
 dispatch_inputs:
   - name: git_ref
-    description: branch or sha for native checkouts
+    description: branch or sha for runner checkouts
     required: true
     default: main
 ```
@@ -602,8 +602,8 @@ and dispatch paths, so the rule cannot drift between them.
 Postgres workflow registrations are the runtime source of truth. The
 workflow upstream endpoints have been retired; dispatch reads the registered
 workflow document, not a consumer repository file.
-The native runner direction is documented in
-[`project-native-runner-architecture.md`](project-native-runner-architecture.md):
+The runner direction is documented in
+[`project-runner-architecture.md`](project-runner-architecture.md):
 Glimmung owns the runner contract and project workflows use inline step
 commands rather than repo-owned callback plumbing.
 
@@ -616,9 +616,9 @@ history.
 
 Each cycle stores a durable execution ledger for the schema snapshot it was
 created with: phase records contain job records, and job records contain step
-records. The graph UI projects from this ledger first, then uses raw native
+records. The graph UI projects from this ledger first, then uses raw runner
 events as live detail. This keeps state names and colors stable even when a
-native job has not emitted logs yet.
+runner job has not emitted logs yet.
 
 ## Operator control pins and the control ledger
 

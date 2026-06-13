@@ -14,7 +14,7 @@ type fakeGraphStore struct {
 	runs        []RunReport
 	touchpoints []TouchpointRow
 	signals     []GraphSignal
-	nativeLogs  NativeRunLogsResponse
+	runnerLogs  RunnerLogsResponse
 }
 
 func (s fakeGraphStore) ListIssues(context.Context, IssueListFilter) ([]IssueRow, error) {
@@ -88,16 +88,16 @@ func (s fakeGraphStore) ListGraphSignals(context.Context, GraphSignalFilter) ([]
 	return s.signals, nil
 }
 
-func (s fakeGraphStore) GetNativeRunStatusByID(context.Context, string, string) (NativeRunStatusResponse, error) {
-	return NativeRunStatusResponse{}, ErrUnsupported
+func (s fakeGraphStore) GetRunnerStatusByID(context.Context, string, string) (RunnerStatusResponse, error) {
+	return RunnerStatusResponse{}, ErrUnsupported
 }
 
-func (s fakeGraphStore) RecordNativeEventByID(context.Context, string, string, NativeRunEventRequest) (NativeRunEventResult, error) {
-	return NativeRunEventResult{}, ErrUnsupported
+func (s fakeGraphStore) RecordRunnerEventByID(context.Context, string, string, RunnerEventRequest) (RunnerEventResult, error) {
+	return RunnerEventResult{}, ErrUnsupported
 }
 
-func (s fakeGraphStore) ListNativeEventsByID(context.Context, string, string, *int, *string, *string, *int, *int) (NativeRunLogsResponse, error) {
-	return s.nativeLogs, nil
+func (s fakeGraphStore) ListRunnerEventsByID(context.Context, string, string, *int, *string, *string, *int, *int) (RunnerLogsResponse, error) {
+	return s.runnerLogs, nil
 }
 
 func TestIssueGraphByNumberBuildsRunAttemptAndTouchpointNodes(t *testing.T) {
@@ -116,10 +116,10 @@ func TestIssueGraphByNumberBuildsRunAttemptAndTouchpointNodes(t *testing.T) {
 					Name:    "env-prep",
 					Kind:    "k8s_job",
 					Outputs: []string{"validation_url"},
-					Jobs: []NativeJobSpec{{
+					Jobs: []RunnerJobSpec{{
 						ID:   "prepare",
 						Name: stringPtr("prepare env"),
-						Steps: []NativeStepSpec{{
+						Steps: []RunnerStepSpec{{
 							Slug:  "checkout",
 							Title: stringPtr("checkout"),
 						}},
@@ -169,7 +169,7 @@ func TestIssueGraphByNumberBuildsRunAttemptAndTouchpointNodes(t *testing.T) {
 					SourcePhase:        "env-prep",
 					SourceAttemptIndex: intPtr(0),
 				}},
-				LogArchiveURL: stringPtr("blob://artifacts/glimmung/17/native.log"),
+				LogArchiveURL: stringPtr("blob://artifacts/glimmung/17/run.log"),
 				PhaseOutputs:  map[string]string{"validation_url": "https://preview.example"},
 				JobCompletions: []RunAttemptJobCompletion{{
 					JobID:              "prepare",
@@ -265,7 +265,7 @@ func TestIssueGraphByNumberBuildsRunAttemptAndTouchpointNodes(t *testing.T) {
 	}
 	assertProjectionEvidence(t, graph.Projection.Runs[0], "validation", "https://preview.example")
 	assertProjectionEvidence(t, graph.Projection.Runs[0], "artifact", "blob://artifacts/glimmung/17/verification.json")
-	assertProjectionEvidence(t, graph.Projection.Runs[0], "log", "blob://artifacts/glimmung/17/native.log")
+	assertProjectionEvidence(t, graph.Projection.Runs[0], "log", "blob://artifacts/glimmung/17/run.log")
 	assertProjectionEvidence(t, graph.Projection.Runs[0], "screenshot", "blob://artifacts/runs/glimmung/run-1/screenshots/default.png")
 	videoEvidence := findProjectionEvidence(t, graph.Projection.Runs[0], "video", "videos/release-pulse.webm")
 	if videoEvidence.URL == nil || *videoEvidence.URL != "/v1/artifacts/runs/glimmung/run-1/videos/release-pulse.webm" {
@@ -306,10 +306,10 @@ func TestRunCycleGraphProjectionUsesCanonicalStateAndNativeActivity(t *testing.T
 				{
 					Name: "env-prep",
 					Kind: "k8s_job",
-					Jobs: []NativeJobSpec{{
+					Jobs: []RunnerJobSpec{{
 						ID:   "prepare",
 						Name: stringPtr("prepare env"),
-						Steps: []NativeStepSpec{{
+						Steps: []RunnerStepSpec{{
 							Slug:  "checkout",
 							Title: stringPtr("checkout"),
 						}},
@@ -324,7 +324,7 @@ func TestRunCycleGraphProjectionUsesCanonicalStateAndNativeActivity(t *testing.T
 						On:          []string{"verify_fail", "verify_malformed"},
 						LandsAt:     "self",
 					},
-					Jobs: []NativeJobSpec{{ID: "agent"}},
+					Jobs: []RunnerJobSpec{{ID: "agent"}},
 				},
 			},
 			PR: PrPrimitive{},
@@ -363,7 +363,7 @@ func TestRunCycleGraphProjectionUsesCanonicalStateAndNativeActivity(t *testing.T
 				DispatchedAt:     now,
 			}},
 		}},
-		nativeLogs: NativeRunLogsResponse{Events: []NativeRunLogEvent{{
+		runnerLogs: RunnerLogsResponse{Events: []RunnerLogEvent{{
 			Project:      "glimmung",
 			RunRef:       runRef,
 			AttemptIndex: 0,
@@ -431,7 +431,7 @@ func TestWorkflowTopologyForRunMarksRecycleOriginArrowActive(t *testing.T) {
 				DependsOn: []string{"evidence-gate"},
 				RunOn:     PhaseRunOnSuccess,
 				Purpose:   PhasePurposeReviewTouchpoint,
-				Jobs:      []NativeJobSpec{{ID: "pr-touchpoint", Primitive: JobPrimitivePRTouchpoint}},
+				Jobs:      []RunnerJobSpec{{ID: "pr-touchpoint", Primitive: JobPrimitivePRTouchpoint}},
 			},
 		},
 		PR: PrPrimitive{
@@ -483,7 +483,7 @@ func TestWorkflowTopologyForRunMarksTouchpointRecycleOriginArrowActive(t *testin
 				DependsOn: []string{"evidence-gate"},
 				RunOn:     PhaseRunOnSuccess,
 				Purpose:   PhasePurposeReviewTouchpoint,
-				Jobs:      []NativeJobSpec{{ID: "pr-touchpoint", Primitive: JobPrimitivePRTouchpoint}},
+				Jobs:      []RunnerJobSpec{{ID: "pr-touchpoint", Primitive: JobPrimitivePRTouchpoint}},
 			},
 		},
 		PR: PrPrimitive{
@@ -542,8 +542,8 @@ func TestRunCycleGraphProjectionUsesDurableExecutions(t *testing.T) {
 			Project: "glimmung",
 			Name:    "agent-run",
 			Phases: []PhaseSpec{
-				{Name: "env-prep", Kind: "k8s_job", Jobs: []NativeJobSpec{{ID: "prepare"}}},
-				{Name: "agent-execute", Kind: "k8s_job", DependsOn: []string{"env-prep"}, Jobs: []NativeJobSpec{{ID: "agent"}}},
+				{Name: "env-prep", Kind: "k8s_job", Jobs: []RunnerJobSpec{{ID: "prepare"}}},
+				{Name: "agent-execute", Kind: "k8s_job", DependsOn: []string{"env-prep"}, Jobs: []RunnerJobSpec{{ID: "agent"}}},
 			},
 		}}},
 		issue: IssueDetail{
@@ -652,8 +652,8 @@ func TestRunCycleGraphProjectionShowsCarriedForwardEntrypointInputs(t *testing.T
 			Project: "ambience",
 			Name:    "default",
 			Phases: []PhaseSpec{
-				{Name: "env-prep", Kind: "k8s_job", Jobs: []NativeJobSpec{{ID: "env-prep", Name: stringPtr("Environment prep")}}},
-				{Name: "llm-work", Kind: "k8s_job", DependsOn: []string{"env-prep"}, Jobs: []NativeJobSpec{{ID: "llm-implement"}}},
+				{Name: "env-prep", Kind: "k8s_job", Jobs: []RunnerJobSpec{{ID: "env-prep", Name: stringPtr("Environment prep")}}},
+				{Name: "llm-work", Kind: "k8s_job", DependsOn: []string{"env-prep"}, Jobs: []RunnerJobSpec{{ID: "llm-implement"}}},
 			},
 		}}},
 		issue: IssueDetail{
@@ -751,9 +751,9 @@ func TestRunCycleGraphProjectionKeepsPendingWorkflowJobsWithDurableExecutions(t 
 				{
 					Name: "env-prep",
 					Kind: "k8s_job",
-					Jobs: []NativeJobSpec{{
+					Jobs: []RunnerJobSpec{{
 						ID: "prepare",
-						Steps: []NativeStepSpec{{
+						Steps: []RunnerStepSpec{{
 							Slug:  "checkout",
 							Title: stringPtr("Checkout"),
 						}},
@@ -763,10 +763,10 @@ func TestRunCycleGraphProjectionKeepsPendingWorkflowJobsWithDurableExecutions(t 
 					Name:      "agent-execute",
 					Kind:      "k8s_job",
 					DependsOn: []string{"env-prep"},
-					Jobs: []NativeJobSpec{{
+					Jobs: []RunnerJobSpec{{
 						ID:   "agent",
 						Name: stringPtr("Run agent"),
-						Steps: []NativeStepSpec{{
+						Steps: []RunnerStepSpec{{
 							Slug:       "run-agent",
 							Title:      stringPtr("Run agent"),
 							Group:      "sweep-01",
@@ -878,7 +878,7 @@ func TestApplyNativeEventsResetsUnobservedFailedSteps(t *testing.T) {
 			}},
 		}},
 	}
-	events := []NativeRunLogEvent{{
+	events := []RunnerLogEvent{{
 		AttemptIndex: 0,
 		Phase:        "env-prep",
 		JobID:        "env-prep",
@@ -888,7 +888,7 @@ func TestApplyNativeEventsResetsUnobservedFailedSteps(t *testing.T) {
 		ExitCode:     &exitCode,
 	}}
 
-	applyNativeEventsToProjectionRun(&run, events)
+	applyRunnerEventsToProjectionRun(&run, events)
 
 	steps := run.Phases[0].Jobs[0].Steps
 	if steps[0].State != "failed" || steps[0].Reason == nil || *steps[0].Reason != "exit_nonzero" {
@@ -920,7 +920,7 @@ func TestApplyNativeEventsProjectsDynamicGroupConcreteSteps(t *testing.T) {
 			}},
 		}},
 	}
-	events := []NativeRunLogEvent{
+	events := []RunnerLogEvent{
 		{
 			AttemptIndex: 0,
 			Phase:        "llm-verify",
@@ -951,7 +951,7 @@ func TestApplyNativeEventsProjectsDynamicGroupConcreteSteps(t *testing.T) {
 		},
 	}
 
-	applyNativeEventsToProjectionRun(&run, events)
+	applyRunnerEventsToProjectionRun(&run, events)
 
 	steps := run.Phases[0].Jobs[0].Steps
 	if len(steps) != 3 || steps[1].Slug != "gather-evidence-case-01" || steps[2].Slug != "judge-evidence-case-01" {
@@ -978,8 +978,8 @@ func TestRunCycleGraphProjectionShowsLegacyAbortedDispatchTimeout(t *testing.T) 
 			Project: "glimmung",
 			Name:    "agent-run",
 			Phases: []PhaseSpec{
-				{Name: "env-prep", Kind: "k8s_job", Jobs: []NativeJobSpec{{ID: "prepare"}}},
-				{Name: "agent-execute", Kind: "k8s_job", DependsOn: []string{"env-prep"}, Jobs: []NativeJobSpec{{ID: "agent"}}},
+				{Name: "env-prep", Kind: "k8s_job", Jobs: []RunnerJobSpec{{ID: "prepare"}}},
+				{Name: "agent-execute", Kind: "k8s_job", DependsOn: []string{"env-prep"}, Jobs: []RunnerJobSpec{{ID: "agent"}}},
 			},
 		}}},
 		issue: IssueDetail{
@@ -1045,18 +1045,18 @@ func TestRunCycleGraphProjectionShowsForwardDispatchFailureWithDispatchStepOwner
 			Project: "ambience",
 			Name:    "default",
 			Phases: []PhaseSpec{
-				{Name: "env-prep", Kind: "k8s_job", Outputs: []string{"claude_ca_namespace"}, Jobs: []NativeJobSpec{{ID: "env-prep"}}},
+				{Name: "env-prep", Kind: "k8s_job", Outputs: []string{"claude_ca_namespace"}, Jobs: []RunnerJobSpec{{ID: "env-prep"}}},
 				{
 					Name:      "llm-work",
 					Kind:      "k8s_job",
 					DependsOn: []string{"env-prep"},
 					Inputs:    map[string]string{"claude_ca_namespace": "${{ phases.env-prep.outputs.claude_ca_namespace }}"},
-					Jobs: []NativeJobSpec{
-						{ID: "llm-test-plan", Steps: []NativeStepSpec{{Slug: "clone"}, {Slug: "run-test-plan"}}},
-						{ID: "llm-implement", Steps: []NativeStepSpec{{Slug: "clone"}, {Slug: "run-implementation"}}},
+					Jobs: []RunnerJobSpec{
+						{ID: "llm-test-plan", Steps: []RunnerStepSpec{{Slug: "clone"}, {Slug: "run-test-plan"}}},
+						{ID: "llm-implement", Steps: []RunnerStepSpec{{Slug: "clone"}, {Slug: "run-implementation"}}},
 					},
 				},
-				{Name: "llm-verify", Kind: "k8s_job", DependsOn: []string{"llm-work"}, Jobs: []NativeJobSpec{{ID: "llm-verify"}}},
+				{Name: "llm-verify", Kind: "k8s_job", DependsOn: []string{"llm-work"}, Jobs: []RunnerJobSpec{{ID: "llm-verify"}}},
 			},
 		}}},
 		issue: IssueDetail{
@@ -1128,22 +1128,22 @@ func TestRunCycleGraphProjectionPromotesSkippedRowsForDispatchFailureOwnership(t
 	runCycle := 2
 	runDisplay := "5.2"
 	now := time.Date(2026, 6, 1, 7, 19, 41, 0, time.UTC)
-	abortReason := `forward_dispatch_failed: native lease state is "released" for ambience-slot-3, want claimed; cleanup_dispatch_failed: native lease state is "released" for ambience-slot-3, want claimed`
+	abortReason := `forward_dispatch_failed: runner lease state is "released" for ambience-slot-3, want claimed; cleanup_dispatch_failed: runner lease state is "released" for ambience-slot-3, want claimed`
 	store := fakeGraphStore{
 		fakeReadStore: fakeReadStore{workflows: []Workflow{{
 			Project: "ambience",
 			Name:    "default",
 			Phases: []PhaseSpec{
-				{Name: "prepare", Kind: "k8s_job", Jobs: []NativeJobSpec{{ID: "env-prep"}}},
-				{Name: "llm-work", Kind: "k8s_job", DependsOn: []string{"prepare"}, Jobs: []NativeJobSpec{{ID: "llm-implement"}}},
+				{Name: "prepare", Kind: "k8s_job", Jobs: []RunnerJobSpec{{ID: "env-prep"}}},
+				{Name: "llm-work", Kind: "k8s_job", DependsOn: []string{"prepare"}, Jobs: []RunnerJobSpec{{ID: "llm-implement"}}},
 				{
 					Name:      "llm-verify",
 					Kind:      "k8s_job",
 					DependsOn: []string{"llm-work"},
 					Verify:    true,
-					Jobs: []NativeJobSpec{{
+					Jobs: []RunnerJobSpec{{
 						ID: "llm-verify",
-						Steps: []NativeStepSpec{
+						Steps: []RunnerStepSpec{
 							{Slug: "clone", Title: stringPtr("Clone repo")},
 							{Slug: "run-verification", Title: stringPtr("Run verification")},
 						},

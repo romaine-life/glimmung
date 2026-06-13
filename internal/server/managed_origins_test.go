@@ -85,7 +85,7 @@ func TestManagedOriginsReconcileSkipsWhenEnabledFalse(t *testing.T) {
 	service := ManagedOriginService{AuthBaseURL: "https://auth.example", ServiceAccountTokenPath: writeTokenFile(t, "tok")}
 	status, err := service.ReconcileManagedOrigins(context.Background(), newTestProject(map[string]any{
 		"managed_auth_origins": map[string]any{"enabled": false},
-		"native_standby_dns":   map[string]any{"record_base": "tank.dev.romaine.life"},
+		"runner_standby_dns":   map[string]any{"record_base": "tank.dev.romaine.life"},
 	}))
 	if err != nil {
 		t.Fatalf("err=%v", err)
@@ -103,7 +103,7 @@ func TestManagedOriginsReconcileDerivesWildcardFromRecordBase(t *testing.T) {
 	}
 	status, err := service.ReconcileManagedOrigins(context.Background(), newTestProject(map[string]any{
 		"managed_auth_origins": map[string]any{"enabled": true},
-		"native_standby_dns":   map[string]any{"record_base": "tank.dev.romaine.life"},
+		"runner_standby_dns":   map[string]any{"record_base": "tank.dev.romaine.life"},
 	}))
 	if err != nil {
 		t.Fatalf("err=%v", err)
@@ -146,7 +146,7 @@ func TestManagedOriginsReconcileIsIdempotent(t *testing.T) {
 	}
 	project := newTestProject(map[string]any{
 		"managed_auth_origins": map[string]any{"enabled": true},
-		"native_standby_dns":   map[string]any{"record_base": "tank.dev.romaine.life"},
+		"runner_standby_dns":   map[string]any{"record_base": "tank.dev.romaine.life"},
 	})
 	for i := 0; i < 3; i++ {
 		if _, err := service.ReconcileManagedOrigins(context.Background(), project); err != nil {
@@ -194,7 +194,7 @@ func TestManagedOriginsReconcileFailsAndRecordsErrorOn4xx(t *testing.T) {
 	}
 	status, err := service.ReconcileManagedOrigins(context.Background(), newTestProject(map[string]any{
 		"managed_auth_origins": map[string]any{"enabled": true},
-		"native_standby_dns":   map[string]any{"record_base": "tank.dev.romaine.life"},
+		"runner_standby_dns":   map[string]any{"record_base": "tank.dev.romaine.life"},
 	}))
 	if err == nil {
 		t.Fatal("expected error")
@@ -225,7 +225,7 @@ func TestManagedOriginsReconcileRetriesOn5xx(t *testing.T) {
 	}
 	status, err := service.ReconcileManagedOrigins(context.Background(), newTestProject(map[string]any{
 		"managed_auth_origins": map[string]any{"enabled": true},
-		"native_standby_dns":   map[string]any{"record_base": "tank.dev.romaine.life"},
+		"runner_standby_dns":   map[string]any{"record_base": "tank.dev.romaine.life"},
 	}))
 	if err != nil {
 		t.Fatalf("expected eventual success: %v", err)
@@ -250,7 +250,7 @@ func TestManagedOriginsReconcileExhaustsRetriesOn5xx(t *testing.T) {
 	}
 	status, err := service.ReconcileManagedOrigins(context.Background(), newTestProject(map[string]any{
 		"managed_auth_origins": map[string]any{"enabled": true},
-		"native_standby_dns":   map[string]any{"record_base": "tank.dev.romaine.life"},
+		"runner_standby_dns":   map[string]any{"record_base": "tank.dev.romaine.life"},
 	}))
 	if err == nil {
 		t.Fatal("expected error after exhausted retries")
@@ -290,7 +290,7 @@ func TestManagedOriginsReconcileFailsWhenAuthBaseURLUnconfigured(t *testing.T) {
 	}
 	status, err := service.ReconcileManagedOrigins(context.Background(), newTestProject(map[string]any{
 		"managed_auth_origins": map[string]any{"enabled": true},
-		"native_standby_dns":   map[string]any{"record_base": "tank.dev.romaine.life"},
+		"runner_standby_dns":   map[string]any{"record_base": "tank.dev.romaine.life"},
 	}))
 	if err == nil {
 		t.Fatal("expected error")

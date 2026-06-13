@@ -26,7 +26,7 @@ type fakeTestSlotPreparer struct {
 	deprovisioned         []string
 	deprovisionedSessions []string
 	preliminarySlots      []string
-	preliminaryMinter     NativeGitHubTokenMinter
+	preliminaryMinter     RunnerGitHubTokenMinter
 	preliminariesErr      error
 	activateErr           error
 	returnErr             error
@@ -52,17 +52,17 @@ func (s *fakeLeaseStore) AppendTestSlotHotSwapHistory(_ context.Context, _ strin
 	return s.lease, nil
 }
 
-func (p *fakeTestSlotPreparer) EnsureTestSlotPreliminaries(_ context.Context, lease Lease, project Project, minter NativeGitHubTokenMinter) error {
+func (p *fakeTestSlotPreparer) EnsureTestSlotPreliminaries(_ context.Context, lease Lease, project Project, minter RunnerGitHubTokenMinter) error {
 	p.preliminaries = true
 	p.project = project
 	p.preliminaryMinter = minter
-	if slotName, _ := stringFromMap(lease.Metadata, "native_slot_name"); strings.TrimSpace(slotName) != "" {
+	if slotName, _ := stringFromMap(lease.Metadata, "runner_slot_name"); strings.TrimSpace(slotName) != "" {
 		p.preliminarySlots = append(p.preliminarySlots, strings.TrimSpace(slotName))
 	}
 	return p.preliminariesErr
 }
 
-func (p *fakeTestSlotPreparer) ActivateTestSlotRuntime(ctx context.Context, _ Lease, project Project, _ NativeGitHubTokenMinter) error {
+func (p *fakeTestSlotPreparer) ActivateTestSlotRuntime(ctx context.Context, _ Lease, project Project, _ RunnerGitHubTokenMinter) error {
 	p.activated = true
 	p.project = project
 	signalTestChannel(p.activateStarted)
@@ -82,7 +82,7 @@ func (p *fakeTestSlotPreparer) ActivateTestSlotRuntime(ctx context.Context, _ Le
 	return p.activateErr
 }
 
-func (p *fakeTestSlotPreparer) LaunchNativePhase(context.Context, NativeLaunchRequest) ([]NativeLaunchedJob, error) {
+func (p *fakeTestSlotPreparer) LaunchPhase(context.Context, RunLaunchRequest) ([]RunLaunchedJob, error) {
 	return nil, nil
 }
 
@@ -98,17 +98,17 @@ func (p *fakeTestSlotPreparer) ReturnTestSlotRuntime(context.Context, Lease, Pro
 
 func (p *fakeTestSlotPreparer) CleanupTestSlotInstaller(_ context.Context, lease Lease, _ Project) error {
 	p.installerCleaned = true
-	if slotName, _ := stringFromMap(lease.Metadata, "native_slot_name"); strings.TrimSpace(slotName) != "" {
+	if slotName, _ := stringFromMap(lease.Metadata, "runner_slot_name"); strings.TrimSpace(slotName) != "" {
 		p.cleanedSlots = append(p.cleanedSlots, strings.TrimSpace(slotName))
 	}
 	return nil
 }
 
 func (p *fakeTestSlotPreparer) DeprovisionTestSlot(_ context.Context, lease Lease, _ Project) error {
-	if slotName, _ := stringFromMap(lease.Metadata, "native_slot_name"); strings.TrimSpace(slotName) != "" {
+	if slotName, _ := stringFromMap(lease.Metadata, "runner_slot_name"); strings.TrimSpace(slotName) != "" {
 		p.deprovisioned = append(p.deprovisioned, strings.TrimSpace(slotName))
 	}
-	if namespace, _ := stringFromMap(lease.Metadata, "native_sessions_namespace"); strings.TrimSpace(namespace) != "" {
+	if namespace, _ := stringFromMap(lease.Metadata, "runner_sessions_namespace"); strings.TrimSpace(namespace) != "" {
 		p.deprovisionedSessions = append(p.deprovisionedSessions, strings.TrimSpace(namespace))
 	}
 	return nil
@@ -130,7 +130,7 @@ func TestCheckoutTestSlotStartsAsyncActivation(t *testing.T) {
 		fakeReadStore: fakeReadStore{projects: []Project{{
 			ID:   "tank-operator",
 			Name: "tank-operator",
-			Metadata: map[string]any{"native_standby_dns": map[string]any{
+			Metadata: map[string]any{"runner_standby_dns": map[string]any{
 				"slot_prefix": "tank-slot",
 				"record_base": "tank.dev.romaine.life",
 				"count":       float64(1),
@@ -142,13 +142,13 @@ func TestCheckoutTestSlotStartsAsyncActivation(t *testing.T) {
 		lease: Lease{
 			Project:     "tank-operator",
 			LeaseNumber: intPtr(2),
-			Host:        stringPtr("native-k8s"),
+			Host:        stringPtr("runner-k8s"),
 			State:       "claimed",
 			Metadata: map[string]any{
 				"test_slot_checkout": true,
-				"native_k8s":         true,
-				"native_slot_index":  "1",
-				"native_slot_name":   "tank-slot-1",
+				"runner_k8s":         true,
+				"runner_slot_index":  "1",
+				"runner_slot_name":   "tank-slot-1",
 			},
 			RequestedAt: now,
 		},
@@ -189,7 +189,7 @@ func TestCheckoutTestSlotStartsAsyncActivation(t *testing.T) {
 	if store.leaseReq.TTLSeconds == nil || *store.leaseReq.TTLSeconds != testSlotDefaultTTLSeconds {
 		t.Fatalf("default TTL not applied: ttl=%v, want %d", store.leaseReq.TTLSeconds, testSlotDefaultTTLSeconds)
 	}
-	for _, want := range []string{`"state":"activating"`, `"usable":false`, `"slot_name":"tank-slot-1"`, `"url":"https://tank-slot-1.tank.dev.romaine.life/"`, `"host":"native-k8s"`, `"status_url":"/v1/projects/tank-operator/test-environments/tank-slot-1"`} {
+	for _, want := range []string{`"state":"activating"`, `"usable":false`, `"slot_name":"tank-slot-1"`, `"url":"https://tank-slot-1.tank.dev.romaine.life/"`, `"host":"runner-k8s"`, `"status_url":"/v1/projects/tank-operator/test-environments/tank-slot-1"`} {
 		if !strings.Contains(rec.Body.String(), want) {
 			t.Fatalf("response missing %s: %s", want, rec.Body.String())
 		}
@@ -222,7 +222,7 @@ func TestCheckoutTestSlotExposesPlaywrightWSEndpointWhenEnabled(t *testing.T) {
 		fakeReadStore: fakeReadStore{projects: []Project{{
 			ID:   "tank-operator",
 			Name: "tank-operator",
-			Metadata: map[string]any{"native_standby_dns": map[string]any{
+			Metadata: map[string]any{"runner_standby_dns": map[string]any{
 				"slot_prefix": "tank-slot",
 				"record_base": "tank.dev.romaine.life",
 				"count":       float64(1),
@@ -234,13 +234,13 @@ func TestCheckoutTestSlotExposesPlaywrightWSEndpointWhenEnabled(t *testing.T) {
 		lease: Lease{
 			Project:     "tank-operator",
 			LeaseNumber: intPtr(3),
-			Host:        stringPtr("native-k8s"),
+			Host:        stringPtr("runner-k8s"),
 			State:       "claimed",
 			Metadata: map[string]any{
 				"test_slot_checkout": true,
-				"native_k8s":         true,
-				"native_slot_index":  "1",
-				"native_slot_name":   "tank-slot-1",
+				"runner_k8s":         true,
+				"runner_slot_index":  "1",
+				"runner_slot_name":   "tank-slot-1",
 			},
 			RequestedAt: now,
 		},
@@ -252,9 +252,9 @@ func TestCheckoutTestSlotExposesPlaywrightWSEndpointWhenEnabled(t *testing.T) {
 	}
 	close(preparer.activateRelease)
 	settings := Settings{
-		NativeRunnerPlaywrightEnabled: true,
-		NativeRunnerPlaywrightPort:    "3000",
-		NativeRunnerPlaywrightImage:   "playwright:latest",
+		RunnerPlaywrightEnabled: true,
+		RunnerPlaywrightPort:    "3000",
+		RunnerPlaywrightImage:   "playwright:latest",
 	}
 	handler := newHandler(settings, store, fakeAdminAuthenticator{user: auth.User{Sub: "admin"}}, nil, preparer)
 
@@ -288,7 +288,7 @@ func TestCheckoutTestSlotOmitsPlaywrightWSEndpointWhenDisabled(t *testing.T) {
 		fakeReadStore: fakeReadStore{projects: []Project{{
 			ID:   "tank-operator",
 			Name: "tank-operator",
-			Metadata: map[string]any{"native_standby_dns": map[string]any{
+			Metadata: map[string]any{"runner_standby_dns": map[string]any{
 				"slot_prefix": "tank-slot",
 				"record_base": "tank.dev.romaine.life",
 				"count":       float64(1),
@@ -300,13 +300,13 @@ func TestCheckoutTestSlotOmitsPlaywrightWSEndpointWhenDisabled(t *testing.T) {
 		lease: Lease{
 			Project:     "tank-operator",
 			LeaseNumber: intPtr(4),
-			Host:        stringPtr("native-k8s"),
+			Host:        stringPtr("runner-k8s"),
 			State:       "claimed",
 			Metadata: map[string]any{
 				"test_slot_checkout": true,
-				"native_k8s":         true,
-				"native_slot_index":  "1",
-				"native_slot_name":   "tank-slot-1",
+				"runner_k8s":         true,
+				"runner_slot_index":  "1",
+				"runner_slot_name":   "tank-slot-1",
 			},
 			RequestedAt: now,
 		},
@@ -348,7 +348,7 @@ func TestCheckoutTestSlotHonorsExplicitTTL(t *testing.T) {
 		fakeReadStore: fakeReadStore{projects: []Project{{
 			ID:   "tank-operator",
 			Name: "tank-operator",
-			Metadata: map[string]any{"native_standby_dns": map[string]any{
+			Metadata: map[string]any{"runner_standby_dns": map[string]any{
 				"slot_prefix": "tank-slot",
 				"record_base": "tank.dev.romaine.life",
 				"count":       float64(1),
@@ -360,13 +360,13 @@ func TestCheckoutTestSlotHonorsExplicitTTL(t *testing.T) {
 		lease: Lease{
 			Project:     "tank-operator",
 			LeaseNumber: intPtr(3),
-			Host:        stringPtr("native-k8s"),
+			Host:        stringPtr("runner-k8s"),
 			State:       "claimed",
 			Metadata: map[string]any{
 				"test_slot_checkout": true,
-				"native_k8s":         true,
-				"native_slot_index":  "1",
-				"native_slot_name":   "tank-slot-1",
+				"runner_k8s":         true,
+				"runner_slot_index":  "1",
+				"runner_slot_name":   "tank-slot-1",
 			},
 			RequestedAt: now,
 		},
@@ -408,7 +408,7 @@ func TestCheckoutTestSlotUsesGlobalDefaultTTL(t *testing.T) {
 		fakeReadStore: fakeReadStore{projects: []Project{{
 			ID:   "tank-operator",
 			Name: "tank-operator",
-			Metadata: map[string]any{"native_standby_dns": map[string]any{
+			Metadata: map[string]any{"runner_standby_dns": map[string]any{
 				"count": float64(1),
 			}},
 		}}},
@@ -416,13 +416,13 @@ func TestCheckoutTestSlotUsesGlobalDefaultTTL(t *testing.T) {
 		lease: Lease{
 			Project:     "tank-operator",
 			LeaseNumber: intPtr(3),
-			Host:        stringPtr("native-k8s"),
+			Host:        stringPtr("runner-k8s"),
 			State:       "claimed",
 			Metadata: map[string]any{
 				"test_slot_checkout": true,
-				"native_k8s":         true,
-				"native_slot_index":  "1",
-				"native_slot_name":   "tank-operator-slot-1",
+				"runner_k8s":         true,
+				"runner_slot_index":  "1",
+				"runner_slot_name":   "tank-operator-slot-1",
 			},
 			RequestedAt: time.Now().UTC(),
 		},
@@ -448,7 +448,7 @@ func TestCheckoutTestSlotUsesProjectDefaultTTL(t *testing.T) {
 			ID:   "tank-operator",
 			Name: "tank-operator",
 			Metadata: map[string]any{
-				"native_standby_dns": map[string]any{
+				"runner_standby_dns": map[string]any{
 					"count": float64(1),
 				},
 				testLeaseProjectDefaultTTLSecondsKey: 14400,
@@ -458,13 +458,13 @@ func TestCheckoutTestSlotUsesProjectDefaultTTL(t *testing.T) {
 		lease: Lease{
 			Project:     "tank-operator",
 			LeaseNumber: intPtr(3),
-			Host:        stringPtr("native-k8s"),
+			Host:        stringPtr("runner-k8s"),
 			State:       "claimed",
 			Metadata: map[string]any{
 				"test_slot_checkout": true,
-				"native_k8s":         true,
-				"native_slot_index":  "1",
-				"native_slot_name":   "tank-operator-slot-1",
+				"runner_k8s":         true,
+				"runner_slot_index":  "1",
+				"runner_slot_name":   "tank-operator-slot-1",
 			},
 			RequestedAt: time.Now().UTC(),
 		},
@@ -500,7 +500,7 @@ func TestRecoverInFlightTestSlotsResumesActivation(t *testing.T) {
 		fakeReadStore: fakeReadStore{projects: []Project{{
 			ID:   "recover",
 			Name: "recover",
-			Metadata: map[string]any{"native_standby_dns": map[string]any{
+			Metadata: map[string]any{"runner_standby_dns": map[string]any{
 				"slot_prefix": "recover-slot",
 				"record_base": "recover.dev.romaine.life",
 				"count":       float64(1),
@@ -517,13 +517,13 @@ func TestRecoverInFlightTestSlotsResumesActivation(t *testing.T) {
 		lease: Lease{
 			Project:     "recover",
 			LeaseNumber: intPtr(4),
-			Host:        stringPtr("native-k8s"),
+			Host:        stringPtr("runner-k8s"),
 			State:       "claimed",
 			Metadata: map[string]any{
 				"test_slot_checkout": true,
-				"native_k8s":         true,
-				"native_slot_index":  "1",
-				"native_slot_name":   "recover-slot-1",
+				"runner_k8s":         true,
+				"runner_slot_index":  "1",
+				"runner_slot_name":   "recover-slot-1",
 			},
 			RequestedAt: now,
 		},
@@ -558,7 +558,7 @@ func TestRecoverInFlightTestSlotsResumesCleanup(t *testing.T) {
 		fakeReadStore: fakeReadStore{projects: []Project{{
 			ID:   "recover",
 			Name: "recover",
-			Metadata: map[string]any{"native_standby_dns": map[string]any{
+			Metadata: map[string]any{"runner_standby_dns": map[string]any{
 				"slot_prefix": "recover-slot",
 				"record_base": "recover.dev.romaine.life",
 				"count":       float64(1),
@@ -575,13 +575,13 @@ func TestRecoverInFlightTestSlotsResumesCleanup(t *testing.T) {
 		lease: Lease{
 			Project:     "recover",
 			LeaseNumber: intPtr(4),
-			Host:        stringPtr("native-k8s"),
+			Host:        stringPtr("runner-k8s"),
 			State:       "claimed",
 			Metadata: map[string]any{
 				"test_slot_checkout": true,
-				"native_k8s":         true,
-				"native_slot_index":  "1",
-				"native_slot_name":   "recover-slot-1",
+				"runner_k8s":         true,
+				"runner_slot_index":  "1",
+				"runner_slot_name":   "recover-slot-1",
 			},
 			RequestedAt: now,
 		},
@@ -622,7 +622,7 @@ func TestRecoverInFlightTestSlotsCleansSlotWithoutLease(t *testing.T) {
 		fakeReadStore: fakeReadStore{projects: []Project{{
 			ID:   "recover",
 			Name: "recover",
-			Metadata: map[string]any{"native_standby_dns": map[string]any{
+			Metadata: map[string]any{"runner_standby_dns": map[string]any{
 				"slot_prefix": "recover-slot",
 				"record_base": "recover.dev.romaine.life",
 				"count":       float64(1),
@@ -659,7 +659,7 @@ func TestRecoverInFlightTestSlotsCleansRunningSlotWithoutLease(t *testing.T) {
 		fakeReadStore: fakeReadStore{projects: []Project{{
 			ID:   "recover",
 			Name: "recover",
-			Metadata: map[string]any{"native_standby_dns": map[string]any{
+			Metadata: map[string]any{"runner_standby_dns": map[string]any{
 				"slot_prefix": "recover-slot",
 				"record_base": "recover.dev.romaine.life",
 				"count":       float64(1),
@@ -700,7 +700,7 @@ func TestRecoverInFlightTestSlotsCleansActivationErrorWithoutLease(t *testing.T)
 		fakeReadStore: fakeReadStore{projects: []Project{{
 			ID:   "recover",
 			Name: "recover",
-			Metadata: map[string]any{"native_standby_dns": map[string]any{
+			Metadata: map[string]any{"runner_standby_dns": map[string]any{
 				"slot_prefix": "recover-slot",
 				"record_base": "recover.dev.romaine.life",
 				"count":       float64(1),
@@ -744,7 +744,7 @@ func TestLeaseExpiryTimerFiresCleanup(t *testing.T) {
 		fakeReadStore: fakeReadStore{projects: []Project{{
 			ID:   "expire",
 			Name: "expire",
-			Metadata: map[string]any{"native_standby_dns": map[string]any{
+			Metadata: map[string]any{"runner_standby_dns": map[string]any{
 				"slot_prefix": "expire-slot",
 				"count":       float64(1),
 				"slots": []any{
@@ -760,13 +760,13 @@ func TestLeaseExpiryTimerFiresCleanup(t *testing.T) {
 		lease: Lease{
 			Project:     "expire",
 			LeaseNumber: intPtr(7),
-			Host:        stringPtr("native-k8s"),
+			Host:        stringPtr("runner-k8s"),
 			State:       "claimed",
 			Metadata: map[string]any{
 				"test_slot_checkout": true,
-				"native_k8s":         true,
-				"native_slot_index":  "1",
-				"native_slot_name":   "expire-slot-1",
+				"runner_k8s":         true,
+				"runner_slot_index":  "1",
+				"runner_slot_name":   "expire-slot-1",
 			},
 			RequestedAt: now,
 			AssignedAt:  &now,
@@ -816,7 +816,7 @@ func TestLeaseExpiryTimerCancelPreventsFire(t *testing.T) {
 		fakeReadStore: fakeReadStore{projects: []Project{{
 			ID:   "expire",
 			Name: "expire",
-			Metadata: map[string]any{"native_standby_dns": map[string]any{
+			Metadata: map[string]any{"runner_standby_dns": map[string]any{
 				"slot_prefix": "expire-slot",
 				"count":       float64(1),
 			}},
@@ -824,12 +824,12 @@ func TestLeaseExpiryTimerCancelPreventsFire(t *testing.T) {
 		lease: Lease{
 			Project:     "expire",
 			LeaseNumber: intPtr(7),
-			Host:        stringPtr("native-k8s"),
+			Host:        stringPtr("runner-k8s"),
 			State:       "claimed",
 			Metadata: map[string]any{
 				"test_slot_checkout": true,
-				"native_slot_index":  "1",
-				"native_slot_name":   "expire-slot-1",
+				"runner_slot_index":  "1",
+				"runner_slot_name":   "expire-slot-1",
 			},
 			RequestedAt: now,
 			AssignedAt:  &now,
@@ -857,12 +857,12 @@ func TestFireLeaseExpirySkipsExtendedDurableDeadline(t *testing.T) {
 	staleLease := Lease{
 		Project:     "expire",
 		LeaseNumber: intPtr(8),
-		Host:        stringPtr("native-k8s"),
+		Host:        stringPtr("runner-k8s"),
 		State:       "claimed",
 		Metadata: map[string]any{
 			"test_slot_checkout": true,
-			"native_slot_index":  "1",
-			"native_slot_name":   "expire-slot-1",
+			"runner_slot_index":  "1",
+			"runner_slot_name":   "expire-slot-1",
 		},
 		RequestedAt: oldAssignedAt,
 		AssignedAt:  &oldAssignedAt,
@@ -876,7 +876,7 @@ func TestFireLeaseExpirySkipsExtendedDurableDeadline(t *testing.T) {
 		fakeReadStore: fakeReadStore{projects: []Project{{
 			ID:   "expire",
 			Name: "expire",
-			Metadata: map[string]any{"native_standby_dns": map[string]any{
+			Metadata: map[string]any{"runner_standby_dns": map[string]any{
 				"slot_prefix": "expire-slot",
 				"count":       float64(1),
 			}},
@@ -908,7 +908,7 @@ func TestClaimTestSlotCleanupDedupsOnEtagConflict(t *testing.T) {
 		fakeReadStore: fakeReadStore{projects: []Project{{
 			ID:   "race",
 			Name: "race",
-			Metadata: map[string]any{"native_standby_dns": map[string]any{
+			Metadata: map[string]any{"runner_standby_dns": map[string]any{
 				"slot_prefix": "race-slot",
 				"count":       float64(1),
 				"slots": []any{
@@ -924,12 +924,12 @@ func TestClaimTestSlotCleanupDedupsOnEtagConflict(t *testing.T) {
 		lease: Lease{
 			Project:     "race",
 			LeaseNumber: intPtr(42),
-			Host:        stringPtr("native-k8s"),
+			Host:        stringPtr("runner-k8s"),
 			State:       "claimed",
 			Metadata: map[string]any{
 				"test_slot_checkout": true,
-				"native_slot_index":  "1",
-				"native_slot_name":   "race-slot-1",
+				"runner_slot_index":  "1",
+				"runner_slot_name":   "race-slot-1",
 			},
 			RequestedAt: now,
 			AssignedAt:  &now,
@@ -1013,19 +1013,19 @@ func TestClaimTestSlotWarmupRetriesAcrossCrossSlotWrites(t *testing.T) {
 		fakeReadStore: fakeReadStore{projects: []Project{{
 			ID:   "multi",
 			Name: "multi",
-			Metadata: map[string]any{"native_standby_dns": map[string]any{
+			Metadata: map[string]any{"runner_standby_dns": map[string]any{
 				"slot_prefix": "multi-slot",
 				"count":       float64(count),
 			}},
 		}}},
 	}
 	preparer := &fakeTestSlotPreparer{}
-	minter := fakeNativeGitHubTokenMinter{token: "warm-token"}
+	minter := fakeRunnerGitHubTokenMinter{token: "warm-token"}
 
 	EnsureProjectTestSlotsWarmed(context.Background(), store, preparer, minter, store.projects[0], nil, nil)
 
 	waitForSlotStatusCount(t, store, count*2) // count slots × (warming + ready)
-	seenMinter, ok := preparer.preliminaryMinter.(fakeNativeGitHubTokenMinter)
+	seenMinter, ok := preparer.preliminaryMinter.(fakeRunnerGitHubTokenMinter)
 	if !ok || seenMinter.token != "warm-token" {
 		t.Fatalf("preliminary minter=%#v, want warm-token minter", preparer.preliminaryMinter)
 	}
@@ -1049,7 +1049,7 @@ func TestFireLeaseExpiryNoOpsWhenAnotherReplicaAlreadyClaimed(t *testing.T) {
 		fakeReadStore: fakeReadStore{projects: []Project{{
 			ID:   "race",
 			Name: "race",
-			Metadata: map[string]any{"native_standby_dns": map[string]any{
+			Metadata: map[string]any{"runner_standby_dns": map[string]any{
 				"slot_prefix": "race-slot",
 				"count":       float64(1),
 				"slots": []any{
@@ -1065,12 +1065,12 @@ func TestFireLeaseExpiryNoOpsWhenAnotherReplicaAlreadyClaimed(t *testing.T) {
 		lease: Lease{
 			Project:     "race",
 			LeaseNumber: intPtr(42),
-			Host:        stringPtr("native-k8s"),
+			Host:        stringPtr("runner-k8s"),
 			State:       "claimed",
 			Metadata: map[string]any{
 				"test_slot_checkout": true,
-				"native_slot_index":  "1",
-				"native_slot_name":   "race-slot-1",
+				"runner_slot_index":  "1",
+				"runner_slot_name":   "race-slot-1",
 			},
 			RequestedAt: now,
 			AssignedAt:  &now,
@@ -1118,7 +1118,7 @@ func TestRecoverInFlightTestSlotsArmsTimerForClaimedLease(t *testing.T) {
 		fakeReadStore: fakeReadStore{projects: []Project{{
 			ID:   "expire",
 			Name: "expire",
-			Metadata: map[string]any{"native_standby_dns": map[string]any{
+			Metadata: map[string]any{"runner_standby_dns": map[string]any{
 				"slot_prefix": "expire-slot",
 				"count":       float64(1),
 				"slots": []any{
@@ -1134,12 +1134,12 @@ func TestRecoverInFlightTestSlotsArmsTimerForClaimedLease(t *testing.T) {
 		lease: Lease{
 			Project:     "expire",
 			LeaseNumber: intPtr(7),
-			Host:        stringPtr("native-k8s"),
+			Host:        stringPtr("runner-k8s"),
 			State:       "claimed",
 			Metadata: map[string]any{
 				"test_slot_checkout": true,
-				"native_slot_index":  "1",
-				"native_slot_name":   "expire-slot-1",
+				"runner_slot_index":  "1",
+				"runner_slot_name":   "expire-slot-1",
 			},
 			RequestedAt: now,
 			AssignedAt:  &now,
@@ -1171,7 +1171,7 @@ func TestRecoverInFlightTestSlotsCleansInstallerForActiveSlot(t *testing.T) {
 		fakeReadStore: fakeReadStore{projects: []Project{{
 			ID:   "active",
 			Name: "active",
-			Metadata: map[string]any{"native_standby_dns": map[string]any{
+			Metadata: map[string]any{"runner_standby_dns": map[string]any{
 				"slot_prefix": "active-slot",
 				"count":       float64(1),
 				"slots": []any{
@@ -1187,12 +1187,12 @@ func TestRecoverInFlightTestSlotsCleansInstallerForActiveSlot(t *testing.T) {
 		lease: Lease{
 			Project:     "active",
 			LeaseNumber: intPtr(8),
-			Host:        stringPtr("native-k8s"),
+			Host:        stringPtr("runner-k8s"),
 			State:       "claimed",
 			Metadata: map[string]any{
 				"test_slot_checkout": true,
-				"native_slot_index":  "1",
-				"native_slot_name":   "active-slot-1",
+				"runner_slot_index":  "1",
+				"runner_slot_name":   "active-slot-1",
 			},
 			RequestedAt: now,
 			AssignedAt:  &now,
@@ -1219,7 +1219,7 @@ func TestRecoverInFlightTestSlotsWarmsMissingSlots(t *testing.T) {
 		fakeReadStore: fakeReadStore{projects: []Project{{
 			ID:   "seed",
 			Name: "seed",
-			Metadata: map[string]any{"native_standby_dns": map[string]any{
+			Metadata: map[string]any{"runner_standby_dns": map[string]any{
 				"slot_prefix": "seed-slot",
 				"record_base": "seed.dev.romaine.life",
 				"count":       float64(3),
@@ -1251,7 +1251,7 @@ func TestRecoverInFlightTestSlotsResumesStaleWarming(t *testing.T) {
 		fakeReadStore: fakeReadStore{projects: []Project{{
 			ID:   "stale",
 			Name: "stale",
-			Metadata: map[string]any{"native_standby_dns": map[string]any{
+			Metadata: map[string]any{"runner_standby_dns": map[string]any{
 				"slot_prefix": "stale-slot",
 				"count":       float64(1),
 				"slots": []any{
@@ -1284,7 +1284,7 @@ func TestRecoverInFlightTestSlotsSkipsClaimedSlot(t *testing.T) {
 		fakeReadStore: fakeReadStore{projects: []Project{{
 			ID:   "claim",
 			Name: "claim",
-			Metadata: map[string]any{"native_standby_dns": map[string]any{
+			Metadata: map[string]any{"runner_standby_dns": map[string]any{
 				"slot_prefix": "claim-slot",
 				"count":       float64(1),
 				"slots": []any{
@@ -1300,12 +1300,12 @@ func TestRecoverInFlightTestSlotsSkipsClaimedSlot(t *testing.T) {
 		lease: Lease{
 			Project:     "claim",
 			LeaseNumber: intPtr(11),
-			Host:        stringPtr("native-k8s"),
+			Host:        stringPtr("runner-k8s"),
 			State:       "claimed",
 			Metadata: map[string]any{
 				"test_slot_checkout": true,
-				"native_slot_index":  "1",
-				"native_slot_name":   "claim-slot-1",
+				"runner_slot_index":  "1",
+				"runner_slot_name":   "claim-slot-1",
 			},
 			RequestedAt: now,
 			AssignedAt:  &now,
@@ -1343,7 +1343,7 @@ func TestAsyncCheckoutFailureMarksErrorAndReleasesLease(t *testing.T) {
 		fakeReadStore: fakeReadStore{projects: []Project{{
 			ID:   "tank-operator",
 			Name: "tank-operator",
-			Metadata: map[string]any{"native_standby_dns": map[string]any{
+			Metadata: map[string]any{"runner_standby_dns": map[string]any{
 				"slot_prefix": "tank-slot",
 				"record_base": "tank.dev.romaine.life",
 				"count":       float64(1),
@@ -1355,13 +1355,13 @@ func TestAsyncCheckoutFailureMarksErrorAndReleasesLease(t *testing.T) {
 		lease: Lease{
 			Project:     "tank-operator",
 			LeaseNumber: intPtr(5),
-			Host:        stringPtr("native-k8s"),
+			Host:        stringPtr("runner-k8s"),
 			State:       "claimed",
 			Metadata: map[string]any{
 				"test_slot_checkout": true,
-				"native_k8s":         true,
-				"native_slot_index":  "1",
-				"native_slot_name":   "tank-slot-1",
+				"runner_k8s":         true,
+				"runner_slot_index":  "1",
+				"runner_slot_name":   "tank-slot-1",
 			},
 			RequestedAt: now,
 		},
@@ -1593,8 +1593,8 @@ func TestReturnTestSlotReleasesLease(t *testing.T) {
 			State:       "claimed",
 			Metadata: map[string]any{
 				"test_slot_checkout": true,
-				"native_slot_index":  "1",
-				"native_slot_name":   "tank-slot-1",
+				"runner_slot_index":  "1",
+				"runner_slot_name":   "tank-slot-1",
 			},
 			RequestedAt: now,
 		}},
@@ -1671,8 +1671,8 @@ func TestExtendTestSlotLeaseByTankSession(t *testing.T) {
 			State:       "claimed",
 			Metadata: map[string]any{
 				"test_slot_checkout": true,
-				"native_slot_index":  "1",
-				"native_slot_name":   "tank-slot-1",
+				"runner_slot_index":  "1",
+				"runner_slot_name":   "tank-slot-1",
 				"requester": map[string]any{
 					"consumer": "tank-operator",
 					"kind":     "tank_session",
@@ -1716,8 +1716,8 @@ func TestExtendTestSlotLeaseRejectsWrongTankSession(t *testing.T) {
 			State:       "claimed",
 			Metadata: map[string]any{
 				"test_slot_checkout": true,
-				"native_slot_index":  "1",
-				"native_slot_name":   "tank-slot-1",
+				"runner_slot_index":  "1",
+				"runner_slot_name":   "tank-slot-1",
 				"requester": map[string]any{
 					"consumer": "tank-operator",
 					"kind":     "tank_session",
@@ -1762,7 +1762,7 @@ func TestSetLeaseSlotCleanupFinishedClearsActivationFieldsOnSuccess(t *testing.T
 		fakeReadStore: fakeReadStore{projects: []Project{{
 			ID:   "tank",
 			Name: "tank",
-			Metadata: map[string]any{"native_standby_dns": map[string]any{
+			Metadata: map[string]any{"runner_standby_dns": map[string]any{
 				"slot_prefix": "tank-slot",
 				"count":       float64(1),
 				"slots": []any{
@@ -1787,8 +1787,8 @@ func TestSetLeaseSlotCleanupFinishedClearsActivationFieldsOnSuccess(t *testing.T
 		State:       "claimed",
 		Metadata: map[string]any{
 			"test_slot_checkout": true,
-			"native_slot_index":  "1",
-			"native_slot_name":   "tank-slot-1",
+			"runner_slot_index":  "1",
+			"runner_slot_name":   "tank-slot-1",
 		},
 		RequestedAt: now,
 	}
@@ -1836,7 +1836,7 @@ func TestSetLeaseSlotCleanupFinishedPreservesActivationFieldsOnError(t *testing.
 		fakeReadStore: fakeReadStore{projects: []Project{{
 			ID:   "tank",
 			Name: "tank",
-			Metadata: map[string]any{"native_standby_dns": map[string]any{
+			Metadata: map[string]any{"runner_standby_dns": map[string]any{
 				"slot_prefix": "tank-slot",
 				"count":       float64(1),
 				"slots": []any{
@@ -1859,8 +1859,8 @@ func TestSetLeaseSlotCleanupFinishedPreservesActivationFieldsOnError(t *testing.
 		State:       "claimed",
 		Metadata: map[string]any{
 			"test_slot_checkout": true,
-			"native_slot_index":  "1",
-			"native_slot_name":   "tank-slot-1",
+			"runner_slot_index":  "1",
+			"runner_slot_name":   "tank-slot-1",
 		},
 		RequestedAt: now,
 	}
@@ -1893,8 +1893,8 @@ func TestAppendTestSlotHotSwapHistoryResolvesSlotLease(t *testing.T) {
 			State:       "claimed",
 			Metadata: map[string]any{
 				"test_slot_checkout": true,
-				"native_slot_index":  "1",
-				"native_slot_name":   "tank-slot-1",
+				"runner_slot_index":  "1",
+				"runner_slot_name":   "tank-slot-1",
 			},
 		}},
 	}

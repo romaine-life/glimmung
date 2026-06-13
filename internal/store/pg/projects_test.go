@@ -10,13 +10,13 @@ func TestStripServerManagedStatusRemovesOnlyStatusKeys(t *testing.T) {
 	in := map[string]any{
 		"test_slot_hot_swap":                      map[string]any{"enabled": true},
 		"test_slot_helm":                          map[string]any{"chart": "x"},
-		"native_standby_dns":                      map[string]any{"count": 2},
+		"runner_standby_dns":                      map[string]any{"count": 2},
 		"managed_auth_origin_status":              map[string]any{"state": "ok"},
-		"native_standby_workload_identity_status": map[string]any{"state": "ok"},
+		"runner_standby_workload_identity_status": map[string]any{"state": "ok"},
 	}
 	out := stripServerManagedStatus(in)
 
-	for _, k := range []string{"test_slot_hot_swap", "test_slot_helm", "native_standby_dns"} {
+	for _, k := range []string{"test_slot_hot_swap", "test_slot_helm", "runner_standby_dns"} {
 		if _, ok := out[k]; !ok {
 			t.Errorf("authored key %q was dropped by stripServerManagedStatus", k)
 		}

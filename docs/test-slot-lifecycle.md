@@ -1,6 +1,6 @@
-# Native Test-Slot Lifecycle Contract
+# Runner Test-Slot Lifecycle Contract
 
-This document is the product and implementation contract for native test-slot
+This document is the product and implementation contract for runner test-slot
 capacity. If implementation behavior disagrees with this contract, the
 implementation is wrong and should be migrated.
 
@@ -124,9 +124,9 @@ slot name, URL, and lease reference.
 
 Checkout capacity is project-local and database-owned. A project's configured
 slot count plus each slot row's durable lifecycle state decide whether it can
-receive another native lease. A slot is checkout-admissible only when it is
+receive another runner lease. A slot is checkout-admissible only when it is
 within `1..count`, `state=provisioned`, and has no `active_lease_ref`. Claimed
-native leases in other projects must not block checkout for this project.
+runner leases in other projects must not block checkout for this project.
 
 Runtime materialization belongs after slot assignment. If the checkout response
 claims the lease is usable, the required runtime resources for that lease must
@@ -148,7 +148,7 @@ continue activation from those records. On success Glimmung records
 `activation_completed_at`; on failure it records `activation_error`, marks the
 slot `error`, and releases the lease after cleanup.
 
-When native Playwright support is enabled, activation must create the
+When runner Playwright support is enabled, activation must create the
 slot-local `slot-playwright` Deployment and Service and wait for the Deployment
 to report ready and available replicas before recording the slot as active.
 
@@ -235,7 +235,7 @@ lifecycle transition responds to an explicit event:
 | activation finished | inline at end of activation goroutine | one-shot installer cleanup, mark slot `running` |
 | cleanup finished | inline at end of cleanup goroutine | release lease, mark slot `provisioned` |
 | process start | `RecoverInFlightTestSlots` (one-shot, called once from `cmd/glimmung-go/main.go`) | re-arm TTL timers for surviving `claimed` leases, resume in-flight `provisioning`/`activating`/`cleaning` goroutines, provision missing slot docs |
-| process start | `MigrateProjectSlotsIntoCollection` (one-shot, called once from `cmd/glimmung-go/main.go`) | one-time migration of any legacy `metadata.native_standby_dns.slots[]` arrays into the `slots` collection. Idempotent on subsequent boots. |
+| process start | `MigrateProjectSlotsIntoCollection` (one-shot, called once from `cmd/glimmung-go/main.go`) | one-time migration of any legacy `metadata.runner_standby_dns.slots[]` arrays into the `slots` collection. Idempotent on subsequent boots. |
 
 Generated test-slot leases resolve their TTL with this precedence:
 explicit checkout `ttl_seconds`, project `metadata.test_lease_default_ttl_seconds`,
@@ -470,7 +470,7 @@ slot's namespace or explicitly configured session namespace. Their names should
 come from the project/runtime contract, not from Glimmung internals.
 
 Glimmung-owned helper resources may use Glimmung names only when they are
-control-plane artifacts, such as short-lived installer Jobs in the native runner
+control-plane artifacts, such as short-lived installer Jobs in the runner
 namespace. Slot-owned runtime helpers should use slot-local names. For example,
 the Playwright service for a slot is `slot-playwright` in the slot namespace.
 

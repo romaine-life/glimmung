@@ -157,7 +157,7 @@ describe("project workflow definitions", () => {
     if (!jobButton) throw new Error("missing workflow job button");
     await userEvent.click(jobButton);
 
-    expect(await screen.findByText("native job inspector")).toBeInTheDocument();
+    expect(await screen.findByText("runner job inspector")).toBeInTheDocument();
     expect(screen.getByText("planned")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Ensure PR touchpoint/ })).toBeInTheDocument();
     expect(screen.getByText(/\$ step ensure-pr-touchpoint/)).toBeInTheDocument();

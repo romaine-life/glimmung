@@ -103,7 +103,7 @@ func (s *fakeLeaseCallbackStore) SetProjectTestEnvironmentSlotStatus(_ context.C
 		if s.projects[i].Metadata == nil {
 			s.projects[i].Metadata = map[string]any{}
 		}
-		standby, _ := s.projects[i].Metadata["native_standby_dns"].(map[string]any)
+		standby, _ := s.projects[i].Metadata["runner_standby_dns"].(map[string]any)
 		if standby == nil {
 			standby = map[string]any{}
 		}
@@ -123,7 +123,7 @@ func (s *fakeLeaseCallbackStore) SetProjectTestEnvironmentSlotStatus(_ context.C
 			slots = append(slots, testSlotStatusMap(status))
 		}
 		standby["slots"] = slots
-		s.projects[i].Metadata["native_standby_dns"] = standby
+		s.projects[i].Metadata["runner_standby_dns"] = standby
 		return s.projects[i], nil
 	}
 	return Project{}, ErrNotFound
@@ -178,12 +178,12 @@ func TestReadLeaseByCallbackTokenReturnsPublicLease(t *testing.T) {
 			LeaseNumber:  intPtr(42),
 			Project:      "glimmung",
 			Workflow:     stringPtr("agent-run"),
-			Host:         stringPtr("native-k8s"),
+			Host:         stringPtr("runner-k8s"),
 			State:        "claimed",
-			Requirements: map[string]any{"native_k8s": true},
+			Requirements: map[string]any{"runner_k8s": true},
 			Metadata: map[string]any{
 				"lease_callback_token": "callback-token",
-				"native_slot_name":     "glimmung-slot-2",
+				"runner_slot_name":     "glimmung-slot-2",
 			},
 			RequestedAt: now,
 			AssignedAt:  &now,
@@ -223,8 +223,8 @@ func TestHeartbeatLeaseByCallbackTokenReturnsPublicLease(t *testing.T) {
 			ID:           "01JLEASEBACKING",
 			LeaseNumber:  intPtr(7),
 			Project:      "glimmung",
-			Workflow:     stringPtr("native-run"),
-			Host:         stringPtr("native-k8s"),
+			Workflow:     stringPtr("runner-run"),
+			Host:         stringPtr("runner-k8s"),
 			State:        "claimed",
 			Requirements: map[string]any{},
 			Metadata:     map[string]any{"lease_callback_token": "callback-token"},
@@ -289,8 +289,8 @@ func TestReleaseLeaseByCallbackTokenReturnsPublicLease(t *testing.T) {
 			ID:           "01JLEASEBACKING",
 			LeaseNumber:  intPtr(9),
 			Project:      "glimmung",
-			Workflow:     stringPtr("native-run"),
-			Host:         stringPtr("native-k8s"),
+			Workflow:     stringPtr("runner-run"),
+			Host:         stringPtr("runner-k8s"),
 			State:        "claimed",
 			Requirements: map[string]any{},
 			Metadata:     map[string]any{"lease_callback_token": "callback-token"},
@@ -325,7 +325,7 @@ func TestReleaseLeaseByCallbackTokenStartsTestSlotCleanup(t *testing.T) {
 		fakeReadStore: fakeReadStore{projects: []Project{{
 			ID:   "tank",
 			Name: "tank",
-			Metadata: map[string]any{"native_standby_dns": map[string]any{
+			Metadata: map[string]any{"runner_standby_dns": map[string]any{
 				"slot_prefix": "tank-slot",
 				"count":       float64(1),
 				"slots": []any{
@@ -339,14 +339,14 @@ func TestReleaseLeaseByCallbackTokenStartsTestSlotCleanup(t *testing.T) {
 			LeaseNumber:  intPtr(10),
 			Project:      "tank",
 			Workflow:     stringPtr("test-slot-checkout"),
-			Host:         stringPtr("native-k8s"),
+			Host:         stringPtr("runner-k8s"),
 			State:        "claimed",
 			Requirements: map[string]any{},
 			Metadata: map[string]any{
 				"lease_callback_token": "callback-token",
 				"test_slot_checkout":   true,
-				"native_slot_index":    "1",
-				"native_slot_name":     "tank-slot-1",
+				"runner_slot_index":    "1",
+				"runner_slot_name":     "tank-slot-1",
 			},
 			RequestedAt: now,
 			AssignedAt:  &now,

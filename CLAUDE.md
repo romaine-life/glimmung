@@ -71,7 +71,7 @@ GitHub Issues are not part of the live Glimmung issue/run loop. GitHub Issues ma
 
 Glimmung-managed workflows run on Glimmung-managed Kubernetes Jobs. Workflow phases use `k8s_job`; GitHub Actions is not a supported allocator, executor, fallback, or exception path. GitHub PRs remain a syndication/review target; the canonical Glimmung review object is Report.
 
-Native agent provider auth is proxy-owned. Runner Jobs write placeholder Claude
+Runner agent provider auth is proxy-owned. Runner Jobs write placeholder Claude
 and Codex credentials using `managed-by-glimmung` and route provider hostnames
 through the Glimmung provider API proxies. Runner Jobs must not mount the real
 provider OAuth Secret. The mechanism and migration guard are documented in

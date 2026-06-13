@@ -60,7 +60,7 @@ type RunPhaseExecution struct {
 }
 
 // InnerJobRef is one registered child k8s Job that a phase script
-// spawned. Populated at read time from the native event stream;
+// spawned. Populated at read time from the runner event stream;
 // reconciler is the source of truth for the terminal fields.
 type InnerJobRef struct {
 	ParentJobID    string  `json:"parent_job_id"`

@@ -24,8 +24,8 @@ The detailed cleanup inventory lives in
 - `README.md` is the operator/developer overview for the active Go service.
 - `.github/agent/prompt.md` is the default in-repo agent contract and must keep
   the app validation gate on Go plus the Vite dashboard.
-- `docs/workflow-shape.md` owns the workflow model and native job conventions.
-- `docs/test-slot-lifecycle.md` owns the native test-slot terms, lifecycle
+- `docs/workflow-shape.md` owns the workflow model and runner job conventions.
+- `docs/test-slot-lifecycle.md` owns the runner test-slot terms, lifecycle
   states, and warm-versus-hot resource boundary.
 - `docs/features/README.md` owns the review-facing contract index for
   substantial feature work.
@@ -39,13 +39,13 @@ The detailed cleanup inventory lives in
   verifies the active route list from `internal/server/server.go`.
 - Do not add, remove, or rename MCP-used routes without an explicit rollout
   issue in `docs/mcp-surface-rollout.md`.
-- Keep callback-token routes stable. Native runners and lease clients call
+- Keep callback-token routes stable. Runners and lease clients call
   those endpoints directly.
 - Keep `/healthz`, `/v1/config`, `/v1/auth/me`, `/v1/state`, and `/v1/events`
   stable for operations, dashboard bootstrap, and automation clients.
 - Retired route families must stay unregistered. `route_inventory_test.go`
   rejects storage-ID, GitHub Issue-coordinate, Report alias, PR-coordinate
-  Touchpoint, and retired native callback/proxy routes.
+  Touchpoint, and retired runner callback/proxy routes.
 - Canonical graph routes are Go-owned: `/v1/issues/by-number/{project}/{issue_number}/graph`
   and `/v1/graph`.
 
@@ -57,7 +57,7 @@ The detailed cleanup inventory lives in
 - Workflow phases must use `k8s_job`. Blank workflow phase `kind` values
   normalize to `k8s_job`; any other executor kind is rejected before it can
   become the project runtime contract.
-- Lease acquisition is native-only. Lease requests must identify native
+- Lease acquisition is runner-only. Lease requests must identify runner
   Kubernetes capacity and cannot fall back to registered host allocation.
 
 ## Hot-swap rules

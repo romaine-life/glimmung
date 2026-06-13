@@ -13,20 +13,20 @@ import (
 	"github.com/romaine-life/glimmung/internal/domain/agentruntime"
 )
 
-func TestNativeJobManifestIncludesRunnerCallbackEnv(t *testing.T) {
+func TestRunnerJobManifestIncludesRunnerCallbackEnv(t *testing.T) {
 	runNumber := 7
 	runDisplay := "7"
 	callback := "callback-token"
 	timeout := 120
 	leaseNumber := 3
-	req := NativeLaunchRequest{
+	req := RunLaunchRequest{
 		Lease: Lease{
 			Project:     "tank-operator",
 			LeaseNumber: &leaseNumber,
 			State:       "claimed",
 			Metadata: map[string]any{
-				"native_slot_name":     "tank-operator-slot-1",
-				"native_slot_index":    "1",
+				"runner_slot_name":     "tank-operator-slot-1",
+				"runner_slot_index":    "1",
 				"entrypoint_job_id":    "test",
 				"entrypoint_step_slug": "verify-ui",
 				"evidence_requirements": []EvidenceRequirement{{
@@ -61,13 +61,13 @@ func TestNativeJobManifestIncludesRunnerCallbackEnv(t *testing.T) {
 		},
 	}
 
-	manifest := nativeJobManifest(Settings{
-		NativeRunnerNamespace:         "glimmung-runs",
-		NativeRunnerServiceAccount:    "glimmung-native-runner",
-		NativeRunnerCallbackBaseURL:   "http://glimmung.glimmung.svc.cluster.local",
-		NativeRunnerPlaywrightEnabled: true,
-		NativeRunnerPlaywrightPort:    "3000",
-	}, req, NativeJobSpec{
+	manifest := runnerJobManifest(Settings{
+		RunnerNamespace:         "glimmung-runs",
+		RunnerServiceAccount:    "glimmung-runner",
+		RunnerCallbackBaseURL:   "http://glimmung.glimmung.svc.cluster.local",
+		RunnerPlaywrightEnabled: true,
+		RunnerPlaywrightPort:    "3000",
+	}, req, RunnerJobSpec{
 		ID:             "test",
 		Image:          "runner:latest",
 		TimeoutSeconds: &timeout,
@@ -77,8 +77,8 @@ func TestNativeJobManifestIncludesRunnerCallbackEnv(t *testing.T) {
 		},
 	}, "job", "secret", "attempt")
 
-	env := nativeManifestEnv(manifest)
-	if env["GLIMMUNG_COMPLETED_URL"] != "http://glimmung.glimmung.svc.cluster.local/v1/run-callbacks/callback-token/native/completed" {
+	env := runnerManifestEnv(manifest)
+	if env["GLIMMUNG_COMPLETED_URL"] != "http://glimmung.glimmung.svc.cluster.local/v1/run-callbacks/callback-token/run/completed" {
 		t.Fatalf("completed url=%q", env["GLIMMUNG_COMPLETED_URL"])
 	}
 	if _, ok := env["GLIMMUNG_FAILED_URL"]; ok {
@@ -119,20 +119,20 @@ func TestNativeJobManifestIncludesRunnerCallbackEnv(t *testing.T) {
 	}
 }
 
-func TestResolveNativeCheckoutRunInputs(t *testing.T) {
+func TestResolveRunnerCheckoutRunInputs(t *testing.T) {
 	phase := PhaseSpec{
 		Name: "prepare",
-		Jobs: []NativeJobSpec{{
+		Jobs: []RunnerJobSpec{{
 			ID:       "env-prep",
-			Checkout: &NativeCheckoutSpec{Repo: "owner/repo", Ref: "${{ inputs.git_ref }}", Path: "/workspace/repo"},
-			ExtraCheckouts: []NativeCheckoutSpec{{
+			Checkout: &RunnerCheckoutSpec{Repo: "owner/repo", Ref: "${{ inputs.git_ref }}", Path: "/workspace/repo"},
+			ExtraCheckouts: []RunnerCheckoutSpec{{
 				Repo: "owner/extra",
 				Ref:  "${{ inputs.branch }}",
 				Path: "/workspace/extra",
 			}},
 		}},
 	}
-	got, err := resolveNativeCheckoutRunInputs(phase, map[string]string{
+	got, err := resolveRunnerCheckoutRunInputs(phase, map[string]string{
 		"git_ref": "codex/lifecycle-observe",
 		"branch":  "support-branch",
 	})
@@ -150,15 +150,15 @@ func TestResolveNativeCheckoutRunInputs(t *testing.T) {
 	}
 }
 
-func TestResolveNativeCheckoutRunInputsRequiresProvidedInput(t *testing.T) {
+func TestResolveRunnerCheckoutRunInputsRequiresProvidedInput(t *testing.T) {
 	phase := PhaseSpec{
 		Name: "prepare",
-		Jobs: []NativeJobSpec{{
+		Jobs: []RunnerJobSpec{{
 			ID:       "env-prep",
-			Checkout: &NativeCheckoutSpec{Ref: "${{ inputs.git_ref }}"},
+			Checkout: &RunnerCheckoutSpec{Ref: "${{ inputs.git_ref }}"},
 		}},
 	}
-	if _, err := resolveNativeCheckoutRunInputs(phase, nil); err == nil {
+	if _, err := resolveRunnerCheckoutRunInputs(phase, nil); err == nil {
 		t.Fatal("expected missing input error")
 	}
 }
@@ -167,38 +167,38 @@ func TestResolveNativeCheckoutRunInputsRequiresProvidedInput(t *testing.T) {
 // transient pod-start blip self-heals instead of instantly failing the
 // cleanup phase. Producer/verify jobs keep backoffLimit=0 (fail fast;
 // Glimmung owns their retries at the attempt level).
-func TestNativeJobBackoffLimitTeardownAbsorbsTransientFailure(t *testing.T) {
-	if got := nativeJobBackoffLimit(PhaseSpec{Name: "cleanup_early", Purpose: PhasePurposeTeardown}); got != nativeTeardownJobBackoffLimit {
-		t.Fatalf("teardown backoffLimit=%d, want %d", got, nativeTeardownJobBackoffLimit)
+func TestRunnerJobBackoffLimitTeardownAbsorbsTransientFailure(t *testing.T) {
+	if got := runnerJobBackoffLimit(PhaseSpec{Name: "cleanup_early", Purpose: PhasePurposeTeardown}); got != runnerTeardownJobBackoffLimit {
+		t.Fatalf("teardown backoffLimit=%d, want %d", got, runnerTeardownJobBackoffLimit)
 	}
-	if got := nativeJobBackoffLimit(PhaseSpec{Name: "llm-verify", Purpose: PhasePurposeVerification}); got != 0 {
+	if got := runnerJobBackoffLimit(PhaseSpec{Name: "llm-verify", Purpose: PhasePurposeVerification}); got != 0 {
 		t.Fatalf("verify backoffLimit=%d, want 0 (fail fast)", got)
 	}
-	if got := nativeJobBackoffLimit(PhaseSpec{Name: "llm-work", Purpose: PhasePurposeWork}); got != 0 {
+	if got := runnerJobBackoffLimit(PhaseSpec{Name: "llm-work", Purpose: PhasePurposeWork}); got != 0 {
 		t.Fatalf("producer backoffLimit=%d, want 0 (fail fast)", got)
 	}
 }
 
-func TestNativeJobManifestTeardownPhaseUsesBoundedBackoffLimit(t *testing.T) {
+func TestRunnerJobManifestTeardownPhaseUsesBoundedBackoffLimit(t *testing.T) {
 	runNumber := 13
-	req := NativeLaunchRequest{
+	req := RunLaunchRequest{
 		Lease:    Lease{Project: "ambience", State: "claimed"},
 		Workflow: Workflow{Name: "agent-run"},
-		Phase:    PhaseSpec{Name: "cleanup_early", Purpose: PhasePurposeTeardown, Jobs: []NativeJobSpec{{ID: "env-destroy"}}},
+		Phase:    PhaseSpec{Name: "cleanup_early", Purpose: PhasePurposeTeardown, Jobs: []RunnerJobSpec{{ID: "env-destroy"}}},
 		Run:      RunReplayData{ID: "run-1", Project: "ambience", IssueNumber: 168, RunNumber: &runNumber, Attempts: []RunAttemptData{{AttemptIndex: 1, Phase: "cleanup_early"}}},
 	}
-	manifest := nativeJobManifest(Settings{NativeRunnerNamespace: "glimmung-runs"}, req, NativeJobSpec{ID: "env-destroy"}, "job", "secret", "attempt")
+	manifest := runnerJobManifest(Settings{RunnerNamespace: "glimmung-runs"}, req, RunnerJobSpec{ID: "env-destroy"}, "job", "secret", "attempt")
 	spec, ok := manifest["spec"].(map[string]any)
 	if !ok {
 		t.Fatalf("manifest spec missing: %#v", manifest)
 	}
-	if spec["backoffLimit"] != nativeTeardownJobBackoffLimit {
-		t.Fatalf("teardown manifest backoffLimit=%v, want %d", spec["backoffLimit"], nativeTeardownJobBackoffLimit)
+	if spec["backoffLimit"] != runnerTeardownJobBackoffLimit {
+		t.Fatalf("teardown manifest backoffLimit=%v, want %d", spec["backoffLimit"], runnerTeardownJobBackoffLimit)
 	}
 }
 
-func TestNativeJobManifestIncludesStringMapPhaseInputs(t *testing.T) {
-	req := NativeLaunchRequest{
+func TestRunnerJobManifestIncludesStringMapPhaseInputs(t *testing.T) {
+	req := RunLaunchRequest{
 		Lease: Lease{
 			Project: "ambience",
 			State:   "claimed",
@@ -221,13 +221,13 @@ func TestNativeJobManifestIncludesStringMapPhaseInputs(t *testing.T) {
 		},
 	}
 
-	manifest := nativeJobManifest(Settings{
-		NativeRunnerNamespace:       "glimmung-runs",
-		NativeRunnerServiceAccount:  "glimmung-native-runner",
-		NativeRunnerCallbackBaseURL: "http://glimmung.glimmung.svc.cluster.local",
-	}, req, NativeJobSpec{ID: "llm-test-plan", Image: "runner:latest"}, "job", "secret", "attempt")
+	manifest := runnerJobManifest(Settings{
+		RunnerNamespace:       "glimmung-runs",
+		RunnerServiceAccount:  "glimmung-runner",
+		RunnerCallbackBaseURL: "http://glimmung.glimmung.svc.cluster.local",
+	}, req, RunnerJobSpec{ID: "llm-test-plan", Image: "runner:latest"}, "job", "secret", "attempt")
 
-	env := nativeManifestEnv(manifest)
+	env := runnerManifestEnv(manifest)
 	if env["GLIMMUNG_INPUT_NAMESPACE"] != "ambience-slot-1" {
 		t.Fatalf("namespace input env=%q", env["GLIMMUNG_INPUT_NAMESPACE"])
 	}
@@ -236,8 +236,8 @@ func TestNativeJobManifestIncludesStringMapPhaseInputs(t *testing.T) {
 	}
 }
 
-func TestNativeJobManifestManagedJobUsesSharedRunnerEntrypoint(t *testing.T) {
-	req := NativeLaunchRequest{
+func TestRunnerJobManifestManagedJobUsesSharedRunnerEntrypoint(t *testing.T) {
+	req := RunLaunchRequest{
 		Lease:    Lease{Project: "ambience"},
 		Workflow: Workflow{Name: "agent-run"},
 		Phase:    PhaseSpec{Name: "env-prep"},
@@ -249,37 +249,37 @@ func TestNativeJobManifestManagedJobUsesSharedRunnerEntrypoint(t *testing.T) {
 			Attempts:      []RunAttemptData{{AttemptIndex: 1, Phase: "env-prep"}},
 		},
 	}
-	job := NativeJobSpec{
+	job := RunnerJobSpec{
 		ID:               "prepare",
 		Managed:          true,
 		WorkingDirectory: "/workspace/ambience",
-		Steps: []NativeStepSpec{{
+		Steps: []RunnerStepSpec{{
 			Slug: "unit",
 			Run:  "go test ./...",
 		}},
 	}
 
-	manifest := nativeJobManifest(Settings{
-		NativeRunnerNamespace:       "glimmung-runs",
-		NativeRunnerServiceAccount:  "glimmung-native-runner",
-		NativeRunnerCallbackBaseURL: "http://glimmung.glimmung.svc.cluster.local",
-		NativeRunnerImage:           "romainecr.azurecr.io/glimmung-native-runner:test",
-		NativeRunnerEntrypoint:      "/runner/glimmung-native-runner",
+	manifest := runnerJobManifest(Settings{
+		RunnerNamespace:       "glimmung-runs",
+		RunnerServiceAccount:  "glimmung-runner",
+		RunnerCallbackBaseURL: "http://glimmung.glimmung.svc.cluster.local",
+		RunnerImage:           "romainecr.azurecr.io/glimmung-runner:test",
+		RunnerEntrypoint:      "/runner/glimmung-runner",
 	}, req, job, "job", "secret", "attempt")
 
-	container := nativeManifestContainer(manifest)
+	container := runnerManifestContainer(manifest)
 	command, ok := container["command"].([]string)
-	if !ok || len(command) != 1 || command[0] != "/runner/glimmung-native-runner" {
+	if !ok || len(command) != 1 || command[0] != "/runner/glimmung-runner" {
 		t.Fatalf("command=%#v", container["command"])
 	}
-	if container["image"] != "romainecr.azurecr.io/glimmung-native-runner:test" {
+	if container["image"] != "romainecr.azurecr.io/glimmung-runner:test" {
 		t.Fatalf("image=%#v", container["image"])
 	}
 	if _, ok := container["args"]; ok {
 		t.Fatalf("managed runner should not receive legacy args: %#v", container["args"])
 	}
-	env := nativeManifestEnv(manifest)
-	var got NativeJobSpec
+	env := runnerManifestEnv(manifest)
+	var got RunnerJobSpec
 	if err := json.Unmarshal([]byte(env["GLIMMUNG_RUNNER_JOB_SPEC"]), &got); err != nil {
 		t.Fatalf("runner spec JSON: %v", err)
 	}
@@ -291,8 +291,8 @@ func TestNativeJobManifestManagedJobUsesSharedRunnerEntrypoint(t *testing.T) {
 	}
 }
 
-func TestNativeJobManifestDoesNotMountProviderCredentialSecret(t *testing.T) {
-	req := NativeLaunchRequest{
+func TestRunnerJobManifestDoesNotMountProviderCredentialSecret(t *testing.T) {
+	req := RunLaunchRequest{
 		Lease:    Lease{Project: "ambience"},
 		Workflow: Workflow{Name: "agent-run"},
 		Phase:    PhaseSpec{Name: "llm-work"},
@@ -305,37 +305,37 @@ func TestNativeJobManifestDoesNotMountProviderCredentialSecret(t *testing.T) {
 			Attempts:      []RunAttemptData{{AttemptIndex: 1, Phase: "llm-work"}},
 		},
 	}
-	job := NativeJobSpec{
+	job := RunnerJobSpec{
 		ID:      "implement",
 		Managed: true,
-		Steps: []NativeStepSpec{{
+		Steps: []RunnerStepSpec{{
 			Slug:  "run-agent",
 			Agent: &AgentStepSpec{Slot: "implementation"},
 		}},
 	}
-	manifest := nativeJobManifest(Settings{
-		NativeRunnerNamespace:       "glimmung-runs",
-		NativeRunnerServiceAccount:  "glimmung-native-runner",
-		NativeRunnerCallbackBaseURL: "http://glimmung.glimmung.svc.cluster.local",
-		NativeRunnerImage:           "romainecr.azurecr.io/glimmung-native-runner:test",
+	manifest := runnerJobManifest(Settings{
+		RunnerNamespace:       "glimmung-runs",
+		RunnerServiceAccount:  "glimmung-runner",
+		RunnerCallbackBaseURL: "http://glimmung.glimmung.svc.cluster.local",
+		RunnerImage:           "romainecr.azurecr.io/glimmung-runner:test",
 	}, req, job, "job", "secret", "attempt")
 
-	podSpec := nativeManifestPodSpec(manifest)
+	podSpec := runnerManifestPodSpec(manifest)
 	for _, volume := range podSpec["volumes"].([]any) {
 		if volume.(map[string]any)["name"] == "codex-credentials" {
-			t.Fatalf("native jobs must not mount real provider credentials: %#v", podSpec["volumes"])
+			t.Fatalf("runner jobs must not mount real provider credentials: %#v", podSpec["volumes"])
 		}
 	}
-	container := nativeManifestContainer(manifest)
+	container := runnerManifestContainer(manifest)
 	for _, mount := range container["volumeMounts"].([]any) {
 		if mount.(map[string]any)["name"] == "codex-credentials" {
-			t.Fatalf("native jobs must not mount real provider credentials: %#v", container["volumeMounts"])
+			t.Fatalf("runner jobs must not mount real provider credentials: %#v", container["volumeMounts"])
 		}
 	}
 }
 
-func TestNativeJobManifestWiresProviderAPIProxyForAgentJob(t *testing.T) {
-	req := NativeLaunchRequest{
+func TestRunnerJobManifestWiresProviderAPIProxyForAgentJob(t *testing.T) {
+	req := RunLaunchRequest{
 		Lease:    Lease{Project: "ambience"},
 		Workflow: Workflow{Name: "agent-run"},
 		Phase:    PhaseSpec{Name: "llm-work"},
@@ -348,10 +348,10 @@ func TestNativeJobManifestWiresProviderAPIProxyForAgentJob(t *testing.T) {
 			Attempts:      []RunAttemptData{{AttemptIndex: 1, Phase: "llm-work"}},
 		},
 	}
-	job := NativeJobSpec{
+	job := RunnerJobSpec{
 		ID:      "implement",
 		Managed: true,
-		Steps: []NativeStepSpec{{
+		Steps: []RunnerStepSpec{{
 			Slug:  "run-agent",
 			Agent: &AgentStepSpec{Slot: "implementation"},
 		}},
@@ -363,14 +363,14 @@ func TestNativeJobManifestWiresProviderAPIProxyForAgentJob(t *testing.T) {
 		CASecretName:    "glimmung-provider-api-proxy-ca",
 		CABundlePath:    "/etc/glimmung-provider-api-proxy-bundle/ca-certificates.crt",
 	}
-	manifest := nativeJobManifest(Settings{
-		NativeRunnerNamespace:       "glimmung-runs",
-		NativeRunnerServiceAccount:  "glimmung-native-runner",
-		NativeRunnerCallbackBaseURL: "http://glimmung.glimmung.svc.cluster.local",
-		NativeRunnerImage:           "romainecr.azurecr.io/glimmung-native-runner:test",
+	manifest := runnerJobManifest(Settings{
+		RunnerNamespace:       "glimmung-runs",
+		RunnerServiceAccount:  "glimmung-runner",
+		RunnerCallbackBaseURL: "http://glimmung.glimmung.svc.cluster.local",
+		RunnerImage:           "romainecr.azurecr.io/glimmung-runner:test",
 	}, req, job, "job", "secret", "attempt", proxyRuntime)
 
-	podSpec := nativeManifestPodSpec(manifest)
+	podSpec := runnerManifestPodSpec(manifest)
 	hostAliases := podSpec["hostAliases"].([]any)
 	if len(hostAliases) != 3 {
 		t.Fatalf("hostAliases=%#v", hostAliases)
@@ -381,7 +381,7 @@ func TestNativeJobManifestWiresProviderAPIProxyForAgentJob(t *testing.T) {
 	if _, ok := podSpec["initContainers"]; !ok {
 		t.Fatalf("expected CA bundle init container: %#v", podSpec)
 	}
-	env := nativeManifestEnv(manifest)
+	env := runnerManifestEnv(manifest)
 	if env["NODE_EXTRA_CA_CERTS"] != "/etc/glimmung-provider-api-proxy-ca/ca.crt" {
 		t.Fatalf("NODE_EXTRA_CA_CERTS=%q", env["NODE_EXTRA_CA_CERTS"])
 	}
@@ -399,18 +399,18 @@ func TestNativeJobManifestWiresProviderAPIProxyForAgentJob(t *testing.T) {
 	}
 }
 
-func TestLaunchNativePhaseResolvesProviderAPIProxyForAgentJobs(t *testing.T) {
+func TestLaunchPhaseResolvesProviderAPIProxyForAgentJobs(t *testing.T) {
 	tokenPath := tempTokenFile(t)
 	var paths []string
 	var postedJob string
-	launcher := &KubernetesNativeLauncher{
+	launcher := &KubernetesRunLauncher{
 		Settings: Settings{
 			K8sAPIHost:                    "https://kube.test",
 			K8sSATokenPath:                tokenPath,
-			NativeRunnerNamespace:         "glimmung-runs",
-			NativeRunnerServiceAccount:    "glimmung-native-runner",
-			NativeRunnerCallbackBaseURL:   "http://glimmung.glimmung.svc.cluster.local",
-			NativeRunnerImage:             "romainecr.azurecr.io/glimmung-native-runner:test",
+			RunnerNamespace:               "glimmung-runs",
+			RunnerServiceAccount:          "glimmung-runner",
+			RunnerCallbackBaseURL:         "http://glimmung.glimmung.svc.cluster.local",
+			RunnerImage:                   "romainecr.azurecr.io/glimmung-runner:test",
 			ProviderAPIProxyNamespace:     "glimmung-runs",
 			ProviderAPIProxyCASecret:      "glimmung-provider-api-proxy-ca",
 			ProviderAPIProxyCABundlePath:  "/etc/glimmung-provider-api-proxy-bundle/ca-certificates.crt",
@@ -440,15 +440,15 @@ func TestLaunchNativePhaseResolvesProviderAPIProxyForAgentJobs(t *testing.T) {
 			}, nil
 		})},
 	}
-	req := NativeLaunchRequest{
+	req := RunLaunchRequest{
 		Lease:    Lease{Project: "ambience"},
 		Workflow: Workflow{Name: "agent-run"},
 		Phase: PhaseSpec{
 			Name: "llm-work",
-			Jobs: []NativeJobSpec{{
+			Jobs: []RunnerJobSpec{{
 				ID:      "implement",
 				Managed: true,
-				Steps: []NativeStepSpec{{
+				Steps: []RunnerStepSpec{{
 					Slug:  "run-agent",
 					Agent: &AgentStepSpec{Slot: "implementation"},
 				}},
@@ -464,8 +464,8 @@ func TestLaunchNativePhaseResolvesProviderAPIProxyForAgentJobs(t *testing.T) {
 		},
 	}
 
-	if _, err := launcher.LaunchNativePhase(context.Background(), req); err != nil {
-		t.Fatalf("LaunchNativePhase: %v", err)
+	if _, err := launcher.LaunchPhase(context.Background(), req); err != nil {
+		t.Fatalf("LaunchPhase: %v", err)
 	}
 	for _, want := range []string{
 		"GET /api/v1/namespaces/glimmung-runs/services/claude-api-proxy",
@@ -502,18 +502,18 @@ func TestLaunchNativePhaseResolvesProviderAPIProxyForAgentJobs(t *testing.T) {
 	}
 }
 
-func TestLaunchNativePhaseResolvesProviderAPIProxyForVerificationPhase(t *testing.T) {
+func TestLaunchPhaseResolvesProviderAPIProxyForVerificationPhase(t *testing.T) {
 	tokenPath := tempTokenFile(t)
 	var paths []string
 	var postedJob string
-	launcher := &KubernetesNativeLauncher{
+	launcher := &KubernetesRunLauncher{
 		Settings: Settings{
 			K8sAPIHost:                    "https://kube.test",
 			K8sSATokenPath:                tokenPath,
-			NativeRunnerNamespace:         "glimmung-runs",
-			NativeRunnerServiceAccount:    "glimmung-native-runner",
-			NativeRunnerCallbackBaseURL:   "http://glimmung.glimmung.svc.cluster.local",
-			NativeRunnerImage:             "romainecr.azurecr.io/glimmung-native-runner:test",
+			RunnerNamespace:               "glimmung-runs",
+			RunnerServiceAccount:          "glimmung-runner",
+			RunnerCallbackBaseURL:         "http://glimmung.glimmung.svc.cluster.local",
+			RunnerImage:                   "romainecr.azurecr.io/glimmung-runner:test",
 			ProviderAPIProxyNamespace:     "glimmung-runs",
 			ProviderAPIProxyCASecret:      "glimmung-provider-api-proxy-ca",
 			ProviderAPIProxyCABundlePath:  "/etc/glimmung-provider-api-proxy-bundle/ca-certificates.crt",
@@ -542,18 +542,18 @@ func TestLaunchNativePhaseResolvesProviderAPIProxyForVerificationPhase(t *testin
 			}, nil
 		})},
 	}
-	req := NativeLaunchRequest{
+	req := RunLaunchRequest{
 		Lease:    Lease{Project: "ambience"},
 		Workflow: Workflow{Name: "default"},
 		Phase: PhaseSpec{
 			Name:   "llm-verify",
 			Verify: true, RecyclePolicy: &RecyclePolicy{MaxAttempts: 1, On: []string{"verify_fail"}, LandsAt: "prepare"},
-			Jobs: []NativeJobSpec{{
+			Jobs: []RunnerJobSpec{{
 				ID:      "llm-verify",
 				Managed: true,
-				Steps: []NativeStepSpec{{
+				Steps: []RunnerStepSpec{{
 					Slug: "run-verification",
-					Run:  "/bin/bash /workspace/ambience/scripts/glimmung-native/verify.sh",
+					Run:  "/bin/bash /workspace/ambience/scripts/glimmung-runner/verify.sh",
 				}},
 			}},
 		},
@@ -566,8 +566,8 @@ func TestLaunchNativePhaseResolvesProviderAPIProxyForVerificationPhase(t *testin
 		},
 	}
 
-	if _, err := launcher.LaunchNativePhase(context.Background(), req); err != nil {
-		t.Fatalf("LaunchNativePhase: %v", err)
+	if _, err := launcher.LaunchPhase(context.Background(), req); err != nil {
+		t.Fatalf("LaunchPhase: %v", err)
 	}
 	for _, want := range []string{
 		"GET /api/v1/namespaces/glimmung-runs/services/claude-api-proxy",
@@ -593,14 +593,14 @@ func TestLaunchNativePhaseResolvesProviderAPIProxyForVerificationPhase(t *testin
 	}
 }
 
-func TestNativeJobManifestEvidenceGateUsesManagedRunner(t *testing.T) {
-	req := NativeLaunchRequest{
+func TestRunnerJobManifestEvidenceGateUsesManagedRunner(t *testing.T) {
+	req := RunLaunchRequest{
 		Lease:    Lease{Project: "ambience"},
 		Workflow: Workflow{Name: "default"},
 		Phase: PhaseSpec{
 			Name:                     "evidence-gate",
 			EvidenceVerificationGate: true,
-			Jobs: []NativeJobSpec{{
+			Jobs: []RunnerJobSpec{{
 				ID:      "legacy-gate",
 				Image:   "python:3.12-slim",
 				Command: []string{"python", "-c"},
@@ -616,27 +616,27 @@ func TestNativeJobManifestEvidenceGateUsesManagedRunner(t *testing.T) {
 		},
 	}
 
-	manifest := nativeJobManifest(Settings{
-		NativeRunnerNamespace:       "glimmung-runs",
-		NativeRunnerServiceAccount:  "glimmung-native-runner",
-		NativeRunnerCallbackBaseURL: "http://glimmung.glimmung.svc.cluster.local",
-		NativeRunnerImage:           "romainecr.azurecr.io/glimmung-native-runner:test",
-		NativeRunnerEntrypoint:      "/app/glimmung-native-runner",
+	manifest := runnerJobManifest(Settings{
+		RunnerNamespace:       "glimmung-runs",
+		RunnerServiceAccount:  "glimmung-runner",
+		RunnerCallbackBaseURL: "http://glimmung.glimmung.svc.cluster.local",
+		RunnerImage:           "romainecr.azurecr.io/glimmung-runner:test",
+		RunnerEntrypoint:      "/app/glimmung-runner",
 	}, req, req.Phase.Jobs[0], "job", "secret", "attempt")
 
-	container := nativeManifestContainer(manifest)
-	if container["image"] != "romainecr.azurecr.io/glimmung-native-runner:test" {
+	container := runnerManifestContainer(manifest)
+	if container["image"] != "romainecr.azurecr.io/glimmung-runner:test" {
 		t.Fatalf("image=%#v", container["image"])
 	}
 	command, ok := container["command"].([]string)
-	if !ok || len(command) != 1 || command[0] != "/app/glimmung-native-runner" {
+	if !ok || len(command) != 1 || command[0] != "/app/glimmung-runner" {
 		t.Fatalf("command=%#v", container["command"])
 	}
 	if _, ok := container["args"]; ok {
 		t.Fatalf("evidence gate should not receive legacy args: %#v", container["args"])
 	}
-	env := nativeManifestEnv(manifest)
-	var got NativeJobSpec
+	env := runnerManifestEnv(manifest)
+	var got RunnerJobSpec
 	if err := json.Unmarshal([]byte(env["GLIMMUNG_RUNNER_JOB_SPEC"]), &got); err != nil {
 		t.Fatalf("runner spec JSON: %v", err)
 	}
@@ -648,12 +648,12 @@ func TestNativeJobManifestEvidenceGateUsesManagedRunner(t *testing.T) {
 func TestReturnTestSlotRuntimeDoesNotDeleteNamespaces(t *testing.T) {
 	tokenPath := tempTokenFile(t)
 	var paths []string
-	launcher := &KubernetesNativeLauncher{
+	launcher := &KubernetesRunLauncher{
 		Settings: Settings{
-			K8sAPIHost:                "https://kube.test",
-			K8sSATokenPath:            tokenPath,
-			NativeRunnerNamespace:     "glimmung-runs",
-			NativeRunnerJobTTLSeconds: 3600,
+			K8sAPIHost:          "https://kube.test",
+			K8sSATokenPath:      tokenPath,
+			RunnerNamespace:     "glimmung-runs",
+			RunnerJobTTLSeconds: 3600,
 		},
 		HTTPClient: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 			paths = append(paths, req.Method+" "+req.URL.Path)
@@ -672,9 +672,9 @@ func TestReturnTestSlotRuntimeDoesNotDeleteNamespaces(t *testing.T) {
 		Project:     "tank",
 		LeaseNumber: intPtr(2),
 		Metadata: map[string]any{
-			"native_slot_name":          "tank-slot-1",
-			"native_slot_index":         "1",
-			"native_sessions_namespace": "tank-slot-1-sessions",
+			"runner_slot_name":          "tank-slot-1",
+			"runner_slot_index":         "1",
+			"runner_sessions_namespace": "tank-slot-1-sessions",
 		},
 	}
 
@@ -698,11 +698,11 @@ func TestReturnTestSlotRuntimeDeletesSteadyRuntimeResources(t *testing.T) {
 	tokenPath := tempTokenFile(t)
 	var paths []string
 	deleted := map[string]bool{}
-	launcher := &KubernetesNativeLauncher{
+	launcher := &KubernetesRunLauncher{
 		Settings: Settings{
-			K8sAPIHost:            "https://kube.test",
-			K8sSATokenPath:        tokenPath,
-			NativeRunnerNamespace: "glimmung-runs",
+			K8sAPIHost:      "https://kube.test",
+			K8sSATokenPath:  tokenPath,
+			RunnerNamespace: "glimmung-runs",
 		},
 		HTTPClient: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 			paths = append(paths, req.Method+" "+req.URL.Path)
@@ -721,9 +721,9 @@ func TestReturnTestSlotRuntimeDeletesSteadyRuntimeResources(t *testing.T) {
 		Project:     "tank",
 		LeaseNumber: intPtr(2),
 		Metadata: map[string]any{
-			"native_slot_name":          "tank-slot-1",
-			"native_slot_index":         "1",
-			"native_sessions_namespace": "tank-slot-1-sessions",
+			"runner_slot_name":          "tank-slot-1",
+			"runner_slot_index":         "1",
+			"runner_sessions_namespace": "tank-slot-1-sessions",
 		},
 	}
 
@@ -748,13 +748,13 @@ func TestReturnTestSlotRuntimeDeletesSteadyRuntimeResources(t *testing.T) {
 func TestReturnTestSlotRuntimeUninstallsHelmRuntimeRelease(t *testing.T) {
 	tokenPath := tempTokenFile(t)
 	var paths []string
-	launcher := &KubernetesNativeLauncher{
+	launcher := &KubernetesRunLauncher{
 		Settings: Settings{
-			K8sAPIHost:                 "https://kube.test",
-			K8sSATokenPath:             tokenPath,
-			NativeRunnerNamespace:      "glimmung-runs",
-			NativeRunnerServiceAccount: "glimmung-native-runner",
-			NativeRunnerJobTTLSeconds:  3600,
+			K8sAPIHost:           "https://kube.test",
+			K8sSATokenPath:       tokenPath,
+			RunnerNamespace:      "glimmung-runs",
+			RunnerServiceAccount: "glimmung-runner",
+			RunnerJobTTLSeconds:  3600,
 		},
 		HTTPClient: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 			paths = append(paths, req.Method+" "+req.URL.Path)
@@ -773,9 +773,9 @@ func TestReturnTestSlotRuntimeUninstallsHelmRuntimeRelease(t *testing.T) {
 		Project:     "tank-operator",
 		LeaseNumber: intPtr(2),
 		Metadata: map[string]any{
-			"native_slot_name":          "tank-operator-slot-1",
-			"native_slot_index":         "1",
-			"native_sessions_namespace": "tank-operator-slot-1-sessions",
+			"runner_slot_name":          "tank-operator-slot-1",
+			"runner_slot_index":         "1",
+			"runner_sessions_namespace": "tank-operator-slot-1-sessions",
 		},
 	}
 	project := Project{
@@ -807,14 +807,14 @@ func TestReturnTestSlotRuntimeRetiresTankSessionScopeBeforeHelmUninstall(t *test
 	tokenPath := tempTokenFile(t)
 	var paths []string
 	var tankAuth string
-	launcher := &KubernetesNativeLauncher{
+	launcher := &KubernetesRunLauncher{
 		Settings: Settings{
-			K8sAPIHost:                 "https://kube.test",
-			K8sSATokenPath:             tokenPath,
-			TankOperatorBaseURL:        "https://tank.internal",
-			NativeRunnerNamespace:      "glimmung-runs",
-			NativeRunnerServiceAccount: "glimmung-native-runner",
-			NativeRunnerJobTTLSeconds:  3600,
+			K8sAPIHost:           "https://kube.test",
+			K8sSATokenPath:       tokenPath,
+			TankOperatorBaseURL:  "https://tank.internal",
+			RunnerNamespace:      "glimmung-runs",
+			RunnerServiceAccount: "glimmung-runner",
+			RunnerJobTTLSeconds:  3600,
 		},
 		HTTPClient: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 			paths = append(paths, req.Method+" "+req.URL.Host+req.URL.Path)
@@ -841,9 +841,9 @@ func TestReturnTestSlotRuntimeRetiresTankSessionScopeBeforeHelmUninstall(t *test
 		Project:     "tank-operator",
 		LeaseNumber: intPtr(2),
 		Metadata: map[string]any{
-			"native_slot_name":          "tank-operator-slot-1",
-			"native_slot_index":         "1",
-			"native_sessions_namespace": "tank-operator-slot-1-sessions",
+			"runner_slot_name":          "tank-operator-slot-1",
+			"runner_slot_index":         "1",
+			"runner_sessions_namespace": "tank-operator-slot-1-sessions",
 		},
 	}
 	project := Project{
@@ -879,16 +879,16 @@ func TestReturnTestSlotRuntimeExchangesServiceTokenWhenCallerAuthMissing(t *test
 	var paths []string
 	var exchangeAuth string
 	var tankAuth string
-	launcher := &KubernetesNativeLauncher{
+	launcher := &KubernetesRunLauncher{
 		Settings: Settings{
-			K8sAPIHost:                 "https://kube.test",
-			K8sSATokenPath:             tokenPath,
-			TankOperatorBaseURL:        "https://tank.internal",
-			AuthRomaineLifeBaseURL:     "https://auth.internal",
-			AuthRomaineLifeTokenPath:   tokenPath,
-			NativeRunnerNamespace:      "glimmung-runs",
-			NativeRunnerServiceAccount: "glimmung-native-runner",
-			NativeRunnerJobTTLSeconds:  3600,
+			K8sAPIHost:               "https://kube.test",
+			K8sSATokenPath:           tokenPath,
+			TankOperatorBaseURL:      "https://tank.internal",
+			AuthRomaineLifeBaseURL:   "https://auth.internal",
+			AuthRomaineLifeTokenPath: tokenPath,
+			RunnerNamespace:          "glimmung-runs",
+			RunnerServiceAccount:     "glimmung-runner",
+			RunnerJobTTLSeconds:      3600,
 		},
 		HTTPClient: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 			paths = append(paths, req.Method+" "+req.URL.Host+req.URL.Path)
@@ -923,9 +923,9 @@ func TestReturnTestSlotRuntimeExchangesServiceTokenWhenCallerAuthMissing(t *test
 		Project:     "tank-operator",
 		LeaseNumber: intPtr(2),
 		Metadata: map[string]any{
-			"native_slot_name":          "tank-operator-slot-1",
-			"native_slot_index":         "1",
-			"native_sessions_namespace": "tank-operator-slot-1-sessions",
+			"runner_slot_name":          "tank-operator-slot-1",
+			"runner_slot_index":         "1",
+			"runner_sessions_namespace": "tank-operator-slot-1-sessions",
 		},
 	}
 	project := Project{
@@ -960,18 +960,18 @@ func TestReturnTestSlotRuntimeExchangesServiceTokenWhenCallerAuthMissing(t *test
 func TestEnsureTestSlotPreliminariesDoesNotCreatePlaywrightRuntime(t *testing.T) {
 	tokenPath := tempTokenFile(t)
 	var paths []string
-	launcher := &KubernetesNativeLauncher{
+	launcher := &KubernetesRunLauncher{
 		Settings: Settings{
-			K8sAPIHost:                    "https://kube.test",
-			K8sSATokenPath:                tokenPath,
-			NativeRunnerNamespace:         "glimmung-runs",
-			NativeRunnerPlaywrightEnabled: true,
-			NativeRunnerPlaywrightImage:   "playwright:latest",
-			NativeRunnerPlaywrightPort:    "3000",
-			NativeRunnerServiceAccount:    "glimmung-native-runner",
-			NativeRunnerCallbackBaseURL:   "http://glimmung.glimmung.svc.cluster.local",
-			NativeRunnerJobTTLSeconds:     3600,
-			NativeRunnerNamespaceRole:     "cluster-admin",
+			K8sAPIHost:              "https://kube.test",
+			K8sSATokenPath:          tokenPath,
+			RunnerNamespace:         "glimmung-runs",
+			RunnerPlaywrightEnabled: true,
+			RunnerPlaywrightImage:   "playwright:latest",
+			RunnerPlaywrightPort:    "3000",
+			RunnerServiceAccount:    "glimmung-runner",
+			RunnerCallbackBaseURL:   "http://glimmung.glimmung.svc.cluster.local",
+			RunnerJobTTLSeconds:     3600,
+			RunnerNamespaceRole:     "cluster-admin",
 		},
 		HTTPClient: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 			paths = append(paths, req.Method+" "+req.URL.Path)
@@ -986,8 +986,8 @@ func TestEnsureTestSlotPreliminariesDoesNotCreatePlaywrightRuntime(t *testing.T)
 		Project:     "tank",
 		LeaseNumber: intPtr(2),
 		Metadata: map[string]any{
-			"native_slot_name":  "tank-slot-1",
-			"native_slot_index": "1",
+			"runner_slot_name":  "tank-slot-1",
+			"runner_slot_index": "1",
 		},
 	}
 
@@ -1004,14 +1004,14 @@ func TestEnsureTestSlotPreliminariesDoesNotCreatePlaywrightRuntime(t *testing.T)
 func TestEnsureTestSlotPreliminariesRunsWarmHelmOnly(t *testing.T) {
 	tokenPath := tempTokenFile(t)
 	var paths []string
-	launcher := &KubernetesNativeLauncher{
+	launcher := &KubernetesRunLauncher{
 		Settings: Settings{
-			K8sAPIHost:                 "https://kube.test",
-			K8sSATokenPath:             tokenPath,
-			NativeRunnerNamespace:      "glimmung-runs",
-			NativeRunnerServiceAccount: "glimmung-native-runner",
-			NativeRunnerNamespaceRole:  "cluster-admin",
-			NativeRunnerJobTTLSeconds:  3600,
+			K8sAPIHost:           "https://kube.test",
+			K8sSATokenPath:       tokenPath,
+			RunnerNamespace:      "glimmung-runs",
+			RunnerServiceAccount: "glimmung-runner",
+			RunnerNamespaceRole:  "cluster-admin",
+			RunnerJobTTLSeconds:  3600,
 		},
 		HTTPClient: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 			paths = append(paths, req.Method+" "+req.URL.Path)
@@ -1030,9 +1030,9 @@ func TestEnsureTestSlotPreliminariesRunsWarmHelmOnly(t *testing.T) {
 		Project: "tank-operator",
 		State:   "warming",
 		Metadata: map[string]any{
-			"native_slot_name":          "tank-operator-slot-2",
-			"native_slot_index":         "2",
-			"native_sessions_namespace": "tank-operator-slot-2-sessions",
+			"runner_slot_name":          "tank-operator-slot-2",
+			"runner_slot_index":         "2",
+			"runner_sessions_namespace": "tank-operator-slot-2-sessions",
 		},
 	}
 	project := Project{
@@ -1041,7 +1041,7 @@ func TestEnsureTestSlotPreliminariesRunsWarmHelmOnly(t *testing.T) {
 		Metadata:   map[string]any{"test_slot_helm": map[string]any{"enabled": true}},
 	}
 
-	if err := launcher.EnsureTestSlotPreliminaries(context.Background(), lease, project, fakeNativeGitHubTokenMinter{token: "ghs_test"}); err != nil {
+	if err := launcher.EnsureTestSlotPreliminaries(context.Background(), lease, project, fakeRunnerGitHubTokenMinter{token: "ghs_test"}); err != nil {
 		t.Fatalf("EnsureTestSlotPreliminaries: %v", err)
 	}
 	if !containsPath(paths, "POST /apis/batch/v1/namespaces/glimmung-runs/jobs") {
@@ -1062,14 +1062,14 @@ func TestEnsureTestSlotPreliminariesRunsWarmHelmOnly(t *testing.T) {
 
 func TestEnsureTestSlotPreliminariesRequiresMinterForWarmHelm(t *testing.T) {
 	tokenPath := tempTokenFile(t)
-	launcher := &KubernetesNativeLauncher{
+	launcher := &KubernetesRunLauncher{
 		Settings: Settings{
-			K8sAPIHost:                 "https://kube.test",
-			K8sSATokenPath:             tokenPath,
-			NativeRunnerNamespace:      "glimmung-runs",
-			NativeRunnerServiceAccount: "glimmung-native-runner",
-			NativeRunnerNamespaceRole:  "cluster-admin",
-			NativeRunnerJobTTLSeconds:  3600,
+			K8sAPIHost:           "https://kube.test",
+			K8sSATokenPath:       tokenPath,
+			RunnerNamespace:      "glimmung-runs",
+			RunnerServiceAccount: "glimmung-runner",
+			RunnerNamespaceRole:  "cluster-admin",
+			RunnerJobTTLSeconds:  3600,
 		},
 		HTTPClient: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 			return &http.Response{
@@ -1083,8 +1083,8 @@ func TestEnsureTestSlotPreliminariesRequiresMinterForWarmHelm(t *testing.T) {
 		Project: "tank-operator",
 		State:   "warming",
 		Metadata: map[string]any{
-			"native_slot_name":  "tank-operator-slot-2",
-			"native_slot_index": "2",
+			"runner_slot_name":  "tank-operator-slot-2",
+			"runner_slot_index": "2",
 		},
 	}
 	project := Project{
@@ -1102,14 +1102,14 @@ func TestEnsureTestSlotPreliminariesRequiresMinterForWarmHelm(t *testing.T) {
 func TestActivateTestSlotRuntimeRunsHelmInstallerAfterLeaseAssignment(t *testing.T) {
 	tokenPath := tempTokenFile(t)
 	var paths []string
-	launcher := &KubernetesNativeLauncher{
+	launcher := &KubernetesRunLauncher{
 		Settings: Settings{
-			K8sAPIHost:                 "https://kube.test",
-			K8sSATokenPath:             tokenPath,
-			NativeRunnerNamespace:      "glimmung-runs",
-			NativeRunnerServiceAccount: "glimmung-native-runner",
-			NativeRunnerNamespaceRole:  "cluster-admin",
-			NativeRunnerJobTTLSeconds:  3600,
+			K8sAPIHost:           "https://kube.test",
+			K8sSATokenPath:       tokenPath,
+			RunnerNamespace:      "glimmung-runs",
+			RunnerServiceAccount: "glimmung-runner",
+			RunnerNamespaceRole:  "cluster-admin",
+			RunnerJobTTLSeconds:  3600,
 		},
 		HTTPClient: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 			paths = append(paths, req.Method+" "+req.URL.Path)
@@ -1130,9 +1130,9 @@ func TestActivateTestSlotRuntimeRunsHelmInstallerAfterLeaseAssignment(t *testing
 		LeaseNumber: &leaseNumber,
 		State:       "claimed",
 		Metadata: map[string]any{
-			"native_slot_name":          "tank-operator-slot-2",
-			"native_slot_index":         "2",
-			"native_sessions_namespace": "tank-operator-slot-2-sessions",
+			"runner_slot_name":          "tank-operator-slot-2",
+			"runner_slot_index":         "2",
+			"runner_sessions_namespace": "tank-operator-slot-2-sessions",
 		},
 	}
 	project := Project{
@@ -1141,7 +1141,7 @@ func TestActivateTestSlotRuntimeRunsHelmInstallerAfterLeaseAssignment(t *testing
 		Metadata:   map[string]any{"test_slot_helm": map[string]any{"enabled": true}},
 	}
 
-	if err := launcher.ActivateTestSlotRuntime(context.Background(), lease, project, fakeNativeGitHubTokenMinter{token: "ghs_test"}); err != nil {
+	if err := launcher.ActivateTestSlotRuntime(context.Background(), lease, project, fakeRunnerGitHubTokenMinter{token: "ghs_test"}); err != nil {
 		t.Fatalf("ActivateTestSlotRuntime: %v", err)
 	}
 	if !containsPath(paths, "POST /apis/batch/v1/namespaces/glimmung-runs/jobs") {
@@ -1163,17 +1163,17 @@ func TestActivateTestSlotRuntimeRunsHelmInstallerAfterLeaseAssignment(t *testing
 func TestActivateTestSlotRuntimeCreatesReadyPlaywrightRuntime(t *testing.T) {
 	tokenPath := tempTokenFile(t)
 	var paths []string
-	launcher := &KubernetesNativeLauncher{
+	launcher := &KubernetesRunLauncher{
 		Settings: Settings{
-			K8sAPIHost:                    "https://kube.test",
-			K8sSATokenPath:                tokenPath,
-			NativeRunnerNamespace:         "glimmung-runs",
-			NativeRunnerServiceAccount:    "glimmung-native-runner",
-			NativeRunnerNamespaceRole:     "cluster-admin",
-			NativeRunnerJobTTLSeconds:     3600,
-			NativeRunnerPlaywrightEnabled: true,
-			NativeRunnerPlaywrightImage:   "playwright:latest",
-			NativeRunnerPlaywrightPort:    "3000",
+			K8sAPIHost:              "https://kube.test",
+			K8sSATokenPath:          tokenPath,
+			RunnerNamespace:         "glimmung-runs",
+			RunnerServiceAccount:    "glimmung-runner",
+			RunnerNamespaceRole:     "cluster-admin",
+			RunnerJobTTLSeconds:     3600,
+			RunnerPlaywrightEnabled: true,
+			RunnerPlaywrightImage:   "playwright:latest",
+			RunnerPlaywrightPort:    "3000",
 		},
 		HTTPClient: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 			paths = append(paths, req.Method+" "+req.URL.Path)
@@ -1197,9 +1197,9 @@ func TestActivateTestSlotRuntimeCreatesReadyPlaywrightRuntime(t *testing.T) {
 		LeaseNumber: &leaseNumber,
 		State:       "claimed",
 		Metadata: map[string]any{
-			"native_slot_name":          "tank-operator-slot-2",
-			"native_slot_index":         "2",
-			"native_sessions_namespace": "tank-operator-slot-2-sessions",
+			"runner_slot_name":          "tank-operator-slot-2",
+			"runner_slot_index":         "2",
+			"runner_sessions_namespace": "tank-operator-slot-2-sessions",
 		},
 	}
 	project := Project{
@@ -1208,7 +1208,7 @@ func TestActivateTestSlotRuntimeCreatesReadyPlaywrightRuntime(t *testing.T) {
 		Metadata:   map[string]any{"test_slot_helm": map[string]any{"enabled": true}},
 	}
 
-	if err := launcher.ActivateTestSlotRuntime(context.Background(), lease, project, fakeNativeGitHubTokenMinter{token: "ghs_test"}); err != nil {
+	if err := launcher.ActivateTestSlotRuntime(context.Background(), lease, project, fakeRunnerGitHubTokenMinter{token: "ghs_test"}); err != nil {
 		t.Fatalf("ActivateTestSlotRuntime: %v", err)
 	}
 	for _, want := range []string{
@@ -1222,19 +1222,19 @@ func TestActivateTestSlotRuntimeCreatesReadyPlaywrightRuntime(t *testing.T) {
 	}
 }
 
-func TestLaunchNativePhaseCreatesSlotPlaywrightRuntimeWithoutReadinessWait(t *testing.T) {
+func TestLaunchPhaseCreatesSlotPlaywrightRuntimeWithoutReadinessWait(t *testing.T) {
 	tokenPath := tempTokenFile(t)
 	var paths []string
-	launcher := &KubernetesNativeLauncher{
+	launcher := &KubernetesRunLauncher{
 		Settings: Settings{
-			K8sAPIHost:                    "https://kube.test",
-			K8sSATokenPath:                tokenPath,
-			NativeRunnerNamespace:         "glimmung-runs",
-			NativeRunnerServiceAccount:    "glimmung-native-runner",
-			NativeRunnerCallbackBaseURL:   "http://glimmung.glimmung.svc.cluster.local",
-			NativeRunnerPlaywrightEnabled: true,
-			NativeRunnerPlaywrightImage:   "playwright:latest",
-			NativeRunnerPlaywrightPort:    "3000",
+			K8sAPIHost:              "https://kube.test",
+			K8sSATokenPath:          tokenPath,
+			RunnerNamespace:         "glimmung-runs",
+			RunnerServiceAccount:    "glimmung-runner",
+			RunnerCallbackBaseURL:   "http://glimmung.glimmung.svc.cluster.local",
+			RunnerPlaywrightEnabled: true,
+			RunnerPlaywrightImage:   "playwright:latest",
+			RunnerPlaywrightPort:    "3000",
 		},
 		HTTPClient: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 			paths = append(paths, req.Method+" "+req.URL.Path)
@@ -1248,18 +1248,18 @@ func TestLaunchNativePhaseCreatesSlotPlaywrightRuntimeWithoutReadinessWait(t *te
 	runNumber := 7
 	callback := "callback-token"
 	leaseNumber := 3
-	req := NativeLaunchRequest{
+	req := RunLaunchRequest{
 		Lease: Lease{
 			Project:     "tank-operator",
 			LeaseNumber: &leaseNumber,
 			State:       "claimed",
 			Metadata: map[string]any{
-				"native_slot_name":  "tank-operator-slot-1",
-				"native_slot_index": "1",
+				"runner_slot_name":  "tank-operator-slot-1",
+				"runner_slot_index": "1",
 			},
 		},
 		Workflow: Workflow{Name: "agent-run"},
-		Phase:    PhaseSpec{Name: "verify", Jobs: []NativeJobSpec{{ID: "test", Image: "runner:latest"}}},
+		Phase:    PhaseSpec{Name: "verify", Jobs: []RunnerJobSpec{{ID: "test", Image: "runner:latest"}}},
 		Run: RunReplayData{
 			ID:            "run-123",
 			Project:       "tank-operator",
@@ -1269,8 +1269,8 @@ func TestLaunchNativePhaseCreatesSlotPlaywrightRuntimeWithoutReadinessWait(t *te
 		},
 	}
 
-	if _, err := launcher.LaunchNativePhase(context.Background(), req); err != nil {
-		t.Fatalf("LaunchNativePhase: %v", err)
+	if _, err := launcher.LaunchPhase(context.Background(), req); err != nil {
+		t.Fatalf("LaunchPhase: %v", err)
 	}
 	if !containsPath(paths, "POST /apis/apps/v1/namespaces/tank-operator-slot-1/deployments") {
 		t.Fatalf("launch should create slot Playwright deployment, paths=%#v", paths)
@@ -1293,12 +1293,12 @@ func TestDeprovisionTestSlotDeletesInstallerAndNamespaces(t *testing.T) {
 		"tank-operator-slot-11":          true,
 		"tank-operator-slot-11-sessions": true,
 	}
-	launcher := &KubernetesNativeLauncher{
+	launcher := &KubernetesRunLauncher{
 		Settings: Settings{
-			K8sAPIHost:                 "https://kube.test",
-			K8sSATokenPath:             tokenPath,
-			NativeRunnerNamespace:      "glimmung-runs",
-			NativeRunnerServiceAccount: "glimmung-native-runner",
+			K8sAPIHost:           "https://kube.test",
+			K8sSATokenPath:       tokenPath,
+			RunnerNamespace:      "glimmung-runs",
+			RunnerServiceAccount: "glimmung-runner",
 		},
 		HTTPClient: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 			paths = append(paths, req.Method+" "+req.URL.Path)
@@ -1371,15 +1371,15 @@ func TestTestSlotInstallJobManifestRendersHelmApplyJob(t *testing.T) {
 		Project:     "tank-operator",
 		LeaseNumber: &leaseNumber,
 		Metadata: map[string]any{
-			"native_slot_name":  "tank-operator-slot-2",
-			"native_slot_index": "2",
+			"runner_slot_name":  "tank-operator-slot-2",
+			"runner_slot_index": "2",
 		},
 	}
 	project := Project{
 		Name:       "tank-operator",
 		GitHubRepo: "romaine-life/tank-operator",
 		Metadata: map[string]any{
-			"native_standby_dns": map[string]any{
+			"runner_standby_dns": map[string]any{
 				"record_base": "tank.dev.romaine.life",
 			},
 			"test_slot_helm": map[string]any{"enabled": true},
@@ -1390,7 +1390,7 @@ func TestTestSlotInstallJobManifestRendersHelmApplyJob(t *testing.T) {
 		t.Fatal("expected helm config")
 	}
 	manifest := testSlotInstallJobManifest(
-		Settings{NativeRunnerNamespace: "glimmung-runs", NativeRunnerServiceAccount: "glimmung-native-runner", NativeRunnerJobTTLSeconds: 3600},
+		Settings{RunnerNamespace: "glimmung-runs", RunnerServiceAccount: "glimmung-runner", RunnerJobTTLSeconds: 3600},
 		config,
 		lease,
 		project,
@@ -1429,16 +1429,16 @@ func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 	return f(req)
 }
 
-type fakeNativeGitHubTokenMinter struct {
+type fakeRunnerGitHubTokenMinter struct {
 	token string
 	err   error
 }
 
-func (m fakeNativeGitHubTokenMinter) InstallationToken(context.Context) (string, error) {
+func (m fakeRunnerGitHubTokenMinter) InstallationToken(context.Context) (string, error) {
 	return m.token, m.err
 }
 
-func (m fakeNativeGitHubTokenMinter) RepositoryInstallationToken(context.Context, string, map[string]string) (string, error) {
+func (m fakeRunnerGitHubTokenMinter) RepositoryInstallationToken(context.Context, string, map[string]string) (string, error) {
 	return m.token, m.err
 }
 
@@ -1513,8 +1513,8 @@ func runtimeListResponse(path string, deleted map[string]bool) string {
 	}
 }
 
-func nativeManifestEnv(manifest map[string]any) map[string]string {
-	container := nativeManifestContainer(manifest)
+func runnerManifestEnv(manifest map[string]any) map[string]string {
+	container := runnerManifestContainer(manifest)
 	envRows := container["env"].([]map[string]any)
 	env := map[string]string{}
 	for _, row := range envRows {
@@ -1525,20 +1525,20 @@ func nativeManifestEnv(manifest map[string]any) map[string]string {
 	return env
 }
 
-func nativeManifestContainer(manifest map[string]any) map[string]any {
-	podSpec := nativeManifestPodSpec(manifest)
+func runnerManifestContainer(manifest map[string]any) map[string]any {
+	podSpec := runnerManifestPodSpec(manifest)
 	containers := podSpec["containers"].([]any)
 	return containers[0].(map[string]any)
 }
 
-func nativeManifestPodSpec(manifest map[string]any) map[string]any {
+func runnerManifestPodSpec(manifest map[string]any) map[string]any {
 	spec := manifest["spec"].(map[string]any)
 	template := spec["template"].(map[string]any)
 	return template["spec"].(map[string]any)
 }
 
-func TestNativeJobEnvCarriesPriorVerification(t *testing.T) {
-	req := NativeLaunchRequest{
+func TestRunnerJobEnvCarriesPriorVerification(t *testing.T) {
+	req := RunLaunchRequest{
 		Lease:    Lease{Project: "ambience"},
 		Workflow: Workflow{Name: "default"},
 		Phase:    PhaseSpec{Name: "prepare"},
@@ -1559,7 +1559,7 @@ func TestNativeJobEnvCarriesPriorVerification(t *testing.T) {
 			},
 		},
 	}
-	env := nativeJobEnv(Settings{}, req, NativeJobSpec{}, "secret")
+	env := runnerJobEnv(Settings{}, req, RunnerJobSpec{}, "secret")
 	var payload string
 	for _, entry := range env {
 		if entry["name"] == "GLIMMUNG_PRIOR_VERIFICATION_JSON" {
@@ -1582,7 +1582,7 @@ func TestNativeJobEnvCarriesPriorVerification(t *testing.T) {
 
 	// No prior verification -> no env entry.
 	req.Run.PriorVerification = nil
-	for _, entry := range nativeJobEnv(Settings{}, req, NativeJobSpec{}, "secret") {
+	for _, entry := range runnerJobEnv(Settings{}, req, RunnerJobSpec{}, "secret") {
 		if entry["name"] == "GLIMMUNG_PRIOR_VERIFICATION_JSON" {
 			t.Fatal("env should not carry prior verification when absent")
 		}

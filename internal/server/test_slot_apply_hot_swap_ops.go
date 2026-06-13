@@ -52,7 +52,7 @@ type ApplyHotSwapResult struct {
 // k8sJobClient is the surface ApplyHotSwap needs from the k8s API.
 // In production this is implemented by httpK8sJobClient (talks to the
 // kubernetes API over HTTP using the in-cluster SA token, exactly like
-// KubernetesNativeLauncher.request). Tests inject a fake.
+// KubernetesRunLauncher.request). Tests inject a fake.
 //
 // Carving this as a small interface keeps ApplyHotSwap pure-logic and
 // avoids the kubectl-shell-out approach that broke the first cut of
@@ -124,7 +124,7 @@ func ApplyHotSwap(ctx context.Context, k8s k8sJobClient, opts ApplyHotSwapOption
 	}
 	if opts.JobNamespace == "" {
 		// glimmung-runs is where the glimmung pod's SA has Job/create
-		// RBAC (via the glimmung-native-launcher Role). The glimmung
+		// RBAC (via the glimmung-run-launcher Role). The glimmung
 		// namespace itself doesn't grant Job/create to the orchestrator's
 		// own SA — by design, since glimmung's namespace is for the
 		// orchestrator deployment, not for dispatched workloads.
@@ -132,13 +132,13 @@ func ApplyHotSwap(ctx context.Context, k8s k8sJobClient, opts ApplyHotSwapOption
 	}
 	result.JobNamespace = opts.JobNamespace
 	if opts.ServiceAccount == "" {
-		// glimmung-native-runner is the SA for dispatched workloads in
+		// glimmung-runner is the SA for dispatched workloads in
 		// glimmung-runs. The apply-hot-swap Job's swap container runs
 		// `kubectl get/exec` against pods in the target slot's session
 		// namespace; the cross-namespace pods/get+list+exec permission
-		// is granted via charts/.../templates/native-runner-pods-exec-rbac.yaml
+		// is granted via charts/.../templates/runner-pods-exec-rbac.yaml
 		// (ClusterRole bound to this SA).
-		opts.ServiceAccount = "glimmung-native-runner"
+		opts.ServiceAccount = "glimmung-runner"
 	}
 	if opts.SwapContainerImage == "" {
 		// Bitnami deprecated their free public Docker Hub catalog —
@@ -444,7 +444,7 @@ func randHex(n int) string {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Production k8s client (HTTP API, no kubectl) — mirrors the
-// KubernetesNativeLauncher.request pattern.
+// KubernetesRunLauncher.request pattern.
 // ─────────────────────────────────────────────────────────────────────────────
 
 type httpK8sJobClient struct {

@@ -100,7 +100,7 @@ const DESIGN_SYSTEM_ITEMS: PortfolioItem[] = [
           <div className="row">
             <span className="key">summary</span>
             <span className="val">
-              <pre className="evidence-notes">Implemented the requested touchpoint behavior and captured the validation path, WebM evidence, final-state screenshot, and native event log for review.</pre>
+              <pre className="evidence-notes">Implemented the requested touchpoint behavior and captured the validation path, WebM evidence, final-state screenshot, and runner event log for review.</pre>
             </span>
           </div>
           <div className="row">
@@ -112,7 +112,7 @@ const DESIGN_SYSTEM_ITEMS: PortfolioItem[] = [
             <span className="val evidence-list">
               <a href="/">dashboard.webm</a>
               <a href="/">dashboard.png</a>
-              <a href="/">native events</a>
+              <a href="/">runner events</a>
               <a href="/">summary.md</a>
             </span>
           </div>
@@ -447,7 +447,7 @@ const DESIGN_FILE_ITEMS: PortfolioItem[] = [
   {
     id: "capacity-view",
     title: "Front page - Capacity",
-    caption: "The dashboard landing surface: project scope, native leases, and active work",
+    caption: "The dashboard landing surface: project scope, runner leases, and active work",
     initialOpen: true,
     render: () => (
       <Specimen title="front page - capacity">
@@ -459,7 +459,7 @@ const DESIGN_FILE_ITEMS: PortfolioItem[] = [
                   <h1>glimmung</h1>
                   <span className="connection live">live</span>
                 </div>
-                <div className="epigraph">glimmung / agent-run native capacity</div>
+                <div className="epigraph">glimmung / agent-run runner capacity</div>
               </div>
               <div className="user-cluster">
                 <button type="button" className="gb sm"><span className="sigil">∷</span><span className="label">admin</span></button>
@@ -467,7 +467,7 @@ const DESIGN_FILE_ITEMS: PortfolioItem[] = [
               </div>
             </header>
             <div className="kpi-strip frontpage-kpis">
-              <div className="kpi"><span className="k">native leases</span><span className="v">3</span></div>
+              <div className="kpi"><span className="k">runner leases</span><span className="v">3</span></div>
               <div className="kpi"><span className="k">claimed</span><span className="v amber">2</span></div>
               <div className="kpi"><span className="k">waiting slots</span><span className="v">1</span></div>
               <div className="kpi"><span className="k">running jobs</span><span className="v green">5</span></div>
@@ -475,7 +475,7 @@ const DESIGN_FILE_ITEMS: PortfolioItem[] = [
             </div>
             <div className="frontpage-grid">
               <section>
-                <h2>Native leases</h2>
+                <h2>Runner leases</h2>
                 <table>
                   <thead>
                     <tr><th>Lease</th><th>State</th><th>Run</th></tr>
@@ -534,7 +534,7 @@ const DESIGN_FILE_ITEMS: PortfolioItem[] = [
           <div className="row"><span className="key">project</span><span className="val mono">glimmung</span></div>
           <div className="row"><span className="key">github</span><span className="val mono">romaine-life/glimmung</span></div>
           <div className="row"><span className="key">work</span><span className="val mono">1 active</span></div>
-          <div className="row"><span className="key">executor</span><span className="val mono">native k8s jobs</span></div>
+          <div className="row"><span className="key">executor</span><span className="val mono">runner k8s jobs</span></div>
         </div>
         <h2>Workflows</h2>
         <table>
@@ -552,7 +552,7 @@ const DESIGN_FILE_ITEMS: PortfolioItem[] = [
             <tr><th>#</th><th>Title</th><th>Run</th><th>Touchpoint</th></tr>
           </thead>
           <tbody>
-            <tr><td className="mono">206</td><td>Display native run graph and step-level execution</td><td><span className="pill busy">in_progress</span></td><td className="mono dim">PR #218</td></tr>
+            <tr><td className="mono">206</td><td>Display runner run graph and step-level execution</td><td><span className="pill busy">in_progress</span></td><td className="mono dim">PR #218</td></tr>
             <tr><td className="mono">217</td><td>Generate reusable design portfolio from an existing repo</td><td><span className="pill info">review_required</span></td><td className="mono dim">PR #216</td></tr>
           </tbody>
         </table>
@@ -666,7 +666,7 @@ const DESIGN_FILE_ITEMS: PortfolioItem[] = [
               </div>
               <div className="project-info">
                 <div className="row"><span className="key">stage</span><span className="val mono">llm-work</span></div>
-                <div className="row"><span className="key">kind</span><span className="val mono">native k8s job</span></div>
+                <div className="row"><span className="key">kind</span><span className="val mono">runner k8s job</span></div>
                 <div className="row"><span className="key">steps</span><span className="val mono">5</span></div>
                 <div className="row"><span className="key">elapsed</span><span className="val mono">1m 18s</span></div>
               </div>

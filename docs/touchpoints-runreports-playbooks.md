@@ -38,11 +38,11 @@ A RunReport may eventually include:
 - total cost and per-phase or per-step cost
 - verification result
 - WebM videos, screenshots, artifacts, and validation URL
-- logs or native step summaries
+- logs or runner step summaries
 - decision outcome
 - abort or failure reason
 
-RunReport can be persisted or materialized from Run attempts, native events,
+RunReport can be persisted or materialized from Run attempts, runner events,
 and artifacts later. The invariant is the one-Run scope.
 
 ## Touchpoint

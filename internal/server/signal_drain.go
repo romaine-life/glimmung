@@ -81,9 +81,9 @@ const (
 	defaultSignalDrainBatchSize = 50
 )
 
-func drainSignalsHandler(store ReadStore, nativeLauncher NativeLauncher) http.HandlerFunc {
+func drainSignalsHandler(store ReadStore, runLauncher RunLauncher) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		result, err := DrainSignals(r.Context(), store, nativeLauncher, defaultSignalDrainBatchSize)
+		result, err := DrainSignals(r.Context(), store, runLauncher, defaultSignalDrainBatchSize)
 		if err != nil {
 			writeProblem(w, http.StatusServiceUnavailable, err.Error())
 			return
@@ -92,7 +92,7 @@ func drainSignalsHandler(store ReadStore, nativeLauncher NativeLauncher) http.Ha
 	}
 }
 
-func DrainSignals(ctx context.Context, store ReadStore, nativeLauncher NativeLauncher, limit int) (SignalDrainResult, error) {
+func DrainSignals(ctx context.Context, store ReadStore, runLauncher RunLauncher, limit int) (SignalDrainResult, error) {
 	drainStore, ok := store.(SignalDrainStore)
 	if !ok || drainStore == nil {
 		return SignalDrainResult{}, errors.New("signal drain store not configured")
@@ -149,7 +149,7 @@ func DrainSignals(ctx context.Context, store ReadStore, nativeLauncher NativeLau
 		signal = processed
 
 		if decision.Decision == triageDispatch {
-			if err := dispatchTriage(ctx, drainStore, nativeLauncher, signal, decision); err != nil {
+			if err := dispatchTriage(ctx, drainStore, runLauncher, signal, decision); err != nil {
 				_ = drainStore.MarkSignalFailed(ctx, signal, err.Error())
 				drainStore.ReleaseLock(ctx, scope, key, holderID)
 				result.Failed++
@@ -157,7 +157,7 @@ func DrainSignals(ctx context.Context, store ReadStore, nativeLauncher NativeLau
 			}
 		}
 		if decision.Decision == triageReleaseGate {
-			if err := releaseTouchpointGate(ctx, drainStore, nativeLauncher, decision); err != nil {
+			if err := releaseTouchpointGate(ctx, drainStore, runLauncher, decision); err != nil {
 				_ = drainStore.MarkSignalFailed(ctx, signal, err.Error())
 				drainStore.ReleaseLock(ctx, scope, key, holderID)
 				result.Failed++
@@ -165,7 +165,7 @@ func DrainSignals(ctx context.Context, store ReadStore, nativeLauncher NativeLau
 			}
 		}
 		if decision.Decision == triageCancelGate {
-			if err := cancelTouchpointGate(ctx, drainStore, nativeLauncher, decision); err != nil {
+			if err := cancelTouchpointGate(ctx, drainStore, runLauncher, decision); err != nil {
 				_ = drainStore.MarkSignalFailed(ctx, signal, err.Error())
 				drainStore.ReleaseLock(ctx, scope, key, holderID)
 				result.Failed++
@@ -186,8 +186,8 @@ func DrainSignals(ctx context.Context, store ReadStore, nativeLauncher NativeLau
 	return result, nil
 }
 
-func StartSignalDrainReconciler(ctx context.Context, store ReadStore, nativeLauncher NativeLauncher, logf func(string, ...any)) {
-	if _, ok := store.(SignalDrainStore); !ok || store == nil || nativeLauncher == nil {
+func StartSignalDrainReconciler(ctx context.Context, store ReadStore, runLauncher RunLauncher, logf func(string, ...any)) {
+	if _, ok := store.(SignalDrainStore); !ok || store == nil || runLauncher == nil {
 		return
 	}
 	wakeCh := make(chan struct{}, 128)
@@ -204,7 +204,7 @@ func StartSignalDrainReconciler(ctx context.Context, store ReadStore, nativeLaun
 			case <-ctx.Done():
 				return
 			case <-wakeCh:
-				result, err := DrainSignals(ctx, store, nativeLauncher, defaultSignalDrainBatchSize)
+				result, err := DrainSignals(ctx, store, runLauncher, defaultSignalDrainBatchSize)
 				if err != nil {
 					if logf != nil {
 						logf("signal drain failed: %v", err)
@@ -406,7 +406,7 @@ func triageAbortExplanation(decision string, signal QueuedSignal, run RunReplayD
 // sees a normal in-progress run. If the run is not in fact parked at
 // review_required this is a safe no-op (the approve arrived too late or
 // twice; idempotent).
-func releaseTouchpointGate(ctx context.Context, store SignalDrainStore, nativeLauncher NativeLauncher, decision triageDecisionResult) error {
+func releaseTouchpointGate(ctx context.Context, store SignalDrainStore, runLauncher RunLauncher, decision triageDecisionResult) error {
 	if decision.Run.State != "review_required" {
 		// Not parked at the gate (already advanced, already merged, or
 		// recycled by a competing reject). Treat approve as a benign no-op.
@@ -441,7 +441,7 @@ func releaseTouchpointGate(ctx context.Context, store SignalDrainStore, nativeLa
 		return fmt.Errorf("record approval attribution: %w", err)
 	}
 	metrics.RecordReviewDecision("approve")
-	if err := launchTouchpointGateMerge(ctx, completionStore, nativeLauncher, decision.Run, decision.Workflow, *decision.Target); err != nil {
+	if err := launchTouchpointGateMerge(ctx, completionStore, runLauncher, decision.Run, decision.Workflow, *decision.Target); err != nil {
 		return fmt.Errorf("launch touchpoint gate: %w", err)
 	}
 	return nil
@@ -454,7 +454,7 @@ func releaseTouchpointGate(ctx context.Context, store SignalDrainStore, nativeLa
 // "aborted"; the issue is left open (closeIssueOnGatedTerminal only fires on
 // "passed"). If the run is not parked at review_required this is a safe no-op
 // (cancel arrived late or twice; idempotent).
-func cancelTouchpointGate(ctx context.Context, store SignalDrainStore, nativeLauncher NativeLauncher, triage triageDecisionResult) error {
+func cancelTouchpointGate(ctx context.Context, store SignalDrainStore, runLauncher RunLauncher, triage triageDecisionResult) error {
 	if triage.Run.State != "review_required" {
 		return nil
 	}
@@ -508,7 +508,7 @@ func cancelTouchpointGate(ctx context.Context, store SignalDrainStore, nativeLau
 		return nil
 	}
 	for _, target := range targets {
-		if err := dispatchForwardPhase(ctx, completionStore, nativeLauncher, run, triage.Workflow, target); err != nil {
+		if err := dispatchForwardPhase(ctx, completionStore, runLauncher, run, triage.Workflow, target); err != nil {
 			return fmt.Errorf("dispatch teardown after cancel: %w", err)
 		}
 	}
@@ -522,17 +522,17 @@ func cancelTouchpointGate(ctx context.Context, store SignalDrainStore, nativeLau
 func launchTouchpointGateMerge(
 	ctx context.Context,
 	store RunCompletionStore,
-	nativeLauncher NativeLauncher,
+	runLauncher RunLauncher,
 	run RunReplayData,
 	wf *Workflow,
 	gate PhaseSpec,
 ) error {
-	if nativeLauncher == nil {
-		return fmt.Errorf("no native launcher configured")
+	if runLauncher == nil {
+		return fmt.Errorf("no run launcher configured")
 	}
 	phaseKind := workflowPhaseKind(gate.Kind)
-	if phaseKind != workflowKindNativeK8sJob {
-		return fmt.Errorf("expected review gate executor kind %q, got %q", workflowKindNativeK8sJob, phaseKind)
+	if phaseKind != workflowKindRunnerK8sJob {
+		return fmt.Errorf("expected review gate executor kind %q, got %q", workflowKindRunnerK8sJob, phaseKind)
 	}
 	if phasePurpose(gate) != PhasePurposeReviewGate {
 		return fmt.Errorf("expected review_gate phase, got purpose=%q", phasePurpose(gate))
@@ -549,20 +549,20 @@ func launchTouchpointGateMerge(
 		return fmt.Errorf("read lease for gate: %w", err)
 	}
 	if lease.State != "claimed" {
-		return nativeLeaseNotClaimedError(lease)
+		return runnerLeaseNotClaimedError(lease)
 	}
-	canonical := CanonicalNativePhase(gate)
+	canonical := CanonicalRunnerPhase(gate)
 	started := runWithLatestAttempt(run, attemptIdx, gate.Name)
-	launched, err := launchCommittedNativePhase(ctx, nativeLauncher, NativeLaunchRequest{
+	launched, err := launchCommittedPhase(ctx, runLauncher, RunLaunchRequest{
 		Lease:    lease,
 		Workflow: *wf,
 		Phase:    canonical,
 		Run:      started,
 	})
 	if err != nil {
-		return fmt.Errorf("native dispatch: %w", err)
+		return fmt.Errorf("runner dispatch: %w", err)
 	}
-	_ = recordLaunchedNativeJobs(ctx, store, started, canonical, launched)
+	_ = recordLaunchedRunnerJobs(ctx, store, started, canonical, launched)
 	return nil
 }
 
@@ -587,13 +587,13 @@ func latestAttemptIndexForPhase(run RunReplayData, phase string) (int, bool) {
 	return 0, false
 }
 
-func dispatchTriage(ctx context.Context, store SignalDrainStore, nativeLauncher NativeLauncher, signal QueuedSignal, decision triageDecisionResult) error {
+func dispatchTriage(ctx context.Context, store SignalDrainStore, runLauncher RunLauncher, signal QueuedSignal, decision triageDecisionResult) error {
 	run := decision.Run
 	if decision.Workflow == nil {
 		return errors.New("triage dispatch missing workflow")
 	}
-	if nativeLauncher == nil {
-		return errors.New("no native launcher configured")
+	if runLauncher == nil {
+		return errors.New("no run launcher configured")
 	}
 	// Record the reviewer's changes-requested decision on the reviewed run as
 	// durable per-run attribution before recycling. The attribution is about
@@ -618,7 +618,7 @@ func dispatchTriage(ctx context.Context, store SignalDrainStore, nativeLauncher 
 		"previous_run_id":  run.ID,
 		"source":           signal.Source,
 	}
-	result, problem := dispatchRun(ctx, store, nativeLauncher, DispatchRunRequest{
+	result, problem := dispatchRun(ctx, store, runLauncher, DispatchRunRequest{
 		Project:       run.Project,
 		IssueNumber:   run.IssueNumber,
 		WorkflowName:  decision.Workflow.Name,
