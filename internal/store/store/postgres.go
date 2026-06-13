@@ -5204,6 +5204,14 @@ func (s *Store) runnerSlotPrefix(ctx context.Context, project string) string {
 				return strings.Trim(strings.TrimSpace(prefix), ".")
 			}
 		}
+		if standby, ok := rec.Metadata["native_standby_dns"].(map[string]any); ok {
+			if prefix, ok := standby["slot_prefix"].(string); ok && strings.TrimSpace(prefix) != "" {
+				return strings.Trim(strings.TrimSpace(prefix), ".")
+			}
+			if prefix, ok := standby["slotPrefix"].(string); ok && strings.TrimSpace(prefix) != "" {
+				return strings.Trim(strings.TrimSpace(prefix), ".")
+			}
+		}
 	}
 	return project
 }

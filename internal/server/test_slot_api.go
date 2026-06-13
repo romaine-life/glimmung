@@ -1764,6 +1764,14 @@ func testSlotPrefix(project Project) string {
 			return strings.Trim(strings.TrimSpace(value), ".")
 		}
 	}
+	if standby, ok := mapFromMap(project.Metadata, "native_standby_dns"); ok {
+		if value, ok := stringFromMap(standby, "slot_prefix"); ok && strings.TrimSpace(value) != "" {
+			return strings.Trim(strings.TrimSpace(value), ".")
+		}
+		if value, ok := stringFromMap(standby, "slotPrefix"); ok && strings.TrimSpace(value) != "" {
+			return strings.Trim(strings.TrimSpace(value), ".")
+		}
+	}
 	return firstNonEmpty(project.Name, project.ID)
 }
 
