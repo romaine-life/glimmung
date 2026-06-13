@@ -23,7 +23,10 @@ RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/glimmun
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/glimmung-runner ./cmd/glimmung-runner
 
 FROM alpine:3.21 AS runtime
-RUN apk add --no-cache ca-certificates
+# ffmpeg: the evidence blank-first-frame gate decodes frame 0 of video evidence
+# to reject clips that open on the unpainted browser shell. Codec-agnostic, so
+# it covers both VP8 (recordVideo) and VP9 captures.
+RUN apk add --no-cache ca-certificates ffmpeg
 WORKDIR /app
 COPY --from=backend /out/glimmung /app/glimmung
 COPY --from=backend /out/glimmung-supervisor /app/glimmung-supervisor

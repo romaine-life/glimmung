@@ -244,6 +244,9 @@ func validateEvidenceArtifact(ctx context.Context, store ArtifactStore, kind, bl
 		if contentType != "" && !strings.HasPrefix(contentType, "video/") {
 			return ValidationError{Message: fmt.Sprintf("video artifact %s has non-video content type %q", blobName, artifact.ContentType)}
 		}
+		if err := videoEvidenceFirstFrameError(ctx, blobName, artifact.Body); err != nil {
+			return err
+		}
 	}
 	return nil
 }
