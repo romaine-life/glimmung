@@ -107,7 +107,7 @@ type RunReviewFacts struct {
 	ValidationURL *string
 }
 
-func nativePRTouchpointByCallbackToken(store ReadStore, prClient PullRequestClient, artifactStore ArtifactStore) http.HandlerFunc {
+func runnerPRTouchpointByCallbackToken(store ReadStore, prClient PullRequestClient, artifactStore ArtifactStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		completionStore, ok := store.(RunCompletionStore)
 		if !ok || completionStore == nil {
@@ -173,12 +173,12 @@ func nativePRTouchpointByCallbackToken(store ReadStore, prClient PullRequestClie
 	}
 }
 
-// nativePRMergeByCallbackToken handles
-// POST /v1/run-callbacks/{callback_token}/native/pr-merge — the endpoint
+// runnerPRMergeByCallbackToken handles
+// POST /v1/run-callbacks/{callback_token}/run/pr-merge — the endpoint
 // the managed pr_merge primitive curl's into during its run step. The
 // endpoint is idempotent: a second call after the PR is already merged
 // returns status "already_merged" without contacting GitHub for a write.
-func nativePRMergeByCallbackToken(store ReadStore, prClient PullRequestClient) http.HandlerFunc {
+func runnerPRMergeByCallbackToken(store ReadStore, prClient PullRequestClient) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		completionStore, ok := store.(RunCompletionStore)
 		if !ok || completionStore == nil {

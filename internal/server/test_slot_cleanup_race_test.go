@@ -29,7 +29,7 @@ func TestReturnInterruptsActivation(t *testing.T) {
 		fakeReadStore: fakeReadStore{projects: []Project{{
 			ID:   "tank-operator",
 			Name: "tank-operator",
-			Metadata: map[string]any{"native_standby_dns": map[string]any{
+			Metadata: map[string]any{"runner_standby_dns": map[string]any{
 				"slot_prefix": "tank-slot",
 				"record_base": "tank.dev.romaine.life",
 				"count":       float64(1),
@@ -41,13 +41,13 @@ func TestReturnInterruptsActivation(t *testing.T) {
 		lease: Lease{
 			Project:     "tank-operator",
 			LeaseNumber: intPtr(5),
-			Host:        stringPtr("native-k8s"),
+			Host:        stringPtr("runner-k8s"),
 			State:       "claimed",
 			Metadata: map[string]any{
 				"test_slot_checkout": true,
-				"native_k8s":         true,
-				"native_slot_index":  "1",
-				"native_slot_name":   "tank-slot-1",
+				"runner_k8s":         true,
+				"runner_slot_index":  "1",
+				"runner_slot_name":   "tank-slot-1",
 			},
 			RequestedAt: now,
 			AssignedAt:  &now,
@@ -132,7 +132,7 @@ func TestErrorCleaningRetryViaReturn(t *testing.T) {
 		fakeReadStore: fakeReadStore{projects: []Project{{
 			ID:   "tank-operator",
 			Name: "tank-operator",
-			Metadata: map[string]any{"native_standby_dns": map[string]any{
+			Metadata: map[string]any{"runner_standby_dns": map[string]any{
 				"slot_prefix": "tank-slot",
 				"record_base": "tank.dev.romaine.life",
 				"count":       float64(1),
@@ -144,13 +144,13 @@ func TestErrorCleaningRetryViaReturn(t *testing.T) {
 		lease: Lease{
 			Project:     "tank-operator",
 			LeaseNumber: intPtr(6),
-			Host:        stringPtr("native-k8s"),
+			Host:        stringPtr("runner-k8s"),
 			State:       "claimed",
 			Metadata: map[string]any{
 				"test_slot_checkout": true,
-				"native_k8s":         true,
-				"native_slot_index":  "1",
-				"native_slot_name":   "tank-slot-1",
+				"runner_k8s":         true,
+				"runner_slot_index":  "1",
+				"runner_slot_name":   "tank-slot-1",
 			},
 			RequestedAt: now,
 			AssignedAt:  &now,
@@ -247,7 +247,7 @@ func TestRecoverInFlightErrorSlotWithClaimedLease(t *testing.T) {
 		fakeReadStore: fakeReadStore{projects: []Project{{
 			ID:   "recover-err",
 			Name: "recover-err",
-			Metadata: map[string]any{"native_standby_dns": map[string]any{
+			Metadata: map[string]any{"runner_standby_dns": map[string]any{
 				"slot_prefix": "recover-err-slot",
 				"record_base": "recover-err.dev.romaine.life",
 				"count":       float64(1),
@@ -256,13 +256,13 @@ func TestRecoverInFlightErrorSlotWithClaimedLease(t *testing.T) {
 		lease: Lease{
 			Project:     "recover-err",
 			LeaseNumber: intPtr(7),
-			Host:        stringPtr("native-k8s"),
+			Host:        stringPtr("runner-k8s"),
 			State:       "claimed",
 			Metadata: map[string]any{
 				"test_slot_checkout": true,
-				"native_k8s":         true,
-				"native_slot_index":  "1",
-				"native_slot_name":   "recover-err-slot-1",
+				"runner_k8s":         true,
+				"runner_slot_index":  "1",
+				"runner_slot_name":   "recover-err-slot-1",
 			},
 			RequestedAt: now,
 			AssignedAt:  &now,
@@ -320,7 +320,7 @@ func TestRecoverInFlightOrphanErrorSlot(t *testing.T) {
 		fakeReadStore: fakeReadStore{projects: []Project{{
 			ID:   "orphan-err",
 			Name: "orphan-err",
-			Metadata: map[string]any{"native_standby_dns": map[string]any{
+			Metadata: map[string]any{"runner_standby_dns": map[string]any{
 				"slot_prefix": "orphan-err-slot",
 				"record_base": "orphan-err.dev.romaine.life",
 				"count":       float64(1),

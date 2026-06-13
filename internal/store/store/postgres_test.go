@@ -9,15 +9,15 @@ import (
 	pgstore "github.com/romaine-life/glimmung/internal/store/pg"
 )
 
-func verificationCaseJobsForStoreTest() []server.NativeJobSpec {
+func verificationCaseJobsForStoreTest() []server.RunnerJobSpec {
 	timeout := 1800
 	groupTitle := "Test cases generated at runtime"
 	dynamicGroup := &server.StepDynamicGroup{MaxItems: 10, ItemLabel: "test case"}
-	return []server.NativeJobSpec{{
+	return []server.RunnerJobSpec{{
 		ID:             "verify",
 		Managed:        true,
 		TimeoutSeconds: &timeout,
-		Steps: []server.NativeStepSpec{
+		Steps: []server.RunnerStepSpec{
 			{Slug: "author-test-plan", Run: "echo plan"},
 			{Slug: "gather-evidence", Run: "echo gather", Group: "test-cases", GroupTitle: &groupTitle, DynamicGroup: dynamicGroup},
 			{Slug: "judge-evidence", Run: "echo judge", Group: "test-cases", GroupTitle: &groupTitle, DynamicGroup: dynamicGroup},
@@ -26,15 +26,15 @@ func verificationCaseJobsForStoreTest() []server.NativeJobSpec {
 	}}
 }
 
-func TestNativeEventAttemptIndexAcceptsExplicitOrMetadataValue(t *testing.T) {
+func TestRunnerEventAttemptIndexAcceptsExplicitOrMetadataValue(t *testing.T) {
 	explicit := 3
-	if got, ok := nativeEventAttemptIndex(server.NativeRunEventRequest{AttemptIndex: &explicit}); !ok || got != 3 {
+	if got, ok := runnerEventAttemptIndex(server.RunnerEventRequest{AttemptIndex: &explicit}); !ok || got != 3 {
 		t.Fatalf("explicit attempt index=(%d,%t), want (3,true)", got, ok)
 	}
-	if got, ok := nativeEventAttemptIndex(server.NativeRunEventRequest{Metadata: map[string]any{"attempt_index": "2"}}); !ok || got != 2 {
+	if got, ok := runnerEventAttemptIndex(server.RunnerEventRequest{Metadata: map[string]any{"attempt_index": "2"}}); !ok || got != 2 {
 		t.Fatalf("metadata attempt index=(%d,%t), want (2,true)", got, ok)
 	}
-	if _, ok := nativeEventAttemptIndex(server.NativeRunEventRequest{Metadata: map[string]any{"attempt_index": "bad"}}); ok {
+	if _, ok := runnerEventAttemptIndex(server.RunnerEventRequest{Metadata: map[string]any{"attempt_index": "bad"}}); ok {
 		t.Fatal("invalid metadata attempt_index should not be accepted")
 	}
 }
@@ -181,18 +181,18 @@ func TestTerminalStateReleasesSlotLease(t *testing.T) {
 	}
 }
 
-func TestNativeJobExecutionStateVerificationControl(t *testing.T) {
-	completion := nativeJobCompletionDoc{
+func TestRunnerJobExecutionStateVerificationControl(t *testing.T) {
+	completion := runnerJobCompletionDoc{
 		Conclusion:   "success",
 		Verification: &verificationDoc{Status: "fail"},
 	}
 
-	state, reason := nativeJobExecutionStateAndReason(completion, false)
+	state, reason := runnerJobExecutionStateAndReason(completion, false)
 	if state != "succeeded" || reason != "" {
 		t.Fatalf("non-controlling verification state=(%q,%q), want succeeded with no reason", state, reason)
 	}
 
-	state, reason = nativeJobExecutionStateAndReason(completion, true)
+	state, reason = runnerJobExecutionStateAndReason(completion, true)
 	if state != "failed" || reason != "verification_failed" {
 		t.Fatalf("controlling verification state=(%q,%q), want failed verification_failed", state, reason)
 	}
@@ -208,7 +208,7 @@ func TestApplyNativePhaseOutputSetRawStoresAndRejectsDuplicateKeys(t *testing.T)
 		},
 	}
 	attempt := attemptDoc{AttemptIndex: 2, Phase: "env-prep"}
-	event := nativeEventDoc{
+	event := runnerEventDoc{
 		Event:    "phase_output_set",
 		StepSlug: "publish",
 		Metadata: map[string]any{
@@ -217,8 +217,8 @@ func TestApplyNativePhaseOutputSetRawStoresAndRejectsDuplicateKeys(t *testing.T)
 		},
 	}
 
-	if err := applyNativePhaseOutputSetRaw(raw, attempt, event); err != nil {
-		t.Fatalf("applyNativePhaseOutputSetRaw: %v", err)
+	if err := applyRunnerPhaseOutputSetRaw(raw, attempt, event); err != nil {
+		t.Fatalf("applyRunnerPhaseOutputSetRaw: %v", err)
 	}
 	attempts := raw["attempts"].([]any)
 	outputs := attempts[0].(map[string]any)["phase_outputs"].(map[string]any)
@@ -229,7 +229,7 @@ func TestApplyNativePhaseOutputSetRawStoresAndRejectsDuplicateKeys(t *testing.T)
 		t.Fatalf("validation_url was not promoted: %#v", raw)
 	}
 
-	err := applyNativePhaseOutputSetRaw(raw, attempt, event)
+	err := applyRunnerPhaseOutputSetRaw(raw, attempt, event)
 	if err == nil || !strings.Contains(err.Error(), "already set") {
 		t.Fatalf("duplicate error=%v", err)
 	}
@@ -340,7 +340,7 @@ func TestExecutionRawHelpersDriveCanonicalState(t *testing.T) {
 		t.Fatalf("prepare state=%q", got)
 	}
 
-	applyNativeEventToExecutionsRaw(raw, attemptDoc{Phase: "env-prep"}, nativeEventDoc{
+	applyRunnerEventToExecutionsRaw(raw, attemptDoc{Phase: "env-prep"}, runnerEventDoc{
 		JobID:     "prepare",
 		Event:     "step_started",
 		StepSlug:  "checkout",
@@ -505,7 +505,7 @@ func TestJobCompletionFailurePreservesUnstartedSteps(t *testing.T) {
 	}
 }
 
-func TestNativeStepAbortedMarksCausalStepAndJob(t *testing.T) {
+func TestRunnerStepAbortedMarksCausalStepAndJob(t *testing.T) {
 	now := "2026-06-01T04:25:16Z"
 	raw := map[string]any{
 		"phase_executions": []any{
@@ -525,7 +525,7 @@ func TestNativeStepAbortedMarksCausalStepAndJob(t *testing.T) {
 		},
 	}
 
-	applyNativeEventToExecutionsRaw(raw, attemptDoc{Phase: "prepare"}, nativeEventDoc{
+	applyRunnerEventToExecutionsRaw(raw, attemptDoc{Phase: "prepare"}, runnerEventDoc{
 		JobID:     "env-prep",
 		Event:     "step_aborted",
 		StepSlug:  "probe-mod-set",
@@ -579,7 +579,7 @@ func TestDynamicGroupEventsReplaceTemplatesWithConcreteSteps(t *testing.T) {
 	}
 	attempt := attemptDoc{Phase: "llm-verify"}
 
-	applyNativeEventToExecutionsRaw(raw, attempt, nativeEventDoc{
+	applyRunnerEventToExecutionsRaw(raw, attempt, runnerEventDoc{
 		JobID:     "verify",
 		Event:     "dynamic_group_expanded",
 		CreatedAt: now,
@@ -603,7 +603,7 @@ func TestDynamicGroupEventsReplaceTemplatesWithConcreteSteps(t *testing.T) {
 		t.Fatalf("planned concrete steps were not inserted: %#v", job["steps"])
 	}
 
-	applyNativeEventToExecutionsRaw(raw, attempt, nativeEventDoc{
+	applyRunnerEventToExecutionsRaw(raw, attempt, runnerEventDoc{
 		JobID:     "verify",
 		Event:     "step_started",
 		StepSlug:  "gather-evidence-case-01",
@@ -863,12 +863,12 @@ func TestNormalizeWorkflowRegisterForProjectDefaultsToK8sJob(t *testing.T) {
 		Project: "glimmung",
 		Name:    "agent-run",
 		Phases: []server.PhaseSpec{
-			{Name: "prepare", Outputs: []string{"issue_contract"}, Jobs: []server.NativeJobSpec{{ID: "issue-contract"}}},
+			{Name: "prepare", Outputs: []string{"issue_contract"}, Jobs: []server.RunnerJobSpec{{ID: "issue-contract"}}},
 			{Name: "test", Verify: true, RecyclePolicy: &server.RecyclePolicy{MaxAttempts: 1, On: []string{"verify_fail"}, LandsAt: "prepare"}, DependsOn: []string{"prepare"}, Jobs: verificationCaseJobsForStoreTest()},
-			{Name: "cleanup_early", RunOn: server.PhaseRunOnAlways, Purpose: server.PhasePurposeTeardown, When: "${{ run.preserve_test_env }} == 'false'", DependsOn: []string{"test"}, Jobs: []server.NativeJobSpec{{ID: "cleanup-early"}}},
-			{Name: "touchpoint", RunOn: server.PhaseRunOnSuccess, Purpose: server.PhasePurposeReviewTouchpoint, DependsOn: []string{"cleanup_early"}, Jobs: []server.NativeJobSpec{{ID: "pr-touchpoint", Primitive: "pr_touchpoint"}}},
-			{Name: "touchpoint_gate", Kind: "k8s_job", Purpose: server.PhasePurposeReviewGate, DependsOn: []string{"touchpoint"}, Jobs: []server.NativeJobSpec{{ID: "pr-merge", Primitive: "pr_merge"}}},
-			{Name: "cleanup_final", RunOn: server.PhaseRunOnAlways, Purpose: server.PhasePurposeTeardown, DependsOn: []string{"touchpoint_gate"}, Jobs: []server.NativeJobSpec{{ID: "cleanup-final"}}},
+			{Name: "cleanup_early", RunOn: server.PhaseRunOnAlways, Purpose: server.PhasePurposeTeardown, When: "${{ run.preserve_test_env }} == 'false'", DependsOn: []string{"test"}, Jobs: []server.RunnerJobSpec{{ID: "cleanup-early"}}},
+			{Name: "touchpoint", RunOn: server.PhaseRunOnSuccess, Purpose: server.PhasePurposeReviewTouchpoint, DependsOn: []string{"cleanup_early"}, Jobs: []server.RunnerJobSpec{{ID: "pr-touchpoint", Primitive: "pr_touchpoint"}}},
+			{Name: "touchpoint_gate", Kind: "k8s_job", Purpose: server.PhasePurposeReviewGate, DependsOn: []string{"touchpoint"}, Jobs: []server.RunnerJobSpec{{ID: "pr-merge", Primitive: "pr_merge"}}},
+			{Name: "cleanup_final", RunOn: server.PhaseRunOnAlways, Purpose: server.PhasePurposeTeardown, DependsOn: []string{"touchpoint_gate"}, Jobs: []server.RunnerJobSpec{{ID: "cleanup-final"}}},
 		},
 	}
 	normalizeWorkflowRegister(&req)
@@ -888,12 +888,12 @@ func TestWorkflowDocPersistsCanonicalVerificationConstraints(t *testing.T) {
 		Project: "glimmung",
 		Name:    "agent-run",
 		Phases: []server.PhaseSpec{
-			{Name: "prepare", Outputs: []string{"issue_contract"}, Jobs: []server.NativeJobSpec{{ID: "issue-contract"}}},
+			{Name: "prepare", Outputs: []string{"issue_contract"}, Jobs: []server.RunnerJobSpec{{ID: "issue-contract"}}},
 			{Name: "test", Verify: true, RecyclePolicy: &server.RecyclePolicy{MaxAttempts: 1, On: []string{"verify_fail"}, LandsAt: "prepare"}, DependsOn: []string{"prepare"}, Jobs: verificationCaseJobsForStoreTest()},
-			{Name: "cleanup_early", RunOn: server.PhaseRunOnAlways, Purpose: server.PhasePurposeTeardown, When: "${{ run.preserve_test_env }} == 'false'", DependsOn: []string{"test"}, Jobs: []server.NativeJobSpec{{ID: "cleanup-early"}}},
-			{Name: "touchpoint", RunOn: server.PhaseRunOnSuccess, Purpose: server.PhasePurposeReviewTouchpoint, DependsOn: []string{"cleanup_early"}, Jobs: []server.NativeJobSpec{{ID: "pr-touchpoint", Primitive: "pr_touchpoint"}}},
-			{Name: "touchpoint_gate", Kind: "k8s_job", Purpose: server.PhasePurposeReviewGate, DependsOn: []string{"touchpoint"}, Jobs: []server.NativeJobSpec{{ID: "pr-merge", Primitive: "pr_merge"}}},
-			{Name: "cleanup_final", RunOn: server.PhaseRunOnAlways, Purpose: server.PhasePurposeTeardown, DependsOn: []string{"touchpoint_gate"}, Jobs: []server.NativeJobSpec{{ID: "cleanup-final"}}},
+			{Name: "cleanup_early", RunOn: server.PhaseRunOnAlways, Purpose: server.PhasePurposeTeardown, When: "${{ run.preserve_test_env }} == 'false'", DependsOn: []string{"test"}, Jobs: []server.RunnerJobSpec{{ID: "cleanup-early"}}},
+			{Name: "touchpoint", RunOn: server.PhaseRunOnSuccess, Purpose: server.PhasePurposeReviewTouchpoint, DependsOn: []string{"cleanup_early"}, Jobs: []server.RunnerJobSpec{{ID: "pr-touchpoint", Primitive: "pr_touchpoint"}}},
+			{Name: "touchpoint_gate", Kind: "k8s_job", Purpose: server.PhasePurposeReviewGate, DependsOn: []string{"touchpoint"}, Jobs: []server.RunnerJobSpec{{ID: "pr-merge", Primitive: "pr_merge"}}},
+			{Name: "cleanup_final", RunOn: server.PhaseRunOnAlways, Purpose: server.PhasePurposeTeardown, DependsOn: []string{"touchpoint_gate"}, Jobs: []server.RunnerJobSpec{{ID: "cleanup-final"}}},
 		},
 	}
 	normalizeWorkflowRegister(&req)
@@ -919,12 +919,12 @@ func TestWorkflowDocRoundTripsDispatchInputs(t *testing.T) {
 		Project: "ambience",
 		Name:    "default",
 		Phases: []server.PhaseSpec{
-			{Name: "prepare", Outputs: []string{"issue_contract"}, Jobs: []server.NativeJobSpec{{ID: "issue-contract", Checkout: &server.NativeCheckoutSpec{Ref: "${{ inputs.git_ref }}"}}}},
+			{Name: "prepare", Outputs: []string{"issue_contract"}, Jobs: []server.RunnerJobSpec{{ID: "issue-contract", Checkout: &server.RunnerCheckoutSpec{Ref: "${{ inputs.git_ref }}"}}}},
 			{Name: "test", Verify: true, RecyclePolicy: &server.RecyclePolicy{MaxAttempts: 1, On: []string{"verify_fail"}, LandsAt: "prepare"}, DependsOn: []string{"prepare"}, Jobs: verificationCaseJobsForStoreTest()},
-			{Name: "cleanup_early", RunOn: server.PhaseRunOnAlways, Purpose: server.PhasePurposeTeardown, When: "${{ run.preserve_test_env }} == 'false'", DependsOn: []string{"test"}, Jobs: []server.NativeJobSpec{{ID: "cleanup-early"}}},
-			{Name: "touchpoint", RunOn: server.PhaseRunOnSuccess, Purpose: server.PhasePurposeReviewTouchpoint, DependsOn: []string{"cleanup_early"}, Jobs: []server.NativeJobSpec{{ID: "pr-touchpoint", Primitive: "pr_touchpoint"}}},
-			{Name: "touchpoint_gate", Kind: "k8s_job", Purpose: server.PhasePurposeReviewGate, DependsOn: []string{"touchpoint"}, Jobs: []server.NativeJobSpec{{ID: "pr-merge", Primitive: "pr_merge"}}},
-			{Name: "cleanup_final", RunOn: server.PhaseRunOnAlways, Purpose: server.PhasePurposeTeardown, DependsOn: []string{"touchpoint_gate"}, Jobs: []server.NativeJobSpec{{ID: "cleanup-final"}}},
+			{Name: "cleanup_early", RunOn: server.PhaseRunOnAlways, Purpose: server.PhasePurposeTeardown, When: "${{ run.preserve_test_env }} == 'false'", DependsOn: []string{"test"}, Jobs: []server.RunnerJobSpec{{ID: "cleanup-early"}}},
+			{Name: "touchpoint", RunOn: server.PhaseRunOnSuccess, Purpose: server.PhasePurposeReviewTouchpoint, DependsOn: []string{"cleanup_early"}, Jobs: []server.RunnerJobSpec{{ID: "pr-touchpoint", Primitive: "pr_touchpoint"}}},
+			{Name: "touchpoint_gate", Kind: "k8s_job", Purpose: server.PhasePurposeReviewGate, DependsOn: []string{"touchpoint"}, Jobs: []server.RunnerJobSpec{{ID: "pr-merge", Primitive: "pr_merge"}}},
+			{Name: "cleanup_final", RunOn: server.PhaseRunOnAlways, Purpose: server.PhasePurposeTeardown, DependsOn: []string{"touchpoint_gate"}, Jobs: []server.RunnerJobSpec{{ID: "cleanup-final"}}},
 		},
 		DispatchInputs: []server.DispatchInputSpec{
 			{Name: "git_ref", Description: "branch or sha", Required: true, Default: "main"},
@@ -959,18 +959,18 @@ func TestWorkflowDocRoundTripsDispatchInputs(t *testing.T) {
 	}
 }
 
-func TestNativeJobDocRoundTripsAgentStepConfig(t *testing.T) {
-	job := server.NativeJobSpec{
+func TestRunnerJobDocRoundTripsAgentStepConfig(t *testing.T) {
+	job := server.RunnerJobSpec{
 		ID:      "implement",
 		Managed: true,
-		Steps: []server.NativeStepSpec{{
+		Steps: []server.RunnerStepSpec{{
 			Slug:  "agent",
 			Type:  "agent",
 			Agent: &server.AgentStepSpec{Slot: "implementation", Prompt: "ship it", PromptFile: ".glimmung/prompts/implement.md"},
 		}},
 	}
 
-	roundTrip := jobFromDoc(nativeJobDocFromSpec(job))
+	roundTrip := jobFromDoc(runnerJobDocFromSpec(job))
 	if len(roundTrip.Steps) != 1 || roundTrip.Steps[0].Agent == nil {
 		t.Fatalf("round trip step=%#v", roundTrip.Steps)
 	}
@@ -980,10 +980,10 @@ func TestNativeJobDocRoundTripsAgentStepConfig(t *testing.T) {
 	}
 }
 
-func TestNativeJobDocRoundTripsStepGroupMetadata(t *testing.T) {
-	job := server.NativeJobSpec{
+func TestRunnerJobDocRoundTripsStepGroupMetadata(t *testing.T) {
+	job := server.RunnerJobSpec{
 		ID: "verify-ui",
-		Steps: []server.NativeStepSpec{{
+		Steps: []server.RunnerStepSpec{{
 			Slug:       "capture-screenshot",
 			Title:      stringPtr("Capture screenshot"),
 			Group:      "sweep-01",
@@ -991,7 +991,7 @@ func TestNativeJobDocRoundTripsStepGroupMetadata(t *testing.T) {
 		}},
 	}
 
-	roundTrip := jobFromDoc(nativeJobDocFromSpec(job))
+	roundTrip := jobFromDoc(runnerJobDocFromSpec(job))
 	if len(roundTrip.Steps) != 1 {
 		t.Fatalf("round trip step=%#v", roundTrip.Steps)
 	}
@@ -1027,7 +1027,7 @@ func TestLeaseFromDocConvertsStateSnapshotShape(t *testing.T) {
 		"state": "claimed",
 		"requirements": {"size": "large"},
 		"metadata": {
-			"native_slot_name": "ambience-slot-1",
+			"runner_slot_name": "ambience-slot-1",
 			"requester": {
 				"consumer": "glimmung",
 				"kind": "run",
@@ -1053,22 +1053,22 @@ func TestLeaseFromDocConvertsStateSnapshotShape(t *testing.T) {
 	if lease.AssignedAt == nil || lease.ReleasedAt != nil {
 		t.Fatalf("lease times=%#v", lease)
 	}
-	if lease.Metadata["native_slot_name"] != "ambience-slot-1" {
+	if lease.Metadata["runner_slot_name"] != "ambience-slot-1" {
 		t.Fatalf("metadata=%#v", lease.Metadata)
 	}
 }
 
 func TestSetNativeSlotMetadataUsesDeterministicQueueName(t *testing.T) {
 	metadata := map[string]any{
-		"native_slot_name": "ambience-slot-99",
+		"runner_slot_name": "ambience-slot-99",
 	}
 
-	setNativeSlotMetadata(metadata, "ambience", 2, "ambience-slot")
+	setRunnerSlotMetadata(metadata, "ambience", 2, "ambience-slot")
 
-	if metadata["native_slot_index"] != "2" {
-		t.Fatalf("native_slot_index=%#v", metadata["native_slot_index"])
+	if metadata["runner_slot_index"] != "2" {
+		t.Fatalf("runner_slot_index=%#v", metadata["runner_slot_index"])
 	}
-	if metadata["native_slot_name"] != "ambience-slot-2" {
+	if metadata["runner_slot_name"] != "ambience-slot-2" {
 		t.Fatalf("metadata=%#v", metadata)
 	}
 }
@@ -1081,18 +1081,18 @@ func TestValidateNativeLeaseSlotIdentityRejectsCallerSuppliedFields(t *testing.T
 	}{
 		{
 			name:     "top-level slot index",
-			metadata: map[string]any{"native_slot_index": "2"},
-			want:     "native_slot_index",
+			metadata: map[string]any{"runner_slot_index": "2"},
+			want:     "runner_slot_index",
 		},
 		{
 			name:     "top-level slot name",
-			metadata: map[string]any{"native_slot_name": "tank-slot-2"},
-			want:     "native_slot_name",
+			metadata: map[string]any{"runner_slot_name": "tank-slot-2"},
+			want:     "runner_slot_name",
 		},
 		{
 			name:     "top-level slot prefix",
-			metadata: map[string]any{"native_slot_prefix": "tank-slot"},
-			want:     "native_slot_prefix",
+			metadata: map[string]any{"runner_slot_prefix": "tank-slot"},
+			want:     "runner_slot_prefix",
 		},
 		{
 			name:     "phase input preferred slot",
@@ -1107,7 +1107,7 @@ func TestValidateNativeLeaseSlotIdentityRejectsCallerSuppliedFields(t *testing.T
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			err := validateNativeLeaseSlotIdentity(tc.metadata)
+			err := validateRunnerLeaseSlotIdentity(tc.metadata)
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("err=%v, want %q", err, tc.want)
 			}
@@ -1180,7 +1180,7 @@ func TestRunReportsFromDocsBuildsPublicRefsAndAttempts(t *testing.T) {
 				Conclusion:       stringPtr("success"),
 				Verification:     &verificationDoc{Status: "pass", EvidenceRefs: []string{"blob://evidence"}, CostUSD: 2.5},
 				CostUSD:          &cost,
-				JobCompletions: map[string]nativeJobCompletionDoc{
+				JobCompletions: map[string]runnerJobCompletionDoc{
 					"agent": {
 						JobID:       "agent",
 						CompletedAt: completed,
@@ -1268,7 +1268,7 @@ func TestRunReportAttemptFallsBackToVerificationPhaseOutputEvidenceRefs(t *testi
 }
 
 func TestAggregateNativePhaseCompletionPreservesEvidenceRefs(t *testing.T) {
-	payload := aggregateNativePhaseCompletion([]string{"verify"}, map[string]nativeJobCompletionDoc{
+	payload := aggregateRunnerPhaseCompletion([]string{"verify"}, map[string]runnerJobCompletionDoc{
 		"verify": {
 			JobID:      "verify",
 			Conclusion: "success",
@@ -1285,7 +1285,7 @@ func TestAggregateNativePhaseCompletionPreservesEvidenceRefs(t *testing.T) {
 }
 
 func TestAggregateNativePhaseCompletionSynthesizesVerificationOutput(t *testing.T) {
-	payload := aggregateNativePhaseCompletion([]string{"verify-case-01", "verify-case-02"}, map[string]nativeJobCompletionDoc{
+	payload := aggregateRunnerPhaseCompletion([]string{"verify-case-01", "verify-case-02"}, map[string]runnerJobCompletionDoc{
 		"verify-case-01": {
 			JobID:      "verify-case-01",
 			Conclusion: "success",
@@ -1502,7 +1502,7 @@ func serverIssueRowForTest(ref string, state string) server.IssueRow {
 
 func TestAppendInnerJobRegistrationDeduplicates(t *testing.T) {
 	phase := map[string]any{"name": "verify"}
-	doc := nativeEventDoc{
+	doc := runnerEventDoc{
 		JobID:    "llm-verify",
 		Event:    "inner_job_registered",
 		StepSlug: "run-verification",
@@ -1539,7 +1539,7 @@ func TestAppendInnerJobRegistrationDeduplicates(t *testing.T) {
 
 func TestUpdateInnerJobTerminationMatchesExistingRegistration(t *testing.T) {
 	phase := map[string]any{"name": "verify"}
-	regDoc := nativeEventDoc{
+	regDoc := runnerEventDoc{
 		JobID:    "llm-verify",
 		Event:    "inner_job_registered",
 		StepSlug: "run-verification",
@@ -1552,7 +1552,7 @@ func TestUpdateInnerJobTerminationMatchesExistingRegistration(t *testing.T) {
 	}
 	appendInnerJobRegistration(phase, regDoc)
 
-	termDoc := nativeEventDoc{
+	termDoc := runnerEventDoc{
 		JobID: "llm-verify",
 		Event: "inner_job_terminated",
 		Metadata: map[string]any{
@@ -1581,7 +1581,7 @@ func TestUpdateInnerJobTerminationMatchesExistingRegistration(t *testing.T) {
 
 func TestUpdateInnerJobTerminationSynthesizesStubWhenUnregistered(t *testing.T) {
 	phase := map[string]any{"name": "verify"}
-	termDoc := nativeEventDoc{
+	termDoc := runnerEventDoc{
 		JobID: "llm-verify",
 		Event: "inner_job_terminated",
 		Metadata: map[string]any{

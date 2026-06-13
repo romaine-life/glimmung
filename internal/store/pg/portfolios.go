@@ -163,4 +163,3 @@ func (s *PortfoliosStore) PatchPayload(ctx context.Context, project, route, elem
 	}
 	return out, nil
 }
-

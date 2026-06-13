@@ -10,7 +10,7 @@ import (
 )
 
 // MigrateProjectSlotsIntoCollection is the one-shot startup migration that
-// copies every project's embedded `metadata.native_standby_dns.slots[]`
+// copies every project's embedded `metadata.runner_standby_dns.slots[]`
 // array into the `slots` collection as one document per slot, then
 // strips the array from the project doc.
 //
@@ -90,7 +90,7 @@ func (s SlotMigrationSummary) String() string {
 }
 
 // legacyProjectSlotsArrayStripper is implemented by stores that can strip
-// the legacy `metadata.native_standby_dns.slots[]` array from a project
+// the legacy `metadata.runner_standby_dns.slots[]` array from a project
 // doc after migration. The Postgres-backed store implements this; fakes used in
 // unit tests may omit it (the migration tolerates a no-op).
 type legacyProjectSlotsArrayStripper interface {
@@ -98,10 +98,10 @@ type legacyProjectSlotsArrayStripper interface {
 }
 
 // readLegacyProjectSlots returns the slots[] array entries from a
-// project's embedded native_standby_dns metadata, ordered by slot_index
+// project's embedded runner_standby_dns metadata, ordered by slot_index
 // ascending. Returns an empty slice if the array is absent or malformed.
 func readLegacyProjectSlots(project Project) []legacySlotEntry {
-	standbyDNS, ok := mapFromMap(project.Metadata, "native_standby_dns")
+	standbyDNS, ok := mapFromMap(project.Metadata, "runner_standby_dns")
 	if !ok {
 		return nil
 	}

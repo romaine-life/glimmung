@@ -301,7 +301,7 @@ func createInspection(deps createInspectionDeps) http.HandlerFunc {
 
 		inspectionID := uuid.NewString()
 		slotName := ""
-		if v, ok := stringFromMap(lease.Metadata, "native_slot_name"); ok {
+		if v, ok := stringFromMap(lease.Metadata, "runner_slot_name"); ok {
 			slotName = strings.TrimSpace(v)
 		}
 		sessionID := tankSessionID

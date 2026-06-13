@@ -34,8 +34,8 @@ import (
 )
 
 const (
-	// watchManagedByOuter is the label value glimmung's native
-	// launcher sets on every phase Job (see nativeJobManifest).
+	// watchManagedByOuter is the label value glimmung's runner
+	// launcher sets on every phase Job (see runnerJobManifest).
 	watchManagedByOuter = "glimmung"
 	// watchManagedByInner is the label value the ambience inner-agent
 	// Job manifest sets so child Jobs in slot namespaces fall under
@@ -43,12 +43,12 @@ const (
 	watchManagedByInner = "glimmung-inner"
 
 	// watchOuterSelector scopes one of the two Watch goroutines to
-	// glimmung's own phase Jobs in glimmung-runs. The native-job=true
-	// label is set by nativeJobManifest on every phase Job and is the
+	// glimmung's own phase Jobs in glimmung-runs. The run-job=true
+	// label is set by runnerJobManifest on every phase Job and is the
 	// signal that distinguishes them from test-slot installer Jobs
 	// (which also carry managed-by=glimmung but aren't run-bound).
 	watchOuterSelector = "app.kubernetes.io/managed-by=" + watchManagedByOuter +
-		",glimmung.romaine.life/native-job=true"
+		",glimmung.romaine.life/run-job=true"
 
 	// watchInnerSelector scopes the second Watch to inner agent Jobs
 	// ambience labels managed-by=glimmung-inner. They live in slot
@@ -71,32 +71,32 @@ const (
 	watchTimeoutSeconds = 600
 )
 
-// StartNativeJobWatcher launches the cluster-wide Watch goroutine.
+// StartRunnerJobWatcher launches the cluster-wide Watch goroutine.
 // Returns immediately; the goroutine runs until ctx is cancelled. No
 // state is exposed: the watcher's only side effect is to dispatch
 // terminal Job events into the synthesis paths the reconciler also
 // uses, plus update the watch-health metrics.
 //
-// When the launcher does not implement NativeJobStatusGetter the
+// When the launcher does not implement RunnerJobStatusGetter the
 // watcher is a no-op — the same missing-capability gate the reconciler
 // uses. This keeps unit tests with the fake launcher from spawning a
 // live HTTP connection attempt.
-func StartNativeJobWatcher(ctx context.Context, settings Settings, store ReadStore, nativeLauncher NativeLauncher, logf func(string, ...any)) {
+func StartRunnerJobWatcher(ctx context.Context, settings Settings, store ReadStore, runLauncher RunLauncher, logf func(string, ...any)) {
 	timeoutStore, _ := store.(RunDispatchTimeoutStore)
 	if timeoutStore == nil {
 		return
 	}
-	jobStatusGetter, _ := nativeLauncher.(NativeJobStatusGetter)
+	jobStatusGetter, _ := runLauncher.(RunnerJobStatusGetter)
 	if jobStatusGetter == nil {
 		return
 	}
 	completionStore, _ := any(timeoutStore).(RunCompletionStore)
-	jobStore, _ := any(timeoutStore).(NativeJobCompletionStore)
-	eventStore, _ := any(timeoutStore).(NativeRunStore)
+	jobStore, _ := any(timeoutStore).(RunnerJobCompletionStore)
+	eventStore, _ := any(timeoutStore).(RunnerStore)
 	if completionStore == nil || jobStore == nil || eventStore == nil {
 		return
 	}
-	logsFetcher, _ := nativeLauncher.(NativeJobLogsFetcher)
+	logsFetcher, _ := runLauncher.(RunnerJobLogsFetcher)
 	urlBuilder := settingsLogArchiveURLBuilder{settings: settings}
 
 	common := watcherDeps{
@@ -105,11 +105,11 @@ func StartNativeJobWatcher(ctx context.Context, settings Settings, store ReadSto
 		completionStore: completionStore,
 		jobStore:        jobStore,
 		eventStore:      eventStore,
-		nativeLauncher:  nativeLauncher,
+		runLauncher:     runLauncher,
 		statusGetter:    jobStatusGetter,
 		logsFetcher:     logsFetcher,
 		urlBuilder:      urlBuilder,
-		namespace:       strings.TrimSpace(settings.NativeRunnerNamespace),
+		namespace:       strings.TrimSpace(settings.RunnerNamespace),
 		logf:            logf,
 	}
 	go (&k8sJobWatcher{watcherDeps: common, labelSelector: watchOuterSelector}).run(ctx)
@@ -122,11 +122,11 @@ type watcherDeps struct {
 	settings        Settings
 	store           RunDispatchTimeoutStore
 	completionStore RunCompletionStore
-	jobStore        NativeJobCompletionStore
-	eventStore      NativeRunStore
-	nativeLauncher  NativeLauncher
-	statusGetter    NativeJobStatusGetter
-	logsFetcher     NativeJobLogsFetcher
+	jobStore        RunnerJobCompletionStore
+	eventStore      RunnerStore
+	runLauncher     RunLauncher
+	statusGetter    RunnerJobStatusGetter
+	logsFetcher     RunnerJobLogsFetcher
 	urlBuilder      LogArchiveURLBuilder
 	namespace       string
 	logf            func(string, ...any)
@@ -163,7 +163,7 @@ func (w *k8sJobWatcher) run(ctx context.Context) {
 		resourceVersion, err := w.listAndSync(ctx)
 		if err != nil {
 			metrics.RecordRunWatchEvent("control", "list_error")
-			w.log("native-job watcher list failed: %v", err)
+			w.log("runner-job watcher list failed: %v", err)
 			if !sleep(ctx, backoff) {
 				return
 			}
@@ -189,7 +189,7 @@ func (w *k8sJobWatcher) run(ctx context.Context) {
 				return
 			}
 			metrics.RecordRunWatchEvent("control", "stream_error")
-			w.log("native-job watcher stream ended: %v", err)
+			w.log("runner-job watcher stream ended: %v", err)
 			// Stale resourceVersion may have caused this; the next
 			// listAndSync will fetch a fresh one.
 			if !sleep(ctx, backoff) {
@@ -279,7 +279,7 @@ func (w *k8sJobWatcher) watch(ctx context.Context, resourceVersion string) error
 		var ev watchEvent
 		if err := json.Unmarshal(line, &ev); err != nil {
 			metrics.RecordRunWatchEvent("control", "decode_error")
-			w.log("native-job watch decode failed: %v", err)
+			w.log("runner-job watch decode failed: %v", err)
 			continue
 		}
 		w.lastEventAt.Store(time.Now().UnixNano())
@@ -323,7 +323,7 @@ func (w *k8sJobWatcher) handleEvent(ctx context.Context, ev watchEvent) {
 		// 410 Gone here is the canonical signal that the
 		// resourceVersion is stale. The simplest correct response is
 		// to terminate the current watch so run() re-lists.
-		w.log("native-job watch ERROR event payload=%v", ev.Object)
+		w.log("runner-job watch ERROR event payload=%v", ev.Object)
 	default:
 		metrics.RecordRunWatchEvent("control", "unknown_type")
 	}
@@ -339,7 +339,7 @@ func (w *k8sJobWatcher) dispatchJobObject(ctx context.Context, job map[string]an
 		jobKind = kind(job)
 	}
 	metrics.RecordRunWatchEvent(jobKind, action)
-	status := parseNativeJobStatus(job)
+	status := parseRunnerJobStatus(job)
 	if !status.IsTerminallySucceeded() && !status.IsTerminallyFailed() {
 		return
 	}
@@ -354,16 +354,16 @@ func (w *k8sJobWatcher) dispatchJobObject(ctx context.Context, job map[string]an
 // dispatchOuterTerminal synthesizes a phase-job completion for an
 // outer Job that has reached a terminal k8s condition. The labels
 // glimmung's launcher set carry the full run / phase / job-id triple
-// so we can call straight into RecordNativeJobCompletion without a
+// so we can call straight into RecordRunnerJobCompletion without a
 // database lookup.
-func (w *k8sJobWatcher) dispatchOuterTerminal(ctx context.Context, job map[string]any, status NativeJobStatus, action string) {
+func (w *k8sJobWatcher) dispatchOuterTerminal(ctx context.Context, job map[string]any, status RunnerJobStatus, action string) {
 	labels := jobLabels(job)
 	project := strings.TrimSpace(labels["glimmung.romaine.life/project"])
 	runRef := strings.TrimSpace(labels["glimmung.romaine.life/run-ref"])
 	phase := strings.TrimSpace(labels["glimmung.romaine.life/phase"])
 	jobID := strings.TrimSpace(labels["glimmung.romaine.life/job-id"])
 	if project == "" || runRef == "" || phase == "" || jobID == "" {
-		w.log("native-job watch outer event missing labels: %v", labels)
+		w.log("runner-job watch outer event missing labels: %v", labels)
 		return
 	}
 	runID := w.findRunIDByRunRef(ctx, project, runRef)
@@ -385,21 +385,21 @@ func (w *k8sJobWatcher) dispatchOuterTerminal(ctx context.Context, job map[strin
 		TerminalReason:  terminalReason,
 		LogArchiveURL:   logURL,
 	}
-	result, err := w.jobStore.RecordNativeJobCompletion(ctx, project, runID, payload)
+	result, err := w.jobStore.RecordRunnerJobCompletion(ctx, project, runID, payload)
 	if errors.Is(err, ErrConflict) || errors.Is(err, ErrNotFound) {
 		// Already completed (runner callback won the race, or the
 		// reconciler synthesized this) — idempotent success.
 		return
 	}
 	if err != nil {
-		w.log("native-job watch outer synthesis failed run=%s job=%s: %v", runID, jobID, err)
+		w.log("runner-job watch outer synthesis failed run=%s job=%s: %v", runID, jobID, err)
 		return
 	}
 	metrics.RecordRunPhaseJobTerminal(conclusion, NormalizeJobTerminalReason(terminalReason))
 	metrics.RecordRunWatchEvent("outer", "synthesized_"+action)
 	if result.CompletionReady {
-		if _, err := processSyntheticRunCompletion(ctx, w.completionStore, w.nativeLauncher, project, runID, result.PhasePayload); err != nil {
-			w.log("native-job watch outer phase completion failed run=%s: %v", runID, err)
+		if _, err := processSyntheticRunCompletion(ctx, w.completionStore, w.runLauncher, project, runID, result.PhasePayload); err != nil {
+			w.log("runner-job watch outer phase completion failed run=%s: %v", runID, err)
 		}
 	}
 }
@@ -408,7 +408,7 @@ func (w *k8sJobWatcher) dispatchOuterTerminal(ctx context.Context, job map[strin
 // inner Job that has reached a terminal k8s condition. Mirrors the
 // existing reconciler watcher path but is triggered by the apiserver
 // push, not the 1h fallback tick.
-func (w *k8sJobWatcher) dispatchInnerTerminal(ctx context.Context, job map[string]any, status NativeJobStatus, action string) {
+func (w *k8sJobWatcher) dispatchInnerTerminal(ctx context.Context, job map[string]any, status RunnerJobStatus, action string) {
 	namespace := jobObjectNamespace(job)
 	jobName := jobObjectName(job)
 	if namespace == "" || jobName == "" {
@@ -459,18 +459,18 @@ func (w *k8sJobWatcher) dispatchInnerTerminal(ctx context.Context, job map[strin
 	if logURL != "" {
 		metadata["log_archive_url"] = logURL
 	}
-	req := NativeRunEventRequest{
+	req := RunnerEventRequest{
 		JobID:    parentJobID,
 		Seq:      innerJobTerminationSeq(ij),
 		Event:    "inner_job_terminated",
 		StepSlug: stringPtrOrNil(parentStepSlug),
 		Metadata: metadata,
 	}
-	if _, err := w.eventStore.RecordNativeEventByID(ctx, project, runID, req); err != nil {
+	if _, err := w.eventStore.RecordRunnerEventByID(ctx, project, runID, req); err != nil {
 		if errors.Is(err, ErrConflict) {
 			return
 		}
-		w.log("native-job watch inner termination submit failed run=%s job=%s/%s: %v", runID, namespace, jobName, err)
+		w.log("runner-job watch inner termination submit failed run=%s job=%s/%s: %v", runID, namespace, jobName, err)
 		return
 	}
 	metrics.RecordRunWatchEvent("inner", "synthesized_"+action)
@@ -482,7 +482,7 @@ func (w *k8sJobWatcher) dispatchInnerTerminal(ctx context.Context, job map[strin
 func (w *k8sJobWatcher) findRunIDByRunRef(ctx context.Context, project, runRef string) string {
 	runs, err := w.store.ListProjectRuns(ctx, project, 500)
 	if err != nil {
-		w.log("native-job watch list runs failed project=%s: %v", project, err)
+		w.log("runner-job watch list runs failed project=%s: %v", project, err)
 		return ""
 	}
 	for _, run := range runs {
@@ -596,7 +596,7 @@ func (w *k8sJobWatcher) httpClient() *http.Client {
 	return &http.Client{
 		// No Timeout — the Watch is server-bounded by
 		// timeoutSeconds. Cancellation is via ctx on the request.
-		Transport: (&KubernetesNativeLauncher{Settings: w.settings}).transport(),
+		Transport: (&KubernetesRunLauncher{Settings: w.settings}).transport(),
 	}
 }
 
@@ -606,14 +606,14 @@ func (w *k8sJobWatcher) httpClient() *http.Client {
 // status-to-conclusion mapping. We can't reuse evaluateActiveJobFailure
 // directly because it also handles the not-found and grace-period
 // branches that don't apply to a freshly-pushed Watch event.
-func deriveTerminalFromStatus(status NativeJobStatus, k8sJobName string) (conclusion, terminalReason, summary string) {
+func deriveTerminalFromStatus(status RunnerJobStatus, k8sJobName string) (conclusion, terminalReason, summary string) {
 	if status.IsTerminallySucceeded() && !status.IsTerminallyFailed() {
 		// Watch saw Complete=True but the runner never pushed
 		// /completed — surface as failed/callback_lost so evidence
 		// fields stay accurate (runner-side has the verification
 		// payload; we don't).
 		return "failed", JobTerminalReasonCallbackLost,
-			fmt.Sprintf("native job %q completed in kubernetes but its completion callback was never received", k8sJobName)
+			fmt.Sprintf("runner job %q completed in kubernetes but its completion callback was never received", k8sJobName)
 	}
 	reason := status.FailureReason()
 	message := status.FailureMessage()
@@ -628,7 +628,7 @@ func deriveTerminalFromStatus(status NativeJobStatus, k8sJobName string) (conclu
 		terminalReason = JobTerminalReasonBackoffExceeded
 	}
 	terminalReason = refineTerminalReasonFromPod(terminalReason, status.PodTerminationReason)
-	summary = fmt.Sprintf("native job %q ended with kubernetes condition Failed=true reason=%q: %s", k8sJobName, reason, strings.TrimSpace(message))
+	summary = fmt.Sprintf("runner job %q ended with kubernetes condition Failed=true reason=%q: %s", k8sJobName, reason, strings.TrimSpace(message))
 	if status.PodTerminationReason != "" {
 		summary += fmt.Sprintf(" [pod: %s]", status.PodTerminationReason)
 	}
@@ -639,7 +639,7 @@ func deriveTerminalFromStatus(status NativeJobStatus, k8sJobName string) (conclu
 // captureInnerJobLogs (which lives in run_execution_reconciler.go).
 // Same artifact path layout as inner Jobs except scoped to the parent
 // Job's k8s name rather than (namespace, jobName).
-func captureOuterJobLogs(ctx context.Context, fetcher NativeJobLogsFetcher, writer ArtifactWriter, project, runID, namespace, jobName string, logf func(string, ...any)) string {
+func captureOuterJobLogs(ctx context.Context, fetcher RunnerJobLogsFetcher, writer ArtifactWriter, project, runID, namespace, jobName string, logf func(string, ...any)) string {
 	if fetcher == nil || writer == nil {
 		return ""
 	}
@@ -650,7 +650,7 @@ func captureOuterJobLogs(ctx context.Context, fetcher NativeJobLogsFetcher, writ
 	if project == "" || runID == "" || namespace == "" || jobName == "" {
 		return ""
 	}
-	body, err := fetcher.GetNativeJobLogs(ctx, namespace, jobName, 0)
+	body, err := fetcher.GetRunnerJobLogs(ctx, namespace, jobName, 0)
 	if err != nil {
 		if logf != nil {
 			logf("outer-job log capture fetch failed namespace=%s job=%s: %v", namespace, jobName, err)

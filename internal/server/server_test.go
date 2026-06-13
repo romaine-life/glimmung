@@ -110,7 +110,7 @@ func TestPublicConfigShipsGrafanaFields(t *testing.T) {
 		TankOperatorBaseURL:   "https://tank.romaine.life",
 		GrafanaBaseURL:        "https://grafana.romaine.life/",
 		GrafanaLokiDatasource: "loki",
-		NativeRunnerNamespace: "glimmung-runs",
+		RunnerNamespace:       "glimmung-runs",
 	})
 
 	if body["grafana_base_url"] != "https://grafana.romaine.life" {
@@ -119,8 +119,8 @@ func TestPublicConfigShipsGrafanaFields(t *testing.T) {
 	if body["grafana_loki_datasource"] != "loki" {
 		t.Fatalf("grafana_loki_datasource=%q", body["grafana_loki_datasource"])
 	}
-	if body["native_runner_namespace"] != "glimmung-runs" {
-		t.Fatalf("native_runner_namespace=%q", body["native_runner_namespace"])
+	if body["runner_namespace"] != "glimmung-runs" {
+		t.Fatalf("runner_namespace=%q", body["runner_namespace"])
 	}
 }
 

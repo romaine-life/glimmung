@@ -178,4 +178,3 @@ func (s *SignalsStore) PatchPayload(ctx context.Context, id string, mutate func(
 	}
 	return out, nil
 }
-

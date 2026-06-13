@@ -24,7 +24,7 @@ type SSHCertRequest struct {
 // window back to the orchestrator. The certificate is signed by
 // auth.romaine.life (the sole SSH CA issuer); glimmung is a gateway that
 // derives the principal/key_id and relays auth's signed result. The
-// consumer (`scripts/glimmung-native/*.sh`) reads only `.certificate`;
+// consumer (`scripts/glimmung-runner/*.sh`) reads only `.certificate`;
 // the rest is surfaced for diagnosis. auth does not return a
 // `valid_after`, so neither does glimmung.
 type SSHCertResponse struct {
@@ -62,7 +62,7 @@ type runCallbackTokenReader interface {
 // mintRunCallbackSSHCert is the run-callback variant of the remote-host
 // SSH cert mint. Phase pods carry the run's per-attempt token at
 // `$GLIMMUNG_ATTEMPT_TOKEN` and consume the URL Glimmung pre-bakes into
-// `$GLIMMUNG_SSH_CERT_URL` (`/v1/run-callbacks/{callback_token}/native/ssh-cert`).
+// `$GLIMMUNG_SSH_CERT_URL` (`/v1/run-callbacks/{callback_token}/run/ssh-cert`).
 // This mirrors how `github-token`, `pr-touchpoint`, `pr-merge`, and
 // `completed` are surfaced to phase scripts — the lease's own callback
 // token never reaches phase pods.

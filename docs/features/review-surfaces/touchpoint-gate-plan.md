@@ -103,7 +103,7 @@ next dispatch. There is no auto-migration.
 
 ### Stage 2 — `pr_merge` primitive
 
-1. New managed native job primitive `pr_merge` that idempotently merges the
+1. New managed runner job primitive `pr_merge` that idempotently merges the
    target PR (check `pull.merged` before attempting; treat already-merged as
    success).
 2. GitHub App installation-token minting wired into the managed runner.

@@ -6,7 +6,7 @@ routes, admin HTTP routes, GitHub webhooks, and MCP-facing API shape.
 ## Product Model
 
 Glimmung is a control plane. Auth answers who may mutate it, and the API shape
-is the contract that browsers, MCP servers, native runners, and in-cluster
+is the contract that browsers, MCP servers, runners, and in-cluster
 callers rely on. A route that accepts stale identity, advertises a stale schema,
 or silently drifts from its MCP wrapper can make the system appear controllable
 when it is not.

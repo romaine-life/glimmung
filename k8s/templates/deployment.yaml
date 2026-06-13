@@ -44,30 +44,30 @@ spec:
             # values.yaml because the UAMI name isn't a secret.
             - name: POSTGRES_USER
               value: {{ .Values.postgres.user | quote }}
-            - name: NATIVE_RUNNER_NAMESPACE
-              value: {{ .Values.nativeRunner.namespace | quote }}
-            - name: NATIVE_RUNNER_SERVICE_ACCOUNT
-              value: {{ .Values.nativeRunner.serviceAccount | quote }}
-            - name: NATIVE_RUNNER_IMAGE
-              value: {{ .Values.nativeRunner.image | quote }}
-            - name: NATIVE_RUNNER_ENTRYPOINT
-              value: {{ .Values.nativeRunner.entrypoint | quote }}
-            - name: NATIVE_RUNNER_CALLBACK_BASE_URL
-              value: {{ .Values.nativeRunner.callbackBaseUrl | quote }}
-            - name: NATIVE_RUNNER_JOB_TTL_SECONDS
-              value: {{ .Values.nativeRunner.jobTtlSeconds | quote }}
-            - name: NATIVE_RUNNER_NAMESPACE_ROLE
-              value: {{ .Values.nativeRunner.namespaceRole | quote }}
-            - name: NATIVE_STANDBY_DNS_NAMESPACE
-              value: {{ .Values.nativeRunner.standbyDns.namespace | quote }}
-            - name: NATIVE_STANDBY_DNS_GATEWAY_NAMESPACE
-              value: {{ .Values.nativeRunner.standbyDns.gatewayNamespace | quote }}
-            - name: NATIVE_STANDBY_DNS_GATEWAY_NAME
-              value: {{ .Values.nativeRunner.standbyDns.gatewayName | quote }}
-            - name: NATIVE_STANDBY_DNS_TARGET
-              value: {{ .Values.nativeRunner.standbyDns.target | quote }}
-            - name: NATIVE_STANDBY_DNS_DEFAULT_TTL
-              value: {{ .Values.nativeRunner.standbyDns.defaultTtl | quote }}
+            - name: RUNNER_NAMESPACE
+              value: {{ .Values.runner.namespace | quote }}
+            - name: RUNNER_SERVICE_ACCOUNT
+              value: {{ .Values.runner.serviceAccount | quote }}
+            - name: RUNNER_IMAGE
+              value: {{ .Values.runner.image | quote }}
+            - name: RUNNER_ENTRYPOINT
+              value: {{ .Values.runner.entrypoint | quote }}
+            - name: RUNNER_CALLBACK_BASE_URL
+              value: {{ .Values.runner.callbackBaseUrl | quote }}
+            - name: RUNNER_JOB_TTL_SECONDS
+              value: {{ .Values.runner.jobTtlSeconds | quote }}
+            - name: RUNNER_NAMESPACE_ROLE
+              value: {{ .Values.runner.namespaceRole | quote }}
+            - name: RUNNER_STANDBY_DNS_NAMESPACE
+              value: {{ .Values.runner.standbyDns.namespace | quote }}
+            - name: RUNNER_STANDBY_DNS_GATEWAY_NAMESPACE
+              value: {{ .Values.runner.standbyDns.gatewayNamespace | quote }}
+            - name: RUNNER_STANDBY_DNS_GATEWAY_NAME
+              value: {{ .Values.runner.standbyDns.gatewayName | quote }}
+            - name: RUNNER_STANDBY_DNS_TARGET
+              value: {{ .Values.runner.standbyDns.target | quote }}
+            - name: RUNNER_STANDBY_DNS_DEFAULT_TTL
+              value: {{ .Values.runner.standbyDns.defaultTtl | quote }}
             - name: PROVIDER_API_PROXY_NAMESPACE
               value: {{ .Values.providerApiProxy.namespace | quote }}
             - name: PROVIDER_API_PROXY_CA_SECRET
@@ -80,20 +80,20 @@ spec:
               value: {{ .Values.providerApiProxy.codex.serviceName | quote }}
             - name: PROVIDER_API_PROXY_GITHUB_SERVICE
               value: {{ .Values.providerApiProxy.github.serviceName | quote }}
-            - name: NATIVE_RUNNER_PLAYWRIGHT_ENABLED
-              value: {{ .Values.nativeRunner.playwright.enabled | quote }}
-            - name: NATIVE_RUNNER_PLAYWRIGHT_IMAGE
-              value: {{ .Values.nativeRunner.playwright.image | quote }}
-            - name: NATIVE_RUNNER_PLAYWRIGHT_PORT
-              value: {{ .Values.nativeRunner.playwright.port | quote }}
-            - name: NATIVE_RUNNER_PLAYWRIGHT_CPU_REQUEST
-              value: {{ .Values.nativeRunner.playwright.resources.requests.cpu | quote }}
-            - name: NATIVE_RUNNER_PLAYWRIGHT_MEMORY_REQUEST
-              value: {{ .Values.nativeRunner.playwright.resources.requests.memory | quote }}
-            - name: NATIVE_RUNNER_PLAYWRIGHT_CPU_LIMIT
-              value: {{ .Values.nativeRunner.playwright.resources.limits.cpu | quote }}
-            - name: NATIVE_RUNNER_PLAYWRIGHT_MEMORY_LIMIT
-              value: {{ .Values.nativeRunner.playwright.resources.limits.memory | quote }}
+            - name: RUNNER_PLAYWRIGHT_ENABLED
+              value: {{ .Values.runner.playwright.enabled | quote }}
+            - name: RUNNER_PLAYWRIGHT_IMAGE
+              value: {{ .Values.runner.playwright.image | quote }}
+            - name: RUNNER_PLAYWRIGHT_PORT
+              value: {{ .Values.runner.playwright.port | quote }}
+            - name: RUNNER_PLAYWRIGHT_CPU_REQUEST
+              value: {{ .Values.runner.playwright.resources.requests.cpu | quote }}
+            - name: RUNNER_PLAYWRIGHT_MEMORY_REQUEST
+              value: {{ .Values.runner.playwright.resources.requests.memory | quote }}
+            - name: RUNNER_PLAYWRIGHT_CPU_LIMIT
+              value: {{ .Values.runner.playwright.resources.limits.cpu | quote }}
+            - name: RUNNER_PLAYWRIGHT_MEMORY_LIMIT
+              value: {{ .Values.runner.playwright.resources.limits.memory | quote }}
             - name: ARTIFACTS_STORAGE_ACCOUNT
               value: {{ .Values.artifacts.storageAccount | quote }}
             - name: ARTIFACTS_CONTAINER

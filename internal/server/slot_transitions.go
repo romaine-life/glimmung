@@ -139,7 +139,7 @@ func ensureSlotForLease(ctx context.Context, store ReadStore, lease Lease, now t
 		return err
 	}
 	slotName := ""
-	if name := nativeSlotNameFromMetadata(lease.Metadata); name != nil {
+	if name := runnerSlotNameFromMetadata(lease.Metadata); name != nil {
 		slotName = *name
 	}
 	if slotName == "" {
@@ -315,9 +315,9 @@ func appendLeaseSlotHistory(ctx context.Context, store ReadStore, entry SlotHist
 // required metadata fields — that's a programming bug (a non-test-slot
 // lease shouldn't be flowing through the slot-transition helpers).
 func slotIdentityFromLease(lease Lease) (slotIndex int, projectKey string, err error) {
-	idxPtr := nativeSlotIndexFromMetadata(lease.Metadata)
+	idxPtr := runnerSlotIndexFromMetadata(lease.Metadata)
 	if idxPtr == nil {
-		return 0, "", fmt.Errorf("test-slot lease is missing native_slot_index metadata")
+		return 0, "", fmt.Errorf("test-slot lease is missing runner_slot_index metadata")
 	}
 	projectKey = firstNonEmpty(lease.Project, "")
 	if projectKey == "" {

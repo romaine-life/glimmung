@@ -229,7 +229,7 @@ func textHeaders(name, contentType string) map[string][]string {
 func TestCreateInspectionWritesBlobsAndLedger(t *testing.T) {
 	store := &inspectionFakeStore{}
 	writer := newInspectionFakeWriter()
-	resolver := &inspectionFakeLeaseResolver{lease: Lease{ID: "lease-1", Project: "p1", Metadata: map[string]any{"native_slot_name": "p1-slot-1"}}}
+	resolver := &inspectionFakeLeaseResolver{lease: Lease{ID: "lease-1", Project: "p1", Metadata: map[string]any{"runner_slot_name": "p1-slot-1"}}}
 
 	handler := createInspection(createInspectionDeps{store: store, leases: resolver, artifactWrite: writer})
 	rec := httptest.NewRecorder()
@@ -417,7 +417,7 @@ func (s *inspectionFakeStateStore) ListLeases(context.Context) ([]Lease, error) 
 func TestCreateInspectionRunScopedWritesUnderRunPrefix(t *testing.T) {
 	store := &inspectionFakeStore{}
 	writer := newInspectionFakeWriter()
-	resolver := &inspectionFakeLeaseResolver{lease: Lease{ID: "lease-1", Project: "p1", Metadata: map[string]any{"native_slot_name": "p1-slot-1"}}}
+	resolver := &inspectionFakeLeaseResolver{lease: Lease{ID: "lease-1", Project: "p1", Metadata: map[string]any{"runner_slot_name": "p1-slot-1"}}}
 	runs := &inspectionFakeRunResolver{knownRuns: map[string]string{"01R": "p1"}}
 
 	handler := createInspection(createInspectionDeps{store: store, leases: resolver, runs: runs, artifactWrite: writer})

@@ -22,7 +22,7 @@ type RunQueueStore interface {
 	GetWorkflowByName(ctx context.Context, project, name string) (*Workflow, error)
 	GetWorkflowBySchemaRef(ctx context.Context, project, schemaRef string) (*Workflow, error)
 	StartRunCycle(ctx context.Context, req StartRunCycleRequest) (int, error)
-	RecordNativeJobsSkipped(ctx context.Context, project, runID, phase string, skipped map[string]string) error
+	RecordRunnerJobsSkipped(ctx context.Context, project, runID, phase string, skipped map[string]string) error
 	AcquireLease(ctx context.Context, req LeaseAcquireRequest) (Lease, error)
 	CancelLeaseByRef(ctx context.Context, project, ref string) (CancelLeaseResult, error)
 	AbortRunByID(ctx context.Context, project, runID, reason string) (AbortRunResult, error)
@@ -44,9 +44,9 @@ type RunQueueDrainResult struct {
 
 var runQueueWake atomic.Value // stores func(project string)
 
-func StartRunQueueReconciler(ctx context.Context, store ReadStore, nativeLauncher NativeLauncher, logf func(string, ...any)) {
+func StartRunQueueReconciler(ctx context.Context, store ReadStore, runLauncher RunLauncher, logf func(string, ...any)) {
 	queueStore, ok := store.(RunQueueStore)
-	if !ok || queueStore == nil || nativeLauncher == nil {
+	if !ok || queueStore == nil || runLauncher == nil {
 		return
 	}
 	wakeCh := make(chan string, 128)
@@ -63,7 +63,7 @@ func StartRunQueueReconciler(ctx context.Context, store ReadStore, nativeLaunche
 			case <-ctx.Done():
 				return
 			case project := <-wakeCh:
-				result, err := DrainRunQueue(ctx, queueStore, nativeLauncher, project, defaultRunQueueBatchSize)
+				result, err := DrainRunQueue(ctx, queueStore, runLauncher, project, defaultRunQueueBatchSize)
 				if err != nil {
 					if logf != nil {
 						logf("run queue reconcile failed project=%q: %v", project, err)
@@ -85,19 +85,19 @@ func wakeRunQueue(project string) {
 	}
 }
 
-func DrainRunQueue(ctx context.Context, store RunQueueStore, nativeLauncher NativeLauncher, project string, limit int) (RunQueueDrainResult, error) {
+func DrainRunQueue(ctx context.Context, store RunQueueStore, runLauncher RunLauncher, project string, limit int) (RunQueueDrainResult, error) {
 	if store == nil {
 		return RunQueueDrainResult{}, errors.New("run queue store not configured")
 	}
-	if nativeLauncher == nil {
-		return RunQueueDrainResult{}, errors.New("native launcher not configured")
+	if runLauncher == nil {
+		return RunQueueDrainResult{}, errors.New("run launcher not configured")
 	}
 	if limit <= 0 {
 		limit = defaultRunQueueBatchSize
 	}
 	project = strings.TrimSpace(project)
 	if project != "" {
-		return drainProjectRunQueue(ctx, store, nativeLauncher, project, limit)
+		return drainProjectRunQueue(ctx, store, runLauncher, project, limit)
 	}
 	projects, err := store.ListProjects(ctx)
 	if err != nil {
@@ -109,7 +109,7 @@ func DrainRunQueue(ctx context.Context, store RunQueueStore, nativeLauncher Nati
 		if name == "" {
 			continue
 		}
-		result, err := drainProjectRunQueue(ctx, store, nativeLauncher, name, limit)
+		result, err := drainProjectRunQueue(ctx, store, runLauncher, name, limit)
 		if err != nil {
 			return total, err
 		}
@@ -121,7 +121,7 @@ func DrainRunQueue(ctx context.Context, store RunQueueStore, nativeLauncher Nati
 	return total, nil
 }
 
-func drainProjectRunQueue(ctx context.Context, store RunQueueStore, nativeLauncher NativeLauncher, project string, limit int) (RunQueueDrainResult, error) {
+func drainProjectRunQueue(ctx context.Context, store RunQueueStore, runLauncher RunLauncher, project string, limit int) (RunQueueDrainResult, error) {
 	queued, err := store.ListQueuedRunCycles(ctx, project, limit)
 	if err != nil {
 		return RunQueueDrainResult{}, err
@@ -133,7 +133,7 @@ func drainProjectRunQueue(ctx context.Context, store RunQueueStore, nativeLaunch
 			return result, ctx.Err()
 		default:
 		}
-		admission, err := AdmitQueuedRunCycle(ctx, store, nativeLauncher, run)
+		admission, err := AdmitQueuedRunCycle(ctx, store, runLauncher, run)
 		if err != nil {
 			result.Failed++
 			return result, err
@@ -156,7 +156,7 @@ func drainProjectRunQueue(ctx context.Context, store RunQueueStore, nativeLaunch
 	return result, nil
 }
 
-func AdmitQueuedRunCycle(ctx context.Context, store RunQueueStore, nativeLauncher NativeLauncher, run RunReplayData) (RunCycleAdmissionResult, error) {
+func AdmitQueuedRunCycle(ctx context.Context, store RunQueueStore, runLauncher RunLauncher, run RunReplayData) (RunCycleAdmissionResult, error) {
 	wf, err := workflowForQueuedRun(ctx, store, run)
 	if err != nil {
 		return RunCycleAdmissionResult{}, err
@@ -192,7 +192,7 @@ func AdmitQueuedRunCycle(ctx context.Context, store RunQueueStore, nativeLaunche
 	if err != nil {
 		return RunCycleAdmissionResult{}, err
 	}
-	return admitRunCycle(ctx, store, nativeLauncher, run, wf, issue, issueRepo, LeasePurposeDispatch)
+	return admitRunCycle(ctx, store, runLauncher, run, wf, issue, issueRepo, LeasePurposeDispatch)
 }
 
 func workflowForQueuedRun(ctx context.Context, store RunQueueStore, run RunReplayData) (*Workflow, error) {
@@ -223,27 +223,27 @@ func admitRunCycle(
 	ctx context.Context,
 	store interface {
 		StartRunCycle(ctx context.Context, req StartRunCycleRequest) (int, error)
-		RecordNativeJobsSkipped(ctx context.Context, project, runID, phase string, skipped map[string]string) error
+		RecordRunnerJobsSkipped(ctx context.Context, project, runID, phase string, skipped map[string]string) error
 		AcquireLease(ctx context.Context, req LeaseAcquireRequest) (Lease, error)
 		CancelLeaseByRef(ctx context.Context, project, ref string) (CancelLeaseResult, error)
 		AbortRunByID(ctx context.Context, project, runID, reason string) (AbortRunResult, error)
 	},
-	nativeLauncher NativeLauncher,
+	runLauncher RunLauncher,
 	run RunReplayData,
 	wf *Workflow,
 	issue IssueDispatchData,
 	issueRepo string,
 	leasePurpose string,
 ) (RunCycleAdmissionResult, error) {
-	if nativeLauncher == nil {
-		return RunCycleAdmissionResult{}, errors.New("native launcher not configured")
+	if runLauncher == nil {
+		return RunCycleAdmissionResult{}, errors.New("run launcher not configured")
 	}
 	initPhase, ok := runEntrypointPhase(wf.Phases, run)
 	if !ok {
 		return abortAdmissionForRun(ctx, store, run, "workflow has no entry phase")
 	}
 	phaseKind := workflowPhaseKind(initPhase.Kind)
-	if err := validateNativeWorkflowKind(phaseKind); err != nil {
+	if err := validateRunnerWorkflowKind(phaseKind); err != nil {
 		return abortAdmissionForRun(ctx, store, run, err.Error())
 	}
 	workflowFilename := initPhase.WorkflowFilename
@@ -251,7 +251,7 @@ func admitRunCycle(
 		workflowFilename = fmt.Sprintf("%s:%s", phaseKind, initPhase.Name)
 	}
 	metadata := runCycleLeaseMetadata(run, issue, issueRepo, initPhase.Name, 0, nil)
-	leaseTTLSeconds := nativeRunLeaseTTLSeconds(wf)
+	leaseTTLSeconds := runnerLeaseTTLSeconds(wf)
 	var lease Lease
 	leaseRef := ""
 	acquiredLease := false
@@ -288,7 +288,7 @@ func admitRunCycle(
 			Workflow:     &wfName,
 			Requirements: requirements,
 			Metadata:     metadata,
-			TTLSeconds:   nativeLeaseTTLP(leaseTTLSeconds),
+			TTLSeconds:   runnerLeaseTTLP(leaseTTLSeconds),
 		}, store.AcquireLease)
 		if err != nil {
 			if errors.Is(err, ErrUnavailable) {
@@ -304,7 +304,7 @@ func admitRunCycle(
 		if acquiredLease {
 			_, _ = store.CancelLeaseByRef(ctx, run.Project, leaseRef)
 		}
-		leaseErr := nativeLeaseNotClaimedError(lease)
+		leaseErr := runnerLeaseNotClaimedError(lease)
 		_, _ = store.AbortRunByID(ctx, run.Project, run.ID, "native_lease_not_claimed: "+leaseErr.Error())
 		detail := leaseErr.Error()
 		return RunCycleAdmissionResult{State: "dispatch_failed", Detail: &detail}, nil
@@ -341,18 +341,18 @@ func admitRunCycle(
 		PreserveTestEnv: started.PreserveTestEnv,
 	})
 	if err != nil {
-		_, _ = store.AbortRunByID(ctx, run.Project, run.ID, "native_dispatch_failed: "+err.Error())
-		detail := fmt.Sprintf("native dispatch failed: %s", err)
+		_, _ = store.AbortRunByID(ctx, run.Project, run.ID, "runner_dispatch_failed: "+err.Error())
+		detail := fmt.Sprintf("runner dispatch failed: %s", err)
 		return RunCycleAdmissionResult{State: "dispatch_failed", Detail: &detail}, nil
 	}
 	if len(skippedJobs) > 0 {
-		if err := store.RecordNativeJobsSkipped(ctx, run.Project, run.ID, initPhase.Name, skippedJobs); err != nil {
-			_, _ = store.AbortRunByID(ctx, run.Project, run.ID, "native_dispatch_failed: "+err.Error())
-			detail := fmt.Sprintf("native dispatch failed: %s", err)
+		if err := store.RecordRunnerJobsSkipped(ctx, run.Project, run.ID, initPhase.Name, skippedJobs); err != nil {
+			_, _ = store.AbortRunByID(ctx, run.Project, run.ID, "runner_dispatch_failed: "+err.Error())
+			detail := fmt.Sprintf("runner dispatch failed: %s", err)
 			return RunCycleAdmissionResult{State: "dispatch_failed", Detail: &detail}, nil
 		}
 	}
-	launched, err := launchCommittedNativePhase(ctx, nativeLauncher, NativeLaunchRequest{
+	launched, err := launchCommittedPhase(ctx, runLauncher, RunLaunchRequest{
 		Lease:      lease,
 		Workflow:   *wf,
 		Phase:      initPhase,
@@ -363,11 +363,11 @@ func admitRunCycle(
 		if acquiredLease {
 			_, _ = store.CancelLeaseByRef(ctx, run.Project, leaseRef)
 		}
-		_, _ = store.AbortRunByID(ctx, run.Project, run.ID, "native_dispatch_failed: "+err.Error())
-		detail := fmt.Sprintf("native dispatch failed: %s", err)
+		_, _ = store.AbortRunByID(ctx, run.Project, run.ID, "runner_dispatch_failed: "+err.Error())
+		detail := fmt.Sprintf("runner dispatch failed: %s", err)
 		return RunCycleAdmissionResult{State: "dispatch_failed", Detail: &detail}, nil
 	}
-	_ = recordLaunchedNativeJobs(ctx, store, started, initPhase, launched)
+	_ = recordLaunchedRunnerJobs(ctx, store, started, initPhase, launched)
 	return RunCycleAdmissionResult{
 		State: "dispatched",
 		Lease: "claimed",
@@ -419,7 +419,7 @@ func runCycleLeaseMetadata(run RunReplayData, issue IssueDispatchData, issueRepo
 		"attempt_index":      strconv.Itoa(attemptIndex),
 		"phase_name":         phaseName,
 		"issue_number":       strconv.Itoa(run.IssueNumber),
-		"native_k8s":         true,
+		"runner_k8s":         true,
 	}
 	if run.CallbackToken != nil && *run.CallbackToken != "" {
 		metadata["run_callback_token"] = *run.CallbackToken

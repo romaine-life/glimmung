@@ -84,29 +84,29 @@ func (s *patchingDispatchStore) PatchLeasePayload(_ context.Context, project, id
 	return nil
 }
 
-type fakeNativeLauncher struct {
+type fakeRunLauncher struct {
 	called        bool
-	req           NativeLaunchRequest
+	req           RunLaunchRequest
 	err           error
 	ctxErrOnEntry error
 }
 
-func (l *fakeNativeLauncher) LaunchNativePhase(ctx context.Context, req NativeLaunchRequest) ([]NativeLaunchedJob, error) {
+func (l *fakeRunLauncher) LaunchPhase(ctx context.Context, req RunLaunchRequest) ([]RunLaunchedJob, error) {
 	l.called = true
 	l.req = req
 	l.ctxErrOnEntry = ctx.Err()
 	if l.err != nil {
 		return nil, l.err
 	}
-	launched := make([]NativeLaunchedJob, 0, len(req.Phase.Jobs))
+	launched := make([]RunLaunchedJob, 0, len(req.Phase.Jobs))
 	for _, job := range req.Phase.Jobs {
 		if _, skip := req.SkipJobIDs[job.ID]; skip {
 			continue
 		}
-		launched = append(launched, NativeLaunchedJob{JobID: job.ID, K8sJobName: "native-job-" + job.ID})
+		launched = append(launched, RunLaunchedJob{JobID: job.ID, K8sJobName: "runner-job-" + job.ID})
 	}
 	if len(launched) == 0 {
-		launched = append(launched, NativeLaunchedJob{JobID: "job", K8sJobName: "native-job"})
+		launched = append(launched, RunLaunchedJob{JobID: "job", K8sJobName: "runner-job"})
 	}
 	return launched, nil
 }
@@ -166,7 +166,7 @@ func (s *fakeDispatchStore) CreateRun(_ context.Context, req CreateRunRequest) (
 	return CreatedRun{ID: "run-1", RunNumber: 1, CycleNumber: 1, RunCycle: 1, RunDisplay: "1.1", CallbackToken: "tok"}, nil
 }
 
-func (s *fakeDispatchStore) RecordNativeJobsSkipped(_ context.Context, _, _, phase string, skipped map[string]string) error {
+func (s *fakeDispatchStore) RecordRunnerJobsSkipped(_ context.Context, _, _, phase string, skipped map[string]string) error {
 	s.skippedJobsPhase = phase
 	s.skippedJobs = skipped
 	return nil
@@ -194,10 +194,10 @@ func (s *fakeDispatchStore) AbortRunByID(context.Context, string, string, string
 	return AbortRunResult{}, nil
 }
 
-func newDispatchTestHandler(store ReadStore, nativeLauncher NativeLauncher) http.Handler {
+func newDispatchTestHandler(store ReadStore, runLauncher RunLauncher) http.Handler {
 	adminAuthenticator := fakeAdminAuthenticator{user: auth.User{Sub: "admin"}}
 	mux := http.NewServeMux()
-	mux.Handle("POST /v1/runs/dispatch", requireAdmin(adminAuthenticator, http.HandlerFunc(dispatchRunHandler(Settings{}, store, nativeLauncher))))
+	mux.Handle("POST /v1/runs/dispatch", requireAdmin(adminAuthenticator, http.HandlerFunc(dispatchRunHandler(Settings{}, store, runLauncher))))
 	return mux
 }
 
@@ -208,12 +208,12 @@ func newDispatchTestHandler(store ReadStore, nativeLauncher NativeLauncher) http
 // dispatch flow against an in-memory workflow use this.
 func gatedTestPhases() []PhaseSpec {
 	return []PhaseSpec{
-		{Name: "prepare", Kind: "k8s_job", WorkflowFilename: "k8s_job:prepare", Outputs: []string{"issue_contract"}, Jobs: []NativeJobSpec{{ID: "issue-contract", Image: "runner:latest"}}},
+		{Name: "prepare", Kind: "k8s_job", WorkflowFilename: "k8s_job:prepare", Outputs: []string{"issue_contract"}, Jobs: []RunnerJobSpec{{ID: "issue-contract", Image: "runner:latest"}}},
 		{Name: "verify", Kind: "k8s_job", WorkflowFilename: "k8s_job:verify", DependsOn: []string{"prepare"}, Verify: true, RecyclePolicy: &RecyclePolicy{MaxAttempts: 1, On: []string{"verify_fail"}, LandsAt: "prepare"}, Jobs: verificationCaseJobsForTest()},
-		{Name: "cleanup_early", Kind: "k8s_job", WorkflowFilename: "k8s_job:cleanup_early", DependsOn: []string{"verify"}, RunOn: PhaseRunOnAlways, Purpose: PhasePurposeTeardown, When: "${{ run.preserve_test_env }} == 'false'", Jobs: []NativeJobSpec{{ID: "cleanup", Image: "runner:latest"}}},
-		{Name: "touchpoint", Kind: "k8s_job", WorkflowFilename: "k8s_job:touchpoint", DependsOn: []string{"cleanup_early"}, RunOn: PhaseRunOnSuccess, Purpose: PhasePurposeReviewTouchpoint, Jobs: []NativeJobSpec{{ID: PRTouchpointJobID, Primitive: JobPrimitivePRTouchpoint, Managed: true}}},
-		{Name: "touchpoint_gate", Kind: "k8s_job", WorkflowFilename: "k8s_job:touchpoint_gate", Purpose: PhasePurposeReviewGate, DependsOn: []string{"touchpoint"}, Jobs: []NativeJobSpec{{ID: PRMergeJobID, Primitive: JobPrimitivePRMerge, Managed: true}}},
-		{Name: "cleanup_final", Kind: "k8s_job", WorkflowFilename: "k8s_job:cleanup_final", DependsOn: []string{"touchpoint_gate"}, RunOn: PhaseRunOnAlways, Purpose: PhasePurposeTeardown, Jobs: []NativeJobSpec{{ID: "cleanup-final", Image: "runner:latest"}}},
+		{Name: "cleanup_early", Kind: "k8s_job", WorkflowFilename: "k8s_job:cleanup_early", DependsOn: []string{"verify"}, RunOn: PhaseRunOnAlways, Purpose: PhasePurposeTeardown, When: "${{ run.preserve_test_env }} == 'false'", Jobs: []RunnerJobSpec{{ID: "cleanup", Image: "runner:latest"}}},
+		{Name: "touchpoint", Kind: "k8s_job", WorkflowFilename: "k8s_job:touchpoint", DependsOn: []string{"cleanup_early"}, RunOn: PhaseRunOnSuccess, Purpose: PhasePurposeReviewTouchpoint, Jobs: []RunnerJobSpec{{ID: PRTouchpointJobID, Primitive: JobPrimitivePRTouchpoint, Managed: true}}},
+		{Name: "touchpoint_gate", Kind: "k8s_job", WorkflowFilename: "k8s_job:touchpoint_gate", Purpose: PhasePurposeReviewGate, DependsOn: []string{"touchpoint"}, Jobs: []RunnerJobSpec{{ID: PRMergeJobID, Primitive: JobPrimitivePRMerge, Managed: true}}},
+		{Name: "cleanup_final", Kind: "k8s_job", WorkflowFilename: "k8s_job:cleanup_final", DependsOn: []string{"touchpoint_gate"}, RunOn: PhaseRunOnAlways, Purpose: PhasePurposeTeardown, Jobs: []RunnerJobSpec{{ID: "cleanup-final", Image: "runner:latest"}}},
 	}
 }
 
@@ -240,12 +240,12 @@ func minimalDispatchStore() *fakeDispatchStore {
 			ID:          "lease-1",
 			Project:     "proj",
 			LeaseNumber: &leaseNum,
-			Host:        stringPtr("native-k8s"),
+			Host:        stringPtr("runner-k8s"),
 			State:       "claimed",
 			Metadata: map[string]any{
-				"native_k8s":           true,
-				"native_slot_index":    "1",
-				"native_slot_name":     "proj-1",
+				"runner_k8s":           true,
+				"runner_slot_index":    "1",
+				"runner_slot_name":     "proj-1",
 				"lease_callback_token": "lctok",
 			},
 		},
@@ -270,7 +270,7 @@ func TestDispatchRunMissingProject(t *testing.T) {
 	store := minimalDispatchStore()
 	rec := httptest.NewRecorder()
 	body, _ := json.Marshal(DispatchRunRequest{IssueNumber: 1})
-	newDispatchTestHandler(store, &fakeNativeLauncher{}).ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/runs/dispatch", bytes.NewReader(body)))
+	newDispatchTestHandler(store, &fakeRunLauncher{}).ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/runs/dispatch", bytes.NewReader(body)))
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
@@ -315,7 +315,7 @@ func TestDispatchRunRejectsInvalidWorkflowBeforeRunCreation(t *testing.T) {
 	}
 	store.workflows = []Workflow{*store.wf}
 	rec := httptest.NewRecorder()
-	newDispatchTestHandler(store, &fakeNativeLauncher{}).ServeHTTP(rec, dispatchRequest("proj", 1))
+	newDispatchTestHandler(store, &fakeRunLauncher{}).ServeHTTP(rec, dispatchRequest("proj", 1))
 	if rec.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
@@ -331,7 +331,7 @@ func TestDispatchRunAlreadyRunning(t *testing.T) {
 	store := minimalDispatchStore()
 	store.lockErr = &AlreadyRunningError{HeldBy: "holder-123", ExpiresAt: time.Now().Add(time.Hour)}
 	rec := httptest.NewRecorder()
-	newDispatchTestHandler(store, &fakeNativeLauncher{}).ServeHTTP(rec, dispatchRequest("proj", 1))
+	newDispatchTestHandler(store, &fakeRunLauncher{}).ServeHTTP(rec, dispatchRequest("proj", 1))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
@@ -347,7 +347,7 @@ func TestDispatchRunAlreadyRunningErrIs(t *testing.T) {
 	}
 }
 
-func TestDispatchRunRequiresNativeLauncher(t *testing.T) {
+func TestDispatchRunRequiresRunLauncher(t *testing.T) {
 	store := minimalDispatchStore()
 	rec := httptest.NewRecorder()
 	newDispatchTestHandler(store, nil).ServeHTTP(rec, dispatchRequest("proj", 1))
@@ -361,7 +361,7 @@ func TestDispatchRunRequiresNativeLauncher(t *testing.T) {
 
 func TestDispatchRunDispatchedNativeK8sJob(t *testing.T) {
 	store := minimalDispatchStore()
-	launcher := &fakeNativeLauncher{}
+	launcher := &fakeRunLauncher{}
 	rec := httptest.NewRecorder()
 	newDispatchTestHandler(store, launcher).ServeHTTP(rec, dispatchRequest("proj", 1))
 	if rec.Code != http.StatusOK {
@@ -372,7 +372,7 @@ func TestDispatchRunDispatchedNativeK8sJob(t *testing.T) {
 		t.Fatalf("state=%q", result.State)
 	}
 	if !launcher.called {
-		t.Fatal("native launcher was not called")
+		t.Fatal("run launcher was not called")
 	}
 	if launcher.req.Phase.Name != "prepare" || launcher.req.Run.ID != "run-1" {
 		t.Fatalf("launch request=%#v", launcher.req)
@@ -383,10 +383,10 @@ func TestDispatchRunDispatchedNativeK8sJob(t *testing.T) {
 	if store.runReq.SlotLeaseRef == "" || store.startReq == nil || store.startReq.SlotLeaseRef != store.runReq.SlotLeaseRef {
 		t.Fatalf("lease should be attached before run admission: run=%#v start=%#v", store.runReq, store.startReq)
 	}
-	if store.leaseReq == nil || store.leaseReq.Metadata["native_k8s"] != true {
+	if store.leaseReq == nil || store.leaseReq.Metadata["runner_k8s"] != true {
 		t.Fatalf("lease request=%#v", store.leaseReq)
 	}
-	wantTTL := nativeRunLeaseTTLSeconds(store.wf)
+	wantTTL := runnerLeaseTTLSeconds(store.wf)
 	if wantTTL <= 900 {
 		t.Fatalf("test fixture ttl=%d, want larger than retired 15-minute default", wantTTL)
 	}
@@ -402,7 +402,7 @@ func TestDispatchRunPersistsRunInputs(t *testing.T) {
 	store := minimalDispatchStore()
 	store.wf.DispatchInputs = []DispatchInputSpec{{Name: "git_ref", Required: true}}
 	store.workflows[0].DispatchInputs = store.wf.DispatchInputs
-	launcher := &fakeNativeLauncher{}
+	launcher := &fakeRunLauncher{}
 	body, _ := json.Marshal(DispatchRunRequest{
 		Project:     "proj",
 		IssueNumber: 1,
@@ -439,7 +439,7 @@ func TestDispatchRunRejectsInvalidRunInputs(t *testing.T) {
 		Inputs:      map[string]string{"bad key": "main"},
 	})
 	rec := httptest.NewRecorder()
-	newDispatchTestHandler(store, &fakeNativeLauncher{}).ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/runs/dispatch", bytes.NewReader(body)))
+	newDispatchTestHandler(store, &fakeRunLauncher{}).ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/runs/dispatch", bytes.NewReader(body)))
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
@@ -459,7 +459,7 @@ func TestDispatchRunRejectsMissingRequiredInput(t *testing.T) {
 	store.workflows[0].DispatchInputs = store.wf.DispatchInputs
 	body, _ := json.Marshal(DispatchRunRequest{Project: "proj", IssueNumber: 1})
 	rec := httptest.NewRecorder()
-	newDispatchTestHandler(store, &fakeNativeLauncher{}).ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/runs/dispatch", bytes.NewReader(body)))
+	newDispatchTestHandler(store, &fakeRunLauncher{}).ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/runs/dispatch", bytes.NewReader(body)))
 	if rec.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
@@ -478,7 +478,7 @@ func TestDispatchRunFillsDeclaredDefault(t *testing.T) {
 	store := minimalDispatchStore()
 	store.wf.DispatchInputs = []DispatchInputSpec{{Name: "git_ref", Required: true, Default: "main"}}
 	store.workflows[0].DispatchInputs = store.wf.DispatchInputs
-	launcher := &fakeNativeLauncher{}
+	launcher := &fakeRunLauncher{}
 	body, _ := json.Marshal(DispatchRunRequest{Project: "proj", IssueNumber: 1})
 	rec := httptest.NewRecorder()
 	newDispatchTestHandler(store, launcher).ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/runs/dispatch", bytes.NewReader(body)))
@@ -507,7 +507,7 @@ func TestDispatchRunRejectsUndeclaredInput(t *testing.T) {
 		Inputs:      map[string]string{"git_ref": "feature/branch"},
 	})
 	rec := httptest.NewRecorder()
-	newDispatchTestHandler(store, &fakeNativeLauncher{}).ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/runs/dispatch", bytes.NewReader(body)))
+	newDispatchTestHandler(store, &fakeRunLauncher{}).ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/runs/dispatch", bytes.NewReader(body)))
 	if rec.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
@@ -520,14 +520,14 @@ func TestDispatchRunPersistsPostRunWorkContextOnPreclaimedLease(t *testing.T) {
 	base := minimalDispatchStore()
 	base.leaseResult.Metadata["work_context_branch"] = "issue-168-run-unknown"
 	store := &patchingDispatchStore{fakeDispatchStore: base}
-	launcher := &fakeNativeLauncher{}
+	launcher := &fakeRunLauncher{}
 	rec := httptest.NewRecorder()
 	newDispatchTestHandler(store, launcher).ServeHTTP(rec, dispatchRequest("proj", 168))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
 	if !launcher.called {
-		t.Fatal("native launcher was not called")
+		t.Fatal("run launcher was not called")
 	}
 	if got := base.leaseReq.Metadata["work_context_branch"]; got != nil {
 		t.Fatalf("pre-run lease request should not stamp a provisional branch, got %#v", got)
@@ -599,13 +599,13 @@ func TestDispatchRunSnapshotsAgentRuntimePolicy(t *testing.T) {
 		},
 	}
 	store.wf.Phases[0].Jobs[0].Managed = true
-	store.wf.Phases[0].Jobs[0].Steps = []NativeStepSpec{{
+	store.wf.Phases[0].Jobs[0].Steps = []RunnerStepSpec{{
 		Slug:  "implement",
 		Type:  "agent",
 		Agent: &AgentStepSpec{Slot: "implementation"},
 	}}
 
-	launcher := &fakeNativeLauncher{}
+	launcher := &fakeRunLauncher{}
 	rec := httptest.NewRecorder()
 	newDispatchTestHandler(store, launcher).ServeHTTP(rec, dispatchRequest("proj", 1))
 	if rec.Code != http.StatusOK {
@@ -648,7 +648,7 @@ func TestDispatchRunSnapshotsAgentRuntimePolicy(t *testing.T) {
 func TestAdmitRunCycleAcquiresWorkflowTTLForQueuedRunWithoutLease(t *testing.T) {
 	store := minimalDispatchStore()
 	store.leaseReq = nil
-	launcher := &fakeNativeLauncher{}
+	launcher := &fakeRunLauncher{}
 	callbackToken := "queued-token"
 	runNumber := 1
 	cycleNumber := 1
@@ -685,9 +685,9 @@ func TestAdmitRunCycleAcquiresWorkflowTTLForQueuedRunWithoutLease(t *testing.T) 
 		t.Fatalf("state=%q detail=%v", admission.State, admission.Detail)
 	}
 	if !launcher.called {
-		t.Fatal("native launcher was not called")
+		t.Fatal("run launcher was not called")
 	}
-	wantTTL := nativeRunLeaseTTLSeconds(store.wf)
+	wantTTL := runnerLeaseTTLSeconds(store.wf)
 	if store.leaseReq == nil || store.leaseReq.TTLSeconds == nil || *store.leaseReq.TTLSeconds != wantTTL {
 		t.Fatalf("lease ttl=%#v, want %d", store.leaseReq, wantTTL)
 	}
@@ -696,7 +696,7 @@ func TestAdmitRunCycleAcquiresWorkflowTTLForQueuedRunWithoutLease(t *testing.T) 
 func TestDispatchRunSnapshotsVideoEvidenceRequirementFromIssueLabel(t *testing.T) {
 	store := minimalDispatchStore()
 	store.issue.Labels = []string{"evidence:video"}
-	launcher := &fakeNativeLauncher{}
+	launcher := &fakeRunLauncher{}
 	rec := httptest.NewRecorder()
 	newDispatchTestHandler(store, launcher).ServeHTTP(rec, dispatchRequest("proj", 1))
 	if rec.Code != http.StatusOK {
@@ -718,7 +718,7 @@ func TestDispatchRunSnapshotsVideoEvidenceRequirementFromIssueLabel(t *testing.T
 
 func TestDispatchRunLaunchUsesPostCommitContext(t *testing.T) {
 	store := minimalDispatchStore()
-	launcher := &fakeNativeLauncher{}
+	launcher := &fakeRunLauncher{}
 	rec := httptest.NewRecorder()
 	req := dispatchRequest("proj", 1)
 	ctx, cancel := context.WithCancel(req.Context())
@@ -728,7 +728,7 @@ func TestDispatchRunLaunchUsesPostCommitContext(t *testing.T) {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
 	if !launcher.called {
-		t.Fatal("native launcher was not called")
+		t.Fatal("run launcher was not called")
 	}
 	if launcher.ctxErrOnEntry != nil {
 		t.Fatalf("launch context err=%v, want nil", launcher.ctxErrOnEntry)
@@ -739,7 +739,7 @@ func TestDispatchRunNoCapacity(t *testing.T) {
 	store := minimalDispatchStore()
 	store.leaseErr = ErrUnavailable
 	rec := httptest.NewRecorder()
-	newDispatchTestHandler(store, &fakeNativeLauncher{}).ServeHTTP(rec, dispatchRequest("proj", 1))
+	newDispatchTestHandler(store, &fakeRunLauncher{}).ServeHTTP(rec, dispatchRequest("proj", 1))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
@@ -757,7 +757,7 @@ func TestDispatchRunNoCapacity(t *testing.T) {
 func TestDispatchRunNativeDispatchFailed(t *testing.T) {
 	store := minimalDispatchStore()
 	rec := httptest.NewRecorder()
-	newDispatchTestHandler(store, &fakeNativeLauncher{err: errors.New("kube unavailable")}).ServeHTTP(rec, dispatchRequest("proj", 1))
+	newDispatchTestHandler(store, &fakeRunLauncher{err: errors.New("kube unavailable")}).ServeHTTP(rec, dispatchRequest("proj", 1))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
@@ -771,7 +771,7 @@ func TestDispatchRunCreateRunFailReleasesLock(t *testing.T) {
 	store := minimalDispatchStore()
 	store.runErr = errors.New("store unavailable")
 	rec := httptest.NewRecorder()
-	newDispatchTestHandler(store, &fakeNativeLauncher{}).ServeHTTP(rec, dispatchRequest("proj", 1))
+	newDispatchTestHandler(store, &fakeRunLauncher{}).ServeHTTP(rec, dispatchRequest("proj", 1))
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
@@ -806,7 +806,7 @@ func TestDispatchRunWorkflowAlias(t *testing.T) {
 	}
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/v1/runs/dispatch", bytes.NewBufferString(`{"project":"proj","issue_number":1,"workflow":"main"}`))
-	newDispatchTestHandler(store, &fakeNativeLauncher{}).ServeHTTP(rec, req)
+	newDispatchTestHandler(store, &fakeRunLauncher{}).ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}

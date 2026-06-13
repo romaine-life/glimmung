@@ -159,7 +159,7 @@ func WaitForInflightTestSlots(ctx context.Context) error {
 	}
 }
 
-func checkoutTestSlot(settings Settings, store ReadStore, preparer TestSlotPreparer, minter NativeGitHubTokenMinter) http.HandlerFunc {
+func checkoutTestSlot(settings Settings, store ReadStore, preparer TestSlotPreparer, minter RunnerGitHubTokenMinter) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		leaseStore, ok := store.(LeaseStore)
 		if !ok || leaseStore == nil {
@@ -248,7 +248,7 @@ func checkoutTestSlot(settings Settings, store ReadStore, preparer TestSlotPrepa
 	}
 }
 
-func returnTestSlot(store ReadStore, preparer TestSlotPreparer, minter NativeGitHubTokenMinter) http.HandlerFunc {
+func returnTestSlot(store ReadStore, preparer TestSlotPreparer, minter RunnerGitHubTokenMinter) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		leaseStore, ok := store.(LeaseStore)
 		stateStore, hasState := store.(StateStore)
@@ -342,11 +342,11 @@ func returnTestSlot(store ReadStore, preparer TestSlotPreparer, minter NativeGit
 			State:          result.State,
 			Project:        req.Project,
 			Lease:          result.LeaseRef,
-			SlotIndex:      nativeSlotIndexFromMetadata(lease.Metadata),
-			SlotName:       nativeSlotNameFromMetadata(lease.Metadata),
+			SlotIndex:      runnerSlotIndexFromMetadata(lease.Metadata),
+			SlotName:       runnerSlotNameFromMetadata(lease.Metadata),
 			CleanupStarted: cleanupStarted,
 			Usable:         false,
-			StatusURL:      testSlotStatusURL(Project{Name: req.Project}, nativeSlotNameFromMetadata(lease.Metadata)),
+			StatusURL:      testSlotStatusURL(Project{Name: req.Project}, runnerSlotNameFromMetadata(lease.Metadata)),
 		}
 		writeJSON(w, http.StatusOK, resp)
 	}
@@ -389,7 +389,7 @@ func orphanCleanupRetryEligible(slot Slot) bool {
 // (testEnvironmentWarmupLease), the error→cleaning etag-CAS (claimTestSlotCleanup),
 // and beginTestSlotCleanupWithContext with releaseLease=false — identical to
 // the startup sweep's orphan arm, just triggered by a request.
-func tryReturnOrphanedErrorSlot(w http.ResponseWriter, r *http.Request, store ReadStore, preparer TestSlotPreparer, minter NativeGitHubTokenMinter, req TestSlotReturnRequest) bool {
+func tryReturnOrphanedErrorSlot(w http.ResponseWriter, r *http.Request, store ReadStore, preparer TestSlotPreparer, minter RunnerGitHubTokenMinter, req TestSlotReturnRequest) bool {
 	if preparer == nil {
 		return false
 	}
@@ -458,7 +458,7 @@ func tryReturnOrphanedErrorSlot(w http.ResponseWriter, r *http.Request, store Re
 	return true
 }
 
-func extendTestSlotLease(store ReadStore, preparer TestSlotPreparer, minter NativeGitHubTokenMinter) http.HandlerFunc {
+func extendTestSlotLease(store ReadStore, preparer TestSlotPreparer, minter RunnerGitHubTokenMinter) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		updater, ok := store.(LeaseTTLUpdater)
 		stateStore, hasState := store.(StateStore)
@@ -614,8 +614,8 @@ func testSlotReturnHistoryEntry(lease Lease, audit testSlotReturnAudit) TestSlot
 		Event:           "return_requested",
 		CreatedAt:       time.Now().UTC(),
 		Project:         lease.Project,
-		SlotIndex:       nativeSlotIndexFromMetadata(lease.Metadata),
-		SlotName:        nativeSlotNameFromMetadata(lease.Metadata),
+		SlotIndex:       runnerSlotIndexFromMetadata(lease.Metadata),
+		SlotName:        runnerSlotNameFromMetadata(lease.Metadata),
 		LeaseRef:        LeasePublicRefFromLease(lease),
 		LeaseNumber:     lease.LeaseNumber,
 		LeaseRequester:  requester,
@@ -738,7 +738,7 @@ func setLeaseSlotCleanupFinished(ctx context.Context, store ReadStore, _ Project
 }
 
 // setLeaseSlotStatus and currentLeaseSlotStatus were the central writer/
-// reader against the legacy `project.metadata.native_standby_dns.slots[]`
+// reader against the legacy `project.metadata.runner_standby_dns.slots[]`
 // array. The slot-storage rework replaced them with the
 // markLeaseSlot*/SlotStore.UpdateIfMatch path; both functions stay
 // deleted. Any new code path that thinks it needs them should use the
@@ -769,8 +769,8 @@ func findProjectForTestSlot(r *http.Request, w http.ResponseWriter, store ReadSt
 }
 
 func testSlotCheckoutResponse(settings Settings, project Project, workflow string, lease Lease, state string) TestSlotCheckoutResult {
-	slotIndex := nativeSlotIndexFromMetadata(lease.Metadata)
-	slotName := nativeSlotNameFromMetadata(lease.Metadata)
+	slotIndex := runnerSlotIndexFromMetadata(lease.Metadata)
+	slotName := runnerSlotNameFromMetadata(lease.Metadata)
 	url := testSlotURL(project, slotName)
 	ref := LeasePublicRefFromLease(lease)
 	hostName := lease.Host
@@ -805,7 +805,7 @@ func testSlotCheckoutResponse(settings Settings, project Project, workflow strin
 }
 
 func testSlotReturnResponse(project Project, projectName string, lease Lease, state string, cleanupStarted bool) TestSlotReturnResult {
-	slotName := nativeSlotNameFromMetadata(lease.Metadata)
+	slotName := runnerSlotNameFromMetadata(lease.Metadata)
 	var detail *string
 	if state == testSlotStateCleaning {
 		text := "test-slot runtime cleanup is in progress"
@@ -815,7 +815,7 @@ func testSlotReturnResponse(project Project, projectName string, lease Lease, st
 		State:          state,
 		Project:        firstNonEmpty(project.Name, project.ID, projectName),
 		Lease:          LeasePublicRefFromLease(lease),
-		SlotIndex:      nativeSlotIndexFromMetadata(lease.Metadata),
+		SlotIndex:      runnerSlotIndexFromMetadata(lease.Metadata),
 		SlotName:       slotName,
 		CleanupStarted: cleanupStarted,
 		Usable:         false,
@@ -836,7 +836,7 @@ func testSlotStatusURL(project Project, slotName *string) *string {
 	return &value
 }
 
-func beginTestSlotActivation(store ReadStore, preparer TestSlotPreparer, minter NativeGitHubTokenMinter, project Project, lease Lease, logf func(string, ...any)) bool {
+func beginTestSlotActivation(store ReadStore, preparer TestSlotPreparer, minter RunnerGitHubTokenMinter, project Project, lease Lease, logf func(string, ...any)) bool {
 	if preparer == nil {
 		return false
 	}
@@ -933,7 +933,7 @@ func tankSessionScopeRetireAuth(ctx context.Context) string {
 	return strings.TrimSpace(authorization)
 }
 
-func activateTestSlotRuntime(parent context.Context, store ReadStore, preparer TestSlotPreparer, minter NativeGitHubTokenMinter, project Project, lease Lease, logf func(string, ...any)) {
+func activateTestSlotRuntime(parent context.Context, store ReadStore, preparer TestSlotPreparer, minter RunnerGitHubTokenMinter, project Project, lease Lease, logf func(string, ...any)) {
 	// Cross-replica dedup story for activation: there is no meaningful state
 	// transition we could CAS on (the slot stays in `activating` throughout
 	// the Helm install). We rely on three layers instead:
@@ -1004,11 +1004,11 @@ func cleanupTestSlotInstaller(parent context.Context, preparer TestSlotPreparer,
 	}
 }
 
-func beginTestSlotCleanup(store ReadStore, preparer TestSlotPreparer, minter NativeGitHubTokenMinter, project Project, lease Lease, releaseLease bool, cause string, logf func(string, ...any)) bool {
+func beginTestSlotCleanup(store ReadStore, preparer TestSlotPreparer, minter RunnerGitHubTokenMinter, project Project, lease Lease, releaseLease bool, cause string, logf func(string, ...any)) bool {
 	return beginTestSlotCleanupWithContext(context.Background(), store, preparer, minter, project, lease, releaseLease, cause, logf)
 }
 
-func beginTestSlotCleanupWithContext(parent context.Context, store ReadStore, preparer TestSlotPreparer, minter NativeGitHubTokenMinter, project Project, lease Lease, releaseLease bool, cause string, logf func(string, ...any)) bool {
+func beginTestSlotCleanupWithContext(parent context.Context, store ReadStore, preparer TestSlotPreparer, minter RunnerGitHubTokenMinter, project Project, lease Lease, releaseLease bool, cause string, logf func(string, ...any)) bool {
 	if preparer == nil {
 		return false
 	}
@@ -1057,7 +1057,7 @@ func beginTestSlotCleanupWithContext(parent context.Context, store ReadStore, pr
 // counter (a delta means an activation didn't unwind cleanly).
 const activationCancelWait = 30 * time.Second
 
-func cleanupTestSlotRuntime(parent context.Context, store ReadStore, preparer TestSlotPreparer, minter NativeGitHubTokenMinter, project Project, lease Lease, releaseLease bool, logf func(string, ...any)) {
+func cleanupTestSlotRuntime(parent context.Context, store ReadStore, preparer TestSlotPreparer, minter RunnerGitHubTokenMinter, project Project, lease Lease, releaseLease bool, logf func(string, ...any)) {
 	// Cross-replica dedup for cleanup: initiation paths (return, callback
 	// release, TTL timer) already go through the etag-conditional
 	// claimTestSlotCleanup, which does the meaningful `active → cleaning`
@@ -1177,7 +1177,7 @@ func testSlotLeaseStillActivating(ctx context.Context, store ReadStore, project 
 }
 
 func testSlotLeaseStillState(ctx context.Context, store ReadStore, _ Project, lease Lease, state string) bool {
-	slotIndex := nativeSlotIndexFromMetadata(lease.Metadata)
+	slotIndex := runnerSlotIndexFromMetadata(lease.Metadata)
 	if slotIndex == nil {
 		return false
 	}
@@ -1245,7 +1245,7 @@ const recoveryMinAge = 5 * time.Minute
 // After this returns, lifecycle changes are driven exclusively by HTTP
 // handlers (PATCH count, checkout, return, callback release) and per-lease
 // AfterFunc timers. No periodic polling.
-func RecoverInFlightTestSlots(ctx context.Context, store ReadStore, preparer TestSlotPreparer, minter NativeGitHubTokenMinter, logf func(string, ...any)) {
+func RecoverInFlightTestSlots(ctx context.Context, store ReadStore, preparer TestSlotPreparer, minter RunnerGitHubTokenMinter, logf func(string, ...any)) {
 	if store == nil || preparer == nil {
 		return
 	}
@@ -1254,7 +1254,7 @@ func RecoverInFlightTestSlots(ctx context.Context, store ReadStore, preparer Tes
 		return
 	}
 	// Idempotent slot-storage migration: copies any project's legacy
-	// `metadata.native_standby_dns.slots[]` array into the `slots`
+	// `metadata.runner_standby_dns.slots[]` array into the `slots`
 	// collection. Production startup runs this before recovery via
 	// cmd/glimmung-go/main.go; calling it again here is a no-op when the
 	// legacy arrays are already stripped, but it keeps tests and any
@@ -1293,7 +1293,7 @@ func RecoverInFlightTestSlots(ctx context.Context, store ReadStore, preparer Tes
 		if lease.State != "claimed" || !boolFromMap(lease.Metadata, "test_slot_checkout") {
 			continue
 		}
-		slotIndex := nativeSlotIndexFromMetadata(lease.Metadata)
+		slotIndex := runnerSlotIndexFromMetadata(lease.Metadata)
 		if slotIndex == nil {
 			continue
 		}
@@ -1449,7 +1449,7 @@ func RecoverInFlightTestSlots(ctx context.Context, store ReadStore, preparer Tes
 // and the startup recovery sweep. Both paths dedup via `testSlotWarmups`,
 // so the same trigger firing twice or the two triggers racing each other
 // are both safe.
-func EnsureProjectTestSlotsWarmed(ctx context.Context, store ReadStore, preparer TestSlotPreparer, minter NativeGitHubTokenMinter, project Project, claimed map[int]bool, logf func(string, ...any)) {
+func EnsureProjectTestSlotsWarmed(ctx context.Context, store ReadStore, preparer TestSlotPreparer, minter RunnerGitHubTokenMinter, project Project, claimed map[int]bool, logf func(string, ...any)) {
 	if preparer == nil {
 		return
 	}
@@ -1499,7 +1499,7 @@ func EnsureProjectTestSlotsWarmed(ctx context.Context, store ReadStore, preparer
 // ticks don't double-fire EnsureTestSlotPreliminaries against the same slot.
 var testSlotWarmups sync.Map
 
-func beginTestSlotWarmup(store ReadStore, preparer TestSlotPreparer, minter NativeGitHubTokenMinter, project Project, slotIndex int, logf func(string, ...any)) bool {
+func beginTestSlotWarmup(store ReadStore, preparer TestSlotPreparer, minter RunnerGitHubTokenMinter, project Project, slotIndex int, logf func(string, ...any)) bool {
 	if preparer == nil {
 		return false
 	}
@@ -1524,7 +1524,7 @@ func beginTestSlotWarmup(store ReadStore, preparer TestSlotPreparer, minter Nati
 	return true
 }
 
-func warmTestSlot(ctx context.Context, store ReadStore, preparer TestSlotPreparer, minter NativeGitHubTokenMinter, project Project, slotIndex int, slotName string, logf func(string, ...any)) {
+func warmTestSlot(ctx context.Context, store ReadStore, preparer TestSlotPreparer, minter RunnerGitHubTokenMinter, project Project, slotIndex int, slotName string, logf func(string, ...any)) {
 	projectKey := firstNonEmpty(project.Name, project.ID)
 	if projectKey == "" {
 		return
@@ -1606,12 +1606,12 @@ func resolveTestSlotLease(r *http.Request, store StateStore, req TestSlotReturnR
 		if lease.State != "claimed" && lease.State != "pending" {
 			continue
 		}
-		if targetName != "" && nativeSlotNameMatches(lease.Metadata, targetName) {
+		if targetName != "" && runnerSlotNameMatches(lease.Metadata, targetName) {
 			candidates = append(candidates, lease)
 			continue
 		}
 		if req.SlotIndex != nil {
-			if slot := nativeSlotIndexFromMetadata(lease.Metadata); slot != nil && *slot == *req.SlotIndex {
+			if slot := runnerSlotIndexFromMetadata(lease.Metadata); slot != nil && *slot == *req.SlotIndex {
 				candidates = append(candidates, lease)
 			}
 		}
@@ -1705,7 +1705,7 @@ func normalizeTankSessionID(value *string) string {
 }
 
 func currentTestSlotState(ctx context.Context, store ReadStore, lease Lease) (string, bool) {
-	slotIndex := nativeSlotIndexFromMetadata(lease.Metadata)
+	slotIndex := runnerSlotIndexFromMetadata(lease.Metadata)
 	if slotIndex == nil {
 		return "", false
 	}
@@ -1726,13 +1726,13 @@ func testSlotExtendResponse(project Project, lease Lease, extendedBy int, usable
 		State:      lease.State,
 		Project:    lease.Project,
 		Lease:      LeasePublicRefFromLease(lease),
-		SlotIndex:  nativeSlotIndexFromMetadata(lease.Metadata),
-		SlotName:   nativeSlotNameFromMetadata(lease.Metadata),
+		SlotIndex:  runnerSlotIndexFromMetadata(lease.Metadata),
+		SlotName:   runnerSlotNameFromMetadata(lease.Metadata),
 		TTLSeconds: lease.TTLSeconds,
 		ExpiresAt:  expiresAt,
 		ExtendedBy: extendedBy,
 		Usable:     usable,
-		StatusURL:  testSlotStatusURL(project, nativeSlotNameFromMetadata(lease.Metadata)),
+		StatusURL:  testSlotStatusURL(project, runnerSlotNameFromMetadata(lease.Metadata)),
 	}
 }
 
@@ -1756,7 +1756,7 @@ func testSlotRequesterRef(req TestSlotCheckoutRequest) string {
 }
 
 func testSlotPrefix(project Project) string {
-	if standby, ok := mapFromMap(project.Metadata, "native_standby_dns"); ok {
+	if standby, ok := mapFromMap(project.Metadata, "runner_standby_dns"); ok {
 		if value, ok := stringFromMap(standby, "slot_prefix"); ok && strings.TrimSpace(value) != "" {
 			return strings.Trim(strings.TrimSpace(value), ".")
 		}
@@ -1771,7 +1771,7 @@ func testSlotURL(project Project, slotName *string) *string {
 	if slotName == nil || strings.TrimSpace(*slotName) == "" {
 		return nil
 	}
-	if standby, ok := mapFromMap(project.Metadata, "native_standby_dns"); ok {
+	if standby, ok := mapFromMap(project.Metadata, "runner_standby_dns"); ok {
 		if base, ok := stringFromMap(standby, "record_base"); ok && strings.TrimSpace(base) != "" {
 			value := "https://" + strings.TrimSpace(*slotName) + "." + strings.Trim(strings.TrimSpace(base), ".") + "/"
 			return &value
@@ -1784,23 +1784,23 @@ func testSlotURL(project Project, slotName *string) *string {
 	return nil
 }
 
-func nativeSlotIndexFromMetadata(metadata map[string]any) *int {
-	if n, ok := positiveIntFromMap(metadata, "native_slot_index"); ok {
+func runnerSlotIndexFromMetadata(metadata map[string]any) *int {
+	if n, ok := positiveIntFromMap(metadata, "runner_slot_index"); ok {
 		return &n
 	}
 	return nil
 }
 
-func nativeSlotNameFromMetadata(metadata map[string]any) *string {
-	if value, ok := stringFromMap(metadata, "native_slot_name"); ok && strings.TrimSpace(value) != "" {
+func runnerSlotNameFromMetadata(metadata map[string]any) *string {
+	if value, ok := stringFromMap(metadata, "runner_slot_name"); ok && strings.TrimSpace(value) != "" {
 		clean := strings.TrimSpace(value)
 		return &clean
 	}
 	return nil
 }
 
-func nativeSlotNameMatches(metadata map[string]any, target string) bool {
-	slotName := nativeSlotNameFromMetadata(metadata)
+func runnerSlotNameMatches(metadata map[string]any, target string) bool {
+	slotName := runnerSlotNameFromMetadata(metadata)
 	return slotName != nil && *slotName == target
 }
 

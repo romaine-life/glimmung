@@ -31,7 +31,7 @@ type Store struct {
 	// pgLocks owns durable lock state.
 	pgLocks *pgstore.LocksStore
 
-	// pgRunEvents owns native-runner event storage.
+	// pgRunEvents owns runner event storage.
 	pgRunEvents *pgstore.RunEventsStore
 
 	// pgProjects owns project rows and test-lease defaults.
@@ -61,7 +61,7 @@ type Store struct {
 	// pgTouchpoints owns operator-visible review touchpoints.
 	pgTouchpoints *pgstore.TouchpointsStore
 
-	// pgLeases owns native lease rows and lease counters.
+	// pgLeases owns runner lease rows and lease counters.
 	pgLeases *pgstore.LeasesStore
 
 	// pgSlotInspections owns the durable ledger for free
@@ -80,8 +80,8 @@ func (s *Store) SetPGLocks(locks *pgstore.LocksStore) {
 
 // SetPGRunEvents injects the Postgres-backed run-events store. Called
 // once at startup by cmd/glimmung-go/main.go after pg.RunEventsStore is
-// constructed. RecordNativeEventByID writes go to pg via this field;
-// ListNativeEventsByID reads through it.
+// constructed. RecordRunnerEventByID writes go to pg via this field;
+// ListRunnerEventsByID reads through it.
 func (s *Store) SetPGRunEvents(runEvents *pgstore.RunEventsStore) {
 	s.pgRunEvents = runEvents
 }
@@ -509,8 +509,8 @@ func (s *Store) SetProjectTestEnvironmentCount(ctx context.Context, project stri
 	return projectFromRecord(rec), nil
 }
 
-func (s *Store) SetProjectNativeWorkloadIdentityStatus(ctx context.Context, project string, status server.NativeWorkloadIdentityStatus) (server.Project, error) {
-	rec, err := s.pgProjects.SetNativeWorkloadIdentityStatus(ctx, project, status)
+func (s *Store) SetProjectRunnerWorkloadIdentityStatus(ctx context.Context, project string, status server.RunnerWorkloadIdentityStatus) (server.Project, error) {
+	rec, err := s.pgProjects.SetRunnerWorkloadIdentityStatus(ctx, project, status)
 	if errors.Is(err, pgstore.ErrProjectNotFound) {
 		return server.Project{}, server.ErrNotFound
 	}
@@ -602,7 +602,7 @@ func (s *Store) SetProjectTestLeaseHotSwapMinTTL(ctx context.Context, project st
 }
 
 // StripProjectTestEnvironmentSlotsArray removes the embedded
-// `metadata.native_standby_dns.slots[]` array from a project row. Called by
+// `metadata.runner_standby_dns.slots[]` array from a project row. Called by
 // the one-shot slot-storage cleanup in internal/server/slot_migration.go.
 func (s *Store) StripProjectTestEnvironmentSlotsArray(ctx context.Context, project string) error {
 	err := s.pgProjects.StripLegacySlotsArray(ctx, project)
@@ -1209,8 +1209,8 @@ func (s *Store) ReleaseLeaseByCallbackToken(ctx context.Context, token string) (
 	}
 	if doc.State == "released" || doc.State == "expired" {
 		lease := leaseFromDoc(doc)
-		if boolValue(lease.Metadata["native_k8s"]) && !boolValue(lease.Metadata["test_slot_checkout"]) {
-			_ = s.releaseNativeSlotReservation(ctx, lease, time.Now().UTC())
+		if boolValue(lease.Metadata["runner_k8s"]) && !boolValue(lease.Metadata["test_slot_checkout"]) {
+			_ = s.releaseRunnerSlotReservation(ctx, lease, time.Now().UTC())
 		}
 		return lease, nil
 	}
@@ -1236,8 +1236,8 @@ func (s *Store) ReleaseLeaseByCallbackToken(ctx context.Context, token string) (
 		return server.Lease{}, err
 	}
 	lease := leaseFromDoc(updated)
-	if boolValue(lease.Metadata["native_k8s"]) && !boolValue(lease.Metadata["test_slot_checkout"]) {
-		_ = s.releaseNativeSlotReservation(ctx, lease, now)
+	if boolValue(lease.Metadata["runner_k8s"]) && !boolValue(lease.Metadata["test_slot_checkout"]) {
+		_ = s.releaseRunnerSlotReservation(ctx, lease, now)
 	}
 	return lease, nil
 }
@@ -2007,14 +2007,14 @@ type attemptDoc struct {
 	Decision              *string                           `json:"decision"`
 	LogArchiveURL         *string                           `json:"log_archive_url"`
 	PhaseOutputs          map[string]string                 `json:"phase_outputs,omitempty"`
-	JobCompletions        map[string]nativeJobCompletionDoc `json:"job_completions,omitempty"`
+	JobCompletions        map[string]runnerJobCompletionDoc `json:"job_completions,omitempty"`
 	CarryForward          bool                              `json:"carry_forward,omitempty"`
 	CancelRequestedAt     *string                           `json:"cancel_requested_at,omitempty"`
 	CancelReason          *string                           `json:"cancel_reason,omitempty"`
 	CapabilityTokenSHA256 *string                           `json:"capability_token_sha256,omitempty"`
 }
 
-type nativeJobCompletionDoc struct {
+type runnerJobCompletionDoc struct {
 	JobID               string              `json:"job_id"`
 	CompletedAt         string              `json:"completed_at"`
 	Conclusion          string              `json:"conclusion"`
@@ -2031,7 +2031,7 @@ type nativeJobCompletionDoc struct {
 	TerminalReason string `json:"terminal_reason,omitempty"`
 }
 
-type nativeEventDoc struct {
+type runnerEventDoc struct {
 	ID           string         `json:"id"`
 	Project      string         `json:"project"`
 	RunID        string         `json:"run_id"`
@@ -2145,7 +2145,7 @@ type phaseDoc struct {
 	RecyclePolicy            *recyclePolicyDoc `json:"recyclePolicy"`
 	EvidenceVerificationGate bool              `json:"evidenceVerificationGate"`
 	DependsOn                []string          `json:"dependsOn"`
-	Jobs                     []nativeJobDoc    `json:"jobs"`
+	Jobs                     []runnerJobDoc    `json:"jobs"`
 	When                     string            `json:"when,omitempty"`
 	SkipWhenPreserveTestEnv  bool              `json:"skipWhenPreserveTestEnv,omitempty"`
 }
@@ -2156,7 +2156,7 @@ type recyclePolicyDoc struct {
 	LandsAt     string   `json:"landsAt"`
 }
 
-type nativeJobDoc struct {
+type runnerJobDoc struct {
 	ID               string              `json:"id"`
 	Name             *string             `json:"name"`
 	Primitive        string              `json:"primitive,omitempty"`
@@ -2164,17 +2164,17 @@ type nativeJobDoc struct {
 	Command          []string            `json:"command"`
 	Args             []string            `json:"args"`
 	Env              map[string]string   `json:"env"`
-	Steps            []nativeStepDoc     `json:"steps"`
+	Steps            []runnerStepDoc     `json:"steps"`
 	TimeoutSeconds   *int                `json:"timeoutSeconds"`
 	Managed          bool                `json:"managed,omitempty"`
-	Checkout         *nativeCheckoutDoc  `json:"checkout,omitempty"`
-	ExtraCheckouts   []nativeCheckoutDoc `json:"extraCheckouts,omitempty"`
+	Checkout         *runnerCheckoutDoc  `json:"checkout,omitempty"`
+	ExtraCheckouts   []runnerCheckoutDoc `json:"extraCheckouts,omitempty"`
 	WorkingDirectory string              `json:"workingDirectory,omitempty"`
 	Shell            string              `json:"shell,omitempty"`
 	When             string              `json:"when,omitempty"`
 }
 
-type nativeStepDoc struct {
+type runnerStepDoc struct {
 	Slug             string                   `json:"slug"`
 	Title            *string                  `json:"title"`
 	Type             string                   `json:"type,omitempty"`
@@ -2195,7 +2195,7 @@ type agentStepDoc struct {
 	GithubToken bool   `json:"githubToken,omitempty"`
 }
 
-type nativeCheckoutDoc struct {
+type runnerCheckoutDoc struct {
 	Repo string `json:"repo,omitempty"`
 	Ref  string `json:"ref,omitempty"`
 	Path string `json:"path,omitempty"`
@@ -2691,7 +2691,7 @@ func runReportAttemptFromDoc(doc attemptDoc, lineageByID map[string]string) serv
 	}
 }
 
-func runAttemptJobCompletionFromDoc(doc nativeJobCompletionDoc) server.RunAttemptJobCompletion {
+func runAttemptJobCompletionFromDoc(doc runnerJobCompletionDoc) server.RunAttemptJobCompletion {
 	var verificationStatus *string
 	var verificationFailure *server.VerificationFailure
 	verificationReasons := []string{}
@@ -2718,7 +2718,7 @@ func runAttemptJobCompletionFromDoc(doc nativeJobCompletionDoc) server.RunAttemp
 	}
 }
 
-func (doc nativeJobCompletionDoc) VerificationEvidence() []server.EvidenceArtifact {
+func (doc runnerJobCompletionDoc) VerificationEvidence() []server.EvidenceArtifact {
 	if doc.Verification == nil {
 		return nil
 	}
@@ -3051,10 +3051,10 @@ func isWorkflowSchemaDoc(doc workflowDoc) bool {
 }
 
 func phaseDocFromSpec(phase server.PhaseSpec) phaseDoc {
-	phase = server.CanonicalNativePhase(phase)
-	jobs := make([]nativeJobDoc, 0, len(phase.Jobs))
+	phase = server.CanonicalRunnerPhase(phase)
+	jobs := make([]runnerJobDoc, 0, len(phase.Jobs))
 	for _, job := range phase.Jobs {
-		jobs = append(jobs, nativeJobDocFromSpec(job))
+		jobs = append(jobs, runnerJobDocFromSpec(job))
 	}
 	return phaseDoc{
 		Name:                     phase.Name,
@@ -3076,10 +3076,10 @@ func phaseDocFromSpec(phase server.PhaseSpec) phaseDoc {
 	}
 }
 
-func nativeJobDocFromSpec(job server.NativeJobSpec) nativeJobDoc {
-	steps := make([]nativeStepDoc, 0, len(job.Steps))
+func runnerJobDocFromSpec(job server.RunnerJobSpec) runnerJobDoc {
+	steps := make([]runnerStepDoc, 0, len(job.Steps))
 	for _, step := range job.Steps {
-		steps = append(steps, nativeStepDoc{
+		steps = append(steps, runnerStepDoc{
 			Slug:             step.Slug,
 			Title:            step.Title,
 			Type:             step.Type,
@@ -3093,11 +3093,11 @@ func nativeJobDocFromSpec(job server.NativeJobSpec) nativeJobDoc {
 			DynamicGroup:     step.DynamicGroup,
 		})
 	}
-	extraCheckouts := make([]nativeCheckoutDoc, 0, len(job.ExtraCheckouts))
+	extraCheckouts := make([]runnerCheckoutDoc, 0, len(job.ExtraCheckouts))
 	for _, checkout := range job.ExtraCheckouts {
-		extraCheckouts = append(extraCheckouts, nativeCheckoutDocFromSpec(checkout))
+		extraCheckouts = append(extraCheckouts, runnerCheckoutDocFromSpec(checkout))
 	}
-	return nativeJobDoc{
+	return runnerJobDoc{
 		ID:               job.ID,
 		Name:             job.Name,
 		Primitive:        job.Primitive,
@@ -3108,7 +3108,7 @@ func nativeJobDocFromSpec(job server.NativeJobSpec) nativeJobDoc {
 		Steps:            steps,
 		TimeoutSeconds:   job.TimeoutSeconds,
 		Managed:          job.Managed,
-		Checkout:         nativeCheckoutDocPtrFromSpec(job.Checkout),
+		Checkout:         runnerCheckoutDocPtrFromSpec(job.Checkout),
 		ExtraCheckouts:   extraCheckouts,
 		WorkingDirectory: job.WorkingDirectory,
 		Shell:            job.Shell,
@@ -3128,16 +3128,16 @@ func agentStepDocFromSpec(step *server.AgentStepSpec) *agentStepDoc {
 	}
 }
 
-func nativeCheckoutDocPtrFromSpec(checkout *server.NativeCheckoutSpec) *nativeCheckoutDoc {
+func runnerCheckoutDocPtrFromSpec(checkout *server.RunnerCheckoutSpec) *runnerCheckoutDoc {
 	if checkout == nil {
 		return nil
 	}
-	doc := nativeCheckoutDocFromSpec(*checkout)
+	doc := runnerCheckoutDocFromSpec(*checkout)
 	return &doc
 }
 
-func nativeCheckoutDocFromSpec(checkout server.NativeCheckoutSpec) nativeCheckoutDoc {
-	return nativeCheckoutDoc{
+func runnerCheckoutDocFromSpec(checkout server.RunnerCheckoutSpec) runnerCheckoutDoc {
+	return runnerCheckoutDoc{
 		Repo: checkout.Repo,
 		Ref:  checkout.Ref,
 		Path: checkout.Path,
@@ -3200,7 +3200,7 @@ func normalizeWorkflowRegister(req *server.WorkflowRegister) {
 		for j := range req.Phases[i].Jobs {
 			req.Phases[i].Jobs[j].Primitive = strings.TrimSpace(req.Phases[i].Jobs[j].Primitive)
 		}
-		req.Phases[i] = server.CanonicalNativePhase(req.Phases[i])
+		req.Phases[i] = server.CanonicalRunnerPhase(req.Phases[i])
 		if req.Phases[i].Purpose == "" {
 			req.Phases[i].Purpose = server.NormalizePhasePurpose(req.Phases[i])
 		}
@@ -3284,7 +3284,7 @@ func stringValue(value any) string {
 }
 
 func phaseFromDoc(doc phaseDoc) server.PhaseSpec {
-	jobs := make([]server.NativeJobSpec, 0, len(doc.Jobs))
+	jobs := make([]server.RunnerJobSpec, 0, len(doc.Jobs))
 	for _, job := range doc.Jobs {
 		jobs = append(jobs, jobFromDoc(job))
 	}
@@ -3326,10 +3326,10 @@ func defaultWorkflowRefForPhaseDoc(doc phaseDoc) string {
 	return server.CanonicalGitRefDefault
 }
 
-func jobFromDoc(doc nativeJobDoc) server.NativeJobSpec {
-	steps := make([]server.NativeStepSpec, 0, len(doc.Steps))
+func jobFromDoc(doc runnerJobDoc) server.RunnerJobSpec {
+	steps := make([]server.RunnerStepSpec, 0, len(doc.Steps))
 	for _, step := range doc.Steps {
-		steps = append(steps, server.NativeStepSpec{
+		steps = append(steps, server.RunnerStepSpec{
 			Slug:             step.Slug,
 			Title:            step.Title,
 			Type:             step.Type,
@@ -3343,11 +3343,11 @@ func jobFromDoc(doc nativeJobDoc) server.NativeJobSpec {
 			DynamicGroup:     step.DynamicGroup,
 		})
 	}
-	extraCheckouts := make([]server.NativeCheckoutSpec, 0, len(doc.ExtraCheckouts))
+	extraCheckouts := make([]server.RunnerCheckoutSpec, 0, len(doc.ExtraCheckouts))
 	for _, checkout := range doc.ExtraCheckouts {
-		extraCheckouts = append(extraCheckouts, nativeCheckoutFromDoc(checkout))
+		extraCheckouts = append(extraCheckouts, runnerCheckoutFromDoc(checkout))
 	}
-	return server.NativeJobSpec{
+	return server.RunnerJobSpec{
 		ID:               doc.ID,
 		Name:             doc.Name,
 		Primitive:        doc.Primitive,
@@ -3358,7 +3358,7 @@ func jobFromDoc(doc nativeJobDoc) server.NativeJobSpec {
 		Steps:            steps,
 		TimeoutSeconds:   doc.TimeoutSeconds,
 		Managed:          doc.Managed,
-		Checkout:         nativeCheckoutPtrFromDoc(doc.Checkout),
+		Checkout:         runnerCheckoutPtrFromDoc(doc.Checkout),
 		ExtraCheckouts:   extraCheckouts,
 		WorkingDirectory: doc.WorkingDirectory,
 		Shell:            doc.Shell,
@@ -3378,16 +3378,16 @@ func agentStepFromDoc(doc *agentStepDoc) *server.AgentStepSpec {
 	}
 }
 
-func nativeCheckoutPtrFromDoc(doc *nativeCheckoutDoc) *server.NativeCheckoutSpec {
+func runnerCheckoutPtrFromDoc(doc *runnerCheckoutDoc) *server.RunnerCheckoutSpec {
 	if doc == nil {
 		return nil
 	}
-	checkout := nativeCheckoutFromDoc(*doc)
+	checkout := runnerCheckoutFromDoc(*doc)
 	return &checkout
 }
 
-func nativeCheckoutFromDoc(doc nativeCheckoutDoc) server.NativeCheckoutSpec {
-	return server.NativeCheckoutSpec{
+func runnerCheckoutFromDoc(doc runnerCheckoutDoc) server.RunnerCheckoutSpec {
+	return server.RunnerCheckoutSpec{
 		Repo: doc.Repo,
 		Ref:  doc.Ref,
 		Path: doc.Path,
@@ -5008,14 +5008,14 @@ const leaseCounterPrefix = "__counter:lease-number:"
 const maxLeaseConflictRetries = 3
 
 func (s *Store) AcquireLease(ctx context.Context, req server.LeaseAcquireRequest) (server.Lease, error) {
-	if !isNativeLeaseRequest(req) {
-		return server.Lease{}, server.ValidationError{Message: "native_k8s lease required"}
+	if !isRunnerLeaseRequest(req) {
+		return server.Lease{}, server.ValidationError{Message: "runner_k8s lease required"}
 	}
-	return s.acquireNativeLease(ctx, req)
+	return s.acquireRunnerLease(ctx, req)
 }
 
-func (s *Store) acquireNativeLease(ctx context.Context, req server.LeaseAcquireRequest) (server.Lease, error) {
-	if err := validateNativeLeaseSlotIdentity(req.Metadata); err != nil {
+func (s *Store) acquireRunnerLease(ctx context.Context, req server.LeaseAcquireRequest) (server.Lease, error) {
+	if err := validateRunnerLeaseSlotIdentity(req.Metadata); err != nil {
 		return server.Lease{}, err
 	}
 	now := time.Now().UTC()
@@ -5025,24 +5025,24 @@ func (s *Store) acquireNativeLease(ctx context.Context, req server.LeaseAcquireR
 	if err != nil {
 		return server.Lease{}, fmt.Errorf("next lease number: %w", err)
 	}
-	ttl := server.DefaultNativeLeaseTTLSeconds
+	ttl := server.DefaultRunnerLeaseTTLSeconds
 	if req.TTLSeconds != nil && *req.TTLSeconds > 0 {
 		ttl = *req.TTLSeconds
 	}
 	metadata := buildLeaseMetadata(req)
-	metadata["native_k8s"] = true
+	metadata["runner_k8s"] = true
 	callbackToken := uuid.New().String()[:32]
 	metadata["lease_callback_token"] = callbackToken
 
-	slotIndex, err := s.availableNativeSlot(ctx, req.Project)
+	slotIndex, err := s.availableRunnerSlot(ctx, req.Project)
 	if err != nil {
 		return server.Lease{}, err
 	}
 	if slotIndex == nil {
 		return server.Lease{}, server.ErrUnavailable
 	}
-	hostName := "native-k8s"
-	setNativeSlotMetadata(metadata, req.Project, *slotIndex, s.nativeSlotPrefix(ctx, req.Project))
+	hostName := "runner-k8s"
+	setRunnerSlotMetadata(metadata, req.Project, *slotIndex, s.runnerSlotPrefix(ctx, req.Project))
 	doc := leaseDoc{
 		ID:           leaseID,
 		LeaseNumber:  &leaseNumber,
@@ -5072,10 +5072,10 @@ func (s *Store) acquireNativeLease(ctx context.Context, req server.LeaseAcquireR
 		Payload:       payload,
 		ExpiresAt:     leaseExpires,
 	}); err != nil {
-		return server.Lease{}, fmt.Errorf("create native lease doc: %w", err)
+		return server.Lease{}, fmt.Errorf("create runner lease doc: %w", err)
 	}
 	lease := leaseFromDoc(doc)
-	if err := s.reserveNativeSlotForLease(ctx, lease, now); err != nil {
+	if err := s.reserveRunnerSlotForLease(ctx, lease, now); err != nil {
 		_, _ = s.CancelLeaseByRef(ctx, req.Project, server.LeasePublicRefFromLease(lease))
 		if errors.Is(err, server.ErrInvalidSlotTransition) || errors.Is(err, server.ErrPreconditionFailed) {
 			return server.Lease{}, server.ErrUnavailable
@@ -5085,14 +5085,14 @@ func (s *Store) acquireNativeLease(ctx context.Context, req server.LeaseAcquireR
 	return lease, nil
 }
 
-func (s *Store) reserveNativeSlotForLease(ctx context.Context, lease server.Lease, now time.Time) error {
-	slot := nativeSlotIndex(lease.Metadata)
+func (s *Store) reserveRunnerSlotForLease(ctx context.Context, lease server.Lease, now time.Time) error {
+	slot := runnerSlotIndex(lease.Metadata)
 	if slot == nil {
-		return fmt.Errorf("native lease missing native_slot_index")
+		return fmt.Errorf("runner lease missing runner_slot_index")
 	}
 	ref := server.LeasePublicRefFromLease(lease)
 	if strings.TrimSpace(ref) == "" {
-		return fmt.Errorf("native lease missing public ref")
+		return fmt.Errorf("runner lease missing public ref")
 	}
 	const maxRetries = 5
 	for i := 0; i < maxRetries; i++ {
@@ -5107,14 +5107,14 @@ func (s *Store) reserveNativeSlotForLease(ctx context.Context, lease server.Leas
 	return server.ErrPreconditionFailed
 }
 
-func (s *Store) availableNativeSlot(ctx context.Context, project string) (*int, error) {
-	// Native slot checkout is project-local and database-owned: the
+func (s *Store) availableRunnerSlot(ctx context.Context, project string) (*int, error) {
+	// Runner slot checkout is project-local and database-owned: the
 	// project's configured slot count plus each slot row's durable lifecycle
 	// state decide whether this project can lease another slot.
-	// pg.LeasesStore.ListClaimedNative returns claimed native-k8s leases for
-	// this project; selectAvailableNativeSlot uses those only as a defensive
+	// pg.LeasesStore.ListClaimedRunner returns claimed runner-k8s leases for
+	// this project; selectAvailableRunnerSlot uses those only as a defensive
 	// invariant guard against stale slot rows.
-	pgRows, err := s.pgLeases.ListClaimedNative(ctx, project)
+	pgRows, err := s.pgLeases.ListClaimedRunner(ctx, project)
 	if err != nil {
 		return nil, err
 	}
@@ -5126,22 +5126,22 @@ func (s *Store) availableNativeSlot(ctx context.Context, project string) (*int, 
 		}
 		docs = append(docs, doc)
 	}
-	readySlots := s.nativeReadySlots(ctx, project)
-	return selectAvailableNativeSlot(project, readySlots, docs), nil
+	readySlots := s.runnerReadySlots(ctx, project)
+	return selectAvailableRunnerSlot(project, readySlots, docs), nil
 }
 
-// nativeReadySlots returns the slot indices that are currently in the
+// runnerReadySlots returns the slot indices that are currently in the
 // `provisioned` state and therefore eligible to receive a new lease.
 //
 // Slot state lives in the pg slots table. The project metadata count still
 // bounds the result so a stale slot row cannot extend capacity past the
 // declared scale.
-func (s *Store) nativeReadySlots(ctx context.Context, project string) []int {
+func (s *Store) runnerReadySlots(ctx context.Context, project string) []int {
 	rec, err := s.pgProjects.Read(ctx, project)
 	if err != nil {
 		return nil
 	}
-	standby, ok := rec.Metadata["native_standby_dns"].(map[string]any)
+	standby, ok := rec.Metadata["runner_standby_dns"].(map[string]any)
 	if !ok {
 		return nil
 	}
@@ -5158,7 +5158,7 @@ func (s *Store) nativeReadySlots(ctx context.Context, project string) []int {
 
 // selectReadySlotIndices returns the sorted slot indices that are in
 // state provisioned and within the declared 1..count bound. Extracted
-// from nativeReadySlots so the selection contract is testable without a live
+// from runnerReadySlots so the selection contract is testable without a live
 // database round trip.
 func selectReadySlotIndices(slots []server.Slot, count int) []int {
 	out := make([]int, 0, len(slots))
@@ -5174,13 +5174,13 @@ func selectReadySlotIndices(slots []server.Slot, count int) []int {
 	return out
 }
 
-func selectAvailableNativeSlot(project string, readySlots []int, claimed []leaseDoc) *int {
+func selectAvailableRunnerSlot(project string, readySlots []int, claimed []leaseDoc) *int {
 	used := map[int]bool{}
 	for _, doc := range claimed {
 		if doc.Project != project {
 			continue
 		}
-		if slot := nativeSlotIndex(doc.Metadata); slot != nil {
+		if slot := runnerSlotIndex(doc.Metadata); slot != nil {
 			used[*slot] = true
 		}
 	}
@@ -5193,10 +5193,10 @@ func selectAvailableNativeSlot(project string, readySlots []int, claimed []lease
 	return nil
 }
 
-func (s *Store) nativeSlotPrefix(ctx context.Context, project string) string {
+func (s *Store) runnerSlotPrefix(ctx context.Context, project string) string {
 	rec, err := s.pgProjects.Read(ctx, project)
 	if err == nil {
-		if standby, ok := rec.Metadata["native_standby_dns"].(map[string]any); ok {
+		if standby, ok := rec.Metadata["runner_standby_dns"].(map[string]any); ok {
 			if prefix, ok := standby["slot_prefix"].(string); ok && strings.TrimSpace(prefix) != "" {
 				return strings.Trim(strings.TrimSpace(prefix), ".")
 			}
@@ -5244,8 +5244,8 @@ func (s *Store) CancelLeaseByRef(ctx context.Context, project, ref string) (serv
 		return server.CancelLeaseResult{}, err
 	}
 	lease := leaseFromDoc(updated)
-	if boolValue(lease.Metadata["native_k8s"]) && !boolValue(lease.Metadata["test_slot_checkout"]) {
-		_ = s.releaseNativeSlotReservation(ctx, lease, time.Now().UTC())
+	if boolValue(lease.Metadata["runner_k8s"]) && !boolValue(lease.Metadata["test_slot_checkout"]) {
+		_ = s.releaseRunnerSlotReservation(ctx, lease, time.Now().UTC())
 	}
 	return server.CancelLeaseResult{
 		State:    "no_active_run",
@@ -5317,14 +5317,14 @@ func (s *Store) listLeaseDocsForProject(ctx context.Context, project string) ([]
 	return out, nil
 }
 
-// ReleaseExpiredNativeSlotReservation satisfies server.StaleLeaseStore. The
+// ReleaseExpiredRunnerSlotReservation satisfies server.StaleLeaseStore. The
 // expire-stale-leases startup sweep calls it after terminalizing a lease so
-// a native slot lease's reservation is released the same way CancelLeaseByRef
+// a runner slot lease's reservation is released the same way CancelLeaseByRef
 // and ReleaseLeaseByCallbackToken release it. Without this the slot keeps a
 // stale active_lease_ref and never rejoins the available pool. No-op when the
-// lease is missing, not native-k8s, or a test-slot checkout lease (whose slot
+// lease is missing, not runner-k8s, or a test-slot checkout lease (whose slot
 // reservation is owned by the cleanup state machine, not a bare release).
-func (s *Store) ReleaseExpiredNativeSlotReservation(ctx context.Context, project, id string) error {
+func (s *Store) ReleaseExpiredRunnerSlotReservation(ctx context.Context, project, id string) error {
 	if s == nil || s.pgLeases == nil {
 		return nil
 	}
@@ -5343,14 +5343,14 @@ func (s *Store) ReleaseExpiredNativeSlotReservation(ctx context.Context, project
 		return nil
 	}
 	lease := leaseFromDoc(*found)
-	if !boolValue(lease.Metadata["native_k8s"]) || boolValue(lease.Metadata["test_slot_checkout"]) {
+	if !boolValue(lease.Metadata["runner_k8s"]) || boolValue(lease.Metadata["test_slot_checkout"]) {
 		return nil
 	}
-	return s.releaseNativeSlotReservation(ctx, lease, time.Now().UTC())
+	return s.releaseRunnerSlotReservation(ctx, lease, time.Now().UTC())
 }
 
-func (s *Store) releaseNativeSlotReservation(ctx context.Context, lease server.Lease, now time.Time) error {
-	slot := nativeSlotIndex(lease.Metadata)
+func (s *Store) releaseRunnerSlotReservation(ctx context.Context, lease server.Lease, now time.Time) error {
+	slot := runnerSlotIndex(lease.Metadata)
 	if slot == nil {
 		return nil
 	}
@@ -5539,27 +5539,27 @@ func buildLeaseMetadata(req server.LeaseAcquireRequest) map[string]any {
 	return m
 }
 
-func isNativeLeaseRequest(req server.LeaseAcquireRequest) bool {
-	return boolValue(req.Metadata["native_k8s"]) ||
+func isRunnerLeaseRequest(req server.LeaseAcquireRequest) bool {
+	return boolValue(req.Metadata["runner_k8s"]) ||
 		boolValue(req.Metadata["test_slot_checkout"]) ||
-		boolValue(req.Requirements["native_k8s"])
+		boolValue(req.Requirements["runner_k8s"])
 }
 
-func validateNativeLeaseSlotIdentity(metadata map[string]any) error {
+func validateRunnerLeaseSlotIdentity(metadata map[string]any) error {
 	for _, key := range []string{
-		"native_slot_index",
-		"native_slot_name",
-		"native_slot_prefix",
-		"native_sessions_namespace",
+		"runner_slot_index",
+		"runner_slot_name",
+		"runner_slot_prefix",
+		"runner_sessions_namespace",
 	} {
 		if valueHasMeaning(metadata[key]) {
-			return server.ValidationError{Message: "native lease requests may not include caller-supplied slot identity field " + key}
+			return server.ValidationError{Message: "runner lease requests may not include caller-supplied slot identity field " + key}
 		}
 	}
 	phaseInputs := anyMapValue(metadata["phase_inputs"])
-	for _, key := range []string{"validation_slot_index", "slot_index", "native_slot_index", "native_slot_name"} {
+	for _, key := range []string{"validation_slot_index", "slot_index", "runner_slot_index", "runner_slot_name"} {
 		if valueHasMeaning(phaseInputs[key]) {
-			return server.ValidationError{Message: "native lease requests may not include caller-supplied slot identity field phase_inputs." + key}
+			return server.ValidationError{Message: "runner lease requests may not include caller-supplied slot identity field phase_inputs." + key}
 		}
 	}
 	if boolValue(metadata["test_slot_checkout"]) && len(phaseInputs) > 0 {
@@ -5579,20 +5579,20 @@ func valueHasMeaning(value any) bool {
 	}
 }
 
-func nativeSlotIndex(metadata map[string]any) *int {
-	if n, ok := positiveIntValue(metadata["native_slot_index"]); ok {
+func runnerSlotIndex(metadata map[string]any) *int {
+	if n, ok := positiveIntValue(metadata["runner_slot_index"]); ok {
 		return &n
 	}
 	return nil
 }
 
-func setNativeSlotMetadata(metadata map[string]any, project string, slotIndex int, slotPrefix string) {
-	metadata["native_slot_index"] = strconv.Itoa(slotIndex)
+func setRunnerSlotMetadata(metadata map[string]any, project string, slotIndex int, slotPrefix string) {
+	metadata["runner_slot_index"] = strconv.Itoa(slotIndex)
 	prefix := strings.Trim(strings.TrimSpace(slotPrefix), ".")
 	if prefix == "" {
 		prefix = project
 	}
-	metadata["native_slot_name"] = fmt.Sprintf("%s-%d", prefix, slotIndex)
+	metadata["runner_slot_name"] = fmt.Sprintf("%s-%d", prefix, slotIndex)
 }
 
 func matchesRequirements(caps map[string]any, required map[string]any) bool {
@@ -6389,15 +6389,15 @@ func isTerminalAbortDecision(value string) bool {
 	}
 }
 
-func firstFailedJobCompletion(completions map[string]nativeJobCompletionDoc) (nativeJobCompletionDoc, bool) {
+func firstFailedJobCompletion(completions map[string]runnerJobCompletionDoc) (runnerJobCompletionDoc, bool) {
 	ids := sortedJobCompletionIDs(completions)
 	for _, id := range ids {
 		completion := completions[id]
-		if nativeJobCompletionFailed(completion) {
+		if runnerJobCompletionFailed(completion) {
 			return completion, true
 		}
 	}
-	return nativeJobCompletionDoc{}, false
+	return runnerJobCompletionDoc{}, false
 }
 
 func dispatchFailureObservationForRun(doc runDoc, abortReason *string, source string) *server.RunTerminalObservation {
@@ -6575,29 +6575,29 @@ func terminalDispatchFailureMessage(obs *server.RunTerminalObservation) string {
 	return fmt.Sprintf("phase %s failed to dispatch: %s", obs.Phase, obs.Reason)
 }
 
-// ---- NativeRunStore implementation ----
+// ---- RunnerStore implementation ----
 
-// GetNativeRunStatusByID returns the native run status for the latest
+// GetRunnerStatusByID returns the runner run status for the latest
 // in-progress k8s_job attempt.
-func (s *Store) GetNativeRunStatusByID(ctx context.Context, project, runID string) (server.NativeRunStatusResponse, error) {
+func (s *Store) GetRunnerStatusByID(ctx context.Context, project, runID string) (server.RunnerStatusResponse, error) {
 	doc, _, err := s.readRunDoc(ctx, project, runID)
 	if err != nil {
-		return server.NativeRunStatusResponse{}, err
+		return server.RunnerStatusResponse{}, err
 	}
 
 	if len(doc.Attempts) == 0 {
-		return server.NativeRunStatusResponse{}, server.ErrConflict
+		return server.RunnerStatusResponse{}, server.ErrConflict
 	}
 	latest := doc.Attempts[len(doc.Attempts)-1]
 	if latest.PhaseKind != "k8s_job" {
-		return server.NativeRunStatusResponse{}, server.ErrConflict
+		return server.RunnerStatusResponse{}, server.ErrConflict
 	}
 
 	siblings, _ := s.issueRunDocs(ctx, project, doc.IssueNumber)
 	numbers := runNumberMap(siblings)
 	runRef := publicids.RunRef(doc.Project, doc.IssueNumber, runDisplayNumber(doc, numbers[doc.ID]))
 
-	return server.NativeRunStatusResponse{
+	return server.RunnerStatusResponse{
 		Project:           project,
 		RunRef:            runRef,
 		State:             doc.State,
@@ -6608,12 +6608,12 @@ func (s *Store) GetNativeRunStatusByID(ctx context.Context, project, runID strin
 	}, nil
 }
 
-// RecordNativeEventByID writes one idempotent native event for the run's latest in-progress attempt.
-func (s *Store) RecordNativeEventByID(ctx context.Context, project, runID string, req server.NativeRunEventRequest) (server.NativeRunEventResult, error) {
+// RecordRunnerEventByID writes one idempotent runner event for the run's latest in-progress attempt.
+func (s *Store) RecordRunnerEventByID(ctx context.Context, project, runID string, req server.RunnerEventRequest) (server.RunnerEventResult, error) {
 	// Read run to get the latest attempt index + phase.
 	doc, _, err := s.readRunDoc(ctx, project, runID)
 	if err != nil {
-		return server.NativeRunEventResult{}, err
+		return server.RunnerEventResult{}, err
 	}
 
 	attemptIndex := 0
@@ -6623,7 +6623,7 @@ func (s *Store) RecordNativeEventByID(ctx context.Context, project, runID string
 		attemptIndex = latest.AttemptIndex
 		phase = latest.Phase
 	}
-	if requestedAttempt, ok := nativeEventAttemptIndex(req); ok {
+	if requestedAttempt, ok := runnerEventAttemptIndex(req); ok {
 		found := false
 		for _, attempt := range doc.Attempts {
 			if attempt.AttemptIndex == requestedAttempt {
@@ -6634,7 +6634,7 @@ func (s *Store) RecordNativeEventByID(ctx context.Context, project, runID string
 			}
 		}
 		if !found {
-			return server.NativeRunEventResult{}, server.ValidationError{Message: fmt.Sprintf("attempt_index %d is not registered on run", requestedAttempt)}
+			return server.RunnerEventResult{}, server.ValidationError{Message: fmt.Sprintf("attempt_index %d is not registered on run", requestedAttempt)}
 		}
 	}
 
@@ -6653,7 +6653,7 @@ func (s *Store) RecordNativeEventByID(ctx context.Context, project, runID string
 	// Write the event to pg via pgRunEvents. Idempotency is based on the
 	// natural event key: the same key with the same payload is accepted
 	// silently; the same key with a different payload returns ErrConflict.
-	eventDoc := nativeEventDoc{
+	eventDoc := runnerEventDoc{
 		ID:           docID,
 		Project:      project,
 		RunID:        runID,
@@ -6684,13 +6684,13 @@ func (s *Store) RecordNativeEventByID(ctx context.Context, project, runID string
 	})
 	if err != nil {
 		if errors.Is(err, pgstore.ErrRunEventConflict) {
-			return server.NativeRunEventResult{}, server.ErrConflict
+			return server.RunnerEventResult{}, server.ErrConflict
 		}
-		return server.NativeRunEventResult{}, err
+		return server.RunnerEventResult{}, err
 	}
 	if created {
-		if err := s.applyNativeEventExecutionState(ctx, project, runID, eventDoc); err != nil {
-			return server.NativeRunEventResult{}, err
+		if err := s.applyRunnerEventExecutionState(ctx, project, runID, eventDoc); err != nil {
+			return server.RunnerEventResult{}, err
 		}
 	}
 
@@ -6699,7 +6699,7 @@ func (s *Store) RecordNativeEventByID(ctx context.Context, project, runID string
 	numbers := runNumberMap(siblings)
 	runRef := publicids.RunRef(doc.Project, doc.IssueNumber, runDisplayNumber(doc, numbers[doc.ID]))
 
-	return server.NativeRunEventResult{
+	return server.RunnerEventResult{
 		RunRef:   runRef,
 		JobID:    req.JobID,
 		Seq:      req.Seq,
@@ -6707,7 +6707,7 @@ func (s *Store) RecordNativeEventByID(ctx context.Context, project, runID string
 	}, nil
 }
 
-func (s *Store) applyNativeEventExecutionState(ctx context.Context, project, runID string, event nativeEventDoc) error {
+func (s *Store) applyRunnerEventExecutionState(ctx context.Context, project, runID string, event runnerEventDoc) error {
 	return s.mutateRunRaw(ctx, project, runID, func(doc runDoc, raw map[string]any) (bool, error) {
 		var attempt attemptDoc
 		found := false
@@ -6721,9 +6721,9 @@ func (s *Store) applyNativeEventExecutionState(ctx context.Context, project, run
 		if !found {
 			return false, nil
 		}
-		applyNativeEventToExecutionsRaw(raw, attempt, event)
+		applyRunnerEventToExecutionsRaw(raw, attempt, event)
 		if event.Event == "phase_output_set" {
-			if err := applyNativePhaseOutputSetRaw(raw, attempt, event); err != nil {
+			if err := applyRunnerPhaseOutputSetRaw(raw, attempt, event); err != nil {
 				return false, err
 			}
 		}
@@ -6732,7 +6732,7 @@ func (s *Store) applyNativeEventExecutionState(ctx context.Context, project, run
 	})
 }
 
-func applyNativePhaseOutputSetRaw(raw map[string]any, attempt attemptDoc, event nativeEventDoc) error {
+func applyRunnerPhaseOutputSetRaw(raw map[string]any, attempt attemptDoc, event runnerEventDoc) error {
 	key := strings.TrimSpace(stringValue(event.Metadata["key"]))
 	if key == "" {
 		return server.ValidationError{Message: "phase_output_set event requires metadata.key"}
@@ -6812,12 +6812,12 @@ func attemptIndexFromRaw(attempt map[string]any) int {
 	}
 }
 
-// ListNativeEventsByID returns ordered native events for a run.
-func (s *Store) ListNativeEventsByID(ctx context.Context, project, runID string, attemptIndex *int, jobID *string, stepSlug *string, afterSeq *int, limit *int) (server.NativeRunLogsResponse, error) {
+// ListRunnerEventsByID returns ordered runner events for a run.
+func (s *Store) ListRunnerEventsByID(ctx context.Context, project, runID string, attemptIndex *int, jobID *string, stepSlug *string, afterSeq *int, limit *int) (server.RunnerLogsResponse, error) {
 	// Validate that the run exists first.
 	doc, _, err := s.readRunDoc(ctx, project, runID)
 	if err != nil {
-		return server.NativeRunLogsResponse{}, err
+		return server.RunnerLogsResponse{}, err
 	}
 
 	// Read events from pg. pg.RunEventsStore.List returns rows in the canonical
@@ -6826,16 +6826,16 @@ func (s *Store) ListNativeEventsByID(ctx context.Context, project, runID string,
 	// pushed down to SQL.
 	rows, err := s.pgRunEvents.List(ctx, runID, attemptIndex, jobID, stepSlug, afterSeq, limit)
 	if err != nil {
-		return server.NativeRunLogsResponse{}, err
+		return server.RunnerLogsResponse{}, err
 	}
 
 	siblings, _ := s.issueRunDocs(ctx, project, doc.IssueNumber)
 	numbers := runNumberMap(siblings)
 	runRef := publicids.RunRef(doc.Project, doc.IssueNumber, runDisplayNumber(doc, numbers[doc.ID]))
 
-	events := make([]server.NativeRunLogEvent, 0, len(rows))
+	events := make([]server.RunnerLogEvent, 0, len(rows))
 	for _, e := range rows {
-		events = append(events, server.NativeRunLogEvent{
+		events = append(events, server.RunnerLogEvent{
 			Project:      project,
 			RunRef:       runRef,
 			AttemptIndex: e.AttemptIndex,
@@ -6851,7 +6851,7 @@ func (s *Store) ListNativeEventsByID(ctx context.Context, project, runID string,
 		})
 	}
 
-	return server.NativeRunLogsResponse{
+	return server.RunnerLogsResponse{
 		Project:      project,
 		RunRef:       runRef,
 		AttemptIndex: attemptIndex,
@@ -6860,7 +6860,7 @@ func (s *Store) ListNativeEventsByID(ctx context.Context, project, runID string,
 	}, nil
 }
 
-func nativeEventAttemptIndex(req server.NativeRunEventRequest) (int, bool) {
+func runnerEventAttemptIndex(req server.RunnerEventRequest) (int, bool) {
 	if req.AttemptIndex != nil {
 		return *req.AttemptIndex, true
 	}
@@ -6890,17 +6890,17 @@ func stringOrEmpty(s *string) string {
 	return *s
 }
 
-// RecordNativeJobCompletion records a single native job's terminal callback.
+// RecordRunnerJobCompletion records a single runner job's terminal callback.
 // It returns CompletionReady only for the transition where the final expected
 // job for the current phase has completed; callers should run the decision
 // engine only for that transition.
-func (s *Store) RecordNativeJobCompletion(ctx context.Context, project, runID string, p server.CompletionPayload) (server.NativeJobCompletionResult, error) {
+func (s *Store) RecordRunnerJobCompletion(ctx context.Context, project, runID string, p server.CompletionPayload) (server.RunnerJobCompletionResult, error) {
 	jobID := ""
 	if p.JobID != nil {
 		jobID = strings.TrimSpace(*p.JobID)
 	}
 	if jobID == "" {
-		return server.NativeJobCompletionResult{}, server.ValidationError{Message: "job_id required"}
+		return server.RunnerJobCompletionResult{}, server.ValidationError{Message: "job_id required"}
 	}
 
 	// pg's SELECT FOR UPDATE inside PatchPayload owns serialization.
@@ -6911,8 +6911,8 @@ func (s *Store) RecordNativeJobCompletion(ctx context.Context, project, runID st
 		completedIdempotent   bool
 		duplicateCompletion   bool
 		earlyExpectedJobIDs   []string
-		earlyCompletions      map[string]nativeJobCompletionDoc
-		writtenCompletions    map[string]nativeJobCompletionDoc
+		earlyCompletions      map[string]runnerJobCompletionDoc
+		writtenCompletions    map[string]runnerJobCompletionDoc
 		writtenExpectedJobIDs []string
 		validationErr         error
 		conflictMsg           error
@@ -6955,7 +6955,7 @@ func (s *Store) RecordNativeJobCompletion(ctx context.Context, project, runID st
 			validationErr = server.ValidationError{Message: fmt.Sprintf("workflow %q is not registered", doc.Workflow)}
 			return errAbortPatch
 		}
-		expectedJobIDs, eErr := expectedNativeJobIDsFromWorkflow(wf, attempt.Phase)
+		expectedJobIDs, eErr := expectedRunnerJobIDsFromWorkflow(wf, attempt.Phase)
 		if eErr != nil {
 			validationErr = eErr
 			return errAbortPatch
@@ -6971,9 +6971,9 @@ func (s *Store) RecordNativeJobCompletion(ctx context.Context, project, runID st
 			earlyCompletions = completions
 			return errAbortPatch
 		}
-		newCompletion := nativeJobCompletionDocFromPayload(jobID, p, time.Now().UTC().Format(time.RFC3339Nano))
+		newCompletion := runnerJobCompletionDocFromPayload(jobID, p, time.Now().UTC().Format(time.RFC3339Nano))
 		if existing, exists := completions[jobID]; exists {
-			if !sameNativeJobCompletion(existing, newCompletion) {
+			if !sameRunnerJobCompletion(existing, newCompletion) {
 				conflictMsg = server.ErrConflict
 				return errAbortPatch
 			}
@@ -6982,7 +6982,7 @@ func (s *Store) RecordNativeJobCompletion(ctx context.Context, project, runID st
 			earlyCompletions = completions
 			return errAbortPatch
 		}
-		if vErr := validateNativePhaseOutputKeys(jobID, newCompletion.PhaseOutputs, completions); vErr != nil {
+		if vErr := validateRunnerPhaseOutputKeys(jobID, newCompletion.PhaseOutputs, completions); vErr != nil {
 			validationErr = vErr
 			return errAbortPatch
 		}
@@ -6991,38 +6991,38 @@ func (s *Store) RecordNativeJobCompletion(ctx context.Context, project, runID st
 		attempts[idx] = attemptMap
 		raw["attempts"] = attempts
 		raw["updated_at"] = newCompletion.CompletedAt
-		executionState, executionReason := nativeJobExecutionStateAndReason(newCompletion, true)
+		executionState, executionReason := runnerJobExecutionStateAndReason(newCompletion, true)
 		markJobCompletionInExecutionsRaw(raw, attempt.Phase, jobID, executionState, executionReason, newCompletion.CompletedAt)
 		writtenCompletions = completions
 		writtenExpectedJobIDs = expectedJobIDs
 		return nil
 	})
 	if conflictMsg != nil {
-		return server.NativeJobCompletionResult{}, conflictMsg
+		return server.RunnerJobCompletionResult{}, conflictMsg
 	}
 	if validationErr != nil {
-		return server.NativeJobCompletionResult{}, validationErr
+		return server.RunnerJobCompletionResult{}, validationErr
 	}
 	if completedIdempotent || duplicateCompletion {
 		run, err := s.ReadRunForReplay(ctx, project, runID)
 		if err != nil {
-			return server.NativeJobCompletionResult{}, err
+			return server.RunnerJobCompletionResult{}, err
 		}
 		phaseComplete := completedIdempotent || allExpectedJobsCompleted(earlyExpectedJobIDs, earlyCompletions)
-		return nativeJobCompletionResult(run, earlyExpectedJobIDs, earlyCompletions, phaseComplete, false), nil
+		return runnerJobCompletionResult(run, earlyExpectedJobIDs, earlyCompletions, phaseComplete, false), nil
 	}
 	if errors.Is(err, pgstore.ErrRunNotFound) {
-		return server.NativeJobCompletionResult{}, server.ErrNotFound
+		return server.RunnerJobCompletionResult{}, server.ErrNotFound
 	}
 	if err != nil {
-		return server.NativeJobCompletionResult{}, err
+		return server.RunnerJobCompletionResult{}, err
 	}
 	run, err := s.ReadRunForReplay(ctx, project, runID)
 	if err != nil {
-		return server.NativeJobCompletionResult{}, err
+		return server.RunnerJobCompletionResult{}, err
 	}
 	phaseComplete := allExpectedJobsCompleted(writtenExpectedJobIDs, writtenCompletions)
-	return nativeJobCompletionResult(run, writtenExpectedJobIDs, writtenCompletions, phaseComplete, phaseComplete), nil
+	return runnerJobCompletionResult(run, writtenExpectedJobIDs, writtenCompletions, phaseComplete, phaseComplete), nil
 }
 
 // errAbortPatch is returned by mutators that want to short-circuit
@@ -7030,7 +7030,7 @@ func (s *Store) RecordNativeJobCompletion(ctx context.Context, project, runID st
 // captured sentinels to decide the outer return value.
 var errAbortPatch = errors.New("abort patch")
 
-func validateNativePhaseOutputKeys(jobID string, outputs map[string]string, completions map[string]nativeJobCompletionDoc) error {
+func validateRunnerPhaseOutputKeys(jobID string, outputs map[string]string, completions map[string]runnerJobCompletionDoc) error {
 	if len(outputs) == 0 {
 		return nil
 	}
@@ -7048,7 +7048,7 @@ func validateNativePhaseOutputKeys(jobID string, outputs map[string]string, comp
 	return nil
 }
 
-func (s *Store) expectedNativeJobIDs(ctx context.Context, project, workflowName, schemaRef, phaseName string) ([]string, error) {
+func (s *Store) expectedRunnerJobIDs(ctx context.Context, project, workflowName, schemaRef, phaseName string) ([]string, error) {
 	wf, err := s.workflowForRunExecution(ctx, project, workflowName, schemaRef)
 	if err != nil {
 		return nil, err
@@ -7056,15 +7056,15 @@ func (s *Store) expectedNativeJobIDs(ctx context.Context, project, workflowName,
 	if wf == nil {
 		return nil, server.ValidationError{Message: fmt.Sprintf("workflow %q is not registered", workflowName)}
 	}
-	return expectedNativeJobIDsFromWorkflow(wf, phaseName)
+	return expectedRunnerJobIDsFromWorkflow(wf, phaseName)
 }
 
-func expectedNativeJobIDsFromWorkflow(wf *server.Workflow, phaseName string) ([]string, error) {
+func expectedRunnerJobIDsFromWorkflow(wf *server.Workflow, phaseName string) ([]string, error) {
 	for _, phase := range wf.Phases {
 		if phase.Name != phaseName {
 			continue
 		}
-		phase = server.CanonicalNativePhase(phase)
+		phase = server.CanonicalRunnerPhase(phase)
 		if len(phase.Jobs) == 0 {
 			return nil, server.ValidationError{Message: fmt.Sprintf("phase %q has no registered jobs", phaseName)}
 		}
@@ -7086,7 +7086,7 @@ func expectedNativeJobIDsFromWorkflow(wf *server.Workflow, phaseName string) ([]
 	return nil, server.ValidationError{Message: fmt.Sprintf("phase %q is not registered on workflow %q", phaseName, wf.Name)}
 }
 
-func nativeJobCompletionDocFromPayload(jobID string, p server.CompletionPayload, completedAt string) nativeJobCompletionDoc {
+func runnerJobCompletionDocFromPayload(jobID string, p server.CompletionPayload, completedAt string) runnerJobCompletionDoc {
 	var verification *verificationDoc
 	if p.VerificationStatus != "" || len(p.EvidenceRefs) > 0 || len(p.Evidence) > 0 {
 		verification = &verificationDoc{
@@ -7098,7 +7098,7 @@ func nativeJobCompletionDocFromPayload(jobID string, p server.CompletionPayload,
 			CostUSD:      p.CostUSD,
 		}
 	}
-	return nativeJobCompletionDoc{
+	return runnerJobCompletionDoc{
 		JobID:               jobID,
 		CompletedAt:         completedAt,
 		Conclusion:          p.Conclusion,
@@ -7112,8 +7112,8 @@ func nativeJobCompletionDocFromPayload(jobID string, p server.CompletionPayload,
 	}
 }
 
-func nativeJobExecutionStateAndReason(completion nativeJobCompletionDoc, verificationControlsExecution bool) (string, string) {
-	state, fallbackReason := genericNativeJobStateAndReason(completion, verificationControlsExecution)
+func runnerJobExecutionStateAndReason(completion runnerJobCompletionDoc, verificationControlsExecution bool) (string, string) {
+	state, fallbackReason := genericRunnerJobStateAndReason(completion, verificationControlsExecution)
 	// Caller-supplied TerminalReason takes precedence over the
 	// conclusion-based fallback so RunJobExecution.Reason carries the
 	// precise failure mode (e.g. "deadline_exceeded") rather than a
@@ -7128,11 +7128,11 @@ func nativeJobExecutionStateAndReason(completion nativeJobCompletionDoc, verific
 	return state, fallbackReason
 }
 
-// genericNativeJobStateAndReason is the historical conclusion +
+// genericRunnerJobStateAndReason is the historical conclusion +
 // verification mapping that runner-driven completions have always used.
 // It is split out so the precedence policy lives in one place
-// (nativeJobExecutionStateAndReason).
-func genericNativeJobStateAndReason(completion nativeJobCompletionDoc, verificationControlsExecution bool) (string, string) {
+// (runnerJobExecutionStateAndReason).
+func genericRunnerJobStateAndReason(completion runnerJobCompletionDoc, verificationControlsExecution bool) (string, string) {
 	if verificationControlsExecution && completion.Verification != nil {
 		switch completion.Verification.Status {
 		case "pass":
@@ -7166,7 +7166,7 @@ func genericNativeJobStateAndReason(completion nativeJobCompletionDoc, verificat
 // anySkippedJobCompletion reports whether an attempt carries a synthesized
 // when-skip job completion, which relaxes downstream output substitution for
 // that phase (skipped legs publish nothing).
-func anySkippedJobCompletion(completions map[string]nativeJobCompletionDoc) bool {
+func anySkippedJobCompletion(completions map[string]runnerJobCompletionDoc) bool {
 	for _, completion := range completions {
 		if completion.Conclusion == "skipped" {
 			return true
@@ -7175,8 +7175,8 @@ func anySkippedJobCompletion(completions map[string]nativeJobCompletionDoc) bool
 	return false
 }
 
-func cloneJobCompletions(values map[string]nativeJobCompletionDoc) map[string]nativeJobCompletionDoc {
-	out := make(map[string]nativeJobCompletionDoc, len(values))
+func cloneJobCompletions(values map[string]runnerJobCompletionDoc) map[string]runnerJobCompletionDoc {
+	out := make(map[string]runnerJobCompletionDoc, len(values))
 	for k, v := range values {
 		out[k] = v
 	}
@@ -7224,7 +7224,7 @@ func (s *Store) mutateRunRaw(ctx context.Context, project, runID string, mutate 
 // PatchPayload rolls the tx back; the outer call returns nil.
 var errMutateNoChange = errors.New("run mutate: no change")
 
-func (s *Store) RecordNativeJobsDispatched(ctx context.Context, project, runID, phase string, jobs map[string]string) error {
+func (s *Store) RecordRunnerJobsDispatched(ctx context.Context, project, runID, phase string, jobs map[string]string) error {
 	if len(jobs) == 0 {
 		return nil
 	}
@@ -7414,7 +7414,7 @@ func markPhaseJobsDispatchedRaw(raw map[string]any, phaseName string, jobs map[s
 	raw["phase_executions"] = phases
 }
 
-func applyNativeEventToExecutionsRaw(raw map[string]any, attempt attemptDoc, event nativeEventDoc) {
+func applyRunnerEventToExecutionsRaw(raw map[string]any, attempt attemptDoc, event runnerEventDoc) {
 	phases, ok := raw["phase_executions"].([]any)
 	if !ok {
 		return
@@ -7464,7 +7464,7 @@ func applyNativeEventToExecutionsRaw(raw map[string]any, attempt attemptDoc, eve
 				break
 			}
 			if event.StepSlug != "" && event.Event != "log" {
-				steps = ensureNativeEventStep(steps, event, now)
+				steps = ensureRunnerEventStep(steps, event, now)
 			}
 			for k, stepValue := range steps {
 				step, ok := stepValue.(map[string]any)
@@ -7503,7 +7503,7 @@ func applyNativeEventToExecutionsRaw(raw map[string]any, attempt attemptDoc, eve
 					phase["completed_at"] = now
 				case "step_aborted":
 					step["state"] = "aborted"
-					step["reason"] = nativeAbortReason(event)
+					step["reason"] = runnerAbortReason(event)
 					step["completed_at"] = now
 					job["state"] = "failed"
 					job["reason"] = server.JobTerminalReasonAborted
@@ -7526,7 +7526,7 @@ func applyNativeEventToExecutionsRaw(raw map[string]any, attempt attemptDoc, eve
 	raw["phase_executions"] = phases
 }
 
-func applyDynamicGroupExpandedToSteps(steps []any, event nativeEventDoc, now string) []any {
+func applyDynamicGroupExpandedToSteps(steps []any, event runnerEventDoc, now string) []any {
 	group := strings.TrimSpace(stringValue(event.Metadata["group"]))
 	if group == "" {
 		return steps
@@ -7582,7 +7582,7 @@ func applyDynamicGroupExpandedToSteps(steps []any, event nativeEventDoc, now str
 	return out
 }
 
-func dynamicExpansionRawSteps(event nativeEventDoc, now string) []any {
+func dynamicExpansionRawSteps(event runnerEventDoc, now string) []any {
 	items, ok := event.Metadata["steps"].([]any)
 	if !ok || len(items) == 0 {
 		return nil
@@ -7618,7 +7618,7 @@ func dynamicExpansionRawSteps(event nativeEventDoc, now string) []any {
 	return out
 }
 
-func ensureNativeEventStep(steps []any, event nativeEventDoc, now string) []any {
+func ensureRunnerEventStep(steps []any, event runnerEventDoc, now string) []any {
 	for _, stepValue := range steps {
 		step, ok := stepValue.(map[string]any)
 		if ok && stringValue(step["slug"]) == event.StepSlug {
@@ -7643,7 +7643,7 @@ func ensureNativeEventStep(steps []any, event nativeEventDoc, now string) []any 
 	return append(steps, step)
 }
 
-func nativeAbortReason(event nativeEventDoc) string {
+func runnerAbortReason(event runnerEventDoc) string {
 	if event.Metadata != nil {
 		if reason := strings.TrimSpace(stringValue(event.Metadata["abort_reason"])); reason != "" {
 			return reason
@@ -7659,7 +7659,7 @@ func nativeAbortReason(event nativeEventDoc) string {
 // the same registration). Parent attribution comes from the event's
 // job_id (the outer phase Job) and step_slug (the parent step that
 // emitted the marker).
-func appendInnerJobRegistration(phase map[string]any, event nativeEventDoc) {
+func appendInnerJobRegistration(phase map[string]any, event runnerEventDoc) {
 	namespace := stringValue(event.Metadata["namespace"])
 	jobName := stringValue(event.Metadata["job_name"])
 	if namespace == "" || jobName == "" {
@@ -7718,7 +7718,7 @@ func appendInnerJobRegistration(phase map[string]any, event nativeEventDoc) {
 // registration is treated as the registration having been dropped
 // (rare, the marker is at-least-once delivered) so we synthesize a
 // minimal stub instead of losing the signal entirely.
-func updateInnerJobTermination(phase map[string]any, event nativeEventDoc) {
+func updateInnerJobTermination(phase map[string]any, event runnerEventDoc) {
 	namespace := stringValue(event.Metadata["namespace"])
 	jobName := stringValue(event.Metadata["job_name"])
 	if namespace == "" || jobName == "" {
@@ -8085,7 +8085,7 @@ func canonicalExecutionFailureReason(reason string) string {
 		return "timeout"
 	case strings.Contains(reason, "cancel"):
 		return "cancelled"
-	case strings.Contains(reason, "native_dispatch_failed"):
+	case strings.Contains(reason, "runner_dispatch_failed"):
 		return "dispatch_failed"
 	case strings.Contains(reason, "admission_failed"):
 		return "admission_failed"
@@ -8096,26 +8096,26 @@ func canonicalExecutionFailureReason(reason string) string {
 	}
 }
 
-func sameNativeJobCompletion(a, b nativeJobCompletionDoc) bool {
+func sameRunnerJobCompletion(a, b runnerJobCompletionDoc) bool {
 	a.CompletedAt = ""
 	b.CompletedAt = ""
 	return reflect.DeepEqual(a, b)
 }
 
-func nativeJobCompletionResult(run server.RunReplayData, expected []string, completions map[string]nativeJobCompletionDoc, phaseComplete bool, completionReady bool) server.NativeJobCompletionResult {
-	completed, pending, failed := nativeJobCompletionLists(expected, completions, phaseComplete)
-	return server.NativeJobCompletionResult{
+func runnerJobCompletionResult(run server.RunReplayData, expected []string, completions map[string]runnerJobCompletionDoc, phaseComplete bool, completionReady bool) server.RunnerJobCompletionResult {
+	completed, pending, failed := runnerJobCompletionLists(expected, completions, phaseComplete)
+	return server.RunnerJobCompletionResult{
 		Run:             run,
 		PhaseComplete:   phaseComplete,
 		CompletionReady: completionReady,
 		CompletedJobIDs: completed,
 		PendingJobIDs:   pending,
 		FailedJobIDs:    failed,
-		PhasePayload:    aggregateNativePhaseCompletion(expected, completions),
+		PhasePayload:    aggregateRunnerPhaseCompletion(expected, completions),
 	}
 }
 
-func nativeJobCompletionLists(expected []string, completions map[string]nativeJobCompletionDoc, phaseComplete bool) ([]string, []string, []string) {
+func runnerJobCompletionLists(expected []string, completions map[string]runnerJobCompletionDoc, phaseComplete bool) ([]string, []string, []string) {
 	if len(expected) == 0 {
 		expected = sortedJobCompletionIDs(completions)
 	}
@@ -8133,7 +8133,7 @@ func nativeJobCompletionLists(expected []string, completions map[string]nativeJo
 			continue
 		}
 		completed = append(completed, id)
-		if nativeJobCompletionFailed(completion) {
+		if runnerJobCompletionFailed(completion) {
 			failed = append(failed, id)
 		}
 	}
@@ -8146,14 +8146,14 @@ func nativeJobCompletionLists(expected []string, completions map[string]nativeJo
 	sort.Strings(extras)
 	for _, id := range extras {
 		completed = append(completed, id)
-		if nativeJobCompletionFailed(completions[id]) {
+		if runnerJobCompletionFailed(completions[id]) {
 			failed = append(failed, id)
 		}
 	}
 	return completed, pending, failed
 }
 
-func nativeJobCompletionFailed(completion nativeJobCompletionDoc) bool {
+func runnerJobCompletionFailed(completion runnerJobCompletionDoc) bool {
 	if completion.Conclusion != "" && !decision.IsAdvanceConclusion(completion.Conclusion) {
 		return true
 	}
@@ -8166,7 +8166,7 @@ func nativeJobCompletionFailed(completion nativeJobCompletionDoc) bool {
 	return false
 }
 
-func sortedJobCompletionIDs(completions map[string]nativeJobCompletionDoc) []string {
+func sortedJobCompletionIDs(completions map[string]runnerJobCompletionDoc) []string {
 	ids := make([]string, 0, len(completions))
 	for id := range completions {
 		ids = append(ids, id)
@@ -8175,7 +8175,7 @@ func sortedJobCompletionIDs(completions map[string]nativeJobCompletionDoc) []str
 	return ids
 }
 
-func allExpectedJobsCompleted(expected []string, completions map[string]nativeJobCompletionDoc) bool {
+func allExpectedJobsCompleted(expected []string, completions map[string]runnerJobCompletionDoc) bool {
 	if len(expected) == 0 {
 		return len(completions) > 0
 	}
@@ -8187,7 +8187,7 @@ func allExpectedJobsCompleted(expected []string, completions map[string]nativeJo
 	return true
 }
 
-func aggregateNativePhaseCompletion(expected []string, completions map[string]nativeJobCompletionDoc) server.CompletionPayload {
+func aggregateRunnerPhaseCompletion(expected []string, completions map[string]runnerJobCompletionDoc) server.CompletionPayload {
 	ids := expected
 	if len(ids) == 0 {
 		ids = sortedJobCompletionIDs(completions)
@@ -8218,10 +8218,10 @@ func aggregateNativePhaseCompletion(expected []string, completions map[string]na
 			phaseOutputs[key] = value
 		}
 		if completion.SummaryMarkdown != nil && strings.TrimSpace(*completion.SummaryMarkdown) != "" {
-			summaries = append(summaries, nativeJobMarkdownSection(id, *completion.SummaryMarkdown))
+			summaries = append(summaries, runnerJobMarkdownSection(id, *completion.SummaryMarkdown))
 		}
 		if completion.ScreenshotsMarkdown != nil && strings.TrimSpace(*completion.ScreenshotsMarkdown) != "" {
-			screenshots = append(screenshots, nativeJobMarkdownSection(id, *completion.ScreenshotsMarkdown))
+			screenshots = append(screenshots, runnerJobMarkdownSection(id, *completion.ScreenshotsMarkdown))
 		}
 		agentUsage = append(agentUsage, completion.AgentUsage...)
 		if completion.Verification != nil {
@@ -8259,7 +8259,7 @@ func aggregateNativePhaseCompletion(expected []string, completions map[string]na
 		VerificationFailure: verificationFailure,
 		EvidenceRefs:        evidenceRefs,
 		Evidence:            evidenceArtifacts,
-		CostUSD:             sumNativeJobCosts(completions),
+		CostUSD:             sumRunnerJobCosts(completions),
 		AgentUsage:          agentUsage,
 		PhaseOutputs:        phaseOutputs,
 	}
@@ -8291,7 +8291,7 @@ func synthesizedVerificationOutput(status string, reasons []string, failure *ser
 	return string(data)
 }
 
-func nativeJobMarkdownSection(jobID, markdown string) string {
+func runnerJobMarkdownSection(jobID, markdown string) string {
 	return "### " + jobID + "\n\n" + strings.TrimSpace(markdown)
 }
 
@@ -8311,7 +8311,7 @@ func combineVerificationStatus(current, next string) string {
 	return current
 }
 
-func sumNativeJobCosts(completions map[string]nativeJobCompletionDoc) float64 {
+func sumRunnerJobCosts(completions map[string]runnerJobCompletionDoc) float64 {
 	var total float64
 	for _, completion := range completions {
 		total += completion.CostUSD
@@ -8466,7 +8466,7 @@ func (s *Store) ParkRunAtReviewGate(ctx context.Context, project, runID, phase, 
 
 // ReleaseReviewGate flips a parked review gate back to in_progress and marks
 // the existing gate attempt as dispatching so the managed pr_merge k8s job can
-// use the ordinary native status/completion path.
+// use the ordinary runner status/completion path.
 func (s *Store) ReleaseReviewGate(ctx context.Context, project, runID, phase string, attemptIndex int) error {
 	var conflict error
 	_, err := s.pgRuns.PatchPayload(ctx, project, runID, func(raw map[string]any) error {
@@ -8804,7 +8804,7 @@ func (s *Store) StampLatestAttemptSkipped(ctx context.Context, project, runID, r
 	return err
 }
 
-// RecordNativeJobsSkipped writes synthesized "skipped" job completions for
+// RecordRunnerJobsSkipped writes synthesized "skipped" job completions for
 // jobs whose `when` condition evaluated false at dispatch, on the run's
 // latest attempt. No Kubernetes Job ever exists for these jobs: the
 // synthesized completion pre-satisfies the expected-job completion set (so
@@ -8812,7 +8812,7 @@ func (s *Store) StampLatestAttemptSkipped(ctx context.Context, project, runID, r
 // projection renders the job and its declared steps as skipped, attributed
 // to the resolved condition. Written before the launcher runs so a fast real
 // callback can never observe a half-stamped phase.
-func (s *Store) RecordNativeJobsSkipped(ctx context.Context, project, runID, phase string, skipped map[string]string) error {
+func (s *Store) RecordRunnerJobsSkipped(ctx context.Context, project, runID, phase string, skipped map[string]string) error {
 	if len(skipped) == 0 {
 		return nil
 	}

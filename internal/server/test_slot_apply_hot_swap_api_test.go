@@ -70,8 +70,8 @@ func newApplyHotSwapStore(t *testing.T) *fakeLeaseStore {
 				State:   "claimed",
 				Metadata: map[string]any{
 					"test_slot_checkout": true,
-					"native_slot_name":   "tank-operator-slot-1",
-					"native_slot_index":  "1",
+					"runner_slot_name":   "tank-operator-slot-1",
+					"runner_slot_index":  "1",
 				},
 			},
 		},

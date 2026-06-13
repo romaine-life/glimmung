@@ -253,12 +253,12 @@ func (s *fakePlayableStore) ListProjectWorkflows(context.Context, string) ([]Wor
 
 func playbookTestWorkflowPhases() []PhaseSpec {
 	return []PhaseSpec{
-		{Name: "prepare", Kind: "k8s_job", Outputs: []string{"issue_contract"}, Jobs: []NativeJobSpec{{ID: "issue-contract"}}},
+		{Name: "prepare", Kind: "k8s_job", Outputs: []string{"issue_contract"}, Jobs: []RunnerJobSpec{{ID: "issue-contract"}}},
 		{Name: "verify", Kind: "k8s_job", Verify: true, RecyclePolicy: &RecyclePolicy{MaxAttempts: 1, On: []string{"verify_fail"}, LandsAt: "prepare"}, DependsOn: []string{"prepare"}, Jobs: verificationCaseJobsForTest()},
-		{Name: "cleanup_early", Kind: "k8s_job", RunOn: PhaseRunOnAlways, Purpose: PhasePurposeTeardown, When: "${{ run.preserve_test_env }} == 'false'", DependsOn: []string{"verify"}, Jobs: []NativeJobSpec{{ID: "cleanup-early"}}},
-		{Name: "touchpoint", Kind: "k8s_job", RunOn: PhaseRunOnSuccess, Purpose: PhasePurposeReviewTouchpoint, DependsOn: []string{"cleanup_early"}, Jobs: []NativeJobSpec{{ID: "pr-touchpoint", Primitive: JobPrimitivePRTouchpoint, Managed: true}}},
-		{Name: "touchpoint_gate", Kind: "k8s_job", Purpose: PhasePurposeReviewGate, DependsOn: []string{"touchpoint"}, Jobs: []NativeJobSpec{{ID: "pr-merge", Primitive: JobPrimitivePRMerge, Managed: true}}},
-		{Name: "cleanup_final", Kind: "k8s_job", RunOn: PhaseRunOnAlways, Purpose: PhasePurposeTeardown, DependsOn: []string{"touchpoint_gate"}, Jobs: []NativeJobSpec{{ID: "cleanup-final"}}},
+		{Name: "cleanup_early", Kind: "k8s_job", RunOn: PhaseRunOnAlways, Purpose: PhasePurposeTeardown, When: "${{ run.preserve_test_env }} == 'false'", DependsOn: []string{"verify"}, Jobs: []RunnerJobSpec{{ID: "cleanup-early"}}},
+		{Name: "touchpoint", Kind: "k8s_job", RunOn: PhaseRunOnSuccess, Purpose: PhasePurposeReviewTouchpoint, DependsOn: []string{"cleanup_early"}, Jobs: []RunnerJobSpec{{ID: "pr-touchpoint", Primitive: JobPrimitivePRTouchpoint, Managed: true}}},
+		{Name: "touchpoint_gate", Kind: "k8s_job", Purpose: PhasePurposeReviewGate, DependsOn: []string{"touchpoint"}, Jobs: []RunnerJobSpec{{ID: "pr-merge", Primitive: JobPrimitivePRMerge, Managed: true}}},
+		{Name: "cleanup_final", Kind: "k8s_job", RunOn: PhaseRunOnAlways, Purpose: PhasePurposeTeardown, DependsOn: []string{"touchpoint_gate"}, Jobs: []RunnerJobSpec{{ID: "cleanup-final"}}},
 	}
 }
 
@@ -272,7 +272,7 @@ func (s *fakePlayableStore) CreateRun(context.Context, CreateRunRequest) (Create
 	return CreatedRun{ID: "run-1", RunNumber: 1, CycleNumber: 1, RunCycle: 1, RunDisplay: "1.1", CallbackToken: "tok"}, nil
 }
 
-func (s *fakePlayableStore) RecordNativeJobsSkipped(_ context.Context, _, _, _ string, _ map[string]string) error {
+func (s *fakePlayableStore) RecordRunnerJobsSkipped(_ context.Context, _, _, _ string, _ map[string]string) error {
 	return nil
 }
 
@@ -282,12 +282,12 @@ func (s *fakePlayableStore) StartRunCycle(context.Context, StartRunCycleRequest)
 
 func (s *fakePlayableStore) AcquireLease(context.Context, LeaseAcquireRequest) (Lease, error) {
 	one := 1
-	return Lease{Project: "glimmung", LeaseNumber: &one, Host: stringPtr("native-k8s"), State: "claimed", Metadata: map[string]any{"native_k8s": true, "native_slot_name": "slot-1"}}, nil
+	return Lease{Project: "glimmung", LeaseNumber: &one, Host: stringPtr("runner-k8s"), State: "claimed", Metadata: map[string]any{"runner_k8s": true, "runner_slot_name": "slot-1"}}, nil
 }
 
 func (s *fakePlayableStore) ReadLeaseByRef(context.Context, string, string) (Lease, error) {
 	one := 1
-	return Lease{Project: "glimmung", LeaseNumber: &one, Host: stringPtr("native-k8s"), State: "claimed", Metadata: map[string]any{"native_k8s": true, "native_slot_name": "slot-1"}}, nil
+	return Lease{Project: "glimmung", LeaseNumber: &one, Host: stringPtr("runner-k8s"), State: "claimed", Metadata: map[string]any{"runner_k8s": true, "runner_slot_name": "slot-1"}}, nil
 }
 
 func (s *fakePlayableStore) CancelLeaseByRef(context.Context, string, string) (CancelLeaseResult, error) {
@@ -300,7 +300,7 @@ func (s *fakePlayableStore) AbortRunByID(context.Context, string, string, string
 
 func TestRunPlaybookDispatchesReadyEntries(t *testing.T) {
 	store := &fakePlayableStore{}
-	handler := NewWithRuntimeClients(Settings{}, store, fakeAdminAuthenticator{user: auth.User{Sub: "admin"}}, nil, &fakeNativeLauncher{})
+	handler := NewWithRuntimeClients(Settings{}, store, fakeAdminAuthenticator{user: auth.User{Sub: "admin"}}, nil, &fakeRunLauncher{})
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/v1/playbooks/glimmung/pb-ref/run", nil)

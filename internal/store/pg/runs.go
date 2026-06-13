@@ -298,10 +298,10 @@ func (s *LeasesStore) ListAll(ctx context.Context) ([]LeaseRow, error) {
 	return s.queryLeaseRows(ctx, sql, nil)
 }
 
-// ListClaimedNative returns claimed native-k8s leases for project
-// (used by availableNativeSlot to compute "slot used by another
+// ListClaimedRunner returns claimed runner-k8s leases for project
+// (used by availableRunnerSlot to compute "slot used by another
 // active lease").
-func (s *LeasesStore) ListClaimedNative(ctx context.Context, project string) ([]LeaseRow, error) {
+func (s *LeasesStore) ListClaimedRunner(ctx context.Context, project string) ([]LeaseRow, error) {
 	if s == nil || s.pool == nil {
 		return nil, nil
 	}
@@ -310,7 +310,7 @@ func (s *LeasesStore) ListClaimedNative(ctx context.Context, project string) ([]
 		FROM leases
 		WHERE project = $1
 		  AND payload->>'state' = 'claimed'
-		  AND (payload->'metadata'->>'native_k8s')::bool = true
+		  AND (payload->'metadata'->>'runner_k8s')::bool = true
 	`
 	return s.queryLeaseRows(ctx, sql, []any{project})
 }

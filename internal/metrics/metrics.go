@@ -568,7 +568,7 @@ func RecordRunInnerJobRegistered(intent string) {
 	runInnerJobsRegisteredTotal.WithLabelValues(safeLabel(intent)).Inc()
 }
 
-// --- Native phase job terminal ----------------------------------------------
+// --- Runner phase job terminal ----------------------------------------------
 //
 // The V1 deferral named in docs/observability.md ("k8s Job apply/terminal
 // metrics") is now actionable: glimmung#621's run-execution reconciler is
@@ -587,12 +587,12 @@ func RecordRunInnerJobRegistered(intent string) {
 var runPhaseJobTerminalTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "glimmung_run_phase_job_terminal_total",
-		Help: "Native phase Jobs that reached a terminal state, labelled by conclusion (success | failure | timed_out | cancelled) and a closed-enum reason (deadline_exceeded | backoff_exceeded | pod_gone | callback_lost | job_failed | verification_failed | verification_error | timeout | cancelled | unknown | empty for success).",
+		Help: "Runner phase Jobs that reached a terminal state, labelled by conclusion (success | failure | timed_out | cancelled) and a closed-enum reason (deadline_exceeded | backoff_exceeded | pod_gone | callback_lost | job_failed | verification_failed | verification_error | timeout | cancelled | unknown | empty for success).",
 	},
 	[]string{"conclusion", "reason"},
 )
 
-// RecordRunPhaseJobTerminal counts one terminal native-job event. The
+// RecordRunPhaseJobTerminal counts one terminal runner-job event. The
 // conclusion should be one of success/failure/timed_out/cancelled; the
 // reason must already be normalised through server.NormalizeJobTerminalReason
 // so the metric label cardinality stays bounded.
@@ -600,7 +600,7 @@ func RecordRunPhaseJobTerminal(conclusion, reason string) {
 	runPhaseJobTerminalTotal.WithLabelValues(safeLabel(conclusion), safeLabel(reason)).Inc()
 }
 
-// --- Native job watcher (primary detection) ---------------------------------
+// --- Runner job watcher (primary detection) ---------------------------------
 //
 // glimmung's terminal-Job detection moved from a 30s polling
 // reconciler to a cluster-wide k8s Watch (run_watcher.go). The three
@@ -620,18 +620,18 @@ var (
 	runWatchEventsTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "glimmung_run_watch_events_total",
-			Help: "Native-Job Watch events consumed by the cluster-wide watcher. kind is outer | inner | control; action is added | modified | deleted | bookmark | list_sync | synthesized_added | synthesized_modified | synthesized_list_sync | list_error | stream_error | resource_version_gone | decode_error | unknown_type | error.",
+			Help: "Runner-Job Watch events consumed by the cluster-wide watcher. kind is outer | inner | control; action is added | modified | deleted | bookmark | list_sync | synthesized_added | synthesized_modified | synthesized_list_sync | list_error | stream_error | resource_version_gone | decode_error | unknown_type | error.",
 		},
 		[]string{"kind", "action"},
 	)
 	runWatchDisconnectedSeconds = prometheus.NewGauge(prometheus.GaugeOpts{
 		Name: "glimmung_run_watch_disconnected_seconds",
-		Help: "Seconds since the cluster-wide native-Job Watch last received any event (including bookmarks). Zero when connected. Sustained non-zero means the polling reconciler is carrying detection.",
+		Help: "Seconds since the cluster-wide runner-Job Watch last received any event (including bookmarks). Zero when connected. Sustained non-zero means the polling reconciler is carrying detection.",
 	})
 	runReconcilerCaughtTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "glimmung_run_reconciler_caught_total",
-			Help: "Native-Job terminations the periodic reconciler synthesized. Healthy systems keep this near zero; sustained non-zero is the alert signal that the Watch is dropping events.",
+			Help: "Runner-Job terminations the periodic reconciler synthesized. Healthy systems keep this near zero; sustained non-zero is the alert signal that the Watch is dropping events.",
 		},
 		[]string{"kind"},
 	)

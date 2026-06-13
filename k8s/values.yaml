@@ -13,11 +13,11 @@ serviceAccount: infra-shared
 serviceAccountClientId: "3644b9f0-2eb0-42dd-92a4-696f9a3ca090"
 replicas: 1
 
-nativeRunner:
+runner:
   namespace: glimmung-runs
-  serviceAccount: glimmung-native-runner
-  image: romainecr.azurecr.io/glimmung-native-runner:native-runner-794d0c35314b718c90d418f2699541dc9bc2a235df40721a1c1e4cf857a35b37
-  entrypoint: /app/glimmung-native-runner
+  serviceAccount: glimmung-runner
+  image: romainecr.azurecr.io/glimmung-runner:runner-794d0c35314b718c90d418f2699541dc9bc2a235df40721a1c1e4cf857a35b37
+  entrypoint: /app/glimmung-runner
   callbackBaseUrl: http://glimmung.glimmung.svc.cluster.local
   jobTtlSeconds: 259200
   namespaceRole: cluster-admin
@@ -41,8 +41,8 @@ nativeRunner:
       limits:
         cpu: 1000m
         memory: 1Gi
-  # Dedicated native runner identity from tofu/identity.tf's
-  # `glimmung_native_runner_identity_client_id` output.
+  # Dedicated runner identity from tofu/identity.tf's
+  # `glimmung_runner_identity_client_id` output.
   serviceAccountClientId: "a865aa27-e76e-4363-ab53-375712bd6db8"
 
 providerApiProxy:
@@ -241,7 +241,7 @@ observability:
     namespace: ""
     # Extra labels for Prometheus selectors (e.g. release: kube-prometheus).
     labels: {}
-  # Pod-level scrape annotations for native Prometheus discovery without
+  # Pod-level scrape annotations for runner Prometheus discovery without
   # the Operator. Independent of serviceMonitor — turn either or both on.
   scrapeAnnotations:
     enabled: false

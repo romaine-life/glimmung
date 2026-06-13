@@ -26,11 +26,11 @@ export type GlimmungConfig = {
   // grafana_loki_datasource is the Loki datasource name (or UID) Explore
   // links should target.
   grafana_loki_datasource?: string;
-  // native_runner_namespace is the kubernetes namespace native phase Jobs
-  // run in (settings.NativeRunnerNamespace on the server). Surfacing it
+  // runner_namespace is the kubernetes namespace runner phase Jobs
+  // run in (settings.RunnerNamespace on the server). Surfacing it
   // here lets the UI build {namespace="...",pod="..."} LogQL without
   // duplicating the constant.
-  native_runner_namespace?: string;
+  runner_namespace?: string;
   agent_runtime?: AgentRuntimeConfig;
 };
 
@@ -53,7 +53,7 @@ export function initAuth(): Promise<void> {
       tank_operator_base_url: "https://tank.mock.local",
       grafana_base_url: "https://grafana.mock.local",
       grafana_loki_datasource: "loki",
-      native_runner_namespace: "glimmung-runs",
+      runner_namespace: "glimmung-runs",
       agent_runtime: mockSnapshot.agent_runtime,
     };
     const ms = mockAccount();

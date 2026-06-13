@@ -49,7 +49,7 @@ import {
 } from "./workflowGraphModel";
 import { resolveProjectWorkflow } from "./workflowLookup";
 
-const NATIVE_EVENT_PAGE_LIMIT = 200;
+const RUNNER_EVENT_PAGE_LIMIT = 200;
 const MARKDOWN_PLUGINS = [remarkGfm];
 
 type IssueDetail = {
@@ -289,7 +289,7 @@ type RunProjectionSignal = {
   failure_reason?: string | null;
 };
 
-type NativeRunEvent = {
+type RunnerEvent = {
   project: string;
   run_ref: string;
   attempt_index: number;
@@ -304,16 +304,16 @@ type NativeRunEvent = {
   created_at: string;
 };
 
-type NativeRunEventsResponse = {
+type RunnerEventsResponse = {
   project: string;
   run_ref: string;
   attempt_index: number | null;
   job_id: string | null;
-  events: NativeRunEvent[];
+  events: RunnerEvent[];
   archive_url: string | null;
 };
 
-type NativeLogViewMode = "transcript" | "raw";
+type RunnerLogViewMode = "transcript" | "raw";
 type AgentTranscriptFilter = "all" | "assistant";
 
 type AgentTranscriptEntry = {
@@ -403,17 +403,17 @@ type WorkflowRecyclePolicy = {
 };
 
 
-type NativeAttemptJob = {
+type RunnerAttemptJob = {
   job_id: string;
   name?: string | null;
   state?: string | null;
   started_at?: string | null;
   completed_at?: string | null;
   cost_usd?: number | null;
-  steps: NativeAttemptStep[];
+  steps: RunnerAttemptStep[];
 };
 
-type NativeAttemptStep = {
+type RunnerAttemptStep = {
   slug: string;
   title?: string | null;
   state?: string | null;
@@ -427,10 +427,10 @@ type NativeAttemptStep = {
   dynamic_group?: StepDynamicGroup | null;
 };
 
-type NativeStepRef = {
+type RunnerStepRef = {
   key: string;
-  job: NativeAttemptJob;
-  step: NativeAttemptStep;
+  job: RunnerAttemptJob;
+  step: RunnerAttemptStep;
 };
 
 export type DispatchState =
@@ -1276,7 +1276,7 @@ export function RunViewer({
   if (!graphAvailable) {
     return (
       <div className="empty">
-        Run details aren't available for native issues yet.
+        Run details aren't available for runner issues yet.
       </div>
     );
   }
@@ -1463,29 +1463,29 @@ function PipelineDag({
       status: { cls: "", text: "not started" },
       jobLabel: graphPhase.name,
     };
-    const nativeJobs = nativeAttemptJobs(rollup.latest.metadata.jobs);
+    const runnerJobs = runnerAttemptJobs(rollup.latest.metadata.jobs);
     const plannedJobs = graphPhase.jobs && graphPhase.jobs.length > 0
       ? graphPhase.jobs
       : [{ id: graphPhase.name, name: graphPhase.name }];
-    const nativeByID = new Map(nativeJobs.map((job) => [job.job_id, job]));
+    const runnerByID = new Map(runnerJobs.map((job) => [job.job_id, job]));
     const plannedIDs = new Set(plannedJobs.map((job) => job.id));
     const jobNodes = [
       ...plannedJobs.map((job) => {
-        const native = nativeByID.get(job.id);
+        const runnerJob = runnerByID.get(job.id);
         return {
           id: job.id,
-          label: native?.name || job.name || job.id,
-          state: native?.state || rollup.status.text,
-          cls: native ? nativeStatePill(native.state || "") : rollup.status.cls,
+          label: runnerJob?.name || job.name || job.id,
+          state: runnerJob?.state || rollup.status.text,
+          cls: runnerJob ? runnerStatePill(runnerJob.state || "") : rollup.status.cls,
         };
       }),
-      ...nativeJobs
+      ...runnerJobs
         .filter((job) => !plannedIDs.has(job.job_id))
         .map((job) => ({
           id: job.job_id,
           label: job.name || job.job_id,
           state: job.state || rollup.status.text,
-          cls: nativeStatePill(job.state || ""),
+          cls: runnerStatePill(job.state || ""),
         })),
     ];
     if (jobNodes.length > 1) {
@@ -1559,7 +1559,7 @@ function phaseNodesForRun(graph: IssueGraph, run: GraphNode): PhaseRollup[] {
   const out: PhaseRollup[] = [];
   for (const [phaseName, arr] of byPhase) {
     const latest = arr[arr.length - 1];
-    const jobs = nativeAttemptJobs(latest.metadata.jobs);
+    const jobs = runnerAttemptJobs(latest.metadata.jobs);
     const jobLabel = jobs.length > 1
       ? `${jobs.length} jobs`
       : jobs[0]?.name || jobs[0]?.job_id || phaseName;
@@ -1585,19 +1585,19 @@ function phaseStatus(attempt: GraphNode): { cls: string; text: string } {
   const conclusion = stringOrNull(meta.conclusion);
   const verification = isRecord(meta.verification) ? meta.verification : null;
   const verStatus = verification ? stringOrNull(verification.status) : null;
-  const nativeJobs = nativeAttemptJobs(meta.jobs);
-  const nativeRunning = nativeJobs.some((j) => j.state === "active" || j.steps.some((s) => s.state === "active"));
-  const nativeFailed = nativeJobs.some((j) => j.state === "failed" || j.steps.some((s) => s.state === "failed"));
-  const nativeSucceeded = nativeJobs.length > 0 && nativeJobs.every((j) => j.state === "succeeded" || j.state === "skipped");
+  const runnerJobs = runnerAttemptJobs(meta.jobs);
+  const runnerning = runnerJobs.some((j) => j.state === "active" || j.steps.some((s) => s.state === "active"));
+  const runnerFailed = runnerJobs.some((j) => j.state === "failed" || j.steps.some((s) => s.state === "failed"));
+  const runnerSucceeded = runnerJobs.length > 0 && runnerJobs.every((j) => j.state === "succeeded" || j.state === "skipped");
   if (!completed) {
-    if (nativeRunning) {
+    if (runnerning) {
       return { cls: "busy", text: "running" };
     }
     if (verStatus === "pass") return { cls: "free", text: "pass" };
     if (verStatus === "fail") return { cls: "drain", text: "fail" };
     if (verStatus === "error") return { cls: "drain", text: "error" };
-    if (nativeFailed) return { cls: "drain", text: "failed" };
-    if (nativeSucceeded) return { cls: "free", text: "pass" };
+    if (runnerFailed) return { cls: "drain", text: "failed" };
+    if (runnerSucceeded) return { cls: "free", text: "pass" };
     return { cls: "pending", text: "dispatching" };
   }
   // Verification status is the authoritative verdict on a verify phase
@@ -1996,7 +1996,7 @@ function RunsPane({
   if (!graphAvailable) {
     return (
       <div className="empty">
-        Run history isn't available for native issues yet.
+        Run history isn't available for runner issues yet.
       </div>
     );
   }
@@ -2117,7 +2117,7 @@ function RunsPane({
                   </button>
                 </td>
                 <td className="mono dim">{r.started_at ? formatTime(r.started_at) : "—"}</td>
-                <td className="mono dim">{nativeDurationLabel(r.state ?? null, r.started_at ?? null, r.completed_at ?? null) ?? "—"}</td>
+                <td className="mono dim">{runnerDurationLabel(r.state ?? null, r.started_at ?? null, r.completed_at ?? null) ?? "—"}</td>
                 <td className="mono"><span className="dim">—</span></td>
                 <td className="mono">{Number.isFinite(cost) ? `$${cost.toFixed(4)}` : "—"}</td>
                 <td className="mono dim">—</td>
@@ -2172,7 +2172,7 @@ function RunsPane({
                   </button>
                 </td>
                 <td className="mono dim">{r.timestamp ? formatTime(r.timestamp) : "—"}</td>
-                <td className="mono dim">{nativeDurationLabel(r.state ?? null, r.timestamp ?? null, completedAt) ?? "—"}</td>
+                <td className="mono dim">{runnerDurationLabel(r.state ?? null, r.timestamp ?? null, completedAt) ?? "—"}</td>
                 <td className="mono">
                   {lineage.kicker ? (
                     <RunRefLink graph={graph} runId={lineage.kicker} onSelectRun={onSelectRun} />
@@ -2452,12 +2452,12 @@ function ProjectionInspector({
 }) {
   const latestAttempt = phase.attempts[phase.attempts.length - 1] ?? null;
   const selectedJob = job ?? phase.jobs[0] ?? null;
-  const nativeJob = selectedJob ? projectionJobToNativeJob(selectedJob) : null;
+  const runnerJob = selectedJob ? projectionJobToRunnerJob(selectedJob) : null;
   const runNumber = run.run_display_number ?? (run.run_number ? `${run.run_number}.${run.run_cycle_number ?? 1}` : null);
   const dispatchFailureDetail = projectionDispatchFailureDetail(run, phase, selectedJob);
   const selectedJobCost = selectedJob?.cost_usd ?? null;
   const selectedJobDuration = selectedJob
-    ? nativeDurationLabel(selectedJob.state ?? null, selectedJob.started_at ?? null, selectedJob.completed_at ?? null)
+    ? runnerDurationLabel(selectedJob.state ?? null, selectedJob.started_at ?? null, selectedJob.completed_at ?? null)
     : null;
   const selectedEvidence = projectionEvidenceForSelection(run.evidence ?? [], phase, latestAttempt, step);
   const collectedEvidence = step ? [] : projectionEvidenceForJob(run.evidence ?? [], phase, latestAttempt);
@@ -2543,16 +2543,16 @@ function ProjectionInspector({
           <span className="mono">{dispatchFailureDetail}</span>
         </div>
       )}
-      {selectedJob && nativeJob ? (
+      {selectedJob && runnerJob ? (
         latestAttempt && issueNumber !== null && runNumber ? (
           <>
-            <NativeJobInspector
+            <RunnerJobInspector
               project={project}
               runId={run.run_ref}
               issueNumber={issueNumber}
               runNumber={runNumber}
               attemptIndex={latestAttempt.attempt_index}
-              jobs={[nativeJob]}
+              jobs={[runnerJob]}
               archiveUrl={latestAttempt.log_archive_url ?? null}
               live={selectedJob.state === "active" || selectedJob.state === "dispatching"}
               selectedJobId={selectedJob.id}
@@ -2563,14 +2563,14 @@ function ProjectionInspector({
             />
           </>
         ) : (
-          <PlannedNativeJobInspector
-            job={nativeJob}
+          <PlannedRunnerJobInspector
+            job={runnerJob}
             selectedStepSlug={step?.slug ?? null}
             onSelectStep={onSelectStep}
           />
         )
       ) : (
-        <div className="native-log-panel dim mono">No job logs are available for this selection.</div>
+        <div className="runner-log-panel dim mono">No job logs are available for this selection.</div>
       )}
     </div>
   );
@@ -2652,7 +2652,7 @@ function InnerJobsRow({
                     ij.namespace,
                   );
                 const status = innerJobDisplayStatus(ij, job);
-                const duration = nativeDurationLabel(ij.state ?? "unknown", ij.registered_at, ij.completed_at ?? null);
+                const duration = runnerDurationLabel(ij.state ?? "unknown", ij.registered_at, ij.completed_at ?? null);
                 const stepLabel = innerJobStepLabel(ij.parent_step_slug ?? null);
                 const agentLabel = innerJobAgentLabel(ij);
                 return (
@@ -2779,7 +2779,7 @@ function longestInnerJob(innerJobs: RunProjectionInnerJob[]): string | null {
 }
 
 function innerJobShortDuration(innerJob: RunProjectionInnerJob): string | null {
-  return nativeDurationLabel(innerJob.state ?? "unknown", innerJob.registered_at, innerJob.completed_at ?? null)?.replace(/^ran\s+/, "") ?? null;
+  return runnerDurationLabel(innerJob.state ?? "unknown", innerJob.registered_at, innerJob.completed_at ?? null)?.replace(/^ran\s+/, "") ?? null;
 }
 
 function innerJobAgentLabel(innerJob: RunProjectionInnerJob): string {
@@ -2848,7 +2848,7 @@ function terminalObservationDisplay(obs: RunTerminalObservation): string {
   return parts.join(" ");
 }
 
-function projectionJobToNativeJob(job: RunProjectionPhase["jobs"][number]): NativeAttemptJob {
+function projectionJobToRunnerJob(job: RunProjectionPhase["jobs"][number]): RunnerAttemptJob {
   return {
     job_id: job.id,
     name: job.name,
@@ -2871,39 +2871,39 @@ function projectionJobToNativeJob(job: RunProjectionPhase["jobs"][number]): Nati
   };
 }
 
-function nativeStepGroupKey(step: NativeAttemptStep): string {
+function runnerStepGroupKey(step: RunnerAttemptStep): string {
   return step.group?.trim() || "";
 }
 
-function nativeStepGroupTitle(step: NativeAttemptStep): string {
+function runnerStepGroupTitle(step: RunnerAttemptStep): string {
   return step.group_title?.trim() || step.group?.trim() || "steps";
 }
 
-function renderNativeStepGroupHeader(
-  stepRefs: NativeStepRef[],
+function renderRunnerStepGroupHeader(
+  stepRefs: RunnerStepRef[],
   index: number,
 ): string | null {
   const current = stepRefs[index];
-  const group = nativeStepGroupKey(current.step);
+  const group = runnerStepGroupKey(current.step);
   if (!group) return null;
   const previous = stepRefs[index - 1];
   if (
     previous
     && previous.job.job_id === current.job.job_id
-    && nativeStepGroupKey(previous.step) === group
+    && runnerStepGroupKey(previous.step) === group
   ) {
     return null;
   }
-  return nativeStepGroupTitle(current.step);
+  return runnerStepGroupTitle(current.step);
 }
 
-function nativeStepGroupCount(stepRefs: NativeStepRef[], index: number): number {
+function runnerStepGroupCount(stepRefs: RunnerStepRef[], index: number): number {
   const current = stepRefs[index];
-  const group = nativeStepGroupKey(current.step);
+  const group = runnerStepGroupKey(current.step);
   if (!group) return 1;
   let count = 0;
   for (const ref of stepRefs) {
-    if (ref.job.job_id === current.job.job_id && nativeStepGroupKey(ref.step) === group) {
+    if (ref.job.job_id === current.job.job_id && runnerStepGroupKey(ref.step) === group) {
       count++;
     }
   }
@@ -2912,17 +2912,17 @@ function nativeStepGroupCount(stepRefs: NativeStepRef[], index: number): number 
 
 // Aggregate state for a step group's header rail: red if any step failed,
 // blue while any step is active, green once every step has finished
-// successfully, grey otherwise (not yet run). Mirrors nativeStepRowClass so
+// successfully, grey otherwise (not yet run). Mirrors runnerStepRowClass so
 // group headers read at a glance the same way their rows do.
-function nativeStepGroupRowClass(stepRefs: NativeStepRef[], index: number): string {
+function runnerStepGroupRowClass(stepRefs: RunnerStepRef[], index: number): string {
   const current = stepRefs[index];
-  const group = nativeStepGroupKey(current.step);
+  const group = runnerStepGroupKey(current.step);
   if (!group) return "";
   let sawSucceeded = false;
   let sawUnfinished = false;
   for (const ref of stepRefs) {
     if (ref.job.job_id !== current.job.job_id) continue;
-    if (nativeStepGroupKey(ref.step) !== group) continue;
+    if (runnerStepGroupKey(ref.step) !== group) continue;
     const state = ref.step.state ?? "";
     if (state === "failed" || state === "aborted") return "failed";
     if (state === "active") return "active";
@@ -2933,10 +2933,10 @@ function nativeStepGroupRowClass(stepRefs: NativeStepRef[], index: number): stri
 }
 
 // Scoped keys (job:group) of every collapsible step group, for collapse-all.
-function nativeAllStepGroupKeys(stepRefs: NativeStepRef[]): string[] {
+function runnerAllStepGroupKeys(stepRefs: RunnerStepRef[]): string[] {
   const keys = new Set<string>();
   for (const ref of stepRefs) {
-    const groupKey = nativeStepGroupKey(ref.step);
+    const groupKey = runnerStepGroupKey(ref.step);
     if (groupKey) keys.add(`${ref.job.job_id}:${groupKey}`);
   }
   return [...keys];
@@ -3324,7 +3324,7 @@ function TouchpointTab({
   if (!graphAvailable) {
     return (
       <div className="empty">
-        Touchpoint evidence isn't available for native issues yet.
+        Touchpoint evidence isn't available for runner issues yet.
       </div>
     );
   }
@@ -3860,21 +3860,21 @@ function AttemptCard({
   const phaseKind = stringOrNull(meta.phase_kind);
   const attemptIndex = numberOrNull(meta.attempt_index);
   const logArchiveUrl = stringOrNull(meta.log_archive_url);
-  const nativeJobs = nativeAttemptJobs(meta.jobs);
+  const runnerJobs = runnerAttemptJobs(meta.jobs);
 
-  const nativeRunning = nativeJobs.some((j) => j.state === "active" || j.steps.some((s) => s.state === "active"));
-  const nativeFailed = nativeJobs.some((j) => j.state === "failed" || j.steps.some((s) => s.state === "failed"));
-  const nativeSucceeded = nativeJobs.length > 0 && nativeJobs.every((j) => j.state === "succeeded" || j.state === "skipped");
+  const runnerning = runnerJobs.some((j) => j.state === "active" || j.steps.some((s) => s.state === "active"));
+  const runnerFailed = runnerJobs.some((j) => j.state === "failed" || j.steps.some((s) => s.state === "failed"));
+  const runnerSucceeded = runnerJobs.length > 0 && runnerJobs.every((j) => j.state === "succeeded" || j.state === "skipped");
 
   // Pre-start progression:
-  //   no completed_at + no active native step -> dispatching
-  //   active native step                      -> running
-  //   completed_at or terminal native job     -> terminal
-  // The native runner can leave completed_at unset if a callback failed;
+  //   no completed_at + no active runner step -> dispatching
+  //   active runner step                      -> running
+  //   completed_at or terminal runner job     -> terminal
+  // The runner can leave completed_at unset if a callback failed;
   // do not keep showing those terminal jobs as active after the run aborts.
-  const nativeTerminal = nativeFailed || nativeSucceeded;
-  const running = !completedAt && !nativeTerminal && nativeRunning;
-  const dispatching = !completedAt && !nativeTerminal && !running;
+  const runnerTerminal = runnerFailed || runnerSucceeded;
+  const running = !completedAt && !runnerTerminal && runnerning;
+  const dispatching = !completedAt && !runnerTerminal && !running;
   const elapsedMs = dispatchedAt && running ? now() - parseTs(dispatchedAt) : null;
   const stuckDispatching =
     dispatching && elapsedMs !== null && elapsedMs > STUCK_DISPATCHING_MS;
@@ -3892,8 +3892,8 @@ function AttemptCard({
     if (verificationStatus === "pass") return { cls: "free", text: "pass" };
     if (verificationStatus === "fail") return { cls: "drain", text: "fail" };
     if (verificationStatus === "error") return { cls: "drain", text: "error" };
-    if (nativeFailed) return { cls: "drain", text: "failed" };
-    if (nativeSucceeded) return { cls: "free", text: "success" };
+    if (runnerFailed) return { cls: "drain", text: "failed" };
+    if (runnerSucceeded) return { cls: "free", text: "success" };
     if (conclusion === "success") return { cls: "free", text: "success" };
     if (conclusion === "cancelled") return { cls: "drain", text: "cancelled" };
     if (conclusion) return { cls: "drain", text: conclusion };
@@ -3913,7 +3913,7 @@ function AttemptCard({
         <span className="dim mono">{phase}</span>
         {elapsedLabel && <span className="dim mono">{elapsedLabel}</span>}
         {stuckDispatching && (
-          <span className="pill drain" title="No native job activity recorded after dispatch.">
+          <span className="pill drain" title="No runner job activity recorded after dispatch.">
             stuck
           </span>
         )}
@@ -3992,20 +3992,20 @@ function AttemptCard({
         </ul>
       )}
       {phaseKind === "k8s_job" && runIdFromAttempt && attemptIndex !== null && (
-        <NativeJobInspector
+        <RunnerJobInspector
           project={project}
           runId={runIdFromAttempt}
           attemptIndex={attemptIndex}
-          jobs={nativeJobs}
+          jobs={runnerJobs}
           archiveUrl={logArchiveUrl}
-          live={running && nativeRunning}
+          live={running && runnerning}
         />
       )}
     </div>
   );
 }
 
-function NativeJobInspector({
+function RunnerJobInspector({
   project,
   runId,
   issueNumber = null,
@@ -4025,7 +4025,7 @@ function NativeJobInspector({
   issueNumber?: number | null;
   runNumber?: string | null;
   attemptIndex: number;
-  jobs: NativeAttemptJob[];
+  jobs: RunnerAttemptJob[];
   archiveUrl: string | null;
   live: boolean;
   selectedJobId?: string | null;
@@ -4034,7 +4034,7 @@ function NativeJobInspector({
   collectedEvidence?: RunProjectionEvidence[];
   onSelectStep?: (jobId: string, stepSlug: string) => void;
 }) {
-  const [logs, setLogs] = useState<NativeRunEventsResponse | null>(null);
+  const [logs, setLogs] = useState<RunnerEventsResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loadingMinHeight, setLoadingMinHeight] = useState<number | null>(null);
   const inspectorElementRef = useRef<HTMLDivElement | null>(null);
@@ -4043,30 +4043,30 @@ function NativeJobInspector({
     () => selectedJobId ? jobs.filter((job) => job.job_id === selectedJobId) : jobs,
     [jobs, selectedJobId],
   );
-  const stepRefs = useMemo(() => nativeStepRefs(scopedJobs), [scopedJobs]);
+  const stepRefs = useMemo(() => runnerStepRefs(scopedJobs), [scopedJobs]);
   const defaultSelection = useMemo(
     () => selectedStepSlug
-      ? stepRefs.find((step) => step.step.slug === selectedStepSlug)?.key ?? preferredNativeStepKey(stepRefs)
+      ? stepRefs.find((step) => step.step.slug === selectedStepSlug)?.key ?? preferredRunnerStepKey(stepRefs)
       : null,
     [selectedStepSlug, stepRefs],
   );
   const [selectedKey, setSelectedKey] = useState<string | null>(defaultSelection);
   const [selectedGroupKey, setSelectedGroupKey] = useState<string | null>(null);
   const [collapsedStepGroups, setCollapsedStepGroups] = useState<Set<string>>(() => new Set());
-  const [viewMode, setViewMode] = useState<NativeLogViewMode>("transcript");
+  const [viewMode, setViewMode] = useState<RunnerLogViewMode>("transcript");
   const [transcriptFilter, setTranscriptFilter] = useState<AgentTranscriptFilter>("all");
   const [pageCursors, setPageCursors] = useState<number[]>([]);
   const pageAfterSeq = pageCursors[pageCursors.length - 1] ?? null;
   const selected = selectedKey ? stepRefs.find((step) => step.key === selectedKey) ?? null : null;
   const selectedGroup = selectedGroupKey
-    ? stepRefs.find(({ job, step }) => `${job.job_id}:${nativeStepGroupKey(step)}` === selectedGroupKey) ?? null
+    ? stepRefs.find(({ job, step }) => `${job.job_id}:${runnerStepGroupKey(step)}` === selectedGroupKey) ?? null
     : null;
-  const jobEvidence = evidenceWithNativeGroupVerdicts(collectedEvidence, stepRefs);
+  const jobEvidence = evidenceWithRunnerGroupVerdicts(collectedEvidence, stepRefs);
   const selectedGroupEvidence = selectedGroup
-    ? evidenceForNativeStepGroup(jobEvidence, selectedGroup.step)
+    ? evidenceForRunnerStepGroup(jobEvidence, selectedGroup.step)
     : [];
   const selectedStepEvidence = selected
-    ? evidenceWithNativeGroupVerdicts(selectedEvidence, stepRefs)
+    ? evidenceWithRunnerGroupVerdicts(selectedEvidence, stepRefs)
     : selectedEvidence;
   const selectedStepSlugForEvents = selected?.step.slug ?? null;
 
@@ -4090,8 +4090,8 @@ function NativeJobInspector({
     setLogs(null);
     setError(null);
     const base = runNumber && issueNumber !== null
-      ? nativeRunApiBaseForNumber(project, issueNumber, runNumber)
-      : nativeRunApiBase(project, runId);
+      ? runnerApiBaseForNumber(project, issueNumber, runNumber)
+      : runnerApiBase(project, runId);
     if (!base) {
       setError("events unavailable for malformed run ref");
       return () => {
@@ -4101,12 +4101,12 @@ function NativeJobInspector({
     const jobParam = selectedJobId ? `&job_id=${encodeURIComponent(selectedJobId)}` : "";
     const stepParam = selectedStepSlugForEvents ? `&step_slug=${encodeURIComponent(selectedStepSlugForEvents)}` : "";
     const cursorParam = pageAfterSeq !== null ? `&after_seq=${pageAfterSeq}` : "";
-    const url = `${base}/events?attempt_index=${attemptIndex}&limit=${NATIVE_EVENT_PAGE_LIMIT}${jobParam}${stepParam}${cursorParam}`;
+    const url = `${base}/events?attempt_index=${attemptIndex}&limit=${RUNNER_EVENT_PAGE_LIMIT}${jobParam}${stepParam}${cursorParam}`;
     const load = () => {
       fetch(url)
       .then(async (res) => {
         if (!res.ok) throw new Error(`events ${res.status}`);
-        const body = await res.json() as NativeRunEventsResponse;
+        const body = await res.json() as RunnerEventsResponse;
         if (!cancelled) {
           setLogs(body);
           setLoadingMinHeight(null);
@@ -4133,7 +4133,7 @@ function NativeJobInspector({
 
   if (error) {
     return (
-      <div className="native-log-panel">
+      <div className="runner-log-panel">
         <span className="pill drain">log error</span>{" "}
         <span className="mono dim">{error}</span>
       </div>
@@ -4142,48 +4142,48 @@ function NativeJobInspector({
   if (!logs) {
     return (
       <div
-        className="native-log-panel dim mono"
+        className="runner-log-panel dim mono"
         style={loadingMinHeight ? { minHeight: `${loadingMinHeight}px` } : undefined}
       >
-        loading native events…
+        loading runner events…
       </div>
     );
   }
   const events = logs.events;
   const lastEventSeq = events[events.length - 1]?.seq ?? null;
   const hasPreviousBatch = pageCursors.length > 0;
-  const hasNextBatch = events.length === NATIVE_EVENT_PAGE_LIMIT && lastEventSeq !== null;
+  const hasNextBatch = events.length === RUNNER_EVENT_PAGE_LIMIT && lastEventSeq !== null;
   const selectedEvents = selected
     ? events.filter((event) => (
         event.job_id === selected.job.job_id
         && (event.step_slug === selected.step.slug || (event.event === "log" && !event.step_slug))
       ))
     : [];
-  const transcriptEntries = selected && nativeSelectionUsesTranscript(selected.job, selected.step)
+  const transcriptEntries = selected && runnerSelectionUsesTranscript(selected.job, selected.step)
     ? agentTranscriptEntries(selectedEvents)
     : [];
-  const transcriptAvailable = Boolean(selected && nativeSelectionUsesTranscript(selected.job, selected.step) && transcriptEntries.length > 0);
+  const transcriptAvailable = Boolean(selected && runnerSelectionUsesTranscript(selected.job, selected.step) && transcriptEntries.length > 0);
   const visibleTranscriptEntries = transcriptFilter === "assistant"
     ? transcriptEntries.filter((entry) => entry.kind === "assistant")
     : transcriptEntries;
-  const activeViewMode: NativeLogViewMode = transcriptAvailable ? viewMode : "raw";
-  const stepGroupKeys = nativeAllStepGroupKeys(stepRefs);
+  const activeViewMode: RunnerLogViewMode = transcriptAvailable ? viewMode : "raw";
+  const stepGroupKeys = runnerAllStepGroupKeys(stepRefs);
   const allGroupsCollapsed =
     stepGroupKeys.length > 0 && stepGroupKeys.every((key) => collapsedStepGroups.has(key));
   return (
-    <div className="native-inspector" ref={inspectorElementRef}>
-      <div className="native-inspector-head">
+    <div className="runner-inspector" ref={inspectorElementRef}>
+      <div className="runner-inspector-head">
         <div>
-          <span className="key">native job inspector</span>
+          <span className="key">runner job inspector</span>
           <span className="mono dim">
             {events.length} event{events.length === 1 ? "" : "s"}
             {" · "}batch {pageCursors.length + 1}
             {live ? " · live" : ""}
           </span>
         </div>
-        <div className="native-inspector-actions">
+        <div className="runner-inspector-actions">
           {stepGroupKeys.length > 0 && (
-            <div className="native-page-controls">
+            <div className="runner-page-controls">
               <button
                 type="button"
                 aria-pressed={allGroupsCollapsed}
@@ -4195,7 +4195,7 @@ function NativeJobInspector({
               </button>
             </div>
           )}
-          <div className="native-page-controls" role="group" aria-label="native event batches">
+          <div className="runner-page-controls" role="group" aria-label="runner event batches">
             <button
               type="button"
               disabled={!hasPreviousBatch}
@@ -4216,7 +4216,7 @@ function NativeJobInspector({
             </button>
           </div>
           {transcriptAvailable && (
-            <div className="native-view-toggle" role="group" aria-label="native log view">
+            <div className="runner-view-toggle" role="group" aria-label="runner log view">
               <button
                 type="button"
                 aria-pressed={activeViewMode === "transcript"}
@@ -4234,7 +4234,7 @@ function NativeJobInspector({
             </div>
           )}
           {transcriptAvailable && activeViewMode === "transcript" && (
-            <div className="native-view-toggle" role="group" aria-label="transcript filter">
+            <div className="runner-view-toggle" role="group" aria-label="transcript filter">
               <button
                 type="button"
                 aria-pressed={transcriptFilter === "all"}
@@ -4263,19 +4263,19 @@ function NativeJobInspector({
           )}
         </div>
       </div>
-      <div className="step-log-layout native-step-log-layout">
-        <aside className="step-list" aria-label="native job steps">
+      <div className="step-log-layout runner-step-log-layout">
+        <aside className="step-list" aria-label="runner job steps">
           {stepRefs.length === 0 ? (
-            <div className="native-step-empty mono dim">no native steps declared</div>
+            <div className="runner-step-empty mono dim">no runner steps declared</div>
           ) : (
             stepRefs.map(({ key, job, step }, index) => {
-              const groupTitle = renderNativeStepGroupHeader(stepRefs, index);
-              const groupKey = nativeStepGroupKey(step);
+              const groupTitle = renderRunnerStepGroupHeader(stepRefs, index);
+              const groupKey = runnerStepGroupKey(step);
               const scopedGroupKey = groupKey ? `${job.job_id}:${groupKey}` : "";
               const groupCollapsed = scopedGroupKey ? collapsedStepGroups.has(scopedGroupKey) : false;
-              const groupStepCount = groupTitle ? nativeStepGroupCount(stepRefs, index) : 0;
+              const groupStepCount = groupTitle ? runnerStepGroupCount(stepRefs, index) : 0;
               const groupedClass = groupKey ? " grouped" : "";
-              const jobDuration = nativeDurationLabel(job.state ?? null, job.started_at ?? null, job.completed_at ?? null);
+              const jobDuration = runnerDurationLabel(job.state ?? null, job.started_at ?? null, job.completed_at ?? null);
               const groupSelected = Boolean(scopedGroupKey && selectedGroupKey === scopedGroupKey);
               const selectGroup = () => {
                 if (!scopedGroupKey) return;
@@ -4285,9 +4285,9 @@ function NativeJobInspector({
               return (
                 <Fragment key={key}>
                   {(index === 0 || stepRefs[index - 1]?.job.job_id !== job.job_id) && (
-                    <div className="native-job-label">
+                    <div className="runner-job-label">
                       <span className="mono">{job.name || job.job_id}</span>
-                      <span className={`pill ${nativeStatePill(job.state ?? "")}`}>
+                      <span className={`pill ${runnerStatePill(job.state ?? "")}`}>
                         {job.state || "not run"}
                       </span>
                       {jobDuration && <span className="mono dim">{jobDuration}</span>}
@@ -4297,7 +4297,7 @@ function NativeJobInspector({
                     </div>
                   )}
                   {groupTitle && (
-                    <div className={`step-group-row ${nativeStepGroupRowClass(stepRefs, index)}${groupSelected ? " selected" : ""}`}>
+                    <div className={`step-group-row ${runnerStepGroupRowClass(stepRefs, index)}${groupSelected ? " selected" : ""}`}>
                       <button
                         type="button"
                         className="step-group-label"
@@ -4330,19 +4330,19 @@ function NativeJobInspector({
                   {!groupCollapsed && (
                     <button
                       type="button"
-                      className={`step-row ${nativeStepRowClass(step.state ?? "")}${groupedClass}${key === selected?.key ? " selected" : ""}`}
+                      className={`step-row ${runnerStepRowClass(step.state ?? "")}${groupedClass}${key === selected?.key ? " selected" : ""}`}
                       onClick={() => {
                         setSelectedKey(key);
                         setSelectedGroupKey(null);
                         onSelectStep?.(job.job_id, step.slug);
                       }}
                     >
-                      <span>{nativeStepGlyph(step.state ?? "")}</span>
+                      <span>{runnerStepGlyph(step.state ?? "")}</span>
                       <strong>
                         {step.title || step.slug}
                       </strong>
                       <small>
-                        {nativeStepDetailLabel(step)}
+                        {runnerStepDetailLabel(step)}
                       </small>
                     </button>
                   )}
@@ -4351,25 +4351,25 @@ function NativeJobInspector({
             })
           )}
         </aside>
-        <div className="native-log-content">
+        <div className="runner-log-content">
           {selectedGroup ? (
             <>
-              <div className="native-log-placeholder mono dim">Click a step to see its logs.</div>
+              <div className="runner-log-placeholder mono dim">Click a step to see its logs.</div>
               {selectedGroupEvidence.length > 0 ? (
-                <NativeStepEvidenceStrip
+                <RunnerStepEvidenceStrip
                   evidence={selectedGroupEvidence}
                   label="Collected test evidence:"
                   ariaLabel="test set evidence"
                 />
               ) : (
-                <div className="native-log-placeholder mono dim">No collected evidence for this test set.</div>
+                <div className="runner-log-placeholder mono dim">No collected evidence for this test set.</div>
               )}
             </>
           ) : !selected ? (
             <>
-              <div className="native-log-placeholder mono dim">Click a step to see its logs.</div>
+              <div className="runner-log-placeholder mono dim">Click a step to see its logs.</div>
               {jobEvidence.length > 0 && (
-                <NativeStepEvidenceStrip
+                <RunnerStepEvidenceStrip
                   evidence={jobEvidence}
                   label="Collected test evidence:"
                   ariaLabel="collected test evidence"
@@ -4378,15 +4378,15 @@ function NativeJobInspector({
             </>
           ) : (
             <>
-              {selectedStepEvidence.length > 0 && <NativeStepEvidenceStrip evidence={selectedStepEvidence} label="Step evidence:" />}
+              {selectedStepEvidence.length > 0 && <RunnerStepEvidenceStrip evidence={selectedStepEvidence} label="Step evidence:" />}
               {activeViewMode === "transcript" ? (
             <AgentTranscriptView
               entries={visibleTranscriptEntries}
               emptyLabel={transcriptFilter === "assistant" ? "No assistant text in this batch." : "No transcript rows in this batch."}
             />
               ) : (
-            <pre className="step-terminal native-step-terminal">
-              {nativeTerminalText(selected.job, selected.step, selectedEvents)}
+            <pre className="step-terminal runner-step-terminal">
+              {runnerTerminalText(selected.job, selected.step, selectedEvents)}
             </pre>
               )}
             </>
@@ -4397,7 +4397,7 @@ function NativeJobInspector({
   );
 }
 
-function NativeStepEvidenceStrip({
+function RunnerStepEvidenceStrip({
   evidence,
   label = "Evidence:",
   ariaLabel = "step evidence",
@@ -4409,9 +4409,9 @@ function NativeStepEvidenceStrip({
   className?: string;
 }) {
   return (
-    <div className={`native-evidence-strip${className ? ` ${className}` : ""}`} aria-label={ariaLabel}>
-      <span className="key native-evidence-heading">{label}</span>
-      <div className="native-evidence-links">
+    <div className={`runner-evidence-strip${className ? ` ${className}` : ""}`} aria-label={ariaLabel}>
+      <span className="key runner-evidence-heading">{label}</span>
+      <div className="runner-evidence-links">
         {evidence.map((item) => {
           const href = evidenceHref(item);
           const verdict = evidenceVerdict(item);
@@ -4424,16 +4424,16 @@ function NativeStepEvidenceStrip({
             <img src={href} alt={item.label} loading="lazy" />
           ) : null;
           return href ? (
-            <div key={`${item.kind}:${item.ref}`} className={`native-evidence-item${verdict ? ` ${verdict.className}` : ""}`}>
-              {verdict && <span className="native-evidence-verdict" title={verdict.title}>{verdict.mark}</span>}
+            <div key={`${item.kind}:${item.ref}`} className={`runner-evidence-item${verdict ? ` ${verdict.className}` : ""}`}>
+              {verdict && <span className="runner-evidence-verdict" title={verdict.title}>{verdict.mark}</span>}
               {body}
               <a className="mono" href={href} target="_blank" rel="noreferrer">
                 {label}
               </a>
             </div>
           ) : (
-            <div key={`${item.kind}:${item.ref}`} className={`native-evidence-item${verdict ? ` ${verdict.className}` : ""}`}>
-              {verdict && <span className="native-evidence-verdict" title={verdict.title}>{verdict.mark}</span>}
+            <div key={`${item.kind}:${item.ref}`} className={`runner-evidence-item${verdict ? ` ${verdict.className}` : ""}`}>
+              {verdict && <span className="runner-evidence-verdict" title={verdict.title}>{verdict.mark}</span>}
               <span className="mono">{label}</span>
             </div>
           );
@@ -4516,19 +4516,19 @@ function AgentTranscriptView({
   );
 }
 
-function PlannedNativeJobInspector({
+function PlannedRunnerJobInspector({
   job,
   selectedStepSlug = null,
   onSelectStep,
 }: {
-  job: NativeAttemptJob;
+  job: RunnerAttemptJob;
   selectedStepSlug?: string | null;
   onSelectStep?: (jobId: string, stepSlug: string) => void;
 }) {
-  const stepRefs = useMemo(() => nativeStepRefs([job]), [job]);
+  const stepRefs = useMemo(() => runnerStepRefs([job]), [job]);
   const defaultSelection = useMemo(
     () => selectedStepSlug
-      ? stepRefs.find((step) => step.step.slug === selectedStepSlug)?.key ?? preferredNativeStepKey(stepRefs)
+      ? stepRefs.find((step) => step.step.slug === selectedStepSlug)?.key ?? preferredRunnerStepKey(stepRefs)
       : null,
     [selectedStepSlug, stepRefs],
   );
@@ -4540,19 +4540,19 @@ function PlannedNativeJobInspector({
     setSelectedKey(defaultSelection);
   }, [defaultSelection]);
 
-  const stepGroupKeys = nativeAllStepGroupKeys(stepRefs);
+  const stepGroupKeys = runnerAllStepGroupKeys(stepRefs);
   const allGroupsCollapsed =
     stepGroupKeys.length > 0 && stepGroupKeys.every((key) => collapsedStepGroups.has(key));
   return (
-    <div className="native-inspector">
-      <div className="native-inspector-head">
+    <div className="runner-inspector">
+      <div className="runner-inspector-head">
         <div>
-          <span className="key">native job inspector</span>
+          <span className="key">runner job inspector</span>
           <span className="mono dim">planned</span>
         </div>
         {stepGroupKeys.length > 0 && (
-          <div className="native-inspector-actions">
-            <div className="native-page-controls">
+          <div className="runner-inspector-actions">
+            <div className="runner-page-controls">
               <button
                 type="button"
                 aria-pressed={allGroupsCollapsed}
@@ -4566,25 +4566,25 @@ function PlannedNativeJobInspector({
           </div>
         )}
       </div>
-      <div className="step-log-layout native-step-log-layout">
-        <aside className="step-list" aria-label="native job steps">
+      <div className="step-log-layout runner-step-log-layout">
+        <aside className="step-list" aria-label="runner job steps">
           {stepRefs.length === 0 ? (
-            <div className="native-step-empty mono dim">no native steps declared</div>
+            <div className="runner-step-empty mono dim">no runner steps declared</div>
           ) : (
             stepRefs.map(({ key, job: refJob, step }, index) => {
-              const groupTitle = renderNativeStepGroupHeader(stepRefs, index);
-              const groupKey = nativeStepGroupKey(step);
+              const groupTitle = renderRunnerStepGroupHeader(stepRefs, index);
+              const groupKey = runnerStepGroupKey(step);
               const scopedGroupKey = groupKey ? `${refJob.job_id}:${groupKey}` : "";
               const groupCollapsed = scopedGroupKey ? collapsedStepGroups.has(scopedGroupKey) : false;
-              const groupStepCount = groupTitle ? nativeStepGroupCount(stepRefs, index) : 0;
+              const groupStepCount = groupTitle ? runnerStepGroupCount(stepRefs, index) : 0;
               const groupedClass = groupKey ? " grouped" : "";
-              const jobDuration = nativeDurationLabel(refJob.state ?? null, refJob.started_at ?? null, refJob.completed_at ?? null);
+              const jobDuration = runnerDurationLabel(refJob.state ?? null, refJob.started_at ?? null, refJob.completed_at ?? null);
               return (
                 <Fragment key={key}>
                   {(index === 0 || stepRefs[index - 1]?.job.job_id !== refJob.job_id) && (
-                    <div className="native-job-label">
+                    <div className="runner-job-label">
                       <span className="mono">{refJob.name || refJob.job_id}</span>
-                      <span className={`pill ${nativeStatePill(refJob.state ?? "")}`}>
+                      <span className={`pill ${runnerStatePill(refJob.state ?? "")}`}>
                         {refJob.state || "not run"}
                       </span>
                       {jobDuration && <span className="mono dim">{jobDuration}</span>}
@@ -4596,7 +4596,7 @@ function PlannedNativeJobInspector({
                   {groupTitle && (
                     <button
                       type="button"
-                      className={`step-group-label ${nativeStepGroupRowClass(stepRefs, index)}`}
+                      className={`step-group-label ${runnerStepGroupRowClass(stepRefs, index)}`}
                       aria-expanded={!groupCollapsed}
                       onClick={() => {
                         if (!scopedGroupKey) return;
@@ -4615,17 +4615,17 @@ function PlannedNativeJobInspector({
                   {!groupCollapsed && (
                     <button
                       type="button"
-                      className={`step-row ${nativeStepRowClass(step.state ?? "")}${groupedClass}${key === selected?.key ? " selected" : ""}`}
+                      className={`step-row ${runnerStepRowClass(step.state ?? "")}${groupedClass}${key === selected?.key ? " selected" : ""}`}
                       onClick={() => {
                         setSelectedKey(key);
                         onSelectStep?.(refJob.job_id, step.slug);
                       }}
                     >
-                      <span>{nativeStepGlyph(step.state ?? "")}</span>
+                      <span>{runnerStepGlyph(step.state ?? "")}</span>
                       <strong>
                         {step.title || step.slug}
                       </strong>
-                      <small>{nativeStepDetailLabel(step)}</small>
+                      <small>{runnerStepDetailLabel(step)}</small>
                     </button>
                   )}
                 </Fragment>
@@ -4634,12 +4634,12 @@ function PlannedNativeJobInspector({
           )}
         </aside>
         {selected ? (
-          <pre className="step-terminal native-step-terminal">
-            {nativeTerminalText(selected.job, selected.step, [])}
+          <pre className="step-terminal runner-step-terminal">
+            {runnerTerminalText(selected.job, selected.step, [])}
           </pre>
         ) : (
-          <div className="native-log-content">
-            <div className="native-log-placeholder mono dim">Click a step to see its logs.</div>
+          <div className="runner-log-content">
+            <div className="runner-log-placeholder mono dim">Click a step to see its logs.</div>
           </div>
         )}
       </div>
@@ -4647,23 +4647,23 @@ function PlannedNativeJobInspector({
   );
 }
 
-function nativeRunApiBase(project: string, runRef: string): string | null {
+function runnerApiBase(project: string, runRef: string): string | null {
   const parsed = runRef.match(/^[^#]+#(\d+)\/runs\/(.+)$/);
   if (parsed) {
     return `/v1/projects/${encodeURIComponent(project)}` +
       `/issues/${encodeURIComponent(parsed[1])}` +
-      `/runs/${encodeURIComponent(parsed[2])}/native`;
+      `/runs/${encodeURIComponent(parsed[2])}/run`;
   }
   return null;
 }
 
-function nativeRunApiBaseForNumber(project: string, issueNumber: number, runNumber: string): string {
+function runnerApiBaseForNumber(project: string, issueNumber: number, runNumber: string): string {
   return `/v1/projects/${encodeURIComponent(project)}` +
     `/issues/${encodeURIComponent(issueNumber)}` +
-    `/runs/${encodeURIComponent(runNumber)}/native`;
+    `/runs/${encodeURIComponent(runNumber)}/run`;
 }
 
-function nativeStepRefs(jobs: NativeAttemptJob[]): NativeStepRef[] {
+function runnerStepRefs(jobs: RunnerAttemptJob[]): RunnerStepRef[] {
   return jobs.flatMap((job) => (
     job.steps.length > 0
       ? job.steps.map((step) => ({
@@ -4683,8 +4683,8 @@ function nativeStepRefs(jobs: NativeAttemptJob[]): NativeStepRef[] {
   ));
 }
 
-function preferredNativeStepKey(
-  refs: Array<{ key: string; step: NativeAttemptStep }>,
+function preferredRunnerStepKey(
+  refs: Array<{ key: string; step: RunnerAttemptStep }>,
 ): string | null {
   return (
     refs.find((ref) => ref.step.state === "active")?.key
@@ -4696,7 +4696,7 @@ function preferredNativeStepKey(
   );
 }
 
-function nativeStepRowClass(state: string): string {
+function runnerStepRowClass(state: string): string {
   if (state === "succeeded") return "done";
   if (state === "skipped" || state === "supplied") return "skipped";
   if (state === "active") return "active";
@@ -4705,7 +4705,7 @@ function nativeStepRowClass(state: string): string {
   return "pending";
 }
 
-function nativeStepGlyph(state: string): string {
+function runnerStepGlyph(state: string): string {
   if (state === "succeeded") return "✓";
   if (state === "active") return "▶";
   if (state === "aborted") return "!";
@@ -4715,15 +4715,15 @@ function nativeStepGlyph(state: string): string {
   return "·";
 }
 
-function nativeTerminalText(
-  job: NativeAttemptJob | null,
-  step: NativeAttemptStep | null,
-  events: NativeRunEvent[],
+function runnerTerminalText(
+  job: RunnerAttemptJob | null,
+  step: RunnerAttemptStep | null,
+  events: RunnerEvent[],
 ): string {
   const heading = job && step
     ? [`# ${job.name || job.job_id}`, `$ step ${step.slug}`]
-    : ["# native events"];
-  if (job && step && nativeSelectionUsesTranscript(job, step)) {
+    : ["# runner events"];
+  if (job && step && runnerSelectionUsesTranscript(job, step)) {
     heading.push("# llm step");
   }
   const stepMessage = [
@@ -4731,12 +4731,12 @@ function nativeTerminalText(
     ...(step?.reason ? [`# reason ${step.reason}`] : []),
   ];
   const lines = events.length > 0
-    ? events.map(nativeEventLine)
-    : ["No hot native events recorded for this selection."];
+    ? events.map(runnerEventLine)
+    : ["No hot runner events recorded for this selection."];
   return [...heading, ...stepMessage, "", ...lines].join("\n");
 }
 
-function nativeEventLine(event: NativeRunEvent): string {
+function runnerEventLine(event: RunnerEvent): string {
   const prefix = [
     `[${event.seq}]`,
     event.step_slug || event.job_id,
@@ -4748,7 +4748,7 @@ function nativeEventLine(event: NativeRunEvent): string {
   return `${prefix}: ${event.message}${suffix}`;
 }
 
-function agentTranscriptEntries(events: NativeRunEvent[]): AgentTranscriptEntry[] {
+function agentTranscriptEntries(events: RunnerEvent[]): AgentTranscriptEntry[] {
   const entries: AgentTranscriptEntry[] = [];
   const toolNamesById = new Map<string, string>();
   events.forEach((event) => {
@@ -4785,7 +4785,7 @@ function agentTranscriptEntries(events: NativeRunEvent[]): AgentTranscriptEntry[
 
 function appendAgentPayloadEntries(
   entries: AgentTranscriptEntry[],
-  event: NativeRunEvent,
+  event: RunnerEvent,
   payload: unknown,
   payloadIndex: number,
   toolNamesById: Map<string, string>,
@@ -5084,7 +5084,7 @@ function formatAgentJson(value: unknown): string {
   }
 }
 
-function logStreamTitle(event: NativeRunEvent): string {
+function logStreamTitle(event: RunnerEvent): string {
   const stream = stringValue(event.metadata?.stream);
   return stream ? `${stream} log` : "log";
 }
@@ -5199,9 +5199,9 @@ function evidenceForRefs(refs: string[], evidence: RunProjectionEvidence[]): Run
   return evidence.filter((item) => wanted.has(item.ref));
 }
 
-function evidenceForNativeStepGroup(
+function evidenceForRunnerStepGroup(
   evidence: RunProjectionEvidence[],
-  step: NativeAttemptStep,
+  step: RunnerAttemptStep,
 ): RunProjectionEvidence[] {
   return evidenceForStepGroup(evidence, step);
 }
@@ -5215,27 +5215,27 @@ function evidenceForStepGroup(
   return evidence.filter((item) => normalizeEvidenceMatchText(`${item.label} ${item.ref}`).includes(marker));
 }
 
-function evidenceWithNativeGroupVerdicts(
+function evidenceWithRunnerGroupVerdicts(
   evidence: RunProjectionEvidence[],
-  stepRefs: NativeStepRef[],
+  stepRefs: RunnerStepRef[],
 ): RunProjectionEvidence[] {
   if (evidence.length === 0 || stepRefs.length === 0) return evidence;
   return evidence.map((item) => {
-    const group = nativeEvidenceMatchingGroup(item, stepRefs);
+    const group = runnerEvidenceMatchingGroup(item, stepRefs);
     if (!group) return item;
-    const status = nativeStepGroupVerificationStatus(stepRefs, group.jobId, group.groupKey);
+    const status = runnerStepGroupVerificationStatus(stepRefs, group.jobId, group.groupKey);
     return status ? { ...item, verification_status: status } : item;
   });
 }
 
-function nativeEvidenceMatchingGroup(
+function runnerEvidenceMatchingGroup(
   item: RunProjectionEvidence,
-  stepRefs: NativeStepRef[],
+  stepRefs: RunnerStepRef[],
 ): { jobId: string; groupKey: string } | null {
   const text = normalizeEvidenceMatchText(`${item.label} ${item.ref}`);
   const seen = new Set<string>();
   for (const ref of stepRefs) {
-    const groupKey = nativeStepGroupKey(ref.step);
+    const groupKey = runnerStepGroupKey(ref.step);
     if (!groupKey) continue;
     const scopedKey = `${ref.job.job_id}:${groupKey}`;
     if (seen.has(scopedKey)) continue;
@@ -5248,12 +5248,12 @@ function nativeEvidenceMatchingGroup(
   return null;
 }
 
-function nativeStepGroupVerificationStatus(
-  stepRefs: NativeStepRef[],
+function runnerStepGroupVerificationStatus(
+  stepRefs: RunnerStepRef[],
   jobId: string,
   groupKey: string,
 ): string | null {
-  const grouped = stepRefs.filter((ref) => ref.job.job_id === jobId && nativeStepGroupKey(ref.step) === groupKey);
+  const grouped = stepRefs.filter((ref) => ref.job.job_id === jobId && runnerStepGroupKey(ref.step) === groupKey);
   if (grouped.length === 0) return null;
   let sawPass = false;
   let sawSkipped = false;
@@ -5301,13 +5301,13 @@ function evidenceHref(item: RunProjectionEvidence): string | null {
   return null;
 }
 
-function nativeSelectionUsesTranscript(job: NativeAttemptJob | null, step: NativeAttemptStep): boolean {
-  if (!nativeJobLooksLlm(job)) return false;
+function runnerSelectionUsesTranscript(job: RunnerAttemptJob | null, step: RunnerAttemptStep): boolean {
+  if (!runnerJobLooksLlm(job)) return false;
   const marker = `${step.slug} ${step.title ?? ""}`.toLowerCase();
   return step.slug.startsWith("run-") || marker.startsWith("run ");
 }
 
-function nativeJobLooksLlm(job: NativeAttemptJob | null): boolean {
+function runnerJobLooksLlm(job: RunnerAttemptJob | null): boolean {
   const marker = [
     job?.job_id ?? "",
     job?.name ?? "",
@@ -5493,14 +5493,14 @@ function isRecord(x: unknown): x is Record<string, unknown> {
   return typeof x === "object" && x !== null && !Array.isArray(x);
 }
 
-function nativeAttemptJobs(x: unknown): NativeAttemptJob[] {
+function runnerAttemptJobs(x: unknown): RunnerAttemptJob[] {
   if (!Array.isArray(x)) return [];
-  return x.flatMap((raw): NativeAttemptJob[] => {
+  return x.flatMap((raw): RunnerAttemptJob[] => {
     if (!isRecord(raw)) return [];
     const jobId = stringOrNull(raw.job_id) ?? stringOrNull(raw.id);
     if (!jobId) return [];
     const steps = Array.isArray(raw.steps)
-      ? raw.steps.flatMap((s): NativeAttemptStep[] => {
+      ? raw.steps.flatMap((s): RunnerAttemptStep[] => {
           if (!isRecord(s)) return [];
           const slug = stringOrNull(s.slug);
           if (!slug) return [];
@@ -5528,19 +5528,19 @@ function nativeAttemptJobs(x: unknown): NativeAttemptJob[] {
   });
 }
 
-function nativeStepDetailLabel(step: NativeAttemptStep): string {
+function runnerStepDetailLabel(step: RunnerAttemptStep): string {
   const parts: string[] = [];
   if (step.exit_code !== null && step.exit_code !== undefined) {
     parts.push(`exit ${step.exit_code}`);
   } else {
     parts.push(step.state ? formatGraphState(step.state) : "not run");
   }
-  const duration = nativeDurationLabel(step.state ?? null, step.started_at ?? null, step.completed_at ?? null);
+  const duration = runnerDurationLabel(step.state ?? null, step.started_at ?? null, step.completed_at ?? null);
   if (duration) parts.push(duration);
   return parts.join(" · ");
 }
 
-function nativeDurationLabel(state: string | null, startedAt: string | null, completedAt: string | null): string | null {
+function runnerDurationLabel(state: string | null, startedAt: string | null, completedAt: string | null): string | null {
   if (!startedAt) return null;
   const started = parseTs(startedAt);
   if (!started) return null;
@@ -5564,7 +5564,7 @@ function nativeDurationLabel(state: string | null, startedAt: string | null, com
   return null;
 }
 
-function nativeStatePill(state: string): string {
+function runnerStatePill(state: string): string {
   if (state === "succeeded") return "free";
   if (state === "active") return "busy";
   if (state === "failed" || state === "aborted") return "drain";

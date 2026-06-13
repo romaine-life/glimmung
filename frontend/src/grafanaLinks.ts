@@ -1,7 +1,7 @@
 /**
  * Grafana Explore deep-link helpers.
  *
- * Why: when a native phase Job runs, its container stdout and the kube
+ * Why: when a runner phase Job runs, its container stdout and the kube
  * events for the pod are shipped to Loki cluster-wide. The run-report UI
  * has historically had no affordance saying so — an operator (or agent)
  * staring at a stuck step had to discover the data was in Loki and
@@ -32,7 +32,7 @@ export type LokiLinkRange = {
 
 /**
  * Build an Explore URL for one pod. Returns null when the cluster
- * Grafana base URL or the native-runner namespace is not configured —
+ * Grafana base URL or the runner namespace is not configured —
  * the caller should suppress the affordance entirely in that case
  * rather than render a broken link.
  *
@@ -47,7 +47,7 @@ export function lokiExploreUrl(
 ): string | null {
   if (!config) return null;
   const base = (config.grafana_base_url ?? "").replace(/\/+$/, "");
-  const namespace = (namespaceOverride ?? config.native_runner_namespace ?? "").trim();
+  const namespace = (namespaceOverride ?? config.runner_namespace ?? "").trim();
   const datasource = (config.grafana_loki_datasource ?? "loki").trim();
   const pod = (k8sJobName ?? "").trim();
   if (!base || !namespace || !pod) return null;

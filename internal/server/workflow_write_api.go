@@ -16,7 +16,7 @@ import (
 )
 
 const (
-	workflowKindNativeK8sJob = "k8s_job"
+	workflowKindRunnerK8sJob = "k8s_job"
 
 	PhaseRunOnSuccess = "success"
 	PhaseRunOnFailure = "failure"
@@ -42,20 +42,20 @@ const (
 	VerificationShapeDynamicStepGroup   = "dynamic_step_group"
 	DefaultVerificationBoundedCaseCount = VerificationCaseJobCount
 
-	// MinNativePhaseJobTimeoutSeconds is the floor for a phase job's
+	// MinRunnerPhaseJobTimeoutSeconds is the floor for a phase job's
 	// activeDeadlineSeconds. Below this the kubelet grace period
 	// (30s default) doesn't leave enough room for the runner's SIGTERM
 	// handler (glimmung#624) to deliver a /completed callback before
 	// SIGKILL, so the run loses its terminal signal even when the
 	// timeout trips for a benign reason. 60s = 30s grace + 30s margin
 	// for the actual HTTP write + child reap.
-	MinNativePhaseJobTimeoutSeconds = 60
+	MinRunnerPhaseJobTimeoutSeconds = 60
 
-	// MaxNativePhaseJobTimeoutSeconds is the ceiling. Six hours is
+	// MaxRunnerPhaseJobTimeoutSeconds is the ceiling. Six hours is
 	// already well past the longest agent-run timeout we ship; values
 	// above it are almost certainly a typo (e.g. milliseconds instead
 	// of seconds inverted).
-	MaxNativePhaseJobTimeoutSeconds = 6 * 60 * 60
+	MaxRunnerPhaseJobTimeoutSeconds = 6 * 60 * 60
 )
 
 // validPhaseKinds is the closed set of executor kinds Glimmung dispatches.
@@ -63,7 +63,7 @@ const (
 // k8s_job — the default executor. Phases of this kind launch one or more
 // Kubernetes Jobs in parallel; phase completion is callback-driven.
 var validPhaseKinds = map[string]bool{
-	workflowKindNativeK8sJob: true,
+	workflowKindRunnerK8sJob: true,
 }
 
 type WorkflowRegisterStore interface {
@@ -486,16 +486,16 @@ func listWorkflowControlEvents(store ReadStore) http.HandlerFunc {
 }
 
 func normalizeWorkflowRegister(req *WorkflowRegister) {
-	normalizeWorkflowRegisterWithDefaultKind(req, workflowKindNativeK8sJob)
+	normalizeWorkflowRegisterWithDefaultKind(req, workflowKindRunnerK8sJob)
 }
 
 func normalizeWorkflowRegisterForProject(req *WorkflowRegister, project Project) {
-	normalizeWorkflowRegisterWithDefaultKind(req, workflowKindNativeK8sJob)
+	normalizeWorkflowRegisterWithDefaultKind(req, workflowKindRunnerK8sJob)
 }
 
 func normalizeWorkflowRegisterWithDefaultKind(req *WorkflowRegister, defaultKind string) {
 	if strings.TrimSpace(defaultKind) == "" {
-		defaultKind = workflowKindNativeK8sJob
+		defaultKind = workflowKindRunnerK8sJob
 	}
 	if req.Budget.Total == 0 {
 		req.Budget = budget.DefaultConfig()
@@ -515,7 +515,7 @@ func normalizeWorkflowRegisterWithDefaultKind(req *WorkflowRegister, defaultKind
 		req.Phases[i].RunOn = strings.TrimSpace(req.Phases[i].RunOn)
 		req.Phases[i].Purpose = strings.TrimSpace(req.Phases[i].Purpose)
 		if req.Phases[i].WorkflowRef == "" {
-			if nativePhaseHasPrimaryCheckout(req.Phases[i]) {
+			if runnerPhaseHasPrimaryCheckout(req.Phases[i]) {
 				req.Phases[i].WorkflowRef = CanonicalGitRefTemplate
 			} else {
 				req.Phases[i].WorkflowRef = CanonicalGitRefDefault
@@ -548,7 +548,7 @@ func normalizeWorkflowRegisterWithDefaultKind(req *WorkflowRegister, defaultKind
 				}
 			}
 		}
-		req.Phases[i] = CanonicalNativePhase(req.Phases[i])
+		req.Phases[i] = CanonicalRunnerPhase(req.Phases[i])
 		if req.Phases[i].Purpose == "" {
 			req.Phases[i].Purpose = phasePurpose(req.Phases[i])
 		}
@@ -573,7 +573,7 @@ func lookupProject(ctx context.Context, store ReadStore, name string) (Project, 
 
 func validateWorkflowAllowedForProject(project Project, req WorkflowRegister) error {
 	for _, phase := range req.Phases {
-		if err := validateNativeWorkflowKind(phase.Kind); err != nil {
+		if err := validateRunnerWorkflowKind(phase.Kind); err != nil {
 			return err
 		}
 	}
@@ -788,7 +788,7 @@ func ValidateWorkflowRegister(req WorkflowRegister) error {
 				default:
 					return ValidationError{Message: fmt.Sprintf("workflow %s phase %q job %q declares unknown primitive %q", req.Name, name, job.ID, job.Primitive)}
 				}
-				if err := validateNativeJobSpec(req.Name, name, j, job); err != nil {
+				if err := validateRunnerJobSpec(req.Name, name, j, job); err != nil {
 					return err
 				}
 			}
@@ -1004,7 +1004,7 @@ func validateMandatoryGitRefFeature(workflowName string, phases []PhaseSpec, dec
 	return nil
 }
 
-func nativePhaseHasPrimaryCheckout(phase PhaseSpec) bool {
+func runnerPhaseHasPrimaryCheckout(phase PhaseSpec) bool {
 	for _, job := range phase.Jobs {
 		if job.Checkout != nil {
 			return true
@@ -1152,14 +1152,14 @@ func verificationCaseJobID(index int) string {
 	return fmt.Sprintf("%s%02d", VerificationCaseJobPrefix, index)
 }
 
-func validateNativeJobSpec(workflowName, phaseName string, jobIndex int, job NativeJobSpec) error {
+func validateRunnerJobSpec(workflowName, phaseName string, jobIndex int, job RunnerJobSpec) error {
 	if job.Managed {
 		if len(job.Command) > 0 || len(job.Args) > 0 {
 			return ValidationError{Message: fmt.Sprintf("workflow %s phase %q job %q is managed and cannot declare command or args", workflowName, phaseName, job.ID)}
 		}
 	}
 	// Timeout guardrail. activeDeadlineSeconds = job.TimeoutSeconds when
-	// set; below MinNativePhaseJobTimeoutSeconds there is not enough
+	// set; below MinRunnerPhaseJobTimeoutSeconds there is not enough
 	// kubelet grace for the runner's SIGTERM handler (glimmung#624) to
 	// deliver /completed before SIGKILL, so the run loses its terminal
 	// signal even on a normal deadline trip. The ceiling catches typos.
@@ -1167,17 +1167,17 @@ func validateNativeJobSpec(workflowName, phaseName string, jobIndex int, job Nat
 	// reconciler is the safety net.
 	if job.TimeoutSeconds != nil {
 		t := *job.TimeoutSeconds
-		if t < MinNativePhaseJobTimeoutSeconds {
+		if t < MinRunnerPhaseJobTimeoutSeconds {
 			return ValidationError{Message: fmt.Sprintf(
 				"workflow %s phase %q job %q timeout_seconds=%d is below minimum %d; "+
 					"the runner needs at least %d seconds of kubelet grace to deliver /completed before SIGKILL",
-				workflowName, phaseName, job.ID, t, MinNativePhaseJobTimeoutSeconds, MinNativePhaseJobTimeoutSeconds,
+				workflowName, phaseName, job.ID, t, MinRunnerPhaseJobTimeoutSeconds, MinRunnerPhaseJobTimeoutSeconds,
 			)}
 		}
-		if t > MaxNativePhaseJobTimeoutSeconds {
+		if t > MaxRunnerPhaseJobTimeoutSeconds {
 			return ValidationError{Message: fmt.Sprintf(
 				"workflow %s phase %q job %q timeout_seconds=%d exceeds maximum %d (6h); likely a typo",
-				workflowName, phaseName, job.ID, t, MaxNativePhaseJobTimeoutSeconds,
+				workflowName, phaseName, job.ID, t, MaxRunnerPhaseJobTimeoutSeconds,
 			)}
 		}
 	}
@@ -1229,12 +1229,12 @@ func validateNativeJobSpec(workflowName, phaseName string, jobIndex int, job Nat
 func workflowPhaseKind(kind string) string {
 	kind = strings.TrimSpace(kind)
 	if kind == "" {
-		return workflowKindNativeK8sJob
+		return workflowKindRunnerK8sJob
 	}
 	return kind
 }
 
-func validateNativeWorkflowKind(kind string) error {
+func validateRunnerWorkflowKind(kind string) error {
 	if validPhaseKinds[workflowPhaseKind(kind)] {
 		return nil
 	}
@@ -1281,7 +1281,7 @@ func phaseHasPrimitive(phase PhaseSpec, primitive string) bool {
 	return false
 }
 
-func projectRequiresNativeWorkflows(project Project) bool {
+func projectRequiresRunnerWorkflows(project Project) bool {
 	metadata := project.Metadata
 	if boolFromMap(metadata, "native_webapp") || boolFromMap(metadata, "nativeWebapp") {
 		return true

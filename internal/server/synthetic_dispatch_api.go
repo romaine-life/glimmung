@@ -49,7 +49,7 @@ type SyntheticDispatchCopyStore interface {
 	ReadRunForReplay(ctx context.Context, project, runID string) (RunReplayData, error)
 }
 
-func syntheticDispatchRunHandler(settings Settings, store ReadStore, nativeLauncher NativeLauncher) http.HandlerFunc {
+func syntheticDispatchRunHandler(settings Settings, store ReadStore, runLauncher RunLauncher) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		dispatchStore, ok := store.(RunDispatchStore)
 		if !ok || dispatchStore == nil {
@@ -66,7 +66,7 @@ func syntheticDispatchRunHandler(settings Settings, store ReadStore, nativeLaunc
 			writeUnavailable(w, r, "global agent runtime config is invalid", "invalid_agent_runtime_config")
 			return
 		}
-		result, problem := syntheticDispatchRunWithAgentRuntime(r.Context(), dispatchStore, nativeLauncher, globalRuntime, req)
+		result, problem := syntheticDispatchRunWithAgentRuntime(r.Context(), dispatchStore, runLauncher, globalRuntime, req)
 		if problem != nil {
 			writeProblem(w, problem.status, problem.message)
 			return
@@ -75,7 +75,7 @@ func syntheticDispatchRunHandler(settings Settings, store ReadStore, nativeLaunc
 	}
 }
 
-func syntheticDispatchRunWithAgentRuntime(ctx context.Context, store RunDispatchStore, nativeLauncher NativeLauncher, globalRuntime agentruntime.Config, req SyntheticDispatchRequest) (PublicDispatchResult, *dispatchProblem) {
+func syntheticDispatchRunWithAgentRuntime(ctx context.Context, store RunDispatchStore, runLauncher RunLauncher, globalRuntime agentruntime.Config, req SyntheticDispatchRequest) (PublicDispatchResult, *dispatchProblem) {
 	req.Project = strings.TrimSpace(req.Project)
 	req.WorkflowName = strings.TrimSpace(firstNonEmpty(req.WorkflowName, req.Workflow))
 	req.StartAtPhase = strings.TrimSpace(req.StartAtPhase)
@@ -97,10 +97,10 @@ func syntheticDispatchRunWithAgentRuntime(ctx context.Context, store RunDispatch
 		return PublicDispatchResult{}, &dispatchProblem{status: http.StatusBadRequest, message: "reason required"}
 	}
 	if req.ExecutionContext.SlotLeaseRef == "" {
-		return PublicDispatchResult{}, &dispatchProblem{status: http.StatusUnprocessableEntity, message: "execution_context.slot_lease_ref required for synthetic native dispatch"}
+		return PublicDispatchResult{}, &dispatchProblem{status: http.StatusUnprocessableEntity, message: "execution_context.slot_lease_ref required for synthetic runner dispatch"}
 	}
-	if nativeLauncher == nil {
-		return PublicDispatchResult{}, &dispatchProblem{status: http.StatusServiceUnavailable, message: "native launcher not configured"}
+	if runLauncher == nil {
+		return PublicDispatchResult{}, &dispatchProblem{status: http.StatusServiceUnavailable, message: "run launcher not configured"}
 	}
 
 	project, err := store.ReadProjectForDispatch(ctx, req.Project)
@@ -155,7 +155,7 @@ func syntheticDispatchRunWithAgentRuntime(ctx context.Context, store RunDispatch
 		return PublicDispatchResult{}, &dispatchProblem{status: http.StatusUnprocessableEntity, message: fmt.Sprintf("start_at_phase %q is not registered on workflow %q", req.StartAtPhase, wf.Name)}
 	}
 	phaseKind := workflowPhaseKind(startPhase.Kind)
-	if err := validateNativeWorkflowKind(phaseKind); err != nil {
+	if err := validateRunnerWorkflowKind(phaseKind); err != nil {
 		return PublicDispatchResult{}, &dispatchProblem{status: http.StatusUnprocessableEntity, message: err.Error()}
 	}
 	copied, copyProvenance, problem := syntheticCopiedPhaseOutputs(ctx, store, req, wf, startIndex)
@@ -195,7 +195,7 @@ func syntheticDispatchRunWithAgentRuntime(ctx context.Context, store RunDispatch
 	}
 
 	holderID := newDispatchID()
-	leaseTTLSeconds := nativeRunLeaseTTLSeconds(wf)
+	leaseTTLSeconds := runnerLeaseTTLSeconds(wf)
 	if err := store.ClaimIssueLock(ctx, req.Project, req.IssueNumber, holderID, leaseTTLSeconds); err != nil {
 		if errors.Is(err, ErrAlreadyRunning) {
 			return PublicDispatchResult{State: "already_running", Workflow: &wf.Name, Detail: stringPtr(err.Error())}, nil
@@ -295,21 +295,21 @@ func syntheticDispatchRunWithAgentRuntime(ctx context.Context, store RunDispatch
 		PreserveTestEnv: runData.PreserveTestEnv,
 	})
 	if err != nil {
-		_, _ = store.AbortRunByID(ctx, req.Project, run.ID, "native_dispatch_failed: "+err.Error())
-		return PublicDispatchResult{State: "dispatch_failed", RunNumber: &run.RunNumber, CycleNumber: &run.CycleNumber, RunCycle: &run.RunCycle, RunID: &run.ID, RunRef: stringPtr(publicids.RunRef(req.Project, req.IssueNumber, run.RunDisplay)), Workflow: &wf.Name, Detail: stringPtr("native dispatch failed: " + err.Error())}, nil
+		_, _ = store.AbortRunByID(ctx, req.Project, run.ID, "runner_dispatch_failed: "+err.Error())
+		return PublicDispatchResult{State: "dispatch_failed", RunNumber: &run.RunNumber, CycleNumber: &run.CycleNumber, RunCycle: &run.RunCycle, RunID: &run.ID, RunRef: stringPtr(publicids.RunRef(req.Project, req.IssueNumber, run.RunDisplay)), Workflow: &wf.Name, Detail: stringPtr("runner dispatch failed: " + err.Error())}, nil
 	}
 	if len(skippedJobs) > 0 {
-		if err := store.RecordNativeJobsSkipped(ctx, req.Project, run.ID, startPhase.Name, skippedJobs); err != nil {
-			_, _ = store.AbortRunByID(ctx, req.Project, run.ID, "native_dispatch_failed: "+err.Error())
-			return PublicDispatchResult{State: "dispatch_failed", RunNumber: &run.RunNumber, CycleNumber: &run.CycleNumber, RunCycle: &run.RunCycle, RunID: &run.ID, RunRef: stringPtr(publicids.RunRef(req.Project, req.IssueNumber, run.RunDisplay)), Workflow: &wf.Name, Detail: stringPtr("native dispatch failed: " + err.Error())}, nil
+		if err := store.RecordRunnerJobsSkipped(ctx, req.Project, run.ID, startPhase.Name, skippedJobs); err != nil {
+			_, _ = store.AbortRunByID(ctx, req.Project, run.ID, "runner_dispatch_failed: "+err.Error())
+			return PublicDispatchResult{State: "dispatch_failed", RunNumber: &run.RunNumber, CycleNumber: &run.CycleNumber, RunCycle: &run.RunCycle, RunID: &run.ID, RunRef: stringPtr(publicids.RunRef(req.Project, req.IssueNumber, run.RunDisplay)), Workflow: &wf.Name, Detail: stringPtr("runner dispatch failed: " + err.Error())}, nil
 		}
 	}
-	launched, err := launchCommittedNativePhase(ctx, nativeLauncher, NativeLaunchRequest{Lease: lease, Workflow: *wf, Phase: *startPhase, Run: runData, SkipJobIDs: skippedJobs})
+	launched, err := launchCommittedPhase(ctx, runLauncher, RunLaunchRequest{Lease: lease, Workflow: *wf, Phase: *startPhase, Run: runData, SkipJobIDs: skippedJobs})
 	if err != nil {
-		_, _ = store.AbortRunByID(ctx, req.Project, run.ID, "native_dispatch_failed: "+err.Error())
-		return PublicDispatchResult{State: "dispatch_failed", RunNumber: &run.RunNumber, CycleNumber: &run.CycleNumber, RunCycle: &run.RunCycle, RunID: &run.ID, RunRef: stringPtr(publicids.RunRef(req.Project, req.IssueNumber, run.RunDisplay)), Workflow: &wf.Name, Detail: stringPtr("native dispatch failed: " + err.Error())}, nil
+		_, _ = store.AbortRunByID(ctx, req.Project, run.ID, "runner_dispatch_failed: "+err.Error())
+		return PublicDispatchResult{State: "dispatch_failed", RunNumber: &run.RunNumber, CycleNumber: &run.CycleNumber, RunCycle: &run.RunCycle, RunID: &run.ID, RunRef: stringPtr(publicids.RunRef(req.Project, req.IssueNumber, run.RunDisplay)), Workflow: &wf.Name, Detail: stringPtr("runner dispatch failed: " + err.Error())}, nil
 	}
-	_ = recordLaunchedNativeJobs(ctx, store, runData, *startPhase, launched)
+	_ = recordLaunchedRunnerJobs(ctx, store, runData, *startPhase, launched)
 	runRef := publicids.RunRef(req.Project, req.IssueNumber, run.RunDisplay)
 	return PublicDispatchResult{
 		State:       "dispatched",

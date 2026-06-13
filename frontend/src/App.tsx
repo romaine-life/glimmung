@@ -176,19 +176,19 @@ type PhaseSpec = {
   evidence_verification_gate?: boolean;
   depends_on?: string[];
   recycle_policy: RecyclePolicy | null;
-  jobs?: NativeJobSpec[];
+  jobs?: RunnerJobSpec[];
 };
 
-type NativeJobSpec = {
+type RunnerJobSpec = {
   id: string;
   name?: string | null;
   image?: string;
   primitive?: string;
   managed?: boolean;
-  steps?: NativeStepSpec[];
+  steps?: RunnerStepSpec[];
 };
 
-type NativeStepSpec = {
+type RunnerStepSpec = {
   slug: string;
   title?: string | null;
   type?: string;
@@ -943,8 +943,8 @@ function workflowSourceLabel(workflow: Workflow): string {
   if (workflow.workflow_filename) {
     return `${workflow.workflow_filename}@${workflow.workflow_ref ?? "main"}`;
   }
-  const nativeKinds = Array.from(new Set(workflow.phases.map((phase) => phase.kind).filter(Boolean)));
-  return nativeKinds.length > 0 ? nativeKinds.join(" + ") : "native";
+  const runnerKinds = Array.from(new Set(workflow.phases.map((phase) => phase.kind).filter(Boolean)));
+  return runnerKinds.length > 0 ? runnerKinds.join(" + ") : "runner";
 }
 
 function RequirementPills({ requirements }: { requirements: Record<string, unknown> }) {
@@ -1191,16 +1191,16 @@ function DefinitionJobInspector({
 }) {
   const selectedStep = job.steps.find((step) => step.slug === selectedStepSlug) ?? job.steps[0] ?? null;
   return (
-    <div className="native-inspector">
-      <div className="native-inspector-head">
+    <div className="runner-inspector">
+      <div className="runner-inspector-head">
         <div>
-          <span className="key">native job inspector</span>
+          <span className="key">runner job inspector</span>
           <span className="mono dim">planned</span>
         </div>
       </div>
-      <div className="step-log-layout native-step-log-layout">
-        <aside className="step-list" aria-label="native job steps">
-          <div className="native-job-label">
+      <div className="step-log-layout runner-step-log-layout">
+        <aside className="step-list" aria-label="runner job steps">
+          <div className="runner-job-label">
             <span className="mono">{job.name}</span>
             <span className="pill pending">not_started</span>
           </div>
@@ -1227,10 +1227,10 @@ function DefinitionJobInspector({
             );
           })}
         </aside>
-        <pre className="step-terminal native-step-terminal">
+        <pre className="step-terminal runner-step-terminal">
           {selectedStep
-            ? [`# ${job.name}`, `$ step ${selectedStep.slug}`, "", "No hot native events recorded for this selection."].join("\n")
-            : "# native events\n\nNo hot native events recorded for this selection."}
+            ? [`# ${job.name}`, `$ step ${selectedStep.slug}`, "", "No hot runner events recorded for this selection."].join("\n")
+            : "# runner events\n\nNo hot runner events recorded for this selection."}
         </pre>
       </div>
     </div>
@@ -3016,7 +3016,7 @@ function leaseKindNoun(kind: LeaseKind): string {
 
 function leaseKindDescription(kind: LeaseKind): string {
   return kind === "test"
-    ? "test environments and native slots"
+    ? "test environments and runner slots"
     : "agent runners and work leases that are not test environments";
 }
 
@@ -3177,7 +3177,7 @@ function slotHistoryPillClass(entry: TestSlotReturnHistoryEntry): "free" | "busy
 }
 
 function projectTestEnvironmentCount(project: Project, fallback: number): number {
-  const standby = project.metadata?.native_standby_dns;
+  const standby = project.metadata?.runner_standby_dns;
   if (isRecord(standby)) {
     const count = standby.count;
     if (typeof count === "number" && Number.isFinite(count)) return count;
@@ -3300,7 +3300,7 @@ function leasePurpose(lease: Lease): string {
 function leaseSlot(lease: Lease): string {
   const metadata = lease.metadata ?? {};
   return (
-    valueLabel(metadata.native_slot_name)
+    valueLabel(metadata.runner_slot_name)
     || valueLabel(metadata.slot_name)
     || valueLabel(metadata.validation_url)
     || lease.host
@@ -3315,7 +3315,7 @@ function leaseDisplayName(lease: Lease): string {
   if (lease.lease_number !== null && lease.lease_number !== undefined) {
     return `#${lease.lease_number}`;
   }
-  const slotName = lease.metadata?.native_slot_name;
+  const slotName = lease.metadata?.runner_slot_name;
   if (typeof slotName === "string" && slotName) {
     return slotName;
   }

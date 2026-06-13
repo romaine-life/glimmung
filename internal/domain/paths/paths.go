@@ -27,7 +27,7 @@ func AttemptPath(projectName, runID string, attemptIndex int) string {
 	return RunPath(projectName, runID) + "/attempts/" + strconv.Itoa(attemptIndex)
 }
 
-// JobPath returns the path identity for a native k8s_job within an attempt.
+// JobPath returns the path identity for a runner k8s_job within an attempt.
 func JobPath(projectName, runID string, attemptIndex int, jobID string) string {
 	return AttemptPath(projectName, runID, attemptIndex) + "/jobs/" + jobID
 }

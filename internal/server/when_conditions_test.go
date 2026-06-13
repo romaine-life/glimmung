@@ -7,10 +7,10 @@ import (
 	"testing"
 )
 
-func newCompletionRecorderFor(t *testing.T, store *fakeCompletionStore, launcher *fakeNativeLauncher, payload NativeRunCompletedRequest) *httptest.ResponseRecorder {
+func newCompletionRecorderFor(t *testing.T, store *fakeCompletionStore, launcher *fakeRunLauncher, payload RunnerCompletedRequest) *httptest.ResponseRecorder {
 	t.Helper()
 	rec := httptest.NewRecorder()
-	newCompletionHandler(store, launcher).ServeHTTP(rec, nativeCompletionRequest("tok", payload))
+	newCompletionHandler(store, launcher).ServeHTTP(rec, runnerCompletionRequest("tok", payload))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
@@ -25,15 +25,15 @@ func whenTestRegister() WorkflowRegister {
 		Name:    "agent-run",
 		Vars:    map[string]string{"feature_type": "effect"},
 		Phases: []PhaseSpec{
-			{Name: "prepare", Outputs: []string{"issue_contract"}, Jobs: []NativeJobSpec{{ID: "issue-contract"}}},
-			{Name: "work", DependsOn: []string{"prepare"}, Jobs: []NativeJobSpec{
+			{Name: "prepare", Outputs: []string{"issue_contract"}, Jobs: []RunnerJobSpec{{ID: "issue-contract"}}},
+			{Name: "work", DependsOn: []string{"prepare"}, Jobs: []RunnerJobSpec{
 				{ID: "test-plan", When: "${{ vars.feature_type }} != 'effect'"},
 				{ID: "implement"},
 			}},
 			{Name: "verify", Verify: true, RecyclePolicy: &RecyclePolicy{MaxAttempts: 1, On: []string{"verify_fail"}, LandsAt: "prepare"}, DependsOn: []string{"work"}, Jobs: verificationCaseJobsForTest()},
 			{Name: "cleanup_early", RunOn: PhaseRunOnAlways, Purpose: PhasePurposeTeardown, When: "${{ run.preserve_test_env }} == 'false'", DependsOn: []string{"verify"}},
-			{Name: "touchpoint", RunOn: PhaseRunOnSuccess, Purpose: PhasePurposeReviewTouchpoint, DependsOn: []string{"cleanup_early"}, Jobs: []NativeJobSpec{{ID: PRTouchpointJobID, Primitive: JobPrimitivePRTouchpoint}}},
-			{Name: "touchpoint_gate", Kind: "k8s_job", Purpose: PhasePurposeReviewGate, DependsOn: []string{"touchpoint"}, Jobs: []NativeJobSpec{{ID: PRMergeJobID, Primitive: JobPrimitivePRMerge}}},
+			{Name: "touchpoint", RunOn: PhaseRunOnSuccess, Purpose: PhasePurposeReviewTouchpoint, DependsOn: []string{"cleanup_early"}, Jobs: []RunnerJobSpec{{ID: PRTouchpointJobID, Primitive: JobPrimitivePRTouchpoint}}},
+			{Name: "touchpoint_gate", Kind: "k8s_job", Purpose: PhasePurposeReviewGate, DependsOn: []string{"touchpoint"}, Jobs: []RunnerJobSpec{{ID: PRMergeJobID, Primitive: JobPrimitivePRMerge}}},
 			{Name: "cleanup_final", RunOn: PhaseRunOnAlways, Purpose: PhasePurposeTeardown, DependsOn: []string{"touchpoint_gate"}},
 		},
 	}
@@ -120,12 +120,12 @@ func conditionalWorkflowForCompletion(vars map[string]string, testPlanWhen, phas
 		Name:    "wf",
 		Vars:    vars,
 		Phases: []PhaseSpec{
-			{Name: "impl", Kind: "k8s_job", Outputs: []string{"branch_name"}, Jobs: []NativeJobSpec{{ID: "impl-job"}}},
-			{Name: "work2", Kind: "k8s_job", When: phaseWhen, DependsOn: []string{"impl"}, Jobs: []NativeJobSpec{
-				{ID: "test-plan", When: testPlanWhen, Steps: []NativeStepSpec{{Slug: "emit", Type: "run", Run: "true"}}},
-				{ID: "implement", Steps: []NativeStepSpec{{Slug: "emit", Type: "run", Run: "true"}}},
+			{Name: "impl", Kind: "k8s_job", Outputs: []string{"branch_name"}, Jobs: []RunnerJobSpec{{ID: "impl-job"}}},
+			{Name: "work2", Kind: "k8s_job", When: phaseWhen, DependsOn: []string{"impl"}, Jobs: []RunnerJobSpec{
+				{ID: "test-plan", When: testPlanWhen, Steps: []RunnerStepSpec{{Slug: "emit", Type: "run", Run: "true"}}},
+				{ID: "implement", Steps: []RunnerStepSpec{{Slug: "emit", Type: "run", Run: "true"}}},
 			}},
-			{Name: "cleanup", Kind: "k8s_job", RunOn: PhaseRunOnAlways, Purpose: PhasePurposeTeardown, DependsOn: []string{"work2"}, Jobs: []NativeJobSpec{{ID: "cleanup-job"}}},
+			{Name: "cleanup", Kind: "k8s_job", RunOn: PhaseRunOnAlways, Purpose: PhasePurposeTeardown, DependsOn: []string{"work2"}, Jobs: []RunnerJobSpec{{ID: "cleanup-job"}}},
 		},
 	}
 	canonical := CanonicalWorkflow(*wf)
@@ -138,7 +138,7 @@ func TestForwardDispatchSkipsConditionalJobWithoutLaunchingIt(t *testing.T) {
 	store.run.Attempts = []RunAttemptData{{AttemptIndex: 0, Phase: "impl", Conclusion: "failure"}}
 	store.wf = conditionalWorkflowForCompletion(map[string]string{"feature_type": "effect"}, "${{ vars.feature_type }} != 'effect'", "")
 	store.leaseResult = Lease{State: "claimed"}
-	launcher := &fakeNativeLauncher{}
+	launcher := &fakeRunLauncher{}
 
 	rec := newCompletionRecorderFor(t, store, launcher, completedJob("impl-job", "success", nil, map[string]string{"branch_name": "b"}))
 
@@ -177,7 +177,7 @@ func TestForwardDispatchStampsPhaseSkippedOnPhaseWhen(t *testing.T) {
 	store.run.Attempts = []RunAttemptData{{AttemptIndex: 0, Phase: "impl", Conclusion: "failure"}}
 	store.wf = conditionalWorkflowForCompletion(map[string]string{"feature_type": "effect"}, "", "${{ vars.feature_type }} != 'effect'")
 	store.leaseResult = Lease{State: "claimed"}
-	launcher := &fakeNativeLauncher{}
+	launcher := &fakeRunLauncher{}
 
 	_ = newCompletionRecorderFor(t, store, launcher, completedJob("impl-job", "success", nil, map[string]string{"branch_name": "b"}))
 
@@ -200,7 +200,7 @@ func TestForwardDispatchRunsConditionalJobWhenConditionHolds(t *testing.T) {
 	store.run.Attempts = []RunAttemptData{{AttemptIndex: 0, Phase: "impl", Conclusion: "failure"}}
 	store.wf = conditionalWorkflowForCompletion(map[string]string{"feature_type": "stats-display"}, "${{ vars.feature_type }} != 'effect'", "")
 	store.leaseResult = Lease{State: "claimed"}
-	launcher := &fakeNativeLauncher{}
+	launcher := &fakeRunLauncher{}
 
 	_ = newCompletionRecorderFor(t, store, launcher, completedJob("impl-job", "success", nil, map[string]string{"branch_name": "b"}))
 

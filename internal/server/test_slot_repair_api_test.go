@@ -92,8 +92,8 @@ func TestRepairProjectTestEnvironmentRejectsActiveLease(t *testing.T) {
 			State:       "claimed",
 			Metadata: map[string]any{
 				"test_slot_checkout": true,
-				"native_slot_index":  "2",
-				"native_slot_name":   "tank-slot-2",
+				"runner_slot_index":  "2",
+				"runner_slot_name":   "tank-slot-2",
 			},
 		}},
 	}
@@ -126,9 +126,9 @@ func TestRepairProjectTestEnvironmentClearsOrphanedReservation(t *testing.T) {
 			LeaseNumber: intPtr(33),
 			State:       "expired",
 			Metadata: map[string]any{
-				"native_k8s":        true,
-				"native_slot_index": "2",
-				"native_slot_name":  "tank-slot-2",
+				"runner_k8s":        true,
+				"runner_slot_index": "2",
+				"runner_slot_name":  "tank-slot-2",
 			},
 		}},
 	}
@@ -159,7 +159,7 @@ func TestRepairProjectTestEnvironmentClearsOrphanedReservation(t *testing.T) {
 
 func TestRepairProjectTestEnvironmentRejectsActiveRunLease(t *testing.T) {
 	project := repairTestProject()
-	// A live native *run* lease (env-prep and later phases), not a checkout
+	// A live runner *run* lease (env-prep and later phases), not a checkout
 	// lease. Repair must refuse: the slot is genuinely in use, and clearing
 	// its reservation would yank the slot out from under an in-progress run.
 	store := &fakeLeaseStore{
@@ -169,9 +169,9 @@ func TestRepairProjectTestEnvironmentRejectsActiveRunLease(t *testing.T) {
 			LeaseNumber: intPtr(39),
 			State:       "claimed",
 			Metadata: map[string]any{
-				"native_k8s":        true,
-				"native_slot_index": "2",
-				"native_slot_name":  "tank-slot-2",
+				"runner_k8s":        true,
+				"runner_slot_index": "2",
+				"runner_slot_name":  "tank-slot-2",
 			},
 		}},
 	}
@@ -215,7 +215,7 @@ func repairTestProject() Project {
 	return Project{
 		ID:   "tank",
 		Name: "tank",
-		Metadata: map[string]any{"native_standby_dns": map[string]any{
+		Metadata: map[string]any{"runner_standby_dns": map[string]any{
 			"count":       float64(3),
 			"slot_prefix": "tank-slot",
 			"record_base": "tank.dev.romaine.life",

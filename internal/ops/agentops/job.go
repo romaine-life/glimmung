@@ -4,8 +4,8 @@ const AgentBashScript = `set -euo pipefail
 
 # Pre-create evidence dirs the agent writes into. Sibling of /workspace/repo
 # (the clone root) so git add -A does not pick PNGs/notes up. The production
-# evidence flow is glimmung-native-runner → GLIMMUNG_COMPLETION_FILE refs →
-# POST /v1/run-callbacks/.../native/completed; this developer-CLI agent
+# evidence flow is glimmung-runner → GLIMMUNG_COMPLETION_FILE refs →
+# POST /v1/run-callbacks/.../run/completed; this developer-CLI agent
 # script just leaves the files on disk for inspection in the live pod.
 mkdir -p /workspace/evidence/screenshots /workspace/evidence/videos
 

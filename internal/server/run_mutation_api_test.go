@@ -15,7 +15,7 @@ import (
 	"github.com/romaine-life/glimmung/internal/auth"
 )
 
-// fakeRunMutationStore implements RunMutationStore + NativeRunStore for tests.
+// fakeRunMutationStore implements RunMutationStore + RunnerStore for tests.
 type fakeRunMutationStore struct {
 	fakeReadStore
 	runID    string
@@ -25,15 +25,15 @@ type fakeRunMutationStore struct {
 	abortResult AbortRunResult
 	abortErr    error
 
-	nativeStatus      NativeRunStatusResponse
-	nativeStatusErr   error
-	nativeEventResult NativeRunEventResult
-	nativeEventErr    error
-	nativeEvents      NativeRunLogsResponse
-	nativeEventsErr   error
-	nativeStepSlug    *string
-	nativeAfterSeq    *int
-	nativeLimit       *int
+	runnerStatus      RunnerStatusResponse
+	runnerStatusErr   error
+	runnerEventResult RunnerEventResult
+	runnerEventErr    error
+	runnerEvents      RunnerLogsResponse
+	runnerEventsErr   error
+	runnerStepSlug    *string
+	runnerAfterSeq    *int
+	runnerLimit       *int
 }
 
 func (s *fakeRunMutationStore) ReadRunIDForNumber(_ context.Context, project string, issueNumber int, runNumber string) (string, string, error) {
@@ -54,19 +54,19 @@ func (s *fakeRunMutationStore) AbortRunByID(_ context.Context, project, runID, r
 	return s.abortResult, s.abortErr
 }
 
-func (s *fakeRunMutationStore) GetNativeRunStatusByID(_ context.Context, project, runID string) (NativeRunStatusResponse, error) {
-	return s.nativeStatus, s.nativeStatusErr
+func (s *fakeRunMutationStore) GetRunnerStatusByID(_ context.Context, project, runID string) (RunnerStatusResponse, error) {
+	return s.runnerStatus, s.runnerStatusErr
 }
 
-func (s *fakeRunMutationStore) RecordNativeEventByID(_ context.Context, project, runID string, req NativeRunEventRequest) (NativeRunEventResult, error) {
-	return s.nativeEventResult, s.nativeEventErr
+func (s *fakeRunMutationStore) RecordRunnerEventByID(_ context.Context, project, runID string, req RunnerEventRequest) (RunnerEventResult, error) {
+	return s.runnerEventResult, s.runnerEventErr
 }
 
-func (s *fakeRunMutationStore) ListNativeEventsByID(_ context.Context, project, runID string, attemptIndex *int, jobID *string, stepSlug *string, afterSeq *int, limit *int) (NativeRunLogsResponse, error) {
-	s.nativeStepSlug = stepSlug
-	s.nativeAfterSeq = afterSeq
-	s.nativeLimit = limit
-	return s.nativeEvents, s.nativeEventsErr
+func (s *fakeRunMutationStore) ListRunnerEventsByID(_ context.Context, project, runID string, attemptIndex *int, jobID *string, stepSlug *string, afterSeq *int, limit *int) (RunnerLogsResponse, error) {
+	s.runnerStepSlug = stepSlug
+	s.runnerAfterSeq = afterSeq
+	s.runnerLimit = limit
+	return s.runnerEvents, s.runnerEventsErr
 }
 
 func newRunMutHandlerAdmin(store *fakeRunMutationStore) http.Handler {
@@ -244,13 +244,13 @@ func TestGitHubWebhookMissingSignature(t *testing.T) {
 	}
 }
 
-// --- native run tests ---
+// --- runner run tests ---
 
-func TestNativeRunStatusByNumber(t *testing.T) {
+func TestRunnerRunStatusByNumber(t *testing.T) {
 	store := &fakeRunMutationStore{
 		runID:  "run-native",
 		runRef: "proj#10/runs/1",
-		nativeStatus: NativeRunStatusResponse{
+		runnerStatus: RunnerStatusResponse{
 			Project:      "proj",
 			RunRef:       "proj#10/runs/1",
 			State:        "in_progress",
@@ -261,7 +261,7 @@ func TestNativeRunStatusByNumber(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet,
-		"/v1/projects/proj/issues/10/runs/1/native/status", nil))
+		"/v1/projects/proj/issues/10/runs/1/run/status", nil))
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
@@ -271,11 +271,11 @@ func TestNativeRunStatusByNumber(t *testing.T) {
 	}
 }
 
-func TestNativeRunStatusByCallbackToken(t *testing.T) {
+func TestRunnerRunStatusByCallbackToken(t *testing.T) {
 	store := &fakeRunMutationStore{
 		runID:  "run-native",
 		runRef: "proj#10/runs/1",
-		nativeStatus: NativeRunStatusResponse{
+		runnerStatus: RunnerStatusResponse{
 			Project:      "proj",
 			RunRef:       "proj#10/runs/1",
 			State:        "in_progress",
@@ -286,41 +286,41 @@ func TestNativeRunStatusByCallbackToken(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet,
-		"/v1/run-callbacks/mytoken/native/status", nil))
+		"/v1/run-callbacks/mytoken/run/status", nil))
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
 }
 
-func TestNativeRunStatusNotFoundByNumber(t *testing.T) {
+func TestRunnerRunStatusNotFoundByNumber(t *testing.T) {
 	store := &fakeRunMutationStore{notFound: true}
 	handler := newRunMutHandlerNoAuth(store)
 
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet,
-		"/v1/projects/proj/issues/10/runs/1/native/status", nil))
+		"/v1/projects/proj/issues/10/runs/1/run/status", nil))
 
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
 }
 
-func TestNativeRunEventsListByNumber(t *testing.T) {
+func TestRunnerRunEventsListByNumber(t *testing.T) {
 	store := &fakeRunMutationStore{
 		runID:  "run-ev",
 		runRef: "proj#11/runs/2",
-		nativeEvents: NativeRunLogsResponse{
+		runnerEvents: RunnerLogsResponse{
 			Project: "proj",
 			RunRef:  "proj#11/runs/2",
-			Events:  []NativeRunLogEvent{{JobID: "job1", Seq: 1, Event: "log", Message: "hello"}},
+			Events:  []RunnerLogEvent{{JobID: "job1", Seq: 1, Event: "log", Message: "hello"}},
 		},
 	}
 	handler := newRunMutHandlerNoAuth(store)
 
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet,
-		"/v1/projects/proj/issues/11/runs/2/native/events", nil))
+		"/v1/projects/proj/issues/11/runs/2/run/events", nil))
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
@@ -330,47 +330,47 @@ func TestNativeRunEventsListByNumber(t *testing.T) {
 	}
 }
 
-func TestNativeRunEventsListByNumberPassesSeqCursor(t *testing.T) {
+func TestRunnerRunEventsListByNumberPassesSeqCursor(t *testing.T) {
 	store := &fakeRunMutationStore{
 		runID:  "run-ev",
 		runRef: "proj#11/runs/2",
-		nativeEvents: NativeRunLogsResponse{
+		runnerEvents: RunnerLogsResponse{
 			Project: "proj",
 			RunRef:  "proj#11/runs/2",
-			Events:  []NativeRunLogEvent{{JobID: "job1", Seq: 201, Event: "log", Message: "next"}},
+			Events:  []RunnerLogEvent{{JobID: "job1", Seq: 201, Event: "log", Message: "next"}},
 		},
 	}
 	handler := newRunMutHandlerNoAuth(store)
 
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet,
-		"/v1/projects/proj/issues/11/runs/2/native/events?step_slug=run-agent&after_seq=200&limit=200", nil))
+		"/v1/projects/proj/issues/11/runs/2/run/events?step_slug=run-agent&after_seq=200&limit=200", nil))
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
-	if store.nativeAfterSeq == nil || *store.nativeAfterSeq != 200 {
-		t.Fatalf("after_seq=%v, want 200", store.nativeAfterSeq)
+	if store.runnerAfterSeq == nil || *store.runnerAfterSeq != 200 {
+		t.Fatalf("after_seq=%v, want 200", store.runnerAfterSeq)
 	}
-	if store.nativeStepSlug == nil || *store.nativeStepSlug != "run-agent" {
-		t.Fatalf("step_slug=%v, want run-agent", store.nativeStepSlug)
+	if store.runnerStepSlug == nil || *store.runnerStepSlug != "run-agent" {
+		t.Fatalf("step_slug=%v, want run-agent", store.runnerStepSlug)
 	}
-	if store.nativeLimit == nil || *store.nativeLimit != 200 {
-		t.Fatalf("limit=%v, want 200", store.nativeLimit)
+	if store.runnerLimit == nil || *store.runnerLimit != 200 {
+		t.Fatalf("limit=%v, want 200", store.runnerLimit)
 	}
 }
 
-func TestNativeRunEventWriteByCallbackToken(t *testing.T) {
+func TestRunnerRunEventWriteByCallbackToken(t *testing.T) {
 	store := &fakeRunMutationStore{
 		runID:  "run-ev",
 		runRef: "proj#11/runs/2",
-		nativeStatus: NativeRunStatusResponse{
+		runnerStatus: RunnerStatusResponse{
 			Project:      "proj",
 			RunRef:       "proj#11/runs/2",
 			State:        "in_progress",
 			AttemptIndex: 0,
 		},
-		nativeEventResult: NativeRunEventResult{
+		runnerEventResult: RunnerEventResult{
 			RunRef:   "proj#11/runs/2",
 			JobID:    "myjob",
 			Seq:      5,
@@ -379,8 +379,8 @@ func TestNativeRunEventWriteByCallbackToken(t *testing.T) {
 	}
 	handler := newRunMutHandlerNoAuth(store)
 
-	body, _ := json.Marshal(NativeRunEventRequest{JobID: "myjob", Seq: 5, Event: "log"})
-	req := httptest.NewRequest(http.MethodPost, "/v1/run-callbacks/tok/native/events", bytes.NewReader(body))
+	body, _ := json.Marshal(RunnerEventRequest{JobID: "myjob", Seq: 5, Event: "log"})
+	req := httptest.NewRequest(http.MethodPost, "/v1/run-callbacks/tok/run/events", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
@@ -393,18 +393,18 @@ func TestNativeRunEventWriteByCallbackToken(t *testing.T) {
 	}
 }
 
-func TestNativeRunEventWriteByNumberValidation(t *testing.T) {
+func TestRunnerRunEventWriteByNumberValidation(t *testing.T) {
 	store := &fakeRunMutationStore{
 		runID:             "run-ev",
 		runRef:            "proj#11/runs/2",
-		nativeStatus:      NativeRunStatusResponse{AttemptIndex: 0, State: "in_progress"},
-		nativeEventResult: NativeRunEventResult{Accepted: true},
+		runnerStatus:      RunnerStatusResponse{AttemptIndex: 0, State: "in_progress"},
+		runnerEventResult: RunnerEventResult{Accepted: true},
 	}
 	handler := newRunMutHandlerNoAuth(store)
 
 	// Missing job_id → 400
-	body, _ := json.Marshal(NativeRunEventRequest{Seq: 1, Event: "log"})
-	req := httptest.NewRequest(http.MethodPost, "/v1/projects/proj/issues/11/runs/2/native/events", bytes.NewReader(body))
+	body, _ := json.Marshal(RunnerEventRequest{Seq: 1, Event: "log"})
+	req := httptest.NewRequest(http.MethodPost, "/v1/projects/proj/issues/11/runs/2/run/events", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
@@ -413,8 +413,8 @@ func TestNativeRunEventWriteByNumberValidation(t *testing.T) {
 	}
 
 	// seq=0 → 400
-	body, _ = json.Marshal(NativeRunEventRequest{JobID: "job1", Seq: 0, Event: "log"})
-	req = httptest.NewRequest(http.MethodPost, "/v1/projects/proj/issues/11/runs/2/native/events", bytes.NewReader(body))
+	body, _ = json.Marshal(RunnerEventRequest{JobID: "job1", Seq: 0, Event: "log"})
+	req = httptest.NewRequest(http.MethodPost, "/v1/projects/proj/issues/11/runs/2/run/events", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	rec = httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)

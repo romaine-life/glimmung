@@ -242,11 +242,11 @@ type PullRequestMergeRequest struct {
 // AlreadyMerged is true when the PR was already merged on GitHub when the
 // request arrived; the operation is a no-op success in that case.
 type PullRequestMergeResult struct {
-	Number        int
-	HTMLURL       string
-	State         string
+	Number         int
+	HTMLURL        string
+	State          string
 	MergeCommitSHA string
-	AlreadyMerged bool
+	AlreadyMerged  bool
 }
 
 // MergePullRequest idempotently merges the target PR.
@@ -254,7 +254,7 @@ type PullRequestMergeResult struct {
 // The flow:
 //  1. GET /repos/{repo}/pulls/{number} — if pull.merged is true, return
 //     AlreadyMerged=true. Treat that as a successful no-op.
-//  1.5. If the PR is a draft, promote it to ready-for-review (GraphQL) — a
+//     1.5. If the PR is a draft, promote it to ready-for-review (GraphQL) — a
 //     draft 405s the merge and REST cannot clear the flag.
 //  2. PUT /repos/{repo}/pulls/{number}/merge — perform the merge.
 //

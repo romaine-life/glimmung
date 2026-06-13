@@ -44,7 +44,7 @@ type TestSlotHotSwapLeaseExtension struct {
 	MinRemainingSeconds int  `json:"min_remaining_seconds"`
 }
 
-func ensureHotSwapLeaseMinimumByProjectName(ctx context.Context, store ReadStore, preparer TestSlotPreparer, minter NativeGitHubTokenMinter, projectName string, lease Lease) (*TestSlotHotSwapLeaseExtension, error) {
+func ensureHotSwapLeaseMinimumByProjectName(ctx context.Context, store ReadStore, preparer TestSlotPreparer, minter RunnerGitHubTokenMinter, projectName string, lease Lease) (*TestSlotHotSwapLeaseExtension, error) {
 	project, ok := projectByName(ctx, store, projectName)
 	if !ok {
 		project = Project{Name: projectName}
@@ -52,7 +52,7 @@ func ensureHotSwapLeaseMinimumByProjectName(ctx context.Context, store ReadStore
 	return ensureHotSwapLeaseMinimum(ctx, store, preparer, minter, project, lease)
 }
 
-func ensureHotSwapLeaseMinimum(ctx context.Context, store ReadStore, preparer TestSlotPreparer, minter NativeGitHubTokenMinter, project Project, lease Lease) (*TestSlotHotSwapLeaseExtension, error) {
+func ensureHotSwapLeaseMinimum(ctx context.Context, store ReadStore, preparer TestSlotPreparer, minter RunnerGitHubTokenMinter, project Project, lease Lease) (*TestSlotHotSwapLeaseExtension, error) {
 	if lease.State != "claimed" || !boolFromMap(lease.Metadata, "test_slot_checkout") {
 		return nil, nil
 	}
@@ -107,7 +107,7 @@ func hotSwapMinimumTTLSeconds(lease Lease, now time.Time, minRemainingSeconds in
 	return nextTTL, true
 }
 
-func appendTestSlotHotSwapHistory(store ReadStore, preparer TestSlotPreparer, minter NativeGitHubTokenMinter) http.HandlerFunc {
+func appendTestSlotHotSwapHistory(store ReadStore, preparer TestSlotPreparer, minter RunnerGitHubTokenMinter) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		writer, ok := store.(TestSlotHotSwapHistoryStore)
 		stateStore, hasState := store.(StateStore)

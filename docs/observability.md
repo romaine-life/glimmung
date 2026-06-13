@@ -145,7 +145,7 @@ PR with its own data-plumbing requirement:
 
 ### Why a Watch, not a poll
 
-The cluster-wide native-Job Watch in `internal/server/run_watcher.go`
+The cluster-wide runner-Job Watch in `internal/server/run_watcher.go`
 is glimmung's **primary** detection path for terminal `batch/v1.Job`
 events. A single persistent HTTP connection to the kube-apiserver
 streams events for Jobs labelled

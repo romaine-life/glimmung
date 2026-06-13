@@ -88,7 +88,7 @@ type RunVerificationData struct {
 
 // PriorVerificationData carries the deciding (failing) verification of the
 // cycle a recycle was created from. It is persisted on the new cycle's run
-// record and exposed to its native pods as GLIMMUNG_PRIOR_VERIFICATION_JSON,
+// record and exposed to its runner pods as GLIMMUNG_PRIOR_VERIFICATION_JSON,
 // so retry attempts plan and implement against the previous failure instead
 // of rediscovering it. Phase names the verify phase that failed.
 type PriorVerificationData struct {

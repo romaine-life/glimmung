@@ -15,9 +15,9 @@ import (
 )
 
 const (
-	NativeWorkloadIdentityStatusOK      = "ok"
-	NativeWorkloadIdentityStatusSkipped = "skipped"
-	NativeWorkloadIdentityStatusFailed  = "failed"
+	RunnerWorkloadIdentityStatusOK      = "ok"
+	RunnerWorkloadIdentityStatusSkipped = "skipped"
+	RunnerWorkloadIdentityStatusFailed  = "failed"
 
 	defaultWorkloadIdentityAudience = "api://AzureADTokenExchange"
 )
@@ -42,43 +42,43 @@ type FederatedIdentityCredentialClient interface {
 	DeleteFederatedIdentityCredential(ctx context.Context, ref FederatedIdentityCredentialRef) error
 }
 
-type NativeWorkloadIdentityReconciler interface {
-	ReconcileNativeWorkloadIdentities(ctx context.Context, project Project) (NativeWorkloadIdentityStatus, error)
+type RunnerWorkloadIdentityReconciler interface {
+	ReconcileRunnerWorkloadIdentities(ctx context.Context, project Project) (RunnerWorkloadIdentityStatus, error)
 }
 
-type ProjectNativeWorkloadIdentityStatusWriter interface {
-	SetProjectNativeWorkloadIdentityStatus(ctx context.Context, project string, status NativeWorkloadIdentityStatus) (Project, error)
+type ProjectRunnerWorkloadIdentityStatusWriter interface {
+	SetProjectRunnerWorkloadIdentityStatus(ctx context.Context, project string, status RunnerWorkloadIdentityStatus) (Project, error)
 }
 
-type NativeWorkloadIdentityStatus struct {
+type RunnerWorkloadIdentityStatus struct {
 	State              string                                   `json:"state"`
 	Provider           string                                   `json:"provider,omitempty"`
 	SubscriptionID     string                                   `json:"subscription_id,omitempty"`
 	ResourceGroup      string                                   `json:"resource_group,omitempty"`
 	Issuer             string                                   `json:"issuer,omitempty"`
 	DesiredCount       int                                      `json:"desired_count"`
-	ManagedCredentials []NativeWorkloadIdentityCredentialStatus `json:"managed_credentials"`
-	Upserted           []NativeWorkloadIdentityCredentialStatus `json:"upserted,omitempty"`
-	Deleted            []NativeWorkloadIdentityCredentialStatus `json:"deleted,omitempty"`
+	ManagedCredentials []RunnerWorkloadIdentityCredentialStatus `json:"managed_credentials"`
+	Upserted           []RunnerWorkloadIdentityCredentialStatus `json:"upserted,omitempty"`
+	Deleted            []RunnerWorkloadIdentityCredentialStatus `json:"deleted,omitempty"`
 	LastReconciledAt   string                                   `json:"last_reconciled_at,omitempty"`
 	LastError          *string                                  `json:"last_error,omitempty"`
 }
 
-type NativeWorkloadIdentityCredentialStatus struct {
+type RunnerWorkloadIdentityCredentialStatus struct {
 	IdentityName   string   `json:"identity_name"`
 	CredentialName string   `json:"credential_name"`
 	Subject        string   `json:"subject"`
 	Audiences      []string `json:"audiences,omitempty"`
 }
 
-type NativeWorkloadIdentityService struct {
+type RunnerWorkloadIdentityService struct {
 	Client                  FederatedIdentityCredentialClient
 	Issuer                  string
 	ServiceAccountTokenPath string
 	Now                     func() time.Time
 }
 
-type nativeWorkloadIdentityConfig struct {
+type runnerWorkloadIdentityConfig struct {
 	Enabled        bool
 	Provider       string
 	SubscriptionID string
@@ -86,24 +86,24 @@ type nativeWorkloadIdentityConfig struct {
 	Issuer         string
 	SlotPrefix     string
 	Count          int
-	Credentials    []nativeWorkloadIdentityCredentialTemplate
+	Credentials    []runnerWorkloadIdentityCredentialTemplate
 }
 
-type nativeWorkloadIdentityCredentialTemplate struct {
+type runnerWorkloadIdentityCredentialTemplate struct {
 	IdentityName   string
 	CredentialName string
 	Subject        string
 	Audiences      []string
 }
 
-func (s NativeWorkloadIdentityService) ReconcileNativeWorkloadIdentities(ctx context.Context, project Project) (NativeWorkloadIdentityStatus, error) {
-	cfg, ok, err := nativeWorkloadIdentityConfigFromProject(project)
+func (s RunnerWorkloadIdentityService) ReconcileRunnerWorkloadIdentities(ctx context.Context, project Project) (RunnerWorkloadIdentityStatus, error) {
+	cfg, ok, err := runnerWorkloadIdentityConfigFromProject(project)
 	if !ok {
-		return NativeWorkloadIdentityStatus{}, nil
+		return RunnerWorkloadIdentityStatus{}, nil
 	}
 	now := s.now().UTC().Format(time.RFC3339Nano)
-	status := NativeWorkloadIdentityStatus{
-		State:            NativeWorkloadIdentityStatusFailed,
+	status := RunnerWorkloadIdentityStatus{
+		State:            RunnerWorkloadIdentityStatusFailed,
 		Provider:         cfg.Provider,
 		SubscriptionID:   cfg.SubscriptionID,
 		ResourceGroup:    cfg.ResourceGroup,
@@ -120,12 +120,12 @@ func (s NativeWorkloadIdentityService) ReconcileNativeWorkloadIdentities(ctx con
 		return status, err
 	}
 	if cfg.Issuer == "" {
-		err := errors.New("native_standby_workload_identity requires issuer or NATIVE_WORKLOAD_IDENTITY_ISSUER")
+		err := errors.New("runner_standby_workload_identity requires issuer or RUNNER_WORKLOAD_IDENTITY_ISSUER")
 		status.LastError = stringPtr(err.Error())
 		return status, err
 	}
 	if s.Client == nil {
-		err := errors.New("native workload identity client not configured")
+		err := errors.New("runner workload identity client not configured")
 		status.LastError = stringPtr(err.Error())
 		return status, err
 	}
@@ -156,12 +156,12 @@ func (s NativeWorkloadIdentityService) ReconcileNativeWorkloadIdentities(ctx con
 		status.Upserted = append(status.Upserted, credentialStatus(credential))
 	}
 
-	status.State = NativeWorkloadIdentityStatusOK
+	status.State = RunnerWorkloadIdentityStatusOK
 	status.LastError = nil
 	return status, nil
 }
 
-func (s NativeWorkloadIdentityService) currentCredentialsByIdentity(ctx context.Context, cfg nativeWorkloadIdentityConfig) (map[string][]FederatedIdentityCredential, error) {
+func (s RunnerWorkloadIdentityService) currentCredentialsByIdentity(ctx context.Context, cfg runnerWorkloadIdentityConfig) (map[string][]FederatedIdentityCredential, error) {
 	currentByIdentity := map[string][]FederatedIdentityCredential{}
 	seenIdentity := map[string]bool{}
 	for _, template := range cfg.Credentials {
@@ -183,7 +183,7 @@ func (s NativeWorkloadIdentityService) currentCredentialsByIdentity(ctx context.
 	return currentByIdentity, nil
 }
 
-func (s NativeWorkloadIdentityService) deleteRemovedManagedCredentials(ctx context.Context, cfg nativeWorkloadIdentityConfig, desired []FederatedIdentityCredential, currentByIdentity map[string][]FederatedIdentityCredential) ([]FederatedIdentityCredential, error) {
+func (s RunnerWorkloadIdentityService) deleteRemovedManagedCredentials(ctx context.Context, cfg runnerWorkloadIdentityConfig, desired []FederatedIdentityCredential, currentByIdentity map[string][]FederatedIdentityCredential) ([]FederatedIdentityCredential, error) {
 	deleted := []FederatedIdentityCredential{}
 	desiredSet := workloadIdentityCredentialSet(desired)
 	seenIdentity := map[string]bool{}
@@ -209,26 +209,26 @@ func (s NativeWorkloadIdentityService) deleteRemovedManagedCredentials(ctx conte
 	return deleted, nil
 }
 
-func (s NativeWorkloadIdentityService) now() time.Time {
+func (s RunnerWorkloadIdentityService) now() time.Time {
 	if s.Now != nil {
 		return s.Now()
 	}
 	return time.Now()
 }
 
-func nativeWorkloadIdentityConfigFromProject(project Project) (nativeWorkloadIdentityConfig, bool, error) {
-	cfgMap, ok := mapFromMap(project.Metadata, "native_standby_workload_identity")
+func runnerWorkloadIdentityConfigFromProject(project Project) (runnerWorkloadIdentityConfig, bool, error) {
+	cfgMap, ok := mapFromMap(project.Metadata, "runner_standby_workload_identity")
 	if !ok {
-		cfgMap, ok = mapFromMap(project.Metadata, "nativeStandbyWorkloadIdentity")
+		cfgMap, ok = mapFromMap(project.Metadata, "runnerStandbyWorkloadIdentity")
 	}
 	if !ok || !boolFromMap(cfgMap, "enabled") {
-		return nativeWorkloadIdentityConfig{}, false, nil
+		return runnerWorkloadIdentityConfig{}, false, nil
 	}
-	standby, standbyOK := mapFromMap(project.Metadata, "native_standby_dns")
+	standby, standbyOK := mapFromMap(project.Metadata, "runner_standby_dns")
 	if !standbyOK {
-		standby, standbyOK = mapFromMap(project.Metadata, "nativeStandbyDns")
+		standby, standbyOK = mapFromMap(project.Metadata, "runnerStandbyDns")
 	}
-	cfg := nativeWorkloadIdentityConfig{
+	cfg := runnerWorkloadIdentityConfig{
 		Enabled:        true,
 		Provider:       firstNonEmpty(stringMapValue(cfgMap, "provider"), "azure"),
 		SubscriptionID: firstNonEmpty(stringMapValue(cfgMap, "subscription"), stringMapValue(cfgMap, "subscription_id"), stringMapValue(cfgMap, "subscriptionId")),
@@ -244,34 +244,34 @@ func nativeWorkloadIdentityConfigFromProject(project Project) (nativeWorkloadIde
 	case "", "azure":
 		cfg.Provider = "azure"
 	default:
-		return cfg, true, fmt.Errorf("unsupported native workload identity provider %q", cfg.Provider)
+		return cfg, true, fmt.Errorf("unsupported runner workload identity provider %q", cfg.Provider)
 	}
 	if cfg.SubscriptionID == "" {
-		return cfg, true, errors.New("native_standby_workload_identity.subscription is required")
+		return cfg, true, errors.New("runner_standby_workload_identity.subscription is required")
 	}
 	if cfg.ResourceGroup == "" {
-		return cfg, true, errors.New("native_standby_workload_identity.resource_group is required")
+		return cfg, true, errors.New("runner_standby_workload_identity.resource_group is required")
 	}
 	if !standbyOK {
-		return cfg, true, errors.New("native_standby_dns metadata is required")
+		return cfg, true, errors.New("runner_standby_dns metadata is required")
 	}
 	if cfg.SlotPrefix == "" {
-		return cfg, true, errors.New("native_standby_dns.slot_prefix is required")
+		return cfg, true, errors.New("runner_standby_dns.slot_prefix is required")
 	}
 	credentials := workloadIdentityCredentialTemplatesFromMap(cfgMap)
 	if len(credentials) == 0 {
-		return cfg, true, errors.New("native_standby_workload_identity.credentials is required")
+		return cfg, true, errors.New("runner_standby_workload_identity.credentials is required")
 	}
 	cfg.Credentials = credentials
 	return cfg, true, nil
 }
 
-func workloadIdentityCredentialTemplatesFromMap(values map[string]any) []nativeWorkloadIdentityCredentialTemplate {
+func workloadIdentityCredentialTemplatesFromMap(values map[string]any) []runnerWorkloadIdentityCredentialTemplate {
 	rows := anySlice(firstAny(values["credentials"], values["federated_credentials"], values["federatedCredentials"]))
-	templates := make([]nativeWorkloadIdentityCredentialTemplate, 0, len(rows))
+	templates := make([]runnerWorkloadIdentityCredentialTemplate, 0, len(rows))
 	for _, row := range rows {
 		mapped := anyMap(row)
-		template := nativeWorkloadIdentityCredentialTemplate{
+		template := runnerWorkloadIdentityCredentialTemplate{
 			IdentityName:   firstNonEmpty(stringMapValue(mapped, "identity_name"), stringMapValue(mapped, "identityName")),
 			CredentialName: firstNonEmpty(stringMapValue(mapped, "credential_name"), stringMapValue(mapped, "credentialName"), stringMapValue(mapped, "name")),
 			Subject:        stringMapValue(mapped, "subject"),
@@ -288,7 +288,7 @@ func workloadIdentityCredentialTemplatesFromMap(values map[string]any) []nativeW
 	return templates
 }
 
-func desiredWorkloadIdentityCredentials(cfg nativeWorkloadIdentityConfig) []FederatedIdentityCredential {
+func desiredWorkloadIdentityCredentials(cfg runnerWorkloadIdentityConfig) []FederatedIdentityCredential {
 	credentials := make([]FederatedIdentityCredential, 0, cfg.Count*len(cfg.Credentials))
 	for slotIndex := 1; slotIndex <= cfg.Count; slotIndex++ {
 		slotName := fmt.Sprintf("%s-%d", cfg.SlotPrefix, slotIndex)
@@ -351,7 +351,7 @@ func flattenWorkloadIdentityCredentials(currentByIdentity map[string][]Federated
 	return out
 }
 
-func workloadIdentitySubstitutions(cfg nativeWorkloadIdentityConfig, slotIndex int, slotName string) map[string]string {
+func workloadIdentitySubstitutions(cfg runnerWorkloadIdentityConfig, slotIndex int, slotName string) map[string]string {
 	return map[string]string{
 		"project":    cfg.SlotPrefix,
 		"slot_index": strconv.Itoa(slotIndex),
@@ -360,7 +360,7 @@ func workloadIdentitySubstitutions(cfg nativeWorkloadIdentityConfig, slotIndex i
 	}
 }
 
-func managedWorkloadIdentityCredentialIndex(credential FederatedIdentityCredential, cfg nativeWorkloadIdentityConfig) (int, bool) {
+func managedWorkloadIdentityCredentialIndex(credential FederatedIdentityCredential, cfg runnerWorkloadIdentityConfig) (int, bool) {
 	slotName, ok := managedWorkloadIdentityCredentialSlotName(credential, cfg)
 	if !ok {
 		return 0, false
@@ -369,7 +369,7 @@ func managedWorkloadIdentityCredentialIndex(credential FederatedIdentityCredenti
 	return index, index > 0
 }
 
-func managedWorkloadIdentityCredentialSlotName(credential FederatedIdentityCredential, cfg nativeWorkloadIdentityConfig) (string, bool) {
+func managedWorkloadIdentityCredentialSlotName(credential FederatedIdentityCredential, cfg runnerWorkloadIdentityConfig) (string, bool) {
 	for _, template := range cfg.Credentials {
 		if credential.IdentityName != template.IdentityName {
 			continue
@@ -392,7 +392,7 @@ func managedWorkloadIdentityCredentialSlotName(credential FederatedIdentityCrede
 	return "", false
 }
 
-func workloadIdentitySlotNameCandidates(credential FederatedIdentityCredential, template nativeWorkloadIdentityCredentialTemplate) []string {
+func workloadIdentitySlotNameCandidates(credential FederatedIdentityCredential, template runnerWorkloadIdentityCredentialTemplate) []string {
 	seen := map[string]bool{}
 	var candidates []string
 	for _, candidate := range slotNameCandidatesFromTemplate(credential.CredentialName, template.CredentialName) {
@@ -449,16 +449,16 @@ func workloadIdentitySlotIndex(slotName string) int {
 	return index
 }
 
-func credentialStatusList(credentials []FederatedIdentityCredential) []NativeWorkloadIdentityCredentialStatus {
-	statuses := make([]NativeWorkloadIdentityCredentialStatus, 0, len(credentials))
+func credentialStatusList(credentials []FederatedIdentityCredential) []RunnerWorkloadIdentityCredentialStatus {
+	statuses := make([]RunnerWorkloadIdentityCredentialStatus, 0, len(credentials))
 	for _, credential := range credentials {
 		statuses = append(statuses, credentialStatus(credential))
 	}
 	return statuses
 }
 
-func credentialStatus(credential FederatedIdentityCredential) NativeWorkloadIdentityCredentialStatus {
-	return NativeWorkloadIdentityCredentialStatus{
+func credentialStatus(credential FederatedIdentityCredential) RunnerWorkloadIdentityCredentialStatus {
+	return RunnerWorkloadIdentityCredentialStatus{
 		IdentityName:   credential.IdentityName,
 		CredentialName: credential.CredentialName,
 		Subject:        credential.Subject,

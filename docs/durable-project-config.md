@@ -12,7 +12,7 @@ server-reconciled status is a separate, reconciler-owned column.
   in `project_config_schemas` (content-hash `config_schema_ref`),
   transactionally, **without touching the reconciler-owned `status` column**.
 - Server-reconciled status (`managed_auth_origin_status`,
-  `native_standby_workload_identity_status`) lives in `projects.status`, never
+  `runner_standby_workload_identity_status`) lives in `projects.status`, never
   in authored config. Reads merge it back under `Metadata` so the API/frontend
   shape is unchanged.
 

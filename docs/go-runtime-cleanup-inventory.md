@@ -22,16 +22,16 @@ are Go plus the Vite dashboard.
 
 | Surface | Final state |
 |---|---|
-| Native runner callback, event, status, failure, replay, completion, recycle, forward-dispatch, and Kubernetes launch paths | Go-owned. |
-| Native pod-log proxy | Deleted; use native events and archived evidence. |
-| Native HTTP GitHub token routes | Go-owned surface for native runner callbacks. |
+| Runner callback, event, status, failure, replay, completion, recycle, forward-dispatch, and Kubernetes launch paths | Go-owned. |
+| Runner pod-log proxy | Deleted; use runner events and archived evidence. |
+| Runner HTTP GitHub token routes | Go-owned surface for runner callbacks. |
 | Test-slot checkout/return routes | Go-owned surface for MCP/test skill callers; project test-environment scaling remains active for capacity management. |
 | Storage-ID, GitHub issue-coordinate, Report alias, and PR-coordinate Touchpoint routes | Deleted from the live route table; route inventory tests reject reintroduction. |
 | `POST /v1/portfolio/elements/dispatch` | Go-owned; creates a portfolio review Issue and dispatches through the canonical run path. |
 | `POST /v1/playbooks/{project}/{playbook_ref}/run` | Go-owned; advances ready Playbook entries by creating Issues and dispatching Runs. |
 | Signal drain and request-changes triage | Go-owned; queued PR feedback signals drain in the Go service and create a new Run through the canonical project queue. |
 | GitHub webhook event processing beyond signature acknowledgement | Retired unless a future product issue restores a specific syndication behavior. |
-| GitHub Actions executor dispatch | Retired; managed workflow phases must use the native `k8s_job` path. |
+| GitHub Actions executor dispatch | Retired; managed workflow phases must use the runner `k8s_job` path. |
 
 ## Stored Data Notes
 
@@ -42,8 +42,8 @@ The Go store owns these active Postgres tables:
 | `projects` | Preserve `id`, `name`, `githubRepo`, `metadata`, and `createdAt`; `argocdApp` may still appear in old payloads. |
 | `workflows` | Preserve `project`, `name`, `phases`, `pr`, `budget`, `defaultRequirements`, `metadata`, and `createdAt`. |
 | `leases` | Preserve lease numbers, state values, callback-token metadata, requester metadata, test-slot fields, and TTL timestamps. |
-| `runs` | Preserve issue refs, public run-number fields, attempts, verification, phase outputs, callback tokens, lock-holder fields, PR links, and native attempt fields. |
-| `run_events` | Preserve native event sequence fields for runner status/log replay. |
+| `runs` | Preserve issue refs, public run-number fields, attempts, verification, phase outputs, callback tokens, lock-holder fields, PR links, and runner attempt fields. |
+| `run_events` | Preserve runner event sequence fields for runner status/log replay. |
 | `issues` | Preserve project issue numbers, state values, metadata workflow link, comments, and archive/discard timestamps. |
 | `locks` | Preserve `scope`, `key`, `state`, holder, and expiry timestamps. |
 | `reports` | Preserve run report payloads. |

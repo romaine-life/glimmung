@@ -142,7 +142,7 @@ func cancelLeaseByRef(store ReadStore) http.HandlerFunc {
 	}
 }
 
-func updateLeaseTTLByRef(store ReadStore, preparer TestSlotPreparer, minter NativeGitHubTokenMinter) http.HandlerFunc {
+func updateLeaseTTLByRef(store ReadStore, preparer TestSlotPreparer, minter RunnerGitHubTokenMinter) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		updater, ok := store.(LeaseTTLUpdater)
 		if !ok || updater == nil {
@@ -191,7 +191,7 @@ func updateLeaseTTLByRef(store ReadStore, preparer TestSlotPreparer, minter Nati
 	}
 }
 
-func rearmUpdatedLeaseTimer(ctx context.Context, store ReadStore, preparer TestSlotPreparer, minter NativeGitHubTokenMinter, lease Lease) {
+func rearmUpdatedLeaseTimer(ctx context.Context, store ReadStore, preparer TestSlotPreparer, minter RunnerGitHubTokenMinter, lease Lease) {
 	if preparer == nil || lease.State != "claimed" || !boolFromMap(lease.Metadata, "test_slot_checkout") {
 		return
 	}

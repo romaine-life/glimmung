@@ -46,12 +46,12 @@ func TestParseOutputFileRejectsDuplicateKeys(t *testing.T) {
 }
 
 func TestNativeRunnerExecutesStepsAndPublishesOutputs(t *testing.T) {
-	var events []nativeEventRequest
+	var events []runnerEventRequest
 	var completion completedRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/events":
-			var event nativeEventRequest
+			var event runnerEventRequest
 			if err := json.NewDecoder(r.Body).Decode(&event); err != nil {
 				t.Errorf("decode event: %v", err)
 				w.WriteHeader(http.StatusBadRequest)
@@ -73,7 +73,7 @@ func TestNativeRunnerExecutesStepsAndPublishesOutputs(t *testing.T) {
 	defer server.Close()
 
 	workspace := t.TempDir()
-	r := &nativeRunner{
+	r := &runner{
 		cfg: runnerConfig{
 			JobID:        "test",
 			EventsURL:    server.URL + "/events",
@@ -130,13 +130,13 @@ func TestNativeRunnerExecutesStepsAndPublishesOutputs(t *testing.T) {
 }
 
 func TestNativeRunnerExpandsDynamicStepGroupSequentially(t *testing.T) {
-	var events []nativeEventRequest
+	var events []runnerEventRequest
 	var completion completedRequest
 	var mu sync.Mutex
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/events":
-			var event nativeEventRequest
+			var event runnerEventRequest
 			_ = json.NewDecoder(r.Body).Decode(&event)
 			mu.Lock()
 			events = append(events, event)
@@ -154,7 +154,7 @@ func TestNativeRunnerExpandsDynamicStepGroupSequentially(t *testing.T) {
 	defer server.Close()
 
 	workspace := t.TempDir()
-	r := &nativeRunner{
+	r := &runner{
 		cfg: runnerConfig{
 			JobID:        "verify",
 			EventsURL:    server.URL + "/events",
@@ -233,13 +233,13 @@ func TestNativeRunnerExpandsDynamicStepGroupSequentially(t *testing.T) {
 // spirelens env-prep guard contract — a probe that finds the host
 // unavailable / an unexpected mod must not let downstream steps run.
 func TestNativeRunnerHaltsRemainingStepsOnAbortReason(t *testing.T) {
-	var events []nativeEventRequest
+	var events []runnerEventRequest
 	var completion completedRequest
 	var mu sync.Mutex
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/events":
-			var event nativeEventRequest
+			var event runnerEventRequest
 			_ = json.NewDecoder(r.Body).Decode(&event)
 			mu.Lock()
 			events = append(events, event)
@@ -258,7 +258,7 @@ func TestNativeRunnerHaltsRemainingStepsOnAbortReason(t *testing.T) {
 
 	workspace := t.TempDir()
 	sentinel := filepath.Join(workspace, "second-step-ran")
-	r := &nativeRunner{
+	r := &runner{
 		cfg: runnerConfig{
 			JobID:        "test-abort",
 			EventsURL:    server.URL + "/events",
@@ -331,7 +331,7 @@ func TestNativeRunnerAggregatesDynamicCaseVerification(t *testing.T) {
 	defer server.Close()
 
 	workspace := t.TempDir()
-	r := &nativeRunner{
+	r := &runner{
 		cfg: runnerConfig{
 			JobID:        "verify",
 			EventsURL:    server.URL + "/events",
@@ -425,13 +425,13 @@ func TestAggregateDynamicCaseMarkdownSkipsEmptyAndOrdersFailuresFirst(t *testing
 }
 
 func TestNativeRunnerStopsDynamicGroupAfterCaseFailure(t *testing.T) {
-	var events []nativeEventRequest
+	var events []runnerEventRequest
 	var completion completedRequest
 	var mu sync.Mutex
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/events":
-			var event nativeEventRequest
+			var event runnerEventRequest
 			_ = json.NewDecoder(r.Body).Decode(&event)
 			mu.Lock()
 			events = append(events, event)
@@ -449,7 +449,7 @@ func TestNativeRunnerStopsDynamicGroupAfterCaseFailure(t *testing.T) {
 	defer server.Close()
 
 	workspace := t.TempDir()
-	r := &nativeRunner{
+	r := &runner{
 		cfg: runnerConfig{
 			JobID:        "verify",
 			EventsURL:    server.URL + "/events",
@@ -502,7 +502,7 @@ func TestNativeRunnerStopsDynamicGroupAfterCaseFailure(t *testing.T) {
 	}
 }
 
-func sawEvent(events []nativeEventRequest, event string) bool {
+func sawEvent(events []runnerEventRequest, event string) bool {
 	for _, candidate := range events {
 		if candidate.Event == event {
 			return true
@@ -511,16 +511,16 @@ func sawEvent(events []nativeEventRequest, event string) bool {
 	return false
 }
 
-func eventByName(events []nativeEventRequest, event string) nativeEventRequest {
+func eventByName(events []runnerEventRequest, event string) runnerEventRequest {
 	for _, candidate := range events {
 		if candidate.Event == event {
 			return candidate
 		}
 	}
-	return nativeEventRequest{}
+	return runnerEventRequest{}
 }
 
-func sawStep(events []nativeEventRequest, slug string) bool {
+func sawStep(events []runnerEventRequest, slug string) bool {
 	for _, candidate := range events {
 		if candidate.StepSlug != nil && *candidate.StepSlug == slug {
 			return true
@@ -529,7 +529,7 @@ func sawStep(events []nativeEventRequest, slug string) bool {
 	return false
 }
 
-func assertEventStepGroup(t *testing.T, events []nativeEventRequest, slug, group, groupTitle string) {
+func assertEventStepGroup(t *testing.T, events []runnerEventRequest, slug, group, groupTitle string) {
 	t.Helper()
 	for _, event := range events {
 		if event.StepSlug == nil || *event.StepSlug != slug || event.Event != "step_started" {
@@ -556,13 +556,13 @@ func assertEventStepGroup(t *testing.T, events []nativeEventRequest, slug, group
 // process before any callback fired — is what hung ambience#170/runs/1.1
 // even after the rest of verify.sh would have been able to clean up.
 func TestNativeRunnerPostsTimedOutOnContextCancel(t *testing.T) {
-	var events []nativeEventRequest
+	var events []runnerEventRequest
 	var completion completedRequest
 	var mu sync.Mutex
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/events":
-			var event nativeEventRequest
+			var event runnerEventRequest
 			_ = json.NewDecoder(r.Body).Decode(&event)
 			mu.Lock()
 			events = append(events, event)
@@ -580,7 +580,7 @@ func TestNativeRunnerPostsTimedOutOnContextCancel(t *testing.T) {
 	defer server.Close()
 
 	workspace := t.TempDir()
-	r := &nativeRunner{
+	r := &runner{
 		cfg: runnerConfig{
 			JobID:        "test-shutdown",
 			EventsURL:    server.URL + "/events",
@@ -641,13 +641,13 @@ func TestNativeRunnerPostsTimedOutOnContextCancel(t *testing.T) {
 func TestNativeRunnerEmitsInnerJobRegisteredEventFromMarker(t *testing.T) {
 	var (
 		mu       sync.Mutex
-		events   []nativeEventRequest
+		events   []runnerEventRequest
 		complete completedRequest
 	)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/events":
-			var event nativeEventRequest
+			var event runnerEventRequest
 			_ = json.NewDecoder(r.Body).Decode(&event)
 			mu.Lock()
 			events = append(events, event)
@@ -666,7 +666,7 @@ func TestNativeRunnerEmitsInnerJobRegisteredEventFromMarker(t *testing.T) {
 
 	workspace := t.TempDir()
 	marker := `===GLIMMUNG-INNER-JOB=== {"namespace":"ambience-slot-3","job_name":"agent-ve-2","intent":"verification_agent","label":"verify-agent"}`
-	r := &nativeRunner{
+	r := &runner{
 		cfg: runnerConfig{
 			JobID:        "test",
 			EventsURL:    server.URL + "/events",
@@ -704,8 +704,8 @@ func TestNativeRunnerEmitsInnerJobRegisteredEventFromMarker(t *testing.T) {
 	defer mu.Unlock()
 
 	var (
-		registered *nativeEventRequest
-		warning    *nativeEventRequest
+		registered *runnerEventRequest
+		warning    *runnerEventRequest
 	)
 	for i := range events {
 		switch events[i].Event {
@@ -740,14 +740,14 @@ func TestNativeRunnerEmitsInnerJobRegisteredEventFromMarker(t *testing.T) {
 func TestNativeRunnerSuppressesEvidenceTarPayloadLogs(t *testing.T) {
 	var (
 		mu     sync.Mutex
-		events []nativeEventRequest
+		events []runnerEventRequest
 	)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/events" {
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
-		var event nativeEventRequest
+		var event runnerEventRequest
 		_ = json.NewDecoder(r.Body).Decode(&event)
 		mu.Lock()
 		events = append(events, event)
@@ -757,7 +757,7 @@ func TestNativeRunnerSuppressesEvidenceTarPayloadLogs(t *testing.T) {
 	defer server.Close()
 
 	workspace := t.TempDir()
-	r := &nativeRunner{
+	r := &runner{
 		cfg: runnerConfig{
 			EventsURL: server.URL + "/events",
 			Workspace: workspace,
@@ -799,7 +799,7 @@ func TestNativeRunnerSuppressesEvidenceTarPayloadLogs(t *testing.T) {
 				sawSummary = true
 			}
 		}
-		snapshot := append([]nativeEventRequest(nil), events...)
+		snapshot := append([]runnerEventRequest(nil), events...)
 		mu.Unlock()
 		if payloadLeaked != "" {
 			t.Fatalf("evidence payload leaked into log event: %q", payloadLeaked)
@@ -823,14 +823,14 @@ func TestNativeRunnerPreservesLogLineOrderForMultiLineOutput(t *testing.T) {
 	const lineCount = 80
 	var (
 		mu     sync.Mutex
-		events []nativeEventRequest
+		events []runnerEventRequest
 	)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/events" {
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
-		var event nativeEventRequest
+		var event runnerEventRequest
 		_ = json.NewDecoder(r.Body).Decode(&event)
 		mu.Lock()
 		events = append(events, event)
@@ -840,7 +840,7 @@ func TestNativeRunnerPreservesLogLineOrderForMultiLineOutput(t *testing.T) {
 	defer server.Close()
 
 	workspace := t.TempDir()
-	r := &nativeRunner{
+	r := &runner{
 		cfg: runnerConfig{
 			EventsURL: server.URL + "/events",
 			Workspace: workspace,
@@ -861,7 +861,7 @@ func TestNativeRunnerPreservesLogLineOrderForMultiLineOutput(t *testing.T) {
 
 	// Log posts are fire-and-forget goroutines; wait for all lines to land.
 	deadline := time.Now().Add(5 * time.Second)
-	var ordered []nativeEventRequest
+	var ordered []runnerEventRequest
 	for {
 		mu.Lock()
 		ordered = ordered[:0]
@@ -907,7 +907,7 @@ func TestNativeRunnerDoesNotWaitForeverForBlockedLogEvent(t *testing.T) {
 	defer server.Close()
 
 	workspace := t.TempDir()
-	r := &nativeRunner{
+	r := &runner{
 		cfg: runnerConfig{
 			EventsURL: server.URL + "/events",
 			Workspace: workspace,
@@ -1118,7 +1118,7 @@ func TestAggregateDynamicCaseVerificationNoFailureKeyOnPass(t *testing.T) {
 
 func TestAgentPromptIncludesPriorVerification(t *testing.T) {
 	t.Setenv("GLIMMUNG_PRIOR_VERIFICATION_JSON", `{"phase":"llm-verify","verification":{"status":"fail","failure":{"suspected_cause":"test_expectation_mismatch"}}}`)
-	r := &nativeRunner{cfg: runnerConfig{Workspace: t.TempDir()}}
+	r := &runner{cfg: runnerConfig{Workspace: t.TempDir()}}
 	prompt, err := r.agentPrompt(t.TempDir(), stepSpec{Slug: "run-test-plan"}, agentStepSpec{Prompt: "do the work"}, "test_plan", agentruntime.ResolvedProfile{ProfileID: "p", Provider: "claude", Model: "m"})
 	if err != nil {
 		t.Fatalf("agentPrompt: %v", err)
@@ -1159,7 +1159,7 @@ func TestExecuteAgentStepMintsGithubTokenWhenRequested(t *testing.T) {
 	defer server.Close()
 
 	workspace := t.TempDir()
-	r := &nativeRunner{
+	r := &runner{
 		cfg: runnerConfig{
 			EventsURL:           server.URL + "/events",
 			GitHubAgentTokenURL: server.URL + "/github-agent-token",
@@ -1207,7 +1207,7 @@ func TestExecuteAgentStepMintsGithubTokenWhenRequested(t *testing.T) {
 }
 
 func TestMintAgentGithubTokenFileRequiresURL(t *testing.T) {
-	r := &nativeRunner{cfg: runnerConfig{}}
+	r := &runner{cfg: runnerConfig{}}
 	if _, err := r.mintAgentGithubTokenFile(context.Background()); err == nil {
 		t.Fatal("expected error when GLIMMUNG_GITHUB_AGENT_TOKEN_URL unset")
 	}

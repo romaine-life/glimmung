@@ -14,7 +14,7 @@ import (
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 
-	"github.com/romaine-life/glimmung/internal/domain/nativecostrepair"
+	"github.com/romaine-life/glimmung/internal/domain/runnercostrepair"
 	"github.com/romaine-life/glimmung/internal/server"
 	pgstore "github.com/romaine-life/glimmung/internal/store/pg"
 )
@@ -27,7 +27,7 @@ type repairOutput struct {
 	RunDisplayNumber string                  `json:"run_display_number"`
 	IssueNumber      int                     `json:"issue_number,omitempty"`
 	Applied          bool                    `json:"applied"`
-	Result           nativecostrepair.Result `json:"result"`
+	Result           runnercostrepair.Result `json:"result"`
 }
 
 func main() {
@@ -74,12 +74,12 @@ func run() error {
 		return err
 	}
 
-	var result nativecostrepair.Result
+	var result runnercostrepair.Result
 	applied := false
 	if *apply {
 		_, err = runs.PatchPayload(ctx, row.Project, row.ID, func(raw map[string]any) error {
 			var repairErr error
-			result, repairErr = nativecostrepair.RepairRunPayload(raw, events)
+			result, repairErr = runnercostrepair.RepairRunPayload(raw, events)
 			if repairErr != nil {
 				return repairErr
 			}
@@ -97,7 +97,7 @@ func run() error {
 		}
 		applied = result.Changed
 	} else {
-		result, err = nativecostrepair.RepairRunPayload(payload, events)
+		result, err = runnercostrepair.RepairRunPayload(payload, events)
 		if err != nil {
 			return err
 		}
@@ -197,14 +197,14 @@ func numericInt(value any) (int, bool) {
 	}
 }
 
-func repairEvents(ctx context.Context, store *pgstore.RunEventsStore, runID string) ([]nativecostrepair.Event, error) {
+func repairEvents(ctx context.Context, store *pgstore.RunEventsStore, runID string) ([]runnercostrepair.Event, error) {
 	rows, err := store.List(ctx, runID, nil, nil, nil, nil, nil)
 	if err != nil {
 		return nil, err
 	}
-	events := make([]nativecostrepair.Event, 0, len(rows))
+	events := make([]runnercostrepair.Event, 0, len(rows))
 	for _, row := range rows {
-		events = append(events, nativecostrepair.Event{
+		events = append(events, runnercostrepair.Event{
 			AttemptIndex: row.AttemptIndex,
 			JobID:        row.JobID,
 			Event:        row.Event,

@@ -45,7 +45,7 @@ export const mockSnapshot = {
       lease_number: 11,
       project: "glimmung",
       workflow: "default",
-      host: "native-k8s",
+      host: "runner-k8s",
       state: "claimed",
       requirements: { os: "windows", apps: ["sts2"] },
       metadata: { issue: 206, run: "run-glimmung-206-live" },
@@ -60,13 +60,13 @@ export const mockSnapshot = {
       lease_number: 42,
       project: "glimmung",
       workflow: "test-slot-checkout",
-      host: "native-k8s",
+      host: "runner-k8s",
       state: "claimed",
       requirements: { os: "linux", apps: ["node", "playwright"] },
       metadata: {
         test_slot_checkout: true,
-        native_slot_index: 1,
-        native_slot_name: "glimmung-test-1",
+        runner_slot_index: 1,
+        runner_slot_name: "glimmung-test-1",
         purpose: "mock browser validation",
         requester_ref: "mock-designer",
       },
@@ -104,13 +104,13 @@ export const mockSnapshot = {
         lease_number: 42,
         project: "glimmung",
         workflow: "test-slot-checkout",
-        host: "native-k8s",
+        host: "runner-k8s",
         state: "claimed",
         requirements: { os: "linux", apps: ["node", "playwright"] },
         metadata: {
           test_slot_checkout: true,
-          native_slot_index: 1,
-          native_slot_name: "glimmung-test-1",
+          runner_slot_index: 1,
+          runner_slot_name: "glimmung-test-1",
           purpose: "mock browser validation",
           requester_ref: "mock-designer",
         },
@@ -483,7 +483,7 @@ const mockIssues = [
     workflow: "default",
     repo: null,
     number: 206,
-    title: "Display native run graph and step-level execution",
+    title: "Display runner run graph and step-level execution",
     state: "open",
     labels: ["design-system", "run-graph", "agent-run"],
     html_url: null,
@@ -653,7 +653,7 @@ export const mockRuns = [
     cycle_number: 1,
     run_cycle_number: 1,
     issue_number: 206,
-    title: "Display native run graph and step-level execution",
+    title: "Display runner run graph and step-level execution",
     state: "in_progress",
     cycles: 2,
     current_phase: "verify",
@@ -689,7 +689,7 @@ export const mockRuns = [
     cycle_number: 3,
     run_cycle_number: 1,
     issue_number: 184,
-    title: "Wire native runner log archive links",
+    title: "Wire runner log archive links",
     state: "passed",
     cycles: 1,
     current_phase: "touchpoint",
@@ -786,8 +786,8 @@ const mockTouchpoints = [
     project: "glimmung",
     repo: "romaine-life/glimmung",
     pr_number: 218,
-    pr_branch: "codex/native-run-graph",
-    title: "Render native run graph detail view",
+    pr_branch: "codex/run-run-graph",
+    title: "Render runner run graph detail view",
     state: "open",
     merged: false,
     html_url: "https://github.com/romaine-life/glimmung/pull/218",
@@ -827,10 +827,10 @@ const issueGraph = {
         entrypoint_phase: "design",
         touchpoint_ref: "touchpoint-glimmung-206",
         touchpoint_state: "open",
-        touchpoint_title: "Render native run graph detail view",
+        touchpoint_title: "Render runner run graph detail view",
         touchpoint_url: "https://github.com/romaine-life/glimmung/pull/218",
         pr_number: 218,
-        pr_branch: "codex/native-run-graph",
+        pr_branch: "codex/run-run-graph",
       },
     },
     attempt("run-glimmung-206-live", 0, "design", "completed", ago(23), ago(18), "success", "pass", [
@@ -952,7 +952,7 @@ const issueGraph = {
       ref: "romaine-life/glimmung#218",
       repo: "romaine-life/glimmung",
       pr_number: 218,
-      title: "Render native run graph detail view",
+      title: "Render runner run graph detail view",
       state: "open",
       html_url: "https://github.com/romaine-life/glimmung/pull/218",
       linked_run_ref: "glimmung#206/runs/1",
@@ -1007,7 +1007,7 @@ const systemGraph = {
   ],
 };
 
-const nativeEvents = {
+const runnerEvents = {
   project: "glimmung",
   run_ref: "glimmung#206/runs/1",
   attempt_index: 2,
@@ -1106,16 +1106,16 @@ function handleMockRequest(url: URL, init?: RequestInit): Response {
     return json({ id: `mock-${Date.now()}`, ok: true }, { status: 201 });
   }
 
-  const nativeIssueGraphMatch = path.match(/^\/v1\/issues\/by-number\/([^/]+)\/(\d+)\/graph$/);
-  if (nativeIssueGraphMatch) return json(issueGraph);
+  const runnerIssueGraphMatch = path.match(/^\/v1\/issues\/by-number\/([^/]+)\/(\d+)\/graph$/);
+  if (runnerIssueGraphMatch) return json(issueGraph);
 
   const runCycleGraphMatch = path.match(/^\/v1\/projects\/([^/]+)\/issues\/\d+\/runs\/[^/]+\/cycles\/[^/]+\/graph$/);
   if (runCycleGraphMatch) return json(issueGraph.projection);
 
-  const nativeIssueNumberMatch = path.match(/^\/v1\/issues\/by-number\/([^/]+)\/(\d+)$/);
-  if (nativeIssueNumberMatch) {
-    const project = decodeURIComponent(nativeIssueNumberMatch[1]);
-    const number = Number(nativeIssueNumberMatch[2]);
+  const runnerIssueNumberMatch = path.match(/^\/v1\/issues\/by-number\/([^/]+)\/(\d+)$/);
+  if (runnerIssueNumberMatch) {
+    const project = decodeURIComponent(runnerIssueNumberMatch[1]);
+    const number = Number(runnerIssueNumberMatch[2]);
     const detail = issueDetails.find((i) => i.project === project && i.number === number);
     return detail ? json(detail) : json({ error: "not found" }, { status: 404 });
   }
@@ -1130,8 +1130,8 @@ function handleMockRequest(url: URL, init?: RequestInit): Response {
 
   if (path.includes("/comments")) return json({ id: `comment-mock-${Date.now()}`, ok: true });
 
-  if (path.match(/^\/v1\/runs\/[^/]+\/[^/]+\/native\/events$/)) return json(nativeEvents);
-  if (path.match(/^\/v1\/projects\/[^/]+\/issues\/\d+\/runs\/[^/]+\/native\/events$/)) return json(nativeEvents);
+  if (path.match(/^\/v1\/runs\/[^/]+\/[^/]+\/run\/events$/)) return json(runnerEvents);
+  if (path.match(/^\/v1\/projects\/[^/]+\/issues\/\d+\/runs\/[^/]+\/run\/events$/)) return json(runnerEvents);
   if (path.match(/^\/v1\/projects\/[^/]+\/issues\/\d+\/runs\/[^/]+\/abort$/) && method === "POST") return json({ ok: true });
 
   return json({ error: `mock route not implemented: ${method} ${path}` }, { status: 404 });

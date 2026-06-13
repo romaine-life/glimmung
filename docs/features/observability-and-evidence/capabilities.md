@@ -76,7 +76,7 @@ Evidence:
   follow-up showed the framing was wrong: the stdout-base64-tar
   emission in `internal/ops/agentops/job.go` (the developer-CLI
   `glimmung-agent apply-agent-job` script) had **no consumer anywhere
-  in the repo**. The production runner (`glimmung-native-runner`)
+  in the repo**. The production runner (`glimmung-runner`)
   uses a different completion-file ref path and does not currently
   upload evidence bytes. The honest action per migration-policy
   ("vestigial code is a deletion target") was deletion of the dead

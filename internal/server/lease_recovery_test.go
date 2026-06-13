@@ -58,7 +58,7 @@ func (s *fakeStaleLeaseStore) PatchLeasePayload(_ context.Context, project, id s
 	return nil
 }
 
-func (s *fakeStaleLeaseStore) ReleaseExpiredNativeSlotReservation(_ context.Context, project, id string) error {
+func (s *fakeStaleLeaseStore) ReleaseExpiredRunnerSlotReservation(_ context.Context, project, id string) error {
 	if s.releaseErr != nil {
 		return s.releaseErr
 	}

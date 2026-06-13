@@ -1,4 +1,4 @@
-package nativecostrepair
+package runnercostrepair
 
 import (
 	"testing"

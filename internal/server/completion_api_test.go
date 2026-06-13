@@ -70,9 +70,9 @@ type fakeCompletionStore struct {
 	leaseResult Lease
 	leaseErr    error
 
-	nativeExpectedJobs []string
-	nativeCompletions  map[string]CompletionPayload
-	nativeErr          error
+	runnerExpectedJobs []string
+	runnerCompletions  map[string]CompletionPayload
+	runnerErr          error
 
 	recycleReq *CreateRecycleCycleRequest
 
@@ -223,7 +223,7 @@ func (s *fakeCompletionStore) StampLatestAttemptSkipped(_ context.Context, _, _,
 	return s.skippedStampErr
 }
 
-func (s *fakeCompletionStore) RecordNativeJobsSkipped(_ context.Context, _, _, phase string, skipped map[string]string) error {
+func (s *fakeCompletionStore) RecordRunnerJobsSkipped(_ context.Context, _, _, phase string, skipped map[string]string) error {
 	s.skippedJobsPhase = phase
 	s.skippedJobs = skipped
 	return s.skippedJobsErr
@@ -268,39 +268,39 @@ func (s *fakeCompletionStore) CancelLeaseByRef(context.Context, string, string) 
 	return CancelLeaseResult{}, nil
 }
 
-func (s *fakeCompletionStore) RecordNativeJobCompletion(_ context.Context, _, _ string, p CompletionPayload) (NativeJobCompletionResult, error) {
-	if s.nativeErr != nil {
-		return NativeJobCompletionResult{}, s.nativeErr
+func (s *fakeCompletionStore) RecordRunnerJobCompletion(_ context.Context, _, _ string, p CompletionPayload) (RunnerJobCompletionResult, error) {
+	if s.runnerErr != nil {
+		return RunnerJobCompletionResult{}, s.runnerErr
 	}
 	if s.run == nil {
-		return NativeJobCompletionResult{}, ErrNotFound
+		return RunnerJobCompletionResult{}, ErrNotFound
 	}
 	jobID := ""
 	if p.JobID != nil {
 		jobID = *p.JobID
 	}
 	if jobID == "" {
-		return NativeJobCompletionResult{}, ValidationError{Message: "job_id required"}
+		return RunnerJobCompletionResult{}, ValidationError{Message: "job_id required"}
 	}
-	expected := append([]string{}, s.nativeExpectedJobs...)
+	expected := append([]string{}, s.runnerExpectedJobs...)
 	if len(expected) == 0 {
 		expected = append(expected, jobID)
 	}
 	if !containsTestString(expected, jobID) {
-		return NativeJobCompletionResult{}, ValidationError{Message: "unknown job"}
+		return RunnerJobCompletionResult{}, ValidationError{Message: "unknown job"}
 	}
-	if s.nativeCompletions == nil {
-		s.nativeCompletions = map[string]CompletionPayload{}
+	if s.runnerCompletions == nil {
+		s.runnerCompletions = map[string]CompletionPayload{}
 	}
-	_, existed := s.nativeCompletions[jobID]
-	s.nativeCompletions[jobID] = p
+	_, existed := s.runnerCompletions[jobID]
+	s.runnerCompletions[jobID] = p
 
 	completed := make([]string, 0, len(expected))
 	pending := make([]string, 0)
 	failed := make([]string, 0)
 	phaseComplete := true
 	for _, id := range expected {
-		completion, ok := s.nativeCompletions[id]
+		completion, ok := s.runnerCompletions[id]
 		if !ok {
 			phaseComplete = false
 			pending = append(pending, id)
@@ -311,14 +311,14 @@ func (s *fakeCompletionStore) RecordNativeJobCompletion(_ context.Context, _, _ 
 			failed = append(failed, id)
 		}
 	}
-	return NativeJobCompletionResult{
+	return RunnerJobCompletionResult{
 		Run:             *s.run,
 		PhaseComplete:   phaseComplete,
 		CompletionReady: phaseComplete && !existed,
 		CompletedJobIDs: completed,
 		PendingJobIDs:   pending,
 		FailedJobIDs:    failed,
-		PhasePayload:    aggregateFakeNativePayload(expected, s.nativeCompletions),
+		PhasePayload:    aggregateFakeRunnerPayload(expected, s.runnerCompletions),
 	}, nil
 }
 
@@ -418,7 +418,7 @@ func (c *fakePullRequestClient) MergePullRequest(_ context.Context, req PullRequ
 	return c.mergeRes, nil
 }
 
-func aggregateFakeNativePayload(expected []string, completions map[string]CompletionPayload) CompletionPayload {
+func aggregateFakeRunnerPayload(expected []string, completions map[string]CompletionPayload) CompletionPayload {
 	payload := CompletionPayload{Conclusion: "success", PhaseOutputs: map[string]string{}}
 	for _, id := range expected {
 		completion, ok := completions[id]
@@ -441,9 +441,9 @@ func aggregateFakeNativePayload(expected []string, completions map[string]Comple
 	return payload
 }
 
-func TestCompletionPayloadFromNativePrefersPositiveVerificationCost(t *testing.T) {
+func TestCompletionPayloadFromRunnerPrefersPositiveVerificationCost(t *testing.T) {
 	jobID := "verify"
-	payload := completionPayloadFromNative(NativeRunCompletedRequest{
+	payload := completionPayloadFromNative(RunnerCompletedRequest{
 		JobID:      &jobID,
 		Conclusion: "success",
 		CostUSD:    2.5,
@@ -457,9 +457,9 @@ func TestCompletionPayloadFromNativePrefersPositiveVerificationCost(t *testing.T
 	}
 }
 
-func TestCompletionPayloadFromNativeKeepsObservedCostWhenVerificationCostIsZero(t *testing.T) {
+func TestCompletionPayloadFromRunnerKeepsObservedCostWhenVerificationCostIsZero(t *testing.T) {
 	jobID := "verify"
-	payload := completionPayloadFromNative(NativeRunCompletedRequest{
+	payload := completionPayloadFromNative(RunnerCompletedRequest{
 		JobID:      &jobID,
 		Conclusion: "success",
 		CostUSD:    2.5,
@@ -482,15 +482,15 @@ func containsTestString(values []string, target string) bool {
 	return false
 }
 
-func newCompletionHandler(store *fakeCompletionStore, nativeLauncher NativeLauncher) http.Handler {
+func newCompletionHandler(store *fakeCompletionStore, runLauncher RunLauncher) http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /v1/run-callbacks/{callback_token}/native/completed", nativeRunCompletedByCallbackToken(store, nativeLauncher))
+	mux.HandleFunc("POST /v1/run-callbacks/{callback_token}/run/completed", runnerCompletedByCallbackToken(store, runLauncher))
 	return mux
 }
 
 func newPRTouchpointHandler(store *fakeCompletionStore, prClient PullRequestClient) http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /v1/run-callbacks/{callback_token}/native/pr-touchpoint", nativePRTouchpointByCallbackToken(store, prClient, nil))
+	mux.HandleFunc("POST /v1/run-callbacks/{callback_token}/run/pr-touchpoint", runnerPRTouchpointByCallbackToken(store, prClient, nil))
 	return mux
 }
 
@@ -502,7 +502,7 @@ func singlePhaseWorkflowForCompletion(name string, verify bool) *Workflow {
 		Phases: []PhaseSpec{{
 			Name:          name,
 			Kind:          "k8s_job",
-			Jobs:          []NativeJobSpec{{ID: name, Image: "runner:latest"}},
+			Jobs:          []RunnerJobSpec{{ID: name, Image: "runner:latest"}},
 			Verify:        verify,
 			RecyclePolicy: &RecyclePolicy{MaxAttempts: 3, On: []string{"verify_fail"}},
 		}},
@@ -517,7 +517,7 @@ func prWorkflowForCompletion(name string) *Workflow {
 		RunOn:     PhaseRunOnSuccess,
 		Purpose:   PhasePurposeReviewTouchpoint,
 		DependsOn: []string{name},
-		Jobs:      []NativeJobSpec{{ID: PRTouchpointJobID, Primitive: JobPrimitivePRTouchpoint}},
+		Jobs:      []RunnerJobSpec{{ID: PRTouchpointJobID, Primitive: JobPrimitivePRTouchpoint}},
 	})
 	canonical := CanonicalWorkflow(*wf)
 	return &canonical
@@ -532,7 +532,7 @@ func gatedPRWorkflowForCompletion(name string) *Workflow {
 			RunOn:     PhaseRunOnSuccess,
 			Purpose:   PhasePurposeReviewTouchpoint,
 			DependsOn: []string{name},
-			Jobs:      []NativeJobSpec{{ID: PRTouchpointJobID, Primitive: JobPrimitivePRTouchpoint}},
+			Jobs:      []RunnerJobSpec{{ID: PRTouchpointJobID, Primitive: JobPrimitivePRTouchpoint}},
 		},
 		PhaseSpec{
 			Name:      "touchpoint_gate",
@@ -540,7 +540,7 @@ func gatedPRWorkflowForCompletion(name string) *Workflow {
 			RunOn:     PhaseRunOnSuccess,
 			Purpose:   PhasePurposeReviewGate,
 			DependsOn: []string{"touchpoint"},
-			Jobs:      []NativeJobSpec{{ID: PRMergeJobID, Primitive: JobPrimitivePRMerge}},
+			Jobs:      []RunnerJobSpec{{ID: PRMergeJobID, Primitive: JobPrimitivePRMerge}},
 		},
 		PhaseSpec{
 			Name:      "cleanup_final",
@@ -548,7 +548,7 @@ func gatedPRWorkflowForCompletion(name string) *Workflow {
 			RunOn:     PhaseRunOnAlways,
 			Purpose:   PhasePurposeTeardown,
 			DependsOn: []string{"touchpoint_gate"},
-			Jobs:      []NativeJobSpec{{ID: "cleanup-final", Image: "runner:latest"}},
+			Jobs:      []RunnerJobSpec{{ID: "cleanup-final", Image: "runner:latest"}},
 		},
 	)
 	canonical := CanonicalWorkflow(*wf)
@@ -563,7 +563,7 @@ func abortWorkflowWithCleanup(primary string) *Workflow {
 		RunOn:     PhaseRunOnAlways,
 		Purpose:   PhasePurposeTeardown,
 		DependsOn: []string{primary},
-		Jobs:      []NativeJobSpec{{ID: "cleanup", Image: "runner:latest"}},
+		Jobs:      []RunnerJobSpec{{ID: "cleanup", Image: "runner:latest"}},
 	})
 	canonical := CanonicalWorkflow(*wf)
 	return &canonical
@@ -593,13 +593,13 @@ func runDataForCompletion(phase string) *RunReplayData {
 	}
 }
 
-func nativeCompletionRequest(token string, body NativeRunCompletedRequest) *http.Request {
+func runnerCompletionRequest(token string, body RunnerCompletedRequest) *http.Request {
 	data, _ := json.Marshal(body)
-	return httptest.NewRequest(http.MethodPost, "/v1/run-callbacks/"+token+"/native/completed", bytes.NewReader(data))
+	return httptest.NewRequest(http.MethodPost, "/v1/run-callbacks/"+token+"/run/completed", bytes.NewReader(data))
 }
 
-func completedJob(id, conclusion string, verification map[string]any, outputs map[string]string) NativeRunCompletedRequest {
-	return NativeRunCompletedRequest{
+func completedJob(id, conclusion string, verification map[string]any, outputs map[string]string) RunnerCompletedRequest {
+	return RunnerCompletedRequest{
 		JobID:        &id,
 		Conclusion:   conclusion,
 		Verification: verification,
@@ -632,32 +632,32 @@ func readCallbackResult(t *testing.T, rec *httptest.ResponseRecorder) RunCallbac
 	return result
 }
 
-func TestNativeRunCompletedByCallbackTokenTokenNotFound(t *testing.T) {
+func TestRunnerRunCompletedByCallbackTokenTokenNotFound(t *testing.T) {
 	rec := httptest.NewRecorder()
-	newCompletionHandler(&fakeCompletionStore{}, nil).ServeHTTP(rec, nativeCompletionRequest("badtoken", completedJob("impl", "success", nil, nil)))
+	newCompletionHandler(&fakeCompletionStore{}, nil).ServeHTTP(rec, runnerCompletionRequest("badtoken", completedJob("impl", "success", nil, nil)))
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
 }
 
-func TestNativeRunCompletedByCallbackTokenMissingJobID(t *testing.T) {
+func TestRunnerRunCompletedByCallbackTokenMissingJobID(t *testing.T) {
 	store := &fakeCompletionStore{tokenRunID: "r1", tokenProject: "proj"}
 	store.run = runDataForCompletion("impl")
 	store.wf = singlePhaseWorkflowForCompletion("impl", false)
 	rec := httptest.NewRecorder()
-	newCompletionHandler(store, nil).ServeHTTP(rec, nativeCompletionRequest("tok", NativeRunCompletedRequest{Conclusion: "success"}))
+	newCompletionHandler(store, nil).ServeHTTP(rec, runnerCompletionRequest("tok", RunnerCompletedRequest{Conclusion: "success"}))
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
 }
 
-func TestNativeRunCompletedByCallbackTokenAdvancePassed(t *testing.T) {
+func TestRunnerRunCompletedByCallbackTokenAdvancePassed(t *testing.T) {
 	store := &fakeCompletionStore{tokenRunID: "r1", tokenProject: "proj"}
 	store.run = runDataForCompletion("impl")
 	store.wf = singlePhaseWorkflowForCompletion("impl", false)
 	store.terminalResult = AbortRunResult{State: "passed", RunRef: "proj#7/runs/1"}
 	rec := httptest.NewRecorder()
-	newCompletionHandler(store, nil).ServeHTTP(rec, nativeCompletionRequest("tok", completedJob("impl", "success", nil, nil)))
+	newCompletionHandler(store, nil).ServeHTTP(rec, runnerCompletionRequest("tok", completedJob("impl", "success", nil, nil)))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
@@ -670,13 +670,13 @@ func TestNativeRunCompletedByCallbackTokenAdvancePassed(t *testing.T) {
 	}
 }
 
-func TestNativeRunCompletedByCallbackTokenAdvanceOnSkipped(t *testing.T) {
+func TestRunnerRunCompletedByCallbackTokenAdvanceOnSkipped(t *testing.T) {
 	store := &fakeCompletionStore{tokenRunID: "r1", tokenProject: "proj"}
 	store.run = runDataForCompletion("impl")
 	store.wf = singlePhaseWorkflowForCompletion("impl", false)
 	store.terminalResult = AbortRunResult{State: "passed", RunRef: "proj#7/runs/1"}
 	rec := httptest.NewRecorder()
-	newCompletionHandler(store, nil).ServeHTTP(rec, nativeCompletionRequest("tok", completedJob("impl", "skipped", nil, nil)))
+	newCompletionHandler(store, nil).ServeHTTP(rec, runnerCompletionRequest("tok", completedJob("impl", "skipped", nil, nil)))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
@@ -690,7 +690,7 @@ func TestNativeRunCompletedByCallbackTokenAdvanceOnSkipped(t *testing.T) {
 	}
 }
 
-func TestNativeRunCompletedByCallbackTokenPhaseRequestedAbort(t *testing.T) {
+func TestRunnerRunCompletedByCallbackTokenPhaseRequestedAbort(t *testing.T) {
 	// A primary phase (the spirelens env-prep shape: verify=false) emits a
 	// non-empty abort_reason and reports conclusion=aborted. With no
 	// teardown phase to run, completion routing must mark the run aborted
@@ -701,7 +701,7 @@ func TestNativeRunCompletedByCallbackTokenPhaseRequestedAbort(t *testing.T) {
 	store.wf = singlePhaseWorkflowForCompletion("env-prep", false)
 	store.terminalResult = AbortRunResult{State: "aborted", RunRef: "proj#7/runs/1"}
 	rec := httptest.NewRecorder()
-	newCompletionHandler(store, nil).ServeHTTP(rec, nativeCompletionRequest("tok",
+	newCompletionHandler(store, nil).ServeHTTP(rec, runnerCompletionRequest("tok",
 		completedJob("env-prep", decision.ConclusionAborted, nil, map[string]string{
 			"abort_reason": "unexpected_mod:godotexplorer",
 		})))
@@ -720,7 +720,7 @@ func TestNativeRunCompletedByCallbackTokenPhaseRequestedAbort(t *testing.T) {
 	}
 }
 
-func TestNativeRunCompletedByCallbackTokenAbortRunsTeardownThenAborts(t *testing.T) {
+func TestRunnerRunCompletedByCallbackTokenAbortRunsTeardownThenAborts(t *testing.T) {
 	// After a primary phase requested an abort, its teardown cleanup phase
 	// runs on the abort path. When that cleanup completes successfully, the
 	// run must settle to terminal "aborted" with the ORIGINAL primary
@@ -743,7 +743,7 @@ func TestNativeRunCompletedByCallbackTokenAbortRunsTeardownThenAborts(t *testing
 	slotReleased := true
 	store.terminalResult = AbortRunResult{State: "aborted", RunRef: "proj#7/runs/1", SlotLeaseReleased: &slotReleased}
 	rec := httptest.NewRecorder()
-	newCompletionHandler(store, nil).ServeHTTP(rec, nativeCompletionRequest("tok",
+	newCompletionHandler(store, nil).ServeHTTP(rec, runnerCompletionRequest("tok",
 		completedJob("cleanup", "success", nil, nil)))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
@@ -778,7 +778,7 @@ func TestIsAdvanceConclusion(t *testing.T) {
 	}
 }
 
-func TestNativeRunCompletedByCallbackTokenAdvancePostMergeToPassed(t *testing.T) {
+func TestRunnerRunCompletedByCallbackTokenAdvancePostMergeToPassed(t *testing.T) {
 	// After the touchpoint_gate has been released and pr_merge + final
 	// cleanup have run, completion routing reaches the terminal-state
 	// setter and marks the run "passed" (not the historical
@@ -796,7 +796,7 @@ func TestNativeRunCompletedByCallbackTokenAdvancePostMergeToPassed(t *testing.T)
 	store.wf = prWorkflowForCompletion("impl")
 	store.terminalResult = AbortRunResult{State: "passed", RunRef: "proj#7/runs/1"}
 	rec := httptest.NewRecorder()
-	newCompletionHandler(store, nil).ServeHTTP(rec, nativeCompletionRequest("tok", completedJob(PRTouchpointJobID, "success", nil, map[string]string{"pr_number": "123"})))
+	newCompletionHandler(store, nil).ServeHTTP(rec, runnerCompletionRequest("tok", completedJob(PRTouchpointJobID, "success", nil, map[string]string{"pr_number": "123"})))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
@@ -808,7 +808,7 @@ func TestNativeRunCompletedByCallbackTokenAdvancePostMergeToPassed(t *testing.T)
 	}
 }
 
-func TestNativeRunCompletedByCallbackTokenTouchpointGateMergeDispatchesFinalCleanup(t *testing.T) {
+func TestRunnerRunCompletedByCallbackTokenTouchpointGateMergeDispatchesFinalCleanup(t *testing.T) {
 	store := &fakeCompletionStore{tokenRunID: "r1", tokenProject: "proj"}
 	store.run = runDataForCompletion("touchpoint_gate")
 	store.run.Attempts = []RunAttemptData{
@@ -818,10 +818,10 @@ func TestNativeRunCompletedByCallbackTokenTouchpointGateMergeDispatchesFinalClea
 	}
 	store.wf = gatedPRWorkflowForCompletion("impl")
 	store.leaseResult = Lease{State: "claimed"}
-	launcher := &fakeNativeLauncher{}
+	launcher := &fakeRunLauncher{}
 
 	rec := httptest.NewRecorder()
-	newCompletionHandler(store, launcher).ServeHTTP(rec, nativeCompletionRequest("tok",
+	newCompletionHandler(store, launcher).ServeHTTP(rec, runnerCompletionRequest("tok",
 		completedJob(PRMergeJobID, "success", nil, map[string]string{"merge_status": "merged"})))
 
 	if rec.Code != http.StatusOK {
@@ -842,7 +842,7 @@ func TestNativeRunCompletedByCallbackTokenTouchpointGateMergeDispatchesFinalClea
 	}
 }
 
-func TestNativeRunCompletedByCallbackTokenTouchpointParksReviewGateAttempt(t *testing.T) {
+func TestRunnerRunCompletedByCallbackTokenTouchpointParksReviewGateAttempt(t *testing.T) {
 	store := &fakeCompletionStore{tokenRunID: "r1", tokenProject: "proj"}
 	store.run = runDataForCompletion("touchpoint")
 	store.run.Attempts = []RunAttemptData{
@@ -850,10 +850,10 @@ func TestNativeRunCompletedByCallbackTokenTouchpointParksReviewGateAttempt(t *te
 		{AttemptIndex: 1, Phase: "touchpoint", Conclusion: "failure"},
 	}
 	store.wf = gatedPRWorkflowForCompletion("impl")
-	launcher := &fakeNativeLauncher{}
+	launcher := &fakeRunLauncher{}
 
 	rec := httptest.NewRecorder()
-	newCompletionHandler(store, launcher).ServeHTTP(rec, nativeCompletionRequest("tok",
+	newCompletionHandler(store, launcher).ServeHTTP(rec, runnerCompletionRequest("tok",
 		completedJob(PRTouchpointJobID, "success", nil, map[string]string{"pr_number": "99"})))
 
 	if rec.Code != http.StatusOK {
@@ -871,7 +871,7 @@ func TestNativeRunCompletedByCallbackTokenTouchpointParksReviewGateAttempt(t *te
 	}
 }
 
-func TestNativeRunCompletedByCallbackTokenTouchpointGateFailureDispatchesFinalCleanup(t *testing.T) {
+func TestRunnerRunCompletedByCallbackTokenTouchpointGateFailureDispatchesFinalCleanup(t *testing.T) {
 	store := &fakeCompletionStore{tokenRunID: "r1", tokenProject: "proj"}
 	store.run = runDataForCompletion("touchpoint_gate")
 	store.run.Attempts = []RunAttemptData{
@@ -881,10 +881,10 @@ func TestNativeRunCompletedByCallbackTokenTouchpointGateFailureDispatchesFinalCl
 	}
 	store.wf = gatedPRWorkflowForCompletion("impl")
 	store.leaseResult = Lease{State: "claimed"}
-	launcher := &fakeNativeLauncher{}
+	launcher := &fakeRunLauncher{}
 
 	rec := httptest.NewRecorder()
-	newCompletionHandler(store, launcher).ServeHTTP(rec, nativeCompletionRequest("tok",
+	newCompletionHandler(store, launcher).ServeHTTP(rec, runnerCompletionRequest("tok",
 		completedJob(PRMergeJobID, "failure", nil, nil)))
 
 	if rec.Code != http.StatusOK {
@@ -902,7 +902,7 @@ func TestNativeRunCompletedByCallbackTokenTouchpointGateFailureDispatchesFinalCl
 	}
 }
 
-func TestNativeRunCompletedByCallbackTokenTouchpointGateFailureAfterCleanupAborts(t *testing.T) {
+func TestRunnerRunCompletedByCallbackTokenTouchpointGateFailureAfterCleanupAborts(t *testing.T) {
 	store := &fakeCompletionStore{tokenRunID: "r1", tokenProject: "proj"}
 	store.run = runDataForCompletion("cleanup_final")
 	store.run.Attempts = []RunAttemptData{
@@ -915,7 +915,7 @@ func TestNativeRunCompletedByCallbackTokenTouchpointGateFailureAfterCleanupAbort
 	store.terminalResult = AbortRunResult{State: "aborted", RunRef: "proj#7/runs/1"}
 
 	rec := httptest.NewRecorder()
-	newCompletionHandler(store, nil).ServeHTTP(rec, nativeCompletionRequest("tok",
+	newCompletionHandler(store, nil).ServeHTTP(rec, runnerCompletionRequest("tok",
 		completedJob("cleanup-final", "success", nil, nil)))
 
 	if rec.Code != http.StatusOK {
@@ -941,7 +941,7 @@ func TestLaunchTouchpointGateMergeReleasesParkedAttempt(t *testing.T) {
 	if gate == nil {
 		t.Fatal("missing gate")
 	}
-	launcher := &fakeNativeLauncher{}
+	launcher := &fakeRunLauncher{}
 
 	if err := launchTouchpointGateMerge(context.Background(), store, launcher, *run, wf, *gate); err != nil {
 		t.Fatalf("launchTouchpointGateMerge: %v", err)
@@ -957,9 +957,9 @@ func TestLaunchTouchpointGateMergeReleasesParkedAttempt(t *testing.T) {
 	}
 }
 
-func TestCompletionPayloadFromNativeExtractsEvidenceRefs(t *testing.T) {
+func TestCompletionPayloadFromRunnerExtractsEvidenceRefs(t *testing.T) {
 	id := "verify"
-	req := NativeRunCompletedRequest{
+	req := RunnerCompletedRequest{
 		JobID:      &id,
 		Conclusion: "success",
 		Verification: map[string]any{
@@ -980,9 +980,9 @@ func TestCompletionPayloadFromNativeExtractsEvidenceRefs(t *testing.T) {
 	}
 }
 
-func TestCompletionPayloadFromNativeExtractsTypedVideoEvidence(t *testing.T) {
+func TestCompletionPayloadFromRunnerExtractsTypedVideoEvidence(t *testing.T) {
 	id := "verify"
-	req := NativeRunCompletedRequest{
+	req := RunnerCompletedRequest{
 		JobID:      &id,
 		Conclusion: "success",
 		Verification: map[string]any{
@@ -1018,7 +1018,7 @@ func TestCompletionPayloadFromNativeExtractsTypedVideoEvidence(t *testing.T) {
 	}
 }
 
-func TestNativeRunCompletedByCallbackTokenMissingPRPrimitiveLinkAborts(t *testing.T) {
+func TestRunnerRunCompletedByCallbackTokenMissingPRPrimitiveLinkAborts(t *testing.T) {
 	store := &fakeCompletionStore{tokenRunID: "r1", tokenProject: "proj"}
 	store.run = runDataForCompletion("cleanup")
 	// The fixture defaults a PR number; this test specifically exercises
@@ -1032,7 +1032,7 @@ func TestNativeRunCompletedByCallbackTokenMissingPRPrimitiveLinkAborts(t *testin
 	store.terminalResult = AbortRunResult{State: "aborted", RunRef: "proj#7/runs/1"}
 
 	rec := httptest.NewRecorder()
-	newCompletionHandler(store, nil).ServeHTTP(rec, nativeCompletionRequest("tok", completedJob(PRTouchpointJobID, "success", nil, nil)))
+	newCompletionHandler(store, nil).ServeHTTP(rec, runnerCompletionRequest("tok", completedJob(PRTouchpointJobID, "success", nil, nil)))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
@@ -1044,7 +1044,7 @@ func TestNativeRunCompletedByCallbackTokenMissingPRPrimitiveLinkAborts(t *testin
 	}
 }
 
-func TestNativePRTouchpointByCallbackTokenEnsuresPRAndTouchpoint(t *testing.T) {
+func TestRunnerPRTouchpointByCallbackTokenEnsuresPRAndTouchpoint(t *testing.T) {
 	store := &fakeCompletionStore{tokenRunID: "r1", tokenProject: "proj"}
 	store.run = runDataForCompletion("impl")
 	store.run.Attempts[0].Completed = true
@@ -1055,7 +1055,7 @@ func TestNativePRTouchpointByCallbackTokenEnsuresPRAndTouchpoint(t *testing.T) {
 	prClient := &fakePullRequestClient{}
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/v1/run-callbacks/tok/native/pr-touchpoint", nil)
+	req := httptest.NewRequest(http.MethodPost, "/v1/run-callbacks/tok/run/pr-touchpoint", nil)
 	newPRTouchpointHandler(store, prClient).ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
@@ -1104,7 +1104,7 @@ func TestMergeRunPullRequestUsesSquash(t *testing.T) {
 	}
 }
 
-func TestNativePRTouchpointByCallbackTokenSkipsAbortPath(t *testing.T) {
+func TestRunnerPRTouchpointByCallbackTokenSkipsAbortPath(t *testing.T) {
 	store := &fakeCompletionStore{tokenRunID: "r1", tokenProject: "proj"}
 	store.run = runDataForCompletion("impl")
 	store.run.Attempts[0].Completed = true
@@ -1113,7 +1113,7 @@ func TestNativePRTouchpointByCallbackTokenSkipsAbortPath(t *testing.T) {
 	prClient := &fakePullRequestClient{}
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/v1/run-callbacks/tok/native/pr-touchpoint", nil)
+	req := httptest.NewRequest(http.MethodPost, "/v1/run-callbacks/tok/run/pr-touchpoint", nil)
 	newPRTouchpointHandler(store, prClient).ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
@@ -1469,7 +1469,7 @@ func TestFinalizeRunTouchpointByNumberRequiresAdmin(t *testing.T) {
 	}
 }
 
-func TestNativeRunCompletedByCallbackTokenAdvanceDispatchesNextPhase(t *testing.T) {
+func TestRunnerRunCompletedByCallbackTokenAdvanceDispatchesNextPhase(t *testing.T) {
 	leaseNumber := 12
 	store := &fakeCompletionStore{
 		tokenRunID:   "r1",
@@ -1478,9 +1478,9 @@ func TestNativeRunCompletedByCallbackTokenAdvanceDispatchesNextPhase(t *testing.
 		leaseResult: Lease{
 			Project:     "proj",
 			LeaseNumber: &leaseNumber,
-			Host:        stringPtr("native-k8s"),
+			Host:        stringPtr("runner-k8s"),
 			State:       "claimed",
-			Metadata:    map[string]any{"lease_callback_token": "lease-token", "native_k8s": true},
+			Metadata:    map[string]any{"lease_callback_token": "lease-token", "runner_k8s": true},
 		},
 	}
 	leaseRef := "proj/leases/proj-1/12"
@@ -1498,22 +1498,22 @@ func TestNativeRunCompletedByCallbackTokenAdvanceDispatchesNextPhase(t *testing.
 		Name:    "wf",
 		Budget:  budget.Config{Total: 25},
 		Phases: []PhaseSpec{
-			{Name: "env-prep", Kind: "k8s_job", Jobs: []NativeJobSpec{{ID: "env-prep"}}, Outputs: []string{"validation_url"}},
+			{Name: "env-prep", Kind: "k8s_job", Jobs: []RunnerJobSpec{{ID: "env-prep"}}, Outputs: []string{"validation_url"}},
 			{
 				Name:             "agent-execute",
 				Kind:             "k8s_job",
 				WorkflowFilename: "k8s_job:agent-execute",
 				DependsOn:        []string{"env-prep"},
-				Jobs:             []NativeJobSpec{{ID: "agent", Image: "runner:latest"}},
+				Jobs:             []RunnerJobSpec{{ID: "agent", Image: "runner:latest"}},
 				Inputs: map[string]string{
 					"validation_url": "${{ phases.env-prep.outputs.validation_url }}",
 				},
 			},
 		},
 	}
-	launcher := &fakeNativeLauncher{}
+	launcher := &fakeRunLauncher{}
 	rec := httptest.NewRecorder()
-	newCompletionHandler(store, launcher).ServeHTTP(rec, nativeCompletionRequest("tok", completedJob("env-prep", "success", nil, map[string]string{"validation_url": "https://preview.example"})))
+	newCompletionHandler(store, launcher).ServeHTTP(rec, runnerCompletionRequest("tok", completedJob("env-prep", "success", nil, map[string]string{"validation_url": "https://preview.example"})))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
@@ -1525,13 +1525,13 @@ func TestNativeRunCompletedByCallbackTokenAdvanceDispatchesNextPhase(t *testing.
 		t.Fatalf("append=(%q,%q,%q)", store.appendPhase, store.appendKind, store.appendFile)
 	}
 	if !launcher.called || launcher.req.Phase.Name != "agent-execute" {
-		t.Fatalf("native launch=%#v", launcher.req)
+		t.Fatalf("runner launch=%#v", launcher.req)
 	}
 	phaseInputs, ok := launcher.req.Lease.Metadata["phase_inputs"].(map[string]string)
 	if !ok || phaseInputs["validation_url"] != "https://preview.example" {
 		t.Fatalf("phase_inputs=%#v", launcher.req.Lease.Metadata["phase_inputs"])
 	}
-	if launcher.req.Lease.Metadata["native_k8s"] != true {
+	if launcher.req.Lease.Metadata["runner_k8s"] != true {
 		t.Fatalf("lease metadata=%#v", launcher.req.Lease.Metadata)
 	}
 }
@@ -1578,9 +1578,9 @@ func TestLeaseForRunPhasePersistsUpdatedMetadata(t *testing.T) {
 			Project: "proj",
 			State:   "claimed",
 			Metadata: map[string]any{
-				"native_k8s":       true,
+				"runner_k8s":       true,
 				"work_context_id":  "ctx-123",
-				"native_slot_name": "proj-1",
+				"runner_slot_name": "proj-1",
 			},
 		},
 	}
@@ -1627,7 +1627,7 @@ func TestWorkContextBranchFallsBackToIssueRunDisplay(t *testing.T) {
 	}
 }
 
-func TestNativeRunCompletedByCallbackTokenFailureDispatchesCleanup(t *testing.T) {
+func TestRunnerRunCompletedByCallbackTokenFailureDispatchesCleanup(t *testing.T) {
 	leaseRef := "proj/leases/proj-1/1"
 	store := &fakeCompletionStore{
 		tokenRunID:   "r1",
@@ -1649,7 +1649,7 @@ func TestNativeRunCompletedByCallbackTokenFailureDispatchesCleanup(t *testing.T)
 		Name:    "wf",
 		Budget:  budget.Config{Total: 25},
 		Phases: []PhaseSpec{
-			{Name: "env-prep", Kind: "k8s_job", Jobs: []NativeJobSpec{{ID: "env-prep"}}},
+			{Name: "env-prep", Kind: "k8s_job", Jobs: []RunnerJobSpec{{ID: "env-prep"}}},
 			{
 				Name:             "env-destroy",
 				Kind:             "k8s_job",
@@ -1657,16 +1657,16 @@ func TestNativeRunCompletedByCallbackTokenFailureDispatchesCleanup(t *testing.T)
 				RunOn:            PhaseRunOnAlways,
 				Purpose:          PhasePurposeTeardown,
 				DependsOn:        []string{"env-prep"},
-				Jobs:             []NativeJobSpec{{ID: "env-destroy", Image: "runner:latest"}},
+				Jobs:             []RunnerJobSpec{{ID: "env-destroy", Image: "runner:latest"}},
 			},
 		},
 	}
-	launcher := &fakeNativeLauncher{}
+	launcher := &fakeRunLauncher{}
 	req := completedJob("env-prep", "failure", nil, nil)
 	summary := "contract failure"
 	req.SummaryMarkdown = &summary
 	rec := httptest.NewRecorder()
-	newCompletionHandler(store, launcher).ServeHTTP(rec, nativeCompletionRequest("tok", req))
+	newCompletionHandler(store, launcher).ServeHTTP(rec, runnerCompletionRequest("tok", req))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
@@ -1681,11 +1681,11 @@ func TestNativeRunCompletedByCallbackTokenFailureDispatchesCleanup(t *testing.T)
 		t.Fatalf("append=(%q,%q,%q)", store.appendPhase, store.appendKind, store.appendFile)
 	}
 	if !launcher.called || launcher.req.Phase.Name != "env-destroy" {
-		t.Fatalf("native launch=%#v", launcher.req)
+		t.Fatalf("runner launch=%#v", launcher.req)
 	}
 }
 
-func TestNativeRunCompletedByCallbackTokenCleanupAfterAbortKeepsRunAborted(t *testing.T) {
+func TestRunnerRunCompletedByCallbackTokenCleanupAfterAbortKeepsRunAborted(t *testing.T) {
 	store := &fakeCompletionStore{tokenRunID: "r1", tokenProject: "proj"}
 	store.run = &RunReplayData{
 		ID:           "r1",
@@ -1710,21 +1710,21 @@ func TestNativeRunCompletedByCallbackTokenCleanupAfterAbortKeepsRunAborted(t *te
 		PR:      PrPrimitive{},
 		Budget:  budget.Config{Total: 25},
 		Phases: []PhaseSpec{
-			{Name: "env-prep", Kind: "k8s_job", Jobs: []NativeJobSpec{{ID: "env-prep"}}},
+			{Name: "env-prep", Kind: "k8s_job", Jobs: []RunnerJobSpec{{ID: "env-prep"}}},
 			{
 				Name:      "env-destroy",
 				Kind:      "k8s_job",
 				RunOn:     PhaseRunOnAlways,
 				Purpose:   PhasePurposeTeardown,
 				DependsOn: []string{"env-prep"},
-				Jobs:      []NativeJobSpec{{ID: "env-destroy"}},
+				Jobs:      []RunnerJobSpec{{ID: "env-destroy"}},
 			},
 		},
 	}
 	store.terminalResult = AbortRunResult{State: "aborted", RunRef: "proj#7/runs/1"}
 
 	rec := httptest.NewRecorder()
-	newCompletionHandler(store, nil).ServeHTTP(rec, nativeCompletionRequest("tok", completedJob("env-destroy", "success", nil, nil)))
+	newCompletionHandler(store, nil).ServeHTTP(rec, runnerCompletionRequest("tok", completedJob("env-destroy", "success", nil, nil)))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
@@ -1762,7 +1762,7 @@ func TestAllReadyDispatchTargetsAbortPathSkipsReviewPhases(t *testing.T) {
 		{Name: "verify", Verify: true, RecyclePolicy: &RecyclePolicy{MaxAttempts: 1, On: []string{"verify_fail"}, LandsAt: "prepare"}, Purpose: PhasePurposeVerification, DependsOn: []string{"prepare"}},
 		{Name: "evidence-gate", EvidenceVerificationGate: true, Purpose: PhasePurposeEvidenceGate, DependsOn: []string{"verify"}},
 		{Name: "cleanup_early", RunOn: PhaseRunOnAlways, Purpose: PhasePurposeTeardown, DependsOn: []string{"evidence-gate"}},
-		{Name: "touchpoint", RunOn: PhaseRunOnSuccess, Purpose: PhasePurposeReviewTouchpoint, DependsOn: []string{"cleanup_early"}, Jobs: []NativeJobSpec{{ID: PRTouchpointJobID, Primitive: JobPrimitivePRTouchpoint}}},
+		{Name: "touchpoint", RunOn: PhaseRunOnSuccess, Purpose: PhasePurposeReviewTouchpoint, DependsOn: []string{"cleanup_early"}, Jobs: []RunnerJobSpec{{ID: PRTouchpointJobID, Primitive: JobPrimitivePRTouchpoint}}},
 		{Name: "touchpoint_gate", Kind: "k8s_job", RunOn: PhaseRunOnSuccess, Purpose: PhasePurposeReviewGate, DependsOn: []string{"touchpoint"}},
 		{Name: "cleanup_final", RunOn: PhaseRunOnAlways, Purpose: PhasePurposeTeardown, DependsOn: []string{"touchpoint_gate"}},
 	}}
@@ -1797,7 +1797,7 @@ func TestAllReadyDispatchTargetsUsesPhaseOrderNotDependencyDepth(t *testing.T) {
 	assertPhaseTargets(t, allReadyDispatchTargets(wf, run, decision.Advance), "implement")
 }
 
-func TestNativeRunCompletedByCallbackTokenAbortBudgetAttempts(t *testing.T) {
+func TestRunnerRunCompletedByCallbackTokenAbortBudgetAttempts(t *testing.T) {
 	store := &fakeCompletionStore{tokenRunID: "r1", tokenProject: "proj"}
 	store.run = &RunReplayData{
 		ID: "r1", Project: "proj", WorkflowName: "wf", IssueNumber: 7,
@@ -1811,7 +1811,7 @@ func TestNativeRunCompletedByCallbackTokenAbortBudgetAttempts(t *testing.T) {
 	store.wf = singlePhaseWorkflowForCompletion("impl", true)
 	store.terminalResult = AbortRunResult{State: "aborted", RunRef: "proj#7/runs/1"}
 	rec := httptest.NewRecorder()
-	newCompletionHandler(store, nil).ServeHTTP(rec, nativeCompletionRequest("tok", completedJob("impl", "failure", map[string]any{"status": "fail"}, nil)))
+	newCompletionHandler(store, nil).ServeHTTP(rec, runnerCompletionRequest("tok", completedJob("impl", "failure", map[string]any{"status": "fail"}, nil)))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
@@ -1820,13 +1820,13 @@ func TestNativeRunCompletedByCallbackTokenAbortBudgetAttempts(t *testing.T) {
 	}
 }
 
-func TestNativeRunCompletedByCallbackTokenRetryRequiresNativeLauncher(t *testing.T) {
+func TestRunnerRunCompletedByCallbackTokenRetryRequiresRunLauncher(t *testing.T) {
 	store := &fakeCompletionStore{tokenRunID: "r1", tokenProject: "proj"}
 	store.run = runDataForCompletion("impl")
 	store.wf = singlePhaseWorkflowForCompletion("impl", true)
 	store.terminalResult = AbortRunResult{State: "aborted", RunRef: "proj#7/runs/1"}
 	rec := httptest.NewRecorder()
-	newCompletionHandler(store, nil).ServeHTTP(rec, nativeCompletionRequest("tok", completedJob("impl", "failure", map[string]any{"status": "fail"}, nil)))
+	newCompletionHandler(store, nil).ServeHTTP(rec, runnerCompletionRequest("tok", completedJob("impl", "failure", map[string]any{"status": "fail"}, nil)))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
@@ -1835,14 +1835,14 @@ func TestNativeRunCompletedByCallbackTokenRetryRequiresNativeLauncher(t *testing
 	}
 }
 
-func TestNativeRunCompletedByCallbackTokenCycleOrdinalCountsRecycleAttempts(t *testing.T) {
+func TestRunnerRunCompletedByCallbackTokenCycleOrdinalCountsRecycleAttempts(t *testing.T) {
 	store := &fakeCompletionStore{tokenRunID: "r1", tokenProject: "proj"}
 	store.run = runDataForCompletion("impl")
 	store.run.RunCycleNumber = intPtr(3)
 	store.wf = singlePhaseWorkflowForCompletion("impl", true)
 	store.terminalResult = AbortRunResult{State: "aborted", RunRef: "proj#7/runs/1.3"}
 	rec := httptest.NewRecorder()
-	newCompletionHandler(store, nil).ServeHTTP(rec, nativeCompletionRequest("tok", completedJob("impl", "failure", map[string]any{"status": "fail"}, nil)))
+	newCompletionHandler(store, nil).ServeHTTP(rec, runnerCompletionRequest("tok", completedJob("impl", "failure", map[string]any{"status": "fail"}, nil)))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
@@ -1851,34 +1851,34 @@ func TestNativeRunCompletedByCallbackTokenCycleOrdinalCountsRecycleAttempts(t *t
 	}
 }
 
-func TestNativeRunCompletedByCallbackTokenStampError(t *testing.T) {
+func TestRunnerRunCompletedByCallbackTokenStampError(t *testing.T) {
 	store := &fakeCompletionStore{tokenRunID: "r1", tokenProject: "proj", stampErr: errors.New("store unavailable")}
 	store.run = runDataForCompletion("impl")
 	rec := httptest.NewRecorder()
-	newCompletionHandler(store, nil).ServeHTTP(rec, nativeCompletionRequest("tok", completedJob("impl", "success", nil, nil)))
+	newCompletionHandler(store, nil).ServeHTTP(rec, runnerCompletionRequest("tok", completedJob("impl", "success", nil, nil)))
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
 }
 
-func TestNativeRunCompletedByCallbackTokenWaitsForSiblingJobs(t *testing.T) {
+func TestRunnerRunCompletedByCallbackTokenWaitsForSiblingJobs(t *testing.T) {
 	store := &fakeCompletionStore{
 		tokenRunID:         "r1",
 		tokenProject:       "proj",
-		nativeExpectedJobs: []string{"plan", "impl"},
+		runnerExpectedJobs: []string{"plan", "impl"},
 	}
 	store.run = runDataForCompletion("work")
 	store.wf = &Workflow{
 		Project: "proj",
 		Name:    "wf",
 		Budget:  budget.Config{Total: 25},
-		Phases:  []PhaseSpec{{Name: "work", Kind: "k8s_job", Jobs: []NativeJobSpec{{ID: "plan"}, {ID: "impl"}}}},
+		Phases:  []PhaseSpec{{Name: "work", Kind: "k8s_job", Jobs: []RunnerJobSpec{{ID: "plan"}, {ID: "impl"}}}},
 	}
 	store.terminalResult = AbortRunResult{State: "passed", RunRef: "proj#7/runs/1"}
 	handler := newCompletionHandler(store, nil)
 
 	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, nativeCompletionRequest("tok", completedJob("plan", "success", nil, map[string]string{"plan": "ready"})))
+	handler.ServeHTTP(rec, runnerCompletionRequest("tok", completedJob("plan", "success", nil, map[string]string{"plan": "ready"})))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("first status=%d body=%s", rec.Code, rec.Body.String())
 	}
@@ -1888,7 +1888,7 @@ func TestNativeRunCompletedByCallbackTokenWaitsForSiblingJobs(t *testing.T) {
 	}
 
 	rec = httptest.NewRecorder()
-	handler.ServeHTTP(rec, nativeCompletionRequest("tok", completedJob("impl", "success", nil, map[string]string{"impl": "done"})))
+	handler.ServeHTTP(rec, runnerCompletionRequest("tok", completedJob("impl", "success", nil, map[string]string{"impl": "done"})))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("second status=%d body=%s", rec.Code, rec.Body.String())
 	}
@@ -1901,13 +1901,13 @@ func TestNativeRunCompletedByCallbackTokenWaitsForSiblingJobs(t *testing.T) {
 	}
 }
 
-func TestNativeRunCompletedByCallbackTokenEvidenceGateRetryCarriesPriorOutputs(t *testing.T) {
+func TestRunnerRunCompletedByCallbackTokenEvidenceGateRetryCarriesPriorOutputs(t *testing.T) {
 	leaseRef := "proj/leases/proj-1/1"
 	store := &fakeCompletionStore{
 		tokenRunID:         "r1",
 		tokenProject:       "proj",
 		appendIdx:          1,
-		nativeExpectedJobs: []string{EvidenceGateJobID},
+		runnerExpectedJobs: []string{EvidenceGateJobID},
 		leaseResult:        Lease{Project: "proj", LeaseNumber: intPtr(1), State: "claimed", Metadata: map[string]any{}},
 	}
 	store.run = &RunReplayData{
@@ -1939,7 +1939,7 @@ func TestNativeRunCompletedByCallbackTokenEvidenceGateRetryCarriesPriorOutputs(t
 		Name:    "wf",
 		Budget:  budget.Config{Total: 25},
 		Phases: []PhaseSpec{
-			{Name: "env-prep", Kind: "k8s_job", Jobs: []NativeJobSpec{{ID: "env-prep"}}, Outputs: []string{"namespace", "validation_url"}},
+			{Name: "env-prep", Kind: "k8s_job", Jobs: []RunnerJobSpec{{ID: "env-prep"}}, Outputs: []string{"namespace", "validation_url"}},
 			{
 				Name:      "llm-work",
 				Kind:      "k8s_job",
@@ -1948,24 +1948,24 @@ func TestNativeRunCompletedByCallbackTokenEvidenceGateRetryCarriesPriorOutputs(t
 					"namespace":      "${{ phases.env-prep.outputs.namespace }}",
 					"validation_url": "${{ phases.env-prep.outputs.validation_url }}",
 				},
-				Jobs: []NativeJobSpec{{ID: "llm-work", Managed: true, Steps: []NativeStepSpec{{Slug: "run", Run: "true"}}}},
+				Jobs: []RunnerJobSpec{{ID: "llm-work", Managed: true, Steps: []RunnerStepSpec{{Slug: "run", Run: "true"}}}},
 			},
-			{Name: "llm-verify", Kind: "k8s_job", Verify: true, RecyclePolicy: &RecyclePolicy{MaxAttempts: 1, On: []string{"verify_fail"}, LandsAt: "prepare"}, DependsOn: []string{"llm-work"}, Jobs: []NativeJobSpec{{ID: "llm-verify"}}},
+			{Name: "llm-verify", Kind: "k8s_job", Verify: true, RecyclePolicy: &RecyclePolicy{MaxAttempts: 1, On: []string{"verify_fail"}, LandsAt: "prepare"}, DependsOn: []string{"llm-work"}, Jobs: []RunnerJobSpec{{ID: "llm-verify"}}},
 			{
 				Name:                     "evidence-gate",
 				Kind:                     "k8s_job",
 				EvidenceVerificationGate: true,
 				DependsOn:                []string{"llm-verify"},
 				RecyclePolicy:            &RecyclePolicy{MaxAttempts: 3, On: []string{"verify_fail"}, LandsAt: "llm-work"},
-				Jobs:                     []NativeJobSpec{{ID: EvidenceGateJobID}},
+				Jobs:                     []RunnerJobSpec{{ID: EvidenceGateJobID}},
 			},
-			{Name: "cleanup", Kind: "k8s_job", RunOn: PhaseRunOnAlways, Purpose: PhasePurposeTeardown, DependsOn: []string{"evidence-gate"}, Jobs: []NativeJobSpec{{ID: "cleanup"}}},
+			{Name: "cleanup", Kind: "k8s_job", RunOn: PhaseRunOnAlways, Purpose: PhasePurposeTeardown, DependsOn: []string{"evidence-gate"}, Jobs: []RunnerJobSpec{{ID: "cleanup"}}},
 		},
 	}
-	launcher := &fakeNativeLauncher{}
+	launcher := &fakeRunLauncher{}
 	req := completedJob(EvidenceGateJobID, "failure", nil, nil)
 	rec := httptest.NewRecorder()
-	newCompletionHandler(store, launcher).ServeHTTP(rec, nativeCompletionRequest("tok", req))
+	newCompletionHandler(store, launcher).ServeHTTP(rec, runnerCompletionRequest("tok", req))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
@@ -1974,7 +1974,7 @@ func TestNativeRunCompletedByCallbackTokenEvidenceGateRetryCarriesPriorOutputs(t
 		t.Fatalf("decision=%v", result.Decision)
 	}
 	if !launcher.called || launcher.req.Phase.Name != "llm-work" {
-		t.Fatalf("native launch=%#v", launcher.req)
+		t.Fatalf("runner launch=%#v", launcher.req)
 	}
 	phaseInputs, ok := launcher.req.Lease.Metadata["phase_inputs"].(map[string]string)
 	if !ok {
@@ -1991,13 +1991,13 @@ func TestNativeRunCompletedByCallbackTokenEvidenceGateRetryCarriesPriorOutputs(t
 	}
 }
 
-func TestNativeRunCompletedByCallbackTokenEvidenceGateRetryCanRestartAtEnvPrep(t *testing.T) {
+func TestRunnerRunCompletedByCallbackTokenEvidenceGateRetryCanRestartAtEnvPrep(t *testing.T) {
 	leaseRef := "proj/leases/proj-1/1"
 	store := &fakeCompletionStore{
 		tokenRunID:         "r1",
 		tokenProject:       "proj",
 		appendIdx:          0,
-		nativeExpectedJobs: []string{EvidenceGateJobID},
+		runnerExpectedJobs: []string{EvidenceGateJobID},
 		leaseResult:        Lease{Project: "proj", LeaseNumber: intPtr(1), State: "claimed", Metadata: map[string]any{}},
 	}
 	store.run = &RunReplayData{
@@ -2029,7 +2029,7 @@ func TestNativeRunCompletedByCallbackTokenEvidenceGateRetryCanRestartAtEnvPrep(t
 		Name:    "wf",
 		Budget:  budget.Config{Total: 25},
 		Phases: []PhaseSpec{
-			{Name: "env-prep", Kind: "k8s_job", Jobs: []NativeJobSpec{{ID: "env-prep"}}, Outputs: []string{"namespace", "validation_url"}},
+			{Name: "env-prep", Kind: "k8s_job", Jobs: []RunnerJobSpec{{ID: "env-prep"}}, Outputs: []string{"namespace", "validation_url"}},
 			{
 				Name:      "llm-work",
 				Kind:      "k8s_job",
@@ -2038,24 +2038,24 @@ func TestNativeRunCompletedByCallbackTokenEvidenceGateRetryCanRestartAtEnvPrep(t
 					"namespace":      "${{ phases.env-prep.outputs.namespace }}",
 					"validation_url": "${{ phases.env-prep.outputs.validation_url }}",
 				},
-				Jobs: []NativeJobSpec{{ID: "llm-work", Managed: true, Steps: []NativeStepSpec{{Slug: "run", Run: "true"}}}},
+				Jobs: []RunnerJobSpec{{ID: "llm-work", Managed: true, Steps: []RunnerStepSpec{{Slug: "run", Run: "true"}}}},
 			},
-			{Name: "llm-verify", Kind: "k8s_job", Verify: true, RecyclePolicy: &RecyclePolicy{MaxAttempts: 1, On: []string{"verify_fail"}, LandsAt: "prepare"}, DependsOn: []string{"llm-work"}, Jobs: []NativeJobSpec{{ID: "llm-verify"}}},
+			{Name: "llm-verify", Kind: "k8s_job", Verify: true, RecyclePolicy: &RecyclePolicy{MaxAttempts: 1, On: []string{"verify_fail"}, LandsAt: "prepare"}, DependsOn: []string{"llm-work"}, Jobs: []RunnerJobSpec{{ID: "llm-verify"}}},
 			{
 				Name:                     "evidence-gate",
 				Kind:                     "k8s_job",
 				EvidenceVerificationGate: true,
 				DependsOn:                []string{"llm-verify"},
 				RecyclePolicy:            &RecyclePolicy{MaxAttempts: 3, On: []string{"verify_fail"}, LandsAt: "env-prep"},
-				Jobs:                     []NativeJobSpec{{ID: EvidenceGateJobID}},
+				Jobs:                     []RunnerJobSpec{{ID: EvidenceGateJobID}},
 			},
-			{Name: "cleanup", Kind: "k8s_job", RunOn: PhaseRunOnAlways, Purpose: PhasePurposeTeardown, DependsOn: []string{"evidence-gate"}, Jobs: []NativeJobSpec{{ID: "cleanup"}}},
+			{Name: "cleanup", Kind: "k8s_job", RunOn: PhaseRunOnAlways, Purpose: PhasePurposeTeardown, DependsOn: []string{"evidence-gate"}, Jobs: []RunnerJobSpec{{ID: "cleanup"}}},
 		},
 	}
-	launcher := &fakeNativeLauncher{}
+	launcher := &fakeRunLauncher{}
 	req := completedJob(EvidenceGateJobID, "failure", nil, nil)
 	rec := httptest.NewRecorder()
-	newCompletionHandler(store, launcher).ServeHTTP(rec, nativeCompletionRequest("tok", req))
+	newCompletionHandler(store, launcher).ServeHTTP(rec, runnerCompletionRequest("tok", req))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
@@ -2064,7 +2064,7 @@ func TestNativeRunCompletedByCallbackTokenEvidenceGateRetryCanRestartAtEnvPrep(t
 		t.Fatalf("decision=%v", result.Decision)
 	}
 	if !launcher.called || launcher.req.Phase.Name != "env-prep" {
-		t.Fatalf("native launch=%#v", launcher.req)
+		t.Fatalf("runner launch=%#v", launcher.req)
 	}
 	phaseInputs, ok := launcher.req.Lease.Metadata["phase_inputs"].(map[string]string)
 	if !ok {
@@ -2081,9 +2081,9 @@ func TestNativeRunCompletedByCallbackTokenEvidenceGateRetryCanRestartAtEnvPrep(t
 	}
 }
 
-func TestCompletionPayloadFromNativeExtractsVerificationFailure(t *testing.T) {
+func TestCompletionPayloadFromRunnerExtractsVerificationFailure(t *testing.T) {
 	jobID := "verify"
-	payload := completionPayloadFromNative(NativeRunCompletedRequest{
+	payload := completionPayloadFromNative(RunnerCompletedRequest{
 		JobID:      &jobID,
 		Conclusion: "failure",
 		Verification: map[string]any{
@@ -2111,7 +2111,7 @@ func TestCompletionPayloadFromNativeExtractsVerificationFailure(t *testing.T) {
 	}
 }
 
-func TestCompletionPayloadFromNativeIgnoresEmptyOrMalformedFailure(t *testing.T) {
+func TestCompletionPayloadFromRunnerIgnoresEmptyOrMalformedFailure(t *testing.T) {
 	jobID := "verify"
 	for name, failure := range map[string]any{
 		"absent":     nil,
@@ -2123,7 +2123,7 @@ func TestCompletionPayloadFromNativeIgnoresEmptyOrMalformedFailure(t *testing.T)
 		if failure != nil {
 			verification["failure"] = failure
 		}
-		payload := completionPayloadFromNative(NativeRunCompletedRequest{
+		payload := completionPayloadFromNative(RunnerCompletedRequest{
 			JobID:        &jobID,
 			Conclusion:   "failure",
 			Verification: verification,

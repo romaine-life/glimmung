@@ -15,13 +15,13 @@ import (
 func TestDerivePrimaryCheckoutRepoOverridesStaleBakedRepo(t *testing.T) {
 	phase := PhaseSpec{
 		Name: "prepare",
-		Jobs: []NativeJobSpec{
-			{ID: "env-prep", Checkout: &NativeCheckoutSpec{Repo: "nelsong6/ambience", Ref: "main", Path: "/workspace/ambience"}},
+		Jobs: []RunnerJobSpec{
+			{ID: "env-prep", Checkout: &RunnerCheckoutSpec{Repo: "nelsong6/ambience", Ref: "main", Path: "/workspace/ambience"}},
 			{ID: "managed-gate"}, // no checkout (managed primitive) — must stay untouched
 			{
 				ID:             "cross",
-				Checkout:       &NativeCheckoutSpec{Repo: "nelsong6/ambience", Ref: "main"},
-				ExtraCheckouts: []NativeCheckoutSpec{{Repo: "other-org/tool", Ref: "v1"}},
+				Checkout:       &RunnerCheckoutSpec{Repo: "nelsong6/ambience", Ref: "main"},
+				ExtraCheckouts: []RunnerCheckoutSpec{{Repo: "other-org/tool", Ref: "v1"}},
 			},
 		},
 	}
@@ -54,7 +54,7 @@ func TestDerivePrimaryCheckoutRepoOverridesStaleBakedRepo(t *testing.T) {
 func TestDerivePrimaryCheckoutRepoErrorsWhenIssueRepoMissing(t *testing.T) {
 	phase := PhaseSpec{
 		Name: "prepare",
-		Jobs: []NativeJobSpec{{ID: "env-prep", Checkout: &NativeCheckoutSpec{Repo: "x/y"}}},
+		Jobs: []RunnerJobSpec{{ID: "env-prep", Checkout: &RunnerCheckoutSpec{Repo: "x/y"}}},
 	}
 	if _, err := derivePrimaryCheckoutRepo(phase, "   "); err == nil {
 		t.Fatal("expected an error when a checkout is present but the run has no issue repo")
@@ -64,7 +64,7 @@ func TestDerivePrimaryCheckoutRepoErrorsWhenIssueRepoMissing(t *testing.T) {
 func TestDerivePrimaryCheckoutRepoAllowsMissingIssueRepoWhenNoCheckouts(t *testing.T) {
 	phase := PhaseSpec{
 		Name: "evidence-gate",
-		Jobs: []NativeJobSpec{{ID: "evidence-verification-gate"}},
+		Jobs: []RunnerJobSpec{{ID: "evidence-verification-gate"}},
 	}
 	got, err := derivePrimaryCheckoutRepo(phase, "")
 	if err != nil {
@@ -80,10 +80,10 @@ func TestValidateWorkflowRegisterRejectsBakedPrimaryCheckoutRepo(t *testing.T) {
 		Name: "default",
 		Phases: []PhaseSpec{{
 			Name: "prepare",
-			Kind: workflowKindNativeK8sJob,
-			Jobs: []NativeJobSpec{{
+			Kind: workflowKindRunnerK8sJob,
+			Jobs: []RunnerJobSpec{{
 				ID:       "env-prep",
-				Checkout: &NativeCheckoutSpec{Repo: "nelsong6/ambience", Ref: "main", Path: "/workspace/ambience"},
+				Checkout: &RunnerCheckoutSpec{Repo: "nelsong6/ambience", Ref: "main", Path: "/workspace/ambience"},
 			}},
 		}},
 	}

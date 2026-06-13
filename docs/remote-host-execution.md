@@ -15,14 +15,14 @@ to the remote host. The remote host has no Glimmung-controlled daemon
 listening for it.
 
 This document describes the server-side primitives glimmung exposes so
-project-owned `scripts/glimmung-native/*.sh` can stand up that connection
+project-owned `scripts/glimmung-runner/*.sh` can stand up that connection
 safely.
 
 ## Threat model
 
 The orchestrator Job pod is already authenticated to glimmung through the
 run's per-attempt callback token — the same possession-is-proof token that
-authorizes `POST /v1/run-callbacks/{callback_token}/native/completed`,
+authorizes `POST /v1/run-callbacks/{callback_token}/run/completed`,
 `…/github-token`, `…/pr-touchpoint`, and `…/pr-merge`. That token bounds
 every credential glimmung mints under this contract to a single run
 attempt. The lease's own callback token is intentionally not exposed to
@@ -66,9 +66,9 @@ correctness.
 
 ## HTTP surface
 
-Both endpoints share the existing `/v1/run-callbacks/{callback_token}/native/*`
+Both endpoints share the existing `/v1/run-callbacks/{callback_token}/run/*`
 family, alongside `github-token`, `pr-touchpoint`, `pr-merge`, and
-`completed`. Glimmung's native launcher pre-bakes the full URLs for the
+`completed`. Glimmung's run launcher pre-bakes the full URLs for the
 phase script as `GLIMMUNG_SSH_CERT_URL` and `GLIMMUNG_TAILSCALE_AUTHKEY_URL`
 env vars (the callback token is already baked into the path; the secret
 attempt token rides as the `X-Glimmung-Attempt-Token` header).
@@ -76,7 +76,7 @@ attempt token rides as the `X-Glimmung-Attempt-Token` header).
 Glimmung resolves the token to a run + project, derives the principal/tag
 from the project, and mints credentials scoped to that project.
 
-### `POST /v1/run-callbacks/{callback_token}/native/ssh-cert`
+### `POST /v1/run-callbacks/{callback_token}/run/ssh-cert`
 
 Obtain a short-TTL OpenSSH user certificate over a caller-supplied public key.
 This endpoint is a **gateway**: glimmung does not sign the certificate itself.
@@ -129,7 +129,7 @@ Permissions on the certificate are limited to `permit-pty`. Port forwarding,
 agent forwarding, X11, and `user-rc` are not permitted. glimmung requests only
 `permit-pty`; auth enforces the allowed-extension set server-side.
 
-### `POST /v1/run-callbacks/{callback_token}/native/tailscale-authkey`
+### `POST /v1/run-callbacks/{callback_token}/run/tailscale-authkey`
 
 Mint a single-use, pre-authorized, ephemeral Tailscale auth key.
 
@@ -195,7 +195,7 @@ ssh -i "${GLIMMUNG_WORKING_DIR}/id_ed25519" \
 ```
 
 Concrete realizations of this flow live in the consuming project repo (for
-spirelens, `scripts/glimmung-native/env-prep.sh` et al.). The project-side
+spirelens, `scripts/glimmung-runner/env-prep.sh` et al.). The project-side
 scripts are responsible for the keypair lifecycle, Tailscale bring-up, and
 SSH invocation. Glimmung only owns credential minting.
 
@@ -306,7 +306,7 @@ issuer — auth.romaine.life — with no fallback.
 ### auth.romaine.life allowlists
 
 Both flows run from glimmung's main pod (`glimmung/infra-shared`) — not the
-per-run native runner — because the handlers execute inside the glimmung
+per-run runner — because the handlers execute inside the glimmung
 server process when an orchestrator calls a lease-callback endpoint. The
 auth.romaine.life side must therefore allowlist `glimmung/infra-shared` for:
 
@@ -318,7 +318,7 @@ auth.romaine.life side must therefore allowlist `glimmung/infra-shared` for:
 
 ## Runner-image surface
 
-The `native-runner` image ships `openssh-client` and `tailscale` (binaries
+The `runner` image ships `openssh-client` and `tailscale` (binaries
 only, no daemon launched in the image). Project scripts invoke `tailscaled
 --tun=userspace-networking` per-run so the pod does not require `NET_ADMIN`
 or a `/dev/net/tun` device. The Tailscale state directory lives under the
@@ -370,5 +370,5 @@ The invariants this document and the `ssh-cert` gateway uphold:
     `TestSSHCertHandlerRejectsRunWithoutProject`,
     `TestSSHCertHandlerMissingPubKeyReturns400`.
 - **The route inventory is unchanged** — the wire path stays
-  `POST /v1/run-callbacks/{callback_token}/native/ssh-cert`.
+  `POST /v1/run-callbacks/{callback_token}/run/ssh-cert`.
   - *Evidence:* `internal/server/route_inventory_test.go`.

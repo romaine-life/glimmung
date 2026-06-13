@@ -34,7 +34,7 @@ const (
 )
 
 // Registration is the parsed payload. Mirrored on the wire as the
-// metadata of an `inner_job_registered` native event.
+// metadata of an `inner_job_registered` runner event.
 type Registration struct {
 	Namespace string `json:"namespace"`
 	JobName   string `json:"job_name"`
@@ -97,7 +97,7 @@ func (r *Registration) normalize() error {
 }
 
 // Metadata renders the registration as the metadata payload of an
-// `inner_job_registered` native event. The runner sends this verbatim
+// `inner_job_registered` runner event. The runner sends this verbatim
 // to glimmung's event endpoint.
 func (r Registration) Metadata() map[string]any {
 	out := map[string]any{

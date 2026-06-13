@@ -69,7 +69,7 @@ type TestSlotApplyHotSwapResult struct {
 // Hot-swap history is appended on EVERY outcome — durable state lives
 // in the system, not in the request body. A caller that disconnects
 // mid-request can re-query the lease history to see the result.
-func applyTestSlotHotSwap(store ReadStore, preparer TestSlotPreparer, minter NativeGitHubTokenMinter, performer applyHotSwapPerformer) http.HandlerFunc {
+func applyTestSlotHotSwap(store ReadStore, preparer TestSlotPreparer, minter RunnerGitHubTokenMinter, performer applyHotSwapPerformer) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		writer, ok := store.(TestSlotHotSwapHistoryStore)
 		stateStore, hasState := store.(StateStore)
@@ -130,9 +130,9 @@ func applyTestSlotHotSwap(store ReadStore, preparer TestSlotPreparer, minter Nat
 			return
 		}
 		leaseRef := LeasePublicRefFromLease(lease)
-		slotName, _ := stringFromMap(lease.Metadata, "native_slot_name")
+		slotName, _ := stringFromMap(lease.Metadata, "runner_slot_name")
 		if strings.TrimSpace(slotName) == "" {
-			writeProblem(w, http.StatusBadRequest, "lease has no native_slot_name (cannot derive target namespace)")
+			writeProblem(w, http.StatusBadRequest, "lease has no runner_slot_name (cannot derive target namespace)")
 			return
 		}
 

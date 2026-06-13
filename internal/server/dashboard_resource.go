@@ -149,13 +149,13 @@ func resolveIssueResource(w http.ResponseWriter, r *http.Request, store ReadStor
 }
 
 // runResourceLinks points at the typed /v1 reads for a run cycle, narrowing the
-// native event stream to the addressed job/step when the URL named them. The
+// runner event stream to the addressed job/step when the URL named them. The
 // run is addressed by its canonical dotted run.cycle number, the only form the
 // /v1 run routes accept.
 func runResourceLinks(addr publicids.IssueRunAddress, runDisplay string) map[string]string {
 	base := fmt.Sprintf("/v1/projects/%s/issues/%d/runs/%s",
 		url.PathEscape(addr.Project), addr.IssueNumber, url.PathEscape(runDisplay))
-	events := base + "/native/events"
+	events := base + "/run/events"
 	q := url.Values{}
 	if addr.Job != "" {
 		q.Set("job_id", addr.Job)
@@ -168,7 +168,7 @@ func runResourceLinks(addr publicids.IssueRunAddress, runDisplay string) map[str
 	}
 	return map[string]string{
 		"run_report":    base + "/report",
-		"native_events": events,
-		"native_status": base + "/native/status",
+		"runner_events": events,
+		"runner_status": base + "/run/status",
 	}
 }

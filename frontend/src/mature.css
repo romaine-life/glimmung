@@ -409,7 +409,7 @@ tr.eligible td:first-child { border-left: 2px solid var(--state-success-fg); }
 .attempt-card-body .key, .attempt-card-head .key { color: var(--m-dim); }
 
 /* step log + terminal */
-.step-log-layout, .native-step-log-layout {
+.step-log-layout, .runner-step-log-layout {
   border: 1px solid var(--m-line);
   border-radius: var(--m-r);
   overflow: hidden;
@@ -420,7 +420,7 @@ tr.eligible td:first-child { border-left: 2px solid var(--state-success-fg); }
 .step-row { border-bottom: 1px solid var(--m-line-soft); color: var(--m-muted); }
 .step-row.active, .step-row.selected { background: var(--m-panel-2); color: var(--m-strong); }
 .step-row strong { color: inherit; }
-.step-terminal, .native-step-terminal { background: #08080a; color: var(--m-body); }
+.step-terminal, .runner-step-terminal { background: #08080a; color: var(--m-body); }
 
 /* agent transcript entries → panels */
 .agent-transcript { background: #08080a; }
@@ -430,7 +430,7 @@ tr.eligible td:first-child { border-left: 2px solid var(--state-success-fg); }
   border-radius: var(--m-r-sm);
 }
 .agent-transcript-entry strong { color: var(--m-strong); }
-.native-view-toggle, .native-page-controls button {
+.runner-view-toggle, .runner-page-controls button {
   border-color: var(--m-line);
   border-radius: var(--m-r-sm);
   background: var(--m-panel);
@@ -468,7 +468,7 @@ html[data-geometry="chamfer"] .graph-inspector,
 html[data-geometry="chamfer"] .run-panel,
 html[data-geometry="chamfer"] .attempt-card,
 html[data-geometry="chamfer"] .step-log-layout,
-html[data-geometry="chamfer"] .native-step-log-layout,
+html[data-geometry="chamfer"] .runner-step-log-layout,
 html[data-geometry="chamfer"] .dag-phase { clip-path: polygon(11px 0, 100% 0, 100% 100%, 0 100%, 0 11px); }
 html[data-geometry="chamfer"] .run-graph-node,
 html[data-geometry="chamfer"] .dag-node,
@@ -487,7 +487,7 @@ html[data-geometry="chamfer"] .graph-inspector,
 html[data-geometry="chamfer"] .run-panel,
 html[data-geometry="chamfer"] .attempt-card,
 html[data-geometry="chamfer"] .step-log-layout,
-html[data-geometry="chamfer"] .native-step-log-layout { box-shadow: none; }
+html[data-geometry="chamfer"] .runner-step-log-layout { box-shadow: none; }
 
 /* shadows switch (harness tweak) */
 html[data-shadows="off"] .project-fact,
@@ -501,7 +501,7 @@ html[data-shadows="off"] .graph-inspector,
 html[data-shadows="off"] .run-panel,
 html[data-shadows="off"] .attempt-card,
 html[data-shadows="off"] .step-log-layout,
-html[data-shadows="off"] .native-step-log-layout { box-shadow: none; }
+html[data-shadows="off"] .runner-step-log-layout { box-shadow: none; }
 
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; }

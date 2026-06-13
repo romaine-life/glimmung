@@ -2,7 +2,7 @@
 
 Go service for issue-driven agentic development. Glimmung stores projects,
 workflows, issues, runs, leases, touchpoints, and signals in Postgres; serves
-the Vite + React dashboard; and coordinates native Kubernetes jobs.
+the Vite + React dashboard; and coordinates runner Kubernetes jobs.
 
 > *The Glimmung scanned the assembled list of beings he had summoned. From a thousand worlds they had come, each with a craft to contribute.*
 > — paraphrased from Philip K. Dick, *Galactic Pot-Healer*
@@ -15,7 +15,7 @@ systems do not model the orchestration cleanly. Glimmung owns the queue, the
 database-backed workflow shape, the run/lease lifecycle, the callback surface,
 the verify-loop decision engine, the dashboard, and the signal bus.
 
-Native Kubernetes jobs are the execution layer for managed workflow phases.
+Runner Kubernetes jobs are the execution layer for managed workflow phases.
 Apps should not register app-specific GitHub runner pools or keep repo-backed
 workflow files as the runtime source of truth.
 
@@ -32,7 +32,7 @@ Project -> Workflow -> Issue -> Run -> Phase/Job -> RunReport
 
 - **Project** = a repo (e.g. `spirelens`), declares the github_repo only.
 - **Workflow** = a database-backed automation shape under a project. Dispatch
-  reads the Workflow row from Postgres: phases, native jobs, PR policy, budget,
+  reads the Workflow row from Postgres: phases, runner jobs, PR policy, budget,
   and requirements. Omitted phase kinds default to `k8s_job`; registered
   phases must use `k8s_job`.
 - **Issue** = the canonical Glimmung issue row. GitHub Issues may still feed
@@ -40,9 +40,9 @@ Project -> Workflow -> Issue -> Run -> Phase/Job -> RunReport
 - **Run** = durable execution record for one issue/workflow invocation. Runs
   hold attempts, phase state, evidence refs, cost, terminal decision, and
   callback-token metadata.
-- **Lease** = native capacity claim for a `k8s_job` run phase. Lease records are
-  claimed only when native capacity is assigned, heartbeat/release through
-  callback-token APIs, and complete through the native run completion callback.
+- **Lease** = runner capacity claim for a `k8s_job` run phase. Lease records are
+  claimed only when runner capacity is assigned, heartbeat/release through
+  callback-token APIs, and complete through the runner run completion callback.
 
 Workflow registration is an admin/control-plane operation. Runtime dispatch
 reads the Workflow row in Postgres, not GitHub directly. Consumer repos do not
@@ -149,7 +149,7 @@ surface.
 |---|---|---|
 | POST   | `/v1/projects`                    | Register/upsert a project (`{name, github_repo}`). |
 | GET    | `/v1/projects`                    | List projects. |
-| PATCH  | `/v1/projects/{project}/test-environments/count` | Set native test-slot capacity and reconcile configured preliminary resources, including warm Helm resources when configured. |
+| PATCH  | `/v1/projects/{project}/test-environments/count` | Set runner test-slot capacity and reconcile configured preliminary resources, including warm Helm resources when configured. |
 | POST   | `/v1/test-slots/checkout`          | Lease an available test slot chosen by Glimmung; runtime activation may continue asynchronously. |
 | POST   | `/v1/test-slots/return`            | Return a test-slot lease; runtime cleanup may continue asynchronously before the slot is available again. |
 | POST   | `/v1/test-slots/extend`            | Extend a claimed test-slot lease TTL without tearing down the leased runtime. |
@@ -192,7 +192,7 @@ The trustedOrigins allowlist for slot hostnames is **owned by glimmung**,
 not statically listed in `romaine-life/auth` source. Each project that opts in
 sets `managed_auth_origins.enabled=true` in its project metadata;
 glimmung's reconciler (`internal/server/managed_origins.go`) derives the
-wildcard mechanically from `native_standby_dns.record_base`
+wildcard mechanically from `runner_standby_dns.record_base`
 (`https://*.<record_base>`) and PUTs it to
 `auth.romaine.life/api/admin/origins/{project}` via the projected SA
 token mounted with `audience: https://auth.romaine.life`. The wildcard
@@ -211,9 +211,9 @@ Glimmung no longer reconciles redirect URIs against Microsoft Graph on slot
 scale changes — that whole code path was deleted alongside the per-project
 metadata field that used to drive it.
 
-### Native test-slot provisioning
+### Runner test-slot provisioning
 
-The native test-slot lifecycle contract lives in
+The runner test-slot lifecycle contract lives in
 [`docs/test-slot-lifecycle.md`](docs/test-slot-lifecycle.md). In short, queue
 size controls prepared capacity, and checkout asks Glimmung to choose and lease
 one available slot. Callers do not choose the slot.
@@ -225,7 +225,7 @@ other zero-steady-runtime scaffolding. It must not keep project app, API proxy,
 session, Playwright, or validation workload pods running.
 
 Runtime materialization belongs after Glimmung assigns a lease. Activation
-creates the lease-scoped runtime and, when native Playwright is enabled, waits
+creates the lease-scoped runtime and, when runner Playwright is enabled, waits
 for the slot-local `slot-playwright` Deployment before the slot becomes usable.
 Returning a slot tears down that lease-scoped runtime and keeps the preliminary
 slot capacity. Changing queue size is the destructive path that may remove slot
@@ -255,7 +255,7 @@ Any implementation path that treats a Helm-rendered app/proxy/session/tool
 runtime as part of an unleased warmed slot violates the lifecycle contract and
 should be split into preliminary reconciliation and lease activation.
 
-### Native test-slot hot swap
+### Runner test-slot hot swap
 
 Native webapp projects can also advertise `metadata.test_slot_hot_swap` for
 the no-rollout validation path. Static changes copy built assets into the
@@ -330,7 +330,7 @@ Glimmung dogfood metadata:
 
 The Go handler verifies `X-Hub-Signature-256` against `GITHUB_WEBHOOK_SECRET`
 when configured and acknowledges the event. Rich issue/workflow_run processing
-from the retired app is not part of the native lease dispatch path.
+from the retired app is not part of the runner lease dispatch path.
 
 Current event contract: Glimmung accepts GitHub `issues` and `workflow_run`
 webhooks for repair hooks. PR review decisions enter through
@@ -350,16 +350,16 @@ the Postgres store in [`internal/store/store`](internal/store/store) and
 2. Reads the Glimmung issue by project issue number.
 3. Claims the `("issue", "<project>#<number>")` lock; concurrent dispatches on the same issue return `state="already_running"`.
 4. Creates the Run record while the issue lock serializes run-number allocation.
-5. Acquires a native lease. If no native capacity is immediately available, the
+5. Acquires a runner lease. If no runner capacity is immediately available, the
    run waits without launching executor work.
 6. Returns the callback-token metadata needed by the executor.
-7. Launches the claimed `k8s_job` phase through the Go-managed native launcher.
+7. Launches the claimed `k8s_job` phase through the Go-managed run launcher.
 8. Records completion through
-   `/v1/run-callbacks/{callback_token}/native/completed`. Native completion is
+   `/v1/run-callbacks/{callback_token}/run/completed`. Runner completion is
    job-scoped: every callback must
    include `job_id`, and the Go decision engine only advances the phase after
    every registered job in that phase has completed. Job failure uses the same
-   endpoint with a non-`success` `conclusion`; `/native/failed` is retired.
+   endpoint with a non-`success` `conclusion`; `/run/failed` is retired.
 
 Issue-lock TTL is 4h. Terminal Run transitions release issue/PR locks through
 the Go store; leases still have their own TTL/callback lifecycle.
@@ -368,12 +368,12 @@ the Go store; leases still have their own TTL/callback lifecycle.
 
 `POST /v1/runs/dispatch` accepts an optional string map `inputs`. These values
 are durable run facts, persisted as `run_inputs` on the Run and copied into
-native lease metadata for every phase and recycle attempt. Native pods receive
+runner lease metadata for every phase and recycle attempt. Runner pods receive
 them as `GLIMMUNG_RUN_INPUT_*` environment variables.
 
-Native workflow checkouts may set `checkout.ref` or `extra_checkouts[].ref` to
+Runner workflow checkouts may set `checkout.ref` or `extra_checkouts[].ref` to
 an exact run-input template such as `${{ inputs.git_ref }}`. The launcher
-resolves the template before emitting the runner job spec, so the native runner
+resolves the template before emitting the runner job spec, so the runner
 checks out the requested ref instead of a literal template string.
 
 ### Synthetic dispatch
@@ -433,7 +433,7 @@ schema migrations before serving traffic.
 
 ## Lock semantics
 
-Native lease acquisition is slot-backed and project-local. The allocator reads
+Runner lease acquisition is slot-backed and project-local. The allocator reads
 the requested project's durable slot rows inside the configured slot count,
 selects the first provisioned unclaimed test slot, and writes one claimed lease
 document. Leases held by other projects do not consume this project's test-slot
@@ -442,9 +442,9 @@ executor work is not launched.
 
 Release paths:
 - **Fast**: workflow's own release step (if it has one).
-- **Run terminal paths**: Go completion, abort, replay, and native failure
+- **Run terminal paths**: Go completion, abort, replay, and runner failure
   handlers release related issue/PR locks and update run state.
-- **Backstop**: lease TTL and stale heartbeat handling clean abandoned native
+- **Backstop**: lease TTL and stale heartbeat handling clean abandoned runner
   claims so capacity can return to the allocator.
 
 ## One-time setup
@@ -514,7 +514,7 @@ Visit https://glimmung.romaine.life/, click **sign in** (top right) — MSAL pop
 Workflow registrations are structural control-plane data. Apply them through
 the Glimmung API/MCP workflow registration path with a full phase shape, not as
 a project-creation side effect. The dashboard shows projects, workflows, leases,
-runs, reports, and native test slots.
+runs, reports, and runner test slots.
 
 ## Running locally
 
@@ -593,7 +593,7 @@ the PR body, to tank-operator, which gives the session its
 ## Verify-loop substrate (#18)
 
 Glimmung-as-orchestrator wedge: when a verify phase fails, glimmung launches
-the configured native recycle phase with the prior verification context,
+the configured runner recycle phase with the prior verification context,
 repeating until verification passes, attempt count exceeds N, or cumulative
 cost exceeds $X. The substrate that lands here is reused by every other
 [meta #17](https://github.com/romaine-life/glimmung/issues/17) child.
@@ -622,7 +622,7 @@ The budget is **frozen at run-creation time** — relabeling mid-run does not mo
 ### Verification contract
 
 Every verification `k8s_job` phase must report a typed verification payload
-through the native completion callback. The decision engine reads the typed
+through the runner completion callback. The decision engine reads the typed
 verdict, never executor exit state alone. Schema:
 
 ```json
@@ -648,11 +648,11 @@ the engine returns `ABORT_MALFORMED` and records the contract violation.
 
 ### Recycle attempt inputs
 
-When glimmung launches a recycled native phase, the job environment includes:
+When glimmung launches a recycled runner phase, the job environment includes:
 
 | Input | Description |
 |---|---|
-| `GLIMMUNG_LEASE_REF`                  | Fresh native lease ref for the attempt. |
+| `GLIMMUNG_LEASE_REF`                  | Fresh runner lease ref for the attempt. |
 | `GLIMMUNG_RUN_ID`                     | Glimmung Run ULID for log correlation. |
 | `GLIMMUNG_RUN_REF`                    | Public run ref. |
 | `GLIMMUNG_ATTEMPT_INDEX`              | 0-based attempt index (initial=0, first recycle=1, ...). |
@@ -668,7 +668,7 @@ Side effects live at the server call sites, primarily
 [`internal/server/replay_api.go`](internal/server/replay_api.go). Outputs:
 
 - `advance` - verification passed; the next ready phase runs.
-- `retry` - launch the configured recycle phase through the native path.
+- `retry` - launch the configured recycle phase through the runner path.
 - `abort_budget_attempts` - `len(attempts) >= max_attempts`.
 - `abort_budget_cost` - `cumulative_cost_usd >= max_cost_usd` (checked first; harder cap).
 - `abort_malformed` - verification artifact missing or schema-invalid.
@@ -730,18 +730,18 @@ Active triage behavior:
 
 ### Triage recycle contract
 
-Triage recycle launches a native phase with:
+Triage recycle launches a runner phase with:
 
 | Input | Description |
 |---|---|
-| `GLIMMUNG_LEASE_REF`                  | Fresh native lease ref for the triage run. |
+| `GLIMMUNG_LEASE_REF`                  | Fresh runner lease ref for the triage run. |
 | `GLIMMUNG_RUN_ID`                     | Glimmung Run ULID. |
 | `GLIMMUNG_RUN_REF`                    | Public run ref. |
 | `GLIMMUNG_ATTEMPT_INDEX`              | 0-based attempt index. |
 | `GLIMMUNG_INPUT_*`                    | Resolved phase inputs, including human feedback when the workflow declares it. |
 
 The triage contract runs implementation and verification with feedback in
-context through the same native phase and verification callback contract.
+context through the same runner phase and verification callback contract.
 
 ## Historical Platform Phases
 
@@ -753,4 +753,4 @@ live in [`docs/go-runtime-cleanup-inventory.md`](docs/go-runtime-cleanup-invento
 2. **Phase 2** ✓ — GitHub App webhook receiver, ingress at `glimmung.romaine.life`, Entra ID auth on admin endpoints.
 3. **Phase 3** ✓ — Dashboard with SSE, project side pane, workflow as first-class abstraction, MSAL sign-in + admin panel.
 4. **Phase 2.5** ✓ — Migrate spirelens `issue-agent.yaml` to consume glimmung leases. (Numbered out of order; see [glimmung issue #2](https://github.com/romaine-life/glimmung/issues/2) for the build order that actually happened.)
-5. **Phase 4** — Native-runner grounding, dashboard cancel/preempt, and project migrations onto the single native lease path.
+5. **Phase 4** — Runner grounding, dashboard cancel/preempt, and project migrations onto the single runner lease path.

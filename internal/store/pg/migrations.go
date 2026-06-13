@@ -63,7 +63,7 @@ var schemaMigrations = []string{
 	)`,
 
 	// ------------------------------------------------------------------
-	// leases — the callback_token is a uuid the native runner presents; the
+	// leases — the callback_token is a uuid the runner presents; the
 	// existing code path looks leases up by token, so it gets a real index.
 	// ------------------------------------------------------------------
 	`CREATE TABLE IF NOT EXISTS leases (
@@ -137,7 +137,7 @@ var schemaMigrations = []string{
 		ON run_events (project, created_at DESC)`,
 	`CREATE INDEX IF NOT EXISTS run_events_ordered
 		ON run_events (run_id, attempt_index, seq)`,
-	// Rich nativeEventDoc fields use typed columns so `event`, `phase`, and
+	// Rich runnerEventDoc fields use typed columns so `event`, `phase`, and
 	// per-job `step_slug` queries can use real indexes if they grow.
 	`ALTER TABLE run_events ADD COLUMN IF NOT EXISTS phase text NOT NULL DEFAULT ''`,
 	`ALTER TABLE run_events ADD COLUMN IF NOT EXISTS step_slug text NOT NULL DEFAULT ''`,
@@ -382,7 +382,7 @@ var schemaMigrations = []string{
 	//     Seeded by ProjectsStore.BackfillConfigSchemas at startup (the hash
 	//     is computed in Go so it matches the live write path exactly).
 	//   - status: reconciler-owned jsonb (managed_auth_origin_status,
-	//     native_standby_workload_identity_status).
+	//     runner_standby_workload_identity_status).
 	//   - project_config_schemas: immutable authored-config history, mirroring
 	//     workflow_schemas.
 	// ------------------------------------------------------------------
@@ -404,20 +404,20 @@ var schemaMigrations = []string{
 	`UPDATE projects
 		SET status = status || jsonb_strip_nulls(jsonb_build_object(
 				'managed_auth_origin_status', payload->'metadata'->'managed_auth_origin_status',
-				'native_standby_workload_identity_status', payload->'metadata'->'native_standby_workload_identity_status'
+				'runner_standby_workload_identity_status', payload->'metadata'->'runner_standby_workload_identity_status'
 			)),
 		    payload = jsonb_set(
 				payload,
 				'{metadata}',
 				COALESCE(payload->'metadata', '{}'::jsonb)
 					- 'managed_auth_origin_status'
-					- 'native_standby_workload_identity_status'
+					- 'runner_standby_workload_identity_status'
 			),
 		    updated_at = now()
 		WHERE kind = 'project'
 		  AND (
 				payload->'metadata' ? 'managed_auth_origin_status'
-				OR payload->'metadata' ? 'native_standby_workload_identity_status'
+				OR payload->'metadata' ? 'runner_standby_workload_identity_status'
 		  )`,
 
 	// Workflow phases used to encode teardown scheduling with `always`.

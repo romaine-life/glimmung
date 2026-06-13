@@ -29,13 +29,13 @@ const (
 )
 
 // AbortReasonOutputKey is the phase-output key a phase script sets to
-// request a fail-closed run abort. The native runner stops the remaining
+// request a fail-closed run abort. The runner stops the remaining
 // steps in the phase when it sees this key set to a non-empty value and
 // reports the completion with conclusion=ConclusionAborted; the decision
 // engine then routes the run to AbortRequested.
 const AbortReasonOutputKey = "abort_reason"
 
-// ConclusionAborted is the completion conclusion the native runner reports
+// ConclusionAborted is the completion conclusion the runner reports
 // for a phase-requested abort. It is recorded on the attempt for
 // observability; the load-bearing routing signal is the per-attempt
 // AbortReason (sourced from the AbortReasonOutputKey phase output).

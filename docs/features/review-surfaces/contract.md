@@ -13,7 +13,7 @@ RunReports own factual per-run audit state.
 ## Sources Of Truth
 
 - Postgres `issues` owns the work item state.
-- Postgres `runs` and native events own per-run facts.
+- Postgres `runs` and runner events own per-run facts.
 - Postgres `touchpoints` physically stores Touchpoint state.
 - Postgres `playbooks` owns ordered multi-issue planning and execution state.
 - Postgres `signals` owns reviewer feedback and re-entry requests.

@@ -153,7 +153,7 @@ type PhaseSpec struct {
 	Always                   bool            `json:"always,omitempty"`
 	EvidenceVerificationGate bool            `json:"evidence_verification_gate"`
 	DependsOn                []string        `json:"depends_on"`
-	Jobs                     []NativeJobSpec `json:"jobs"`
+	Jobs                     []RunnerJobSpec `json:"jobs"`
 	// When is the phase-level run condition (whenexpr grammar). Evaluated
 	// server-side at dispatch against the registration vars, the run's
 	// dispatch inputs, and the closed run-fact set. False synthesizes a
@@ -173,7 +173,7 @@ type RecyclePolicy struct {
 	LandsAt     string   `json:"lands_at"`
 }
 
-type NativeJobSpec struct {
+type RunnerJobSpec struct {
 	ID               string               `json:"id"`
 	Name             *string              `json:"name"`
 	Primitive        string               `json:"primitive,omitempty"`
@@ -181,11 +181,11 @@ type NativeJobSpec struct {
 	Command          []string             `json:"command"`
 	Args             []string             `json:"args"`
 	Env              map[string]string    `json:"env"`
-	Steps            []NativeStepSpec     `json:"steps"`
+	Steps            []RunnerStepSpec     `json:"steps"`
 	TimeoutSeconds   *int                 `json:"timeout_seconds"`
 	Managed          bool                 `json:"managed,omitempty"`
-	Checkout         *NativeCheckoutSpec  `json:"checkout,omitempty"`
-	ExtraCheckouts   []NativeCheckoutSpec `json:"extra_checkouts,omitempty"`
+	Checkout         *RunnerCheckoutSpec  `json:"checkout,omitempty"`
+	ExtraCheckouts   []RunnerCheckoutSpec `json:"extra_checkouts,omitempty"`
 	WorkingDirectory string               `json:"working_directory,omitempty"`
 	Shell            string               `json:"shell,omitempty"`
 	// When is the job-level run condition (whenexpr grammar). Evaluated
@@ -197,7 +197,7 @@ type NativeJobSpec struct {
 	When string `json:"when,omitempty"`
 }
 
-type NativeStepSpec struct {
+type RunnerStepSpec struct {
 	Slug             string            `json:"slug"`
 	Title            *string           `json:"title"`
 	Type             string            `json:"type,omitempty"`
@@ -216,7 +216,7 @@ type StepDynamicGroup struct {
 	ItemLabel string `json:"item_label,omitempty"`
 }
 
-type NativeCheckoutSpec struct {
+type RunnerCheckoutSpec struct {
 	Repo string `json:"repo,omitempty"`
 	Ref  string `json:"ref,omitempty"`
 	Path string `json:"path,omitempty"`

@@ -1,4 +1,4 @@
-package nativecostrepair
+package runnercostrepair
 
 import (
 	"encoding/json"
@@ -9,7 +9,7 @@ import (
 	"github.com/romaine-life/glimmung/internal/domain/agentruntime"
 )
 
-// Event is the small native log event shape needed to repair persisted cost
+// Event is the small runner log event shape needed to repair persisted cost
 // ledgers from already-durable runner result lines.
 type Event struct {
 	AttemptIndex int

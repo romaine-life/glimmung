@@ -44,7 +44,7 @@ func TestSSHCertHandlerHappyPath(t *testing.T) {
 	handler := mintRunCallbackSSHCert(store, exchanger)
 
 	body := mustEncodeJSON(t, SSHCertRequest{PublicKey: "ssh-ed25519 AAAAUSERKEY"})
-	req := httptest.NewRequest(http.MethodPost, "/v1/run-callbacks/tok-1/native/ssh-cert", bytes.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/v1/run-callbacks/tok-1/run/ssh-cert", bytes.NewReader(body))
 	req.SetPathValue("callback_token", "tok-1")
 	rr := httptest.NewRecorder()
 	handler.ServeHTTP(rr, req)
@@ -186,7 +186,7 @@ func TestTailscaleAuthKeyHandlerHappyPath(t *testing.T) {
 	store := newRunCallbackStore("tok-1", "spirelens")
 	handler := mintRunCallbackTailscaleAuthKey(store, minter)
 
-	req := httptest.NewRequest(http.MethodPost, "/v1/run-callbacks/tok-1/native/tailscale-authkey", nil)
+	req := httptest.NewRequest(http.MethodPost, "/v1/run-callbacks/tok-1/run/tailscale-authkey", nil)
 	req.SetPathValue("callback_token", "tok-1")
 	rr := httptest.NewRecorder()
 	handler.ServeHTTP(rr, req)
@@ -212,7 +212,7 @@ func TestTailscaleAuthKeyHandlerHappyPath(t *testing.T) {
 func TestTailscaleAuthKeyHandlerMinterDisabledReturns503(t *testing.T) {
 	store := newRunCallbackStore("tok-1", "spirelens")
 	handler := mintRunCallbackTailscaleAuthKey(store, nil)
-	req := httptest.NewRequest(http.MethodPost, "/v1/run-callbacks/tok-1/native/tailscale-authkey", nil)
+	req := httptest.NewRequest(http.MethodPost, "/v1/run-callbacks/tok-1/run/tailscale-authkey", nil)
 	req.SetPathValue("callback_token", "tok-1")
 	rr := httptest.NewRecorder()
 	handler.ServeHTTP(rr, req)
@@ -226,7 +226,7 @@ func TestTailscaleAuthKeyHandlerUnknownTokenReturns404(t *testing.T) {
 	minter := newTestMinter(t, f)
 	store := newRunCallbackStore("real", "spirelens")
 	handler := mintRunCallbackTailscaleAuthKey(store, minter)
-	req := httptest.NewRequest(http.MethodPost, "/v1/run-callbacks/wrong/native/tailscale-authkey", nil)
+	req := httptest.NewRequest(http.MethodPost, "/v1/run-callbacks/wrong/run/tailscale-authkey", nil)
 	req.SetPathValue("callback_token", "wrong")
 	rr := httptest.NewRecorder()
 	handler.ServeHTTP(rr, req)
@@ -241,7 +241,7 @@ func TestTailscaleAuthKeyHandlerPropagatesAPIError(t *testing.T) {
 	minter := newTestMinter(t, f)
 	store := newRunCallbackStore("tok-1", "spirelens")
 	handler := mintRunCallbackTailscaleAuthKey(store, minter)
-	req := httptest.NewRequest(http.MethodPost, "/v1/run-callbacks/tok-1/native/tailscale-authkey", nil)
+	req := httptest.NewRequest(http.MethodPost, "/v1/run-callbacks/tok-1/run/tailscale-authkey", nil)
 	req.SetPathValue("callback_token", "tok-1")
 	rr := httptest.NewRecorder()
 	handler.ServeHTTP(rr, req)
@@ -261,7 +261,7 @@ func TestRemoteHostPrincipalAndTag(t *testing.T) {
 
 func doSSHCertReq(t *testing.T, handler http.HandlerFunc, token, body string) *httptest.ResponseRecorder {
 	t.Helper()
-	req := httptest.NewRequest(http.MethodPost, "/v1/run-callbacks/"+token+"/native/ssh-cert", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/v1/run-callbacks/"+token+"/run/ssh-cert", strings.NewReader(body))
 	req.SetPathValue("callback_token", token)
 	rr := httptest.NewRecorder()
 	handler.ServeHTTP(rr, req)

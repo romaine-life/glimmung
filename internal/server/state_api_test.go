@@ -188,7 +188,7 @@ func TestStateSnapshotIncludesTestEnvironmentsAndWaitingRequests(t *testing.T) {
 			ID:   "glimmung",
 			Name: "glimmung",
 			Metadata: map[string]any{
-				"native_standby_dns": map[string]any{
+				"runner_standby_dns": map[string]any{
 					"enabled":     true,
 					"count":       float64(2),
 					"slot_prefix": "glimmung-slot",
@@ -206,7 +206,7 @@ func TestStateSnapshotIncludesTestEnvironmentsAndWaitingRequests(t *testing.T) {
 				Project:     "glimmung",
 				Workflow:    stringPtr("test-slot-checkout"),
 				State:       "claimed",
-				Metadata:    map[string]any{"test_slot_checkout": true, "native_slot_index": "1", "native_slot_name": "glimmung-slot-1"},
+				Metadata:    map[string]any{"test_slot_checkout": true, "runner_slot_index": "1", "runner_slot_name": "glimmung-slot-1"},
 				RequestedAt: now,
 			},
 			{
@@ -260,7 +260,7 @@ func TestTestEnvironmentStatusShowsActivatingSlot(t *testing.T) {
 			ID:   "tank",
 			Name: "tank",
 			Metadata: map[string]any{
-				"native_standby_dns": map[string]any{
+				"runner_standby_dns": map[string]any{
 					"count":       float64(1),
 					"slot_prefix": "tank-slot",
 					"slots": []any{
@@ -281,7 +281,7 @@ func TestTestEnvironmentStatusShowsActivatingSlot(t *testing.T) {
 			Project:     "tank",
 			Workflow:    stringPtr("test-slot-checkout"),
 			State:       "claimed",
-			Metadata:    map[string]any{"test_slot_checkout": true, "native_slot_index": "1", "native_slot_name": "tank-slot-1"},
+			Metadata:    map[string]any{"test_slot_checkout": true, "runner_slot_index": "1", "runner_slot_name": "tank-slot-1"},
 			RequestedAt: now,
 		}},
 	}
@@ -312,7 +312,7 @@ func TestStateSnapshotEmitsEmptyStateForUnseededSlots(t *testing.T) {
 			ID:   "fresh",
 			Name: "fresh",
 			Metadata: map[string]any{
-				"native_standby_dns": map[string]any{
+				"runner_standby_dns": map[string]any{
 					"enabled":     true,
 					"count":       float64(3),
 					"slot_prefix": "fresh-slot",
@@ -369,7 +369,7 @@ func TestStateSnapshotIgnoresOutOfRangeNativeSlots(t *testing.T) {
 			ID:   "tank-operator",
 			Name: "tank-operator",
 			Metadata: map[string]any{
-				"native_standby_dns": map[string]any{
+				"runner_standby_dns": map[string]any{
 					"count":       float64(2),
 					"slot_prefix": "tank-operator-slot",
 				},
@@ -381,7 +381,7 @@ func TestStateSnapshotIgnoresOutOfRangeNativeSlots(t *testing.T) {
 			Project:     "tank-operator",
 			Workflow:    stringPtr("test-slot-checkout"),
 			State:       "claimed",
-			Metadata:    map[string]any{"test_slot_checkout": true, "native_slot_index": "99", "native_slot_name": "tank-operator-slot-99"},
+			Metadata:    map[string]any{"test_slot_checkout": true, "runner_slot_index": "99", "runner_slot_name": "tank-operator-slot-99"},
 			RequestedAt: now,
 		}},
 	}
@@ -437,7 +437,7 @@ func TestStateEventsStreamsInitialStateEvent(t *testing.T) {
 			ID:          "lease-1",
 			Project:     "ambience",
 			State:       "claimed",
-			Metadata:    map[string]any{"native_slot_name": "ambience-slot-1"},
+			Metadata:    map[string]any{"runner_slot_name": "ambience-slot-1"},
 			RequestedAt: now,
 		}},
 	}

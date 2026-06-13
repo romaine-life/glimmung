@@ -31,40 +31,40 @@ const (
 	testSlotRenderModeHot         = "hot"
 )
 
-// NativeLauncher creates Kubernetes resources for native k8s_job phases.
-type NativeLauncher interface {
-	LaunchNativePhase(ctx context.Context, req NativeLaunchRequest) ([]NativeLaunchedJob, error)
+// RunLauncher creates Kubernetes resources for runner k8s_job phases.
+type RunLauncher interface {
+	LaunchPhase(ctx context.Context, req RunLaunchRequest) ([]RunLaunchedJob, error)
 }
 
-// NativeJobStatusGetter exposes the terminal status of a previously launched
-// native phase Job so the run-execution reconciler can detect Jobs that died
+// RunnerJobStatusGetter exposes the terminal status of a previously launched
+// runner phase Job so the run-execution reconciler can detect Jobs that died
 // without the runner ever delivering its completion callback (DeadlineExceeded
 // killing the pod mid-step, OOM, eviction, etc.) and synthesize a failed
-// completion. KubernetesNativeLauncher implements this; the dispatch fakes
+// completion. KubernetesRunLauncher implements this; the dispatch fakes
 // do not have to.
-type NativeJobStatusGetter interface {
-	GetNativeJobStatus(ctx context.Context, namespace, name string) (NativeJobStatus, error)
+type RunnerJobStatusGetter interface {
+	GetRunnerJobStatus(ctx context.Context, namespace, name string) (RunnerJobStatus, error)
 }
 
-// NativeJobLogsFetcher exposes a bounded read of a phase Job's pod
+// RunnerJobLogsFetcher exposes a bounded read of a phase Job's pod
 // stdout so the run-execution reconciler can capture logs into the
 // artifact store on terminal transitions. Stage 3 of the inner-Job
 // observation contract — the durable counterpart to the Grafana
 // Explore deep-link, retained past Loki's window.
-type NativeJobLogsFetcher interface {
-	GetNativeJobLogs(ctx context.Context, namespace, jobName string, maxBytes int64) ([]byte, error)
+type RunnerJobLogsFetcher interface {
+	GetRunnerJobLogs(ctx context.Context, namespace, jobName string, maxBytes int64) ([]byte, error)
 }
 
-// NativeJobStatus is the small subset of batch/v1 Job status the reconciler
+// RunnerJobStatus is the small subset of batch/v1 Job status the reconciler
 // needs to decide whether to synthesize a completion. Zero value (Found=false)
 // means the Job has been garbage-collected from k8s; callers treat that as
 // "the run lost its execution surface" and should fail the phase.
-type NativeJobStatus struct {
+type RunnerJobStatus struct {
 	Found              bool
 	Active             int
 	Succeeded          int
 	Failed             int
-	Conditions         []NativeJobCondition
+	Conditions         []RunnerJobCondition
 	CompletionTime     time.Time
 	LastTransitionTime time.Time
 	// PodTerminationReason is the pod-level termination reason read from
@@ -72,13 +72,13 @@ type NativeJobStatus struct {
 	// BackoffLimitExceeded — the container's terminated.reason
 	// ("OOMKilled", "Error") or the pod's status.reason ("Evicted").
 	// Empty when the pod is gone or recorded no terminal reason.
-	// Populated by GetNativeJobStatus only on terminal failure.
+	// Populated by GetRunnerJobStatus only on terminal failure.
 	PodTerminationReason string
 }
 
-// NativeJobCondition mirrors the fields of batch/v1 JobCondition the
+// RunnerJobCondition mirrors the fields of batch/v1 JobCondition the
 // reconciler inspects.
-type NativeJobCondition struct {
+type RunnerJobCondition struct {
 	Type               string
 	Status             string
 	Reason             string
@@ -87,7 +87,7 @@ type NativeJobCondition struct {
 }
 
 // IsTerminallyFailed reports whether the Job has a Failed=True condition.
-func (s NativeJobStatus) IsTerminallyFailed() bool {
+func (s RunnerJobStatus) IsTerminallyFailed() bool {
 	for _, c := range s.Conditions {
 		if strings.EqualFold(c.Type, "Failed") && strings.EqualFold(c.Status, "True") {
 			return true
@@ -99,7 +99,7 @@ func (s NativeJobStatus) IsTerminallyFailed() bool {
 // IsTerminallySucceeded reports whether the Job has a Complete=True (or
 // SuccessCriteriaMet=True) condition. Used so the reconciler can tell a
 // "successful pod that simply lost its callback" from a real failure.
-func (s NativeJobStatus) IsTerminallySucceeded() bool {
+func (s RunnerJobStatus) IsTerminallySucceeded() bool {
 	for _, c := range s.Conditions {
 		if !strings.EqualFold(c.Status, "True") {
 			continue
@@ -113,7 +113,7 @@ func (s NativeJobStatus) IsTerminallySucceeded() bool {
 
 // FailureReason returns the reason field of the first Failed=True condition,
 // or empty if there is none.
-func (s NativeJobStatus) FailureReason() string {
+func (s RunnerJobStatus) FailureReason() string {
 	for _, c := range s.Conditions {
 		if strings.EqualFold(c.Type, "Failed") && strings.EqualFold(c.Status, "True") {
 			return c.Reason
@@ -123,7 +123,7 @@ func (s NativeJobStatus) FailureReason() string {
 }
 
 // FailureMessage returns the message field of the first Failed=True condition.
-func (s NativeJobStatus) FailureMessage() string {
+func (s RunnerJobStatus) FailureMessage() string {
 	for _, c := range s.Conditions {
 		if strings.EqualFold(c.Type, "Failed") && strings.EqualFold(c.Status, "True") {
 			return c.Message
@@ -135,7 +135,7 @@ func (s NativeJobStatus) FailureMessage() string {
 // TerminalTime returns the best timestamp for when the Job entered its
 // terminal state: completionTime when present, otherwise the most recent
 // condition transition time.
-func (s NativeJobStatus) TerminalTime() time.Time {
+func (s RunnerJobStatus) TerminalTime() time.Time {
 	if !s.CompletionTime.IsZero() {
 		return s.CompletionTime
 	}
@@ -143,8 +143,8 @@ func (s NativeJobStatus) TerminalTime() time.Time {
 }
 
 type TestSlotPreparer interface {
-	EnsureTestSlotPreliminaries(ctx context.Context, lease Lease, project Project, minter NativeGitHubTokenMinter) error
-	ActivateTestSlotRuntime(ctx context.Context, lease Lease, project Project, minter NativeGitHubTokenMinter) error
+	EnsureTestSlotPreliminaries(ctx context.Context, lease Lease, project Project, minter RunnerGitHubTokenMinter) error
+	ActivateTestSlotRuntime(ctx context.Context, lease Lease, project Project, minter RunnerGitHubTokenMinter) error
 	ReturnTestSlotRuntime(ctx context.Context, lease Lease, project Project) error
 	DeprovisionTestSlot(ctx context.Context, lease Lease, project Project) error
 }
@@ -153,7 +153,7 @@ type TestSlotInstallerCleaner interface {
 	CleanupTestSlotInstaller(ctx context.Context, lease Lease, project Project) error
 }
 
-type NativeLaunchRequest struct {
+type RunLaunchRequest struct {
 	Lease    Lease
 	Workflow Workflow
 	Phase    PhaseSpec
@@ -166,15 +166,15 @@ type NativeLaunchRequest struct {
 	SkipJobIDs map[string]string
 }
 
-// NativeLaunchedJob pairs a launched job's schema ID with the concrete
+// RunLaunchedJob pairs a launched job's schema ID with the concrete
 // Kubernetes Job name. Typed (not positional) so conditionally skipped jobs
 // cannot shift the ID<->name mapping.
-type NativeLaunchedJob struct {
+type RunLaunchedJob struct {
 	JobID      string
 	K8sJobName string
 }
 
-type KubernetesNativeLauncher struct {
+type KubernetesRunLauncher struct {
 	Settings   Settings
 	HTTPClient *http.Client
 }
@@ -194,46 +194,46 @@ func (r providerAPIProxyRuntime) enabled() bool {
 		strings.TrimSpace(r.CABundlePath) != ""
 }
 
-func NewKubernetesNativeLauncher(settings Settings) *KubernetesNativeLauncher {
-	return &KubernetesNativeLauncher{Settings: settings}
+func NewKubernetesRunLauncher(settings Settings) *KubernetesRunLauncher {
+	return &KubernetesRunLauncher{Settings: settings}
 }
 
-func (l *KubernetesNativeLauncher) LaunchNativePhase(ctx context.Context, req NativeLaunchRequest) ([]NativeLaunchedJob, error) {
+func (l *KubernetesRunLauncher) LaunchPhase(ctx context.Context, req RunLaunchRequest) ([]RunLaunchedJob, error) {
 	req.Workflow = CanonicalWorkflow(req.Workflow)
 	if phase := phaseSpecByName(req.Workflow.Phases, req.Phase.Name); phase != nil {
 		req.Phase = *phase
 	} else {
-		req.Phase = CanonicalNativePhase(req.Phase)
+		req.Phase = CanonicalRunnerPhase(req.Phase)
 	}
 	derivedPhase, err := derivePrimaryCheckoutRepo(req.Phase, req.Run.IssueRepo)
 	if err != nil {
 		return nil, err
 	}
-	derivedPhase, err = resolveNativeCheckoutRunInputs(derivedPhase, launchRunInputs(req))
+	derivedPhase, err = resolveRunnerCheckoutRunInputs(derivedPhase, launchRunInputs(req))
 	if err != nil {
 		return nil, err
 	}
 	req.Phase = derivedPhase
 	if len(req.Phase.Jobs) == 0 {
-		return nil, fmt.Errorf("native phase %q has no jobs", req.Phase.Name)
+		return nil, fmt.Errorf("runner phase %q has no jobs", req.Phase.Name)
 	}
 	if err := l.ensurePlaywrightForNativePhase(ctx, req); err != nil {
 		return nil, err
 	}
 	var proxyRuntime providerAPIProxyRuntime
-	if nativePhaseRequiresProviderAPIProxy(req.Phase) {
+	if runnerPhaseRequiresProviderAPIProxy(req.Phase) {
 		runtime, err := l.resolveProviderAPIProxyRuntime(ctx)
 		if err != nil {
 			return nil, err
 		}
 		proxyRuntime = runtime
 	}
-	attemptIndex := nativeAttemptIndex(req)
+	attemptIndex := runnerAttemptIndex(req)
 	attemptBase := compactResourceName("glim", runRefFromData(req.Run), attemptIndex)
-	launched := make([]NativeLaunchedJob, 0, len(req.Phase.Jobs))
+	launched := make([]RunLaunchedJob, 0, len(req.Phase.Jobs))
 	for _, job := range req.Phase.Jobs {
 		if strings.TrimSpace(job.ID) == "" {
-			return nil, fmt.Errorf("native phase %q has job with empty id", req.Phase.Name)
+			return nil, fmt.Errorf("runner phase %q has job with empty id", req.Phase.Name)
 		}
 		if _, skip := req.SkipJobIDs[job.ID]; skip {
 			// The job's `when` evaluated false at dispatch. Zero compute:
@@ -241,22 +241,22 @@ func (l *KubernetesNativeLauncher) LaunchNativePhase(ctx context.Context, req Na
 			// owns the synthesized skipped records.
 			continue
 		}
-		jobName := nativeJobName(attemptBase, job.ID)
+		jobName := runnerJobName(attemptBase, job.ID)
 		secretName := jobName + "-token"
 		if _, err := l.ensureAttemptSecret(ctx, secretName, attemptBase, job.ID); err != nil {
 			return nil, err
 		}
 		jobProxyRuntime := providerAPIProxyRuntime{}
-		if nativeJobRequiresProviderAPIProxyForPhase(req.Phase, job) {
+		if runnerJobRequiresProviderAPIProxyForPhase(req.Phase, job) {
 			jobProxyRuntime = proxyRuntime
 		}
-		if err := l.createJob(ctx, nativeJobManifest(l.Settings, req, job, jobName, secretName, attemptBase, jobProxyRuntime)); err != nil {
+		if err := l.createJob(ctx, runnerJobManifest(l.Settings, req, job, jobName, secretName, attemptBase, jobProxyRuntime)); err != nil {
 			return nil, err
 		}
-		launched = append(launched, NativeLaunchedJob{JobID: job.ID, K8sJobName: jobName})
+		launched = append(launched, RunLaunchedJob{JobID: job.ID, K8sJobName: jobName})
 	}
 	if len(launched) == 0 {
-		return nil, fmt.Errorf("native phase %q has no launchable jobs (every job skipped by when conditions); the dispatch layer must synthesize a skipped phase attempt instead of launching", req.Phase.Name)
+		return nil, fmt.Errorf("runner phase %q has no launchable jobs (every job skipped by when conditions); the dispatch layer must synthesize a skipped phase attempt instead of launching", req.Phase.Name)
 	}
 	return launched, nil
 }
@@ -272,14 +272,14 @@ func derivePrimaryCheckoutRepo(phase PhaseSpec, issueRepo string) (PhaseSpec, er
 	if len(phase.Jobs) == 0 {
 		return phase, nil
 	}
-	jobs := make([]NativeJobSpec, len(phase.Jobs))
+	jobs := make([]RunnerJobSpec, len(phase.Jobs))
 	copy(jobs, phase.Jobs)
 	for i := range jobs {
 		if jobs[i].Checkout == nil {
 			continue
 		}
 		if issueRepo == "" {
-			return PhaseSpec{}, fmt.Errorf("native phase %q job %q requires a checkout but the run has no issue repo", phase.Name, jobs[i].ID)
+			return PhaseSpec{}, fmt.Errorf("runner phase %q job %q requires a checkout but the run has no issue repo", phase.Name, jobs[i].ID)
 		}
 		checkout := *jobs[i].Checkout
 		checkout.Repo = issueRepo
@@ -289,29 +289,29 @@ func derivePrimaryCheckoutRepo(phase PhaseSpec, issueRepo string) (PhaseSpec, er
 	return phase, nil
 }
 
-func resolveNativeCheckoutRunInputs(phase PhaseSpec, inputs map[string]string) (PhaseSpec, error) {
+func resolveRunnerCheckoutRunInputs(phase PhaseSpec, inputs map[string]string) (PhaseSpec, error) {
 	if len(phase.Jobs) == 0 {
 		return phase, nil
 	}
-	jobs := make([]NativeJobSpec, len(phase.Jobs))
+	jobs := make([]RunnerJobSpec, len(phase.Jobs))
 	copy(jobs, phase.Jobs)
 	for i := range jobs {
 		if jobs[i].Checkout != nil {
 			checkout := *jobs[i].Checkout
 			ref, err := resolveRunInputTemplate(checkout.Ref, inputs)
 			if err != nil {
-				return PhaseSpec{}, fmt.Errorf("native phase %q job %q checkout.ref: %w", phase.Name, jobs[i].ID, err)
+				return PhaseSpec{}, fmt.Errorf("runner phase %q job %q checkout.ref: %w", phase.Name, jobs[i].ID, err)
 			}
 			checkout.Ref = ref
 			jobs[i].Checkout = &checkout
 		}
 		if len(jobs[i].ExtraCheckouts) > 0 {
-			extra := make([]NativeCheckoutSpec, len(jobs[i].ExtraCheckouts))
+			extra := make([]RunnerCheckoutSpec, len(jobs[i].ExtraCheckouts))
 			copy(extra, jobs[i].ExtraCheckouts)
 			for j := range extra {
 				ref, err := resolveRunInputTemplate(extra[j].Ref, inputs)
 				if err != nil {
-					return PhaseSpec{}, fmt.Errorf("native phase %q job %q extra_checkouts[%d].ref: %w", phase.Name, jobs[i].ID, j, err)
+					return PhaseSpec{}, fmt.Errorf("runner phase %q job %q extra_checkouts[%d].ref: %w", phase.Name, jobs[i].ID, j, err)
 				}
 				extra[j].Ref = ref
 			}
@@ -322,7 +322,7 @@ func resolveNativeCheckoutRunInputs(phase PhaseSpec, inputs map[string]string) (
 	return phase, nil
 }
 
-func launchRunInputs(req NativeLaunchRequest) map[string]string {
+func launchRunInputs(req RunLaunchRequest) map[string]string {
 	out := runInputsForMetadata(req.Run.RunInputs)
 	for key, raw := range anyMap(req.Lease.Metadata["run_inputs"]) {
 		if strings.TrimSpace(key) == "" {
@@ -336,26 +336,26 @@ func launchRunInputs(req NativeLaunchRequest) map[string]string {
 	return out
 }
 
-func nativePhaseRequiresProviderAPIProxy(phase PhaseSpec) bool {
+func runnerPhaseRequiresProviderAPIProxy(phase PhaseSpec) bool {
 	if phase.Verify {
 		return true
 	}
 	for _, job := range phase.Jobs {
-		if nativeJobRequiresProviderAPIProxy(job) {
+		if runnerJobRequiresProviderAPIProxy(job) {
 			return true
 		}
 	}
 	return false
 }
 
-func nativeJobRequiresProviderAPIProxyForPhase(phase PhaseSpec, job NativeJobSpec) bool {
+func runnerJobRequiresProviderAPIProxyForPhase(phase PhaseSpec, job RunnerJobSpec) bool {
 	if phase.Verify && job.Managed {
 		return true
 	}
-	return nativeJobRequiresProviderAPIProxy(job)
+	return runnerJobRequiresProviderAPIProxy(job)
 }
 
-func nativeJobRequiresProviderAPIProxy(job NativeJobSpec) bool {
+func runnerJobRequiresProviderAPIProxy(job RunnerJobSpec) bool {
 	if !job.Managed {
 		return false
 	}
@@ -367,8 +367,8 @@ func nativeJobRequiresProviderAPIProxy(job NativeJobSpec) bool {
 	return false
 }
 
-func (l *KubernetesNativeLauncher) resolveProviderAPIProxyRuntime(ctx context.Context) (providerAPIProxyRuntime, error) {
-	namespace := firstNonEmpty(strings.TrimSpace(l.Settings.ProviderAPIProxyNamespace), strings.TrimSpace(l.Settings.NativeRunnerNamespace))
+func (l *KubernetesRunLauncher) resolveProviderAPIProxyRuntime(ctx context.Context) (providerAPIProxyRuntime, error) {
+	namespace := firstNonEmpty(strings.TrimSpace(l.Settings.ProviderAPIProxyNamespace), strings.TrimSpace(l.Settings.RunnerNamespace))
 	claudeService := firstNonEmpty(strings.TrimSpace(l.Settings.ProviderAPIProxyClaudeService), "claude-api-proxy")
 	codexService := firstNonEmpty(strings.TrimSpace(l.Settings.ProviderAPIProxyCodexService), "codex-api-proxy")
 	githubService := firstNonEmpty(strings.TrimSpace(l.Settings.ProviderAPIProxyGitHubService), "github-git-policy-proxy")
@@ -393,7 +393,7 @@ func (l *KubernetesNativeLauncher) resolveProviderAPIProxyRuntime(ctx context.Co
 	}, nil
 }
 
-func (l *KubernetesNativeLauncher) serviceClusterIP(ctx context.Context, namespace, service string) (string, error) {
+func (l *KubernetesRunLauncher) serviceClusterIP(ctx context.Context, namespace, service string) (string, error) {
 	status, body, err := l.request(ctx, http.MethodGet, "/api/v1/namespaces/"+namespace+"/services/"+service, nil)
 	if err != nil {
 		return "", err
@@ -410,8 +410,8 @@ func (l *KubernetesNativeLauncher) serviceClusterIP(ctx context.Context, namespa
 	return ip, nil
 }
 
-func (l *KubernetesNativeLauncher) EnsureTestSlotPreliminaries(ctx context.Context, lease Lease, project Project, minter NativeGitHubTokenMinter) error {
-	slotName, _ := stringFromMap(lease.Metadata, "native_slot_name")
+func (l *KubernetesRunLauncher) EnsureTestSlotPreliminaries(ctx context.Context, lease Lease, project Project, minter RunnerGitHubTokenMinter) error {
+	slotName, _ := stringFromMap(lease.Metadata, "runner_slot_name")
 	slotName = strings.TrimSpace(slotName)
 	if slotName == "" {
 		return nil
@@ -433,7 +433,7 @@ func (l *KubernetesNativeLauncher) EnsureTestSlotPreliminaries(ctx context.Conte
 	return nil
 }
 
-func (l *KubernetesNativeLauncher) ensureTestSlotPreliminaryAccess(ctx context.Context, lease Lease, project Project, slotName string) error {
+func (l *KubernetesRunLauncher) ensureTestSlotPreliminaryAccess(ctx context.Context, lease Lease, project Project, slotName string) error {
 	slotName = strings.TrimSpace(slotName)
 	if slotName == "" {
 		return nil
@@ -460,8 +460,8 @@ func (l *KubernetesNativeLauncher) ensureTestSlotPreliminaryAccess(ctx context.C
 	return nil
 }
 
-func (l *KubernetesNativeLauncher) ActivateTestSlotRuntime(ctx context.Context, lease Lease, project Project, minter NativeGitHubTokenMinter) error {
-	slotName, _ := stringFromMap(lease.Metadata, "native_slot_name")
+func (l *KubernetesRunLauncher) ActivateTestSlotRuntime(ctx context.Context, lease Lease, project Project, minter RunnerGitHubTokenMinter) error {
+	slotName, _ := stringFromMap(lease.Metadata, "runner_slot_name")
 	slotName = strings.TrimSpace(slotName)
 	if slotName == "" {
 		return nil
@@ -486,8 +486,8 @@ func (l *KubernetesNativeLauncher) ActivateTestSlotRuntime(ctx context.Context, 
 	return l.ensurePlaywrightForSlot(ctx, lease, slotName, true)
 }
 
-func (l *KubernetesNativeLauncher) ReturnTestSlotRuntime(ctx context.Context, lease Lease, project Project) error {
-	slotName, _ := stringFromMap(lease.Metadata, "native_slot_name")
+func (l *KubernetesRunLauncher) ReturnTestSlotRuntime(ctx context.Context, lease Lease, project Project) error {
+	slotName, _ := stringFromMap(lease.Metadata, "runner_slot_name")
 	if strings.TrimSpace(slotName) == "" {
 		return nil
 	}
@@ -506,7 +506,7 @@ func (l *KubernetesNativeLauncher) ReturnTestSlotRuntime(ctx context.Context, le
 	//    further K8s objects. Background propagation on the Job DELETE marks
 	//    its pods for GC; we poll until the GC catches up so the next steps
 	//    don't race the helm tail.
-	if err := l.waitForInstallerPodsBySlotTerminated(ctx, l.Settings.NativeRunnerNamespace, slotName, 90*time.Second); err != nil {
+	if err := l.waitForInstallerPodsBySlotTerminated(ctx, l.Settings.RunnerNamespace, slotName, 90*time.Second); err != nil {
 		return err
 	}
 	if err := l.retireTankSessionScope(ctx, lease, project, slotName); err != nil {
@@ -547,7 +547,7 @@ type tankScopeRetireExchangeResponse struct {
 	Token string `json:"token"`
 }
 
-func (l *KubernetesNativeLauncher) tankSessionScopeRetireAuthorization(ctx context.Context) (string, error) {
+func (l *KubernetesRunLauncher) tankSessionScopeRetireAuthorization(ctx context.Context) (string, error) {
 	if authorization := tankSessionScopeRetireAuth(ctx); authorization != "" {
 		return authorization, nil
 	}
@@ -558,7 +558,7 @@ func (l *KubernetesNativeLauncher) tankSessionScopeRetireAuthorization(ctx conte
 	return "Bearer " + token, nil
 }
 
-func (l *KubernetesNativeLauncher) exchangeAuthRomaineServiceToken(ctx context.Context) (string, error) {
+func (l *KubernetesRunLauncher) exchangeAuthRomaineServiceToken(ctx context.Context) (string, error) {
 	baseURL := strings.TrimRight(strings.TrimSpace(l.Settings.AuthRomaineLifeBaseURL), "/")
 	if baseURL == "" {
 		return "", fmt.Errorf("auth.romaine.life base URL not configured for Tank session-scope retire")
@@ -608,7 +608,7 @@ func (l *KubernetesNativeLauncher) exchangeAuthRomaineServiceToken(ctx context.C
 	return token, nil
 }
 
-func (l *KubernetesNativeLauncher) retireTankSessionScope(ctx context.Context, lease Lease, project Project, slotName string) error {
+func (l *KubernetesRunLauncher) retireTankSessionScope(ctx context.Context, lease Lease, project Project, slotName string) error {
 	if !isTankOperatorProject(project) {
 		return nil
 	}
@@ -667,7 +667,7 @@ func isTankOperatorProject(project Project) bool {
 // up so the cleanup path that follows doesn't race the helm tail still
 // running inside an undead pod. Selector is the standard K8s job-name
 // label that controller-runtime attaches to Job pods.
-func (l *KubernetesNativeLauncher) waitForInstallerPodsTerminated(ctx context.Context, namespace, jobName string, timeout time.Duration) error {
+func (l *KubernetesRunLauncher) waitForInstallerPodsTerminated(ctx context.Context, namespace, jobName string, timeout time.Duration) error {
 	namespace = strings.TrimSpace(namespace)
 	jobName = strings.TrimSpace(jobName)
 	if namespace == "" || jobName == "" {
@@ -703,7 +703,7 @@ func (l *KubernetesNativeLauncher) waitForInstallerPodsTerminated(ctx context.Co
 	}
 }
 
-func (l *KubernetesNativeLauncher) waitForInstallerPodsBySlotTerminated(ctx context.Context, namespace, slotName string, timeout time.Duration) error {
+func (l *KubernetesRunLauncher) waitForInstallerPodsBySlotTerminated(ctx context.Context, namespace, slotName string, timeout time.Duration) error {
 	namespace = strings.TrimSpace(namespace)
 	slotName = strings.TrimSpace(slotName)
 	if namespace == "" || slotName == "" {
@@ -716,7 +716,7 @@ func (l *KubernetesNativeLauncher) waitForInstallerPodsBySlotTerminated(ctx cont
 	defer deadline.Stop()
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
-	selector := "glimmung.romaine.life/native-slot-name=" + labelValue(slotName)
+	selector := "glimmung.romaine.life/run-slot-name=" + labelValue(slotName)
 	path := "/api/v1/namespaces/" + namespace + "/pods?labelSelector=" + url.QueryEscape(selector)
 	for {
 		status, list, err := l.request(ctx, http.MethodGet, path, nil)
@@ -739,12 +739,12 @@ func (l *KubernetesNativeLauncher) waitForInstallerPodsBySlotTerminated(ctx cont
 	}
 }
 
-func (l *KubernetesNativeLauncher) CleanupTestSlotInstaller(ctx context.Context, lease Lease, _ Project) error {
+func (l *KubernetesRunLauncher) CleanupTestSlotInstaller(ctx context.Context, lease Lease, _ Project) error {
 	return l.deleteTestSlotInstaller(ctx, lease)
 }
 
-func (l *KubernetesNativeLauncher) runTestSlotHelmReconcile(ctx context.Context, lease Lease, project Project, minter NativeGitHubTokenMinter, config testSlotHelmSettings, renderMode string) error {
-	slotName, _ := stringFromMap(lease.Metadata, "native_slot_name")
+func (l *KubernetesRunLauncher) runTestSlotHelmReconcile(ctx context.Context, lease Lease, project Project, minter RunnerGitHubTokenMinter, config testSlotHelmSettings, renderMode string) error {
+	slotName, _ := stringFromMap(lease.Metadata, "runner_slot_name")
 	slotName = strings.TrimSpace(slotName)
 	if slotName == "" {
 		return nil
@@ -766,11 +766,11 @@ func (l *KubernetesNativeLauncher) runTestSlotHelmReconcile(ctx context.Context,
 	if err := l.createJob(ctx, testSlotInstallJobManifest(l.Settings, config, lease, project, substitutions, renderMode)); err != nil {
 		return err
 	}
-	return l.waitForJobComplete(ctx, l.Settings.NativeRunnerNamespace, jobName, 5*time.Minute)
+	return l.waitForJobComplete(ctx, l.Settings.RunnerNamespace, jobName, 5*time.Minute)
 }
 
-func (l *KubernetesNativeLauncher) runTestSlotHelmUninstall(ctx context.Context, lease Lease, project Project, config testSlotHelmSettings, renderMode string) error {
-	slotName, _ := stringFromMap(lease.Metadata, "native_slot_name")
+func (l *KubernetesRunLauncher) runTestSlotHelmUninstall(ctx context.Context, lease Lease, project Project, config testSlotHelmSettings, renderMode string) error {
+	slotName, _ := stringFromMap(lease.Metadata, "runner_slot_name")
 	slotName = strings.TrimSpace(slotName)
 	if slotName == "" {
 		return nil
@@ -779,11 +779,11 @@ func (l *KubernetesNativeLauncher) runTestSlotHelmUninstall(ctx context.Context,
 	if err := l.createJob(ctx, testSlotUninstallJobManifest(l.Settings, config, lease, project, renderMode)); err != nil {
 		return err
 	}
-	return l.waitForJobComplete(ctx, l.Settings.NativeRunnerNamespace, jobName, 5*time.Minute)
+	return l.waitForJobComplete(ctx, l.Settings.RunnerNamespace, jobName, 5*time.Minute)
 }
 
-func (l *KubernetesNativeLauncher) DeprovisionTestSlot(ctx context.Context, lease Lease, project Project) error {
-	slotName, _ := stringFromMap(lease.Metadata, "native_slot_name")
+func (l *KubernetesRunLauncher) DeprovisionTestSlot(ctx context.Context, lease Lease, project Project) error {
+	slotName, _ := stringFromMap(lease.Metadata, "runner_slot_name")
 	if strings.TrimSpace(slotName) == "" {
 		return nil
 	}
@@ -805,7 +805,7 @@ func (l *KubernetesNativeLauncher) DeprovisionTestSlot(ctx context.Context, leas
 	return l.deleteNamespaceAndWait(ctx, slotName)
 }
 
-func (l *KubernetesNativeLauncher) deletePlaywrightResources(ctx context.Context, lease Lease, slotName string) error {
+func (l *KubernetesRunLauncher) deletePlaywrightResources(ctx context.Context, lease Lease, slotName string) error {
 	for _, target := range playwrightResourceTargets(lease, slotName) {
 		for _, path := range []string{
 			"/apis/apps/v1/namespaces/" + target.namespace + "/deployments/" + target.name,
@@ -820,7 +820,7 @@ func (l *KubernetesNativeLauncher) deletePlaywrightResources(ctx context.Context
 	return nil
 }
 
-func (l *KubernetesNativeLauncher) deleteTestSlotRuntimeResources(ctx context.Context, lease Lease, project Project, slotName string) error {
+func (l *KubernetesRunLauncher) deleteTestSlotRuntimeResources(ctx context.Context, lease Lease, project Project, slotName string) error {
 	namespaces := []string{slotName}
 	if sessionsNamespace := testSlotSessionsNamespaceForLease(lease, project, slotName); strings.TrimSpace(sessionsNamespace) != "" && sessionsNamespace != slotName {
 		namespaces = append(namespaces, sessionsNamespace)
@@ -845,7 +845,7 @@ func (l *KubernetesNativeLauncher) deleteTestSlotRuntimeResources(ctx context.Co
 	return nil
 }
 
-func (l *KubernetesNativeLauncher) deleteTestSlotRuntimeWorkloads(ctx context.Context, lease Lease, project Project, slotName string) error {
+func (l *KubernetesRunLauncher) deleteTestSlotRuntimeWorkloads(ctx context.Context, lease Lease, project Project, slotName string) error {
 	namespaces := []string{slotName}
 	if sessionsNamespace := testSlotSessionsNamespaceForLease(lease, project, slotName); strings.TrimSpace(sessionsNamespace) != "" && sessionsNamespace != slotName {
 		namespaces = append(namespaces, sessionsNamespace)
@@ -866,7 +866,7 @@ func (l *KubernetesNativeLauncher) deleteTestSlotRuntimeWorkloads(ctx context.Co
 	return l.waitForNoPodsInNamespaces(ctx, namespaces, 5*time.Minute)
 }
 
-func (l *KubernetesNativeLauncher) deleteCollectionItems(ctx context.Context, collectionPath string) error {
+func (l *KubernetesRunLauncher) deleteCollectionItems(ctx context.Context, collectionPath string) error {
 	status, list, err := l.request(ctx, http.MethodGet, collectionPath, nil)
 	if err != nil {
 		if status == http.StatusNotFound || status == http.StatusForbidden {
@@ -887,7 +887,7 @@ func (l *KubernetesNativeLauncher) deleteCollectionItems(ctx context.Context, co
 	return nil
 }
 
-func (l *KubernetesNativeLauncher) waitForNoPodsInNamespaces(ctx context.Context, namespaces []string, timeout time.Duration) error {
+func (l *KubernetesRunLauncher) waitForNoPodsInNamespaces(ctx context.Context, namespaces []string, timeout time.Duration) error {
 	if timeout <= 0 {
 		timeout = time.Minute
 	}
@@ -913,7 +913,7 @@ func (l *KubernetesNativeLauncher) waitForNoPodsInNamespaces(ctx context.Context
 	}
 }
 
-func (l *KubernetesNativeLauncher) remainingPodsInNamespaces(ctx context.Context, namespaces []string) ([]string, error) {
+func (l *KubernetesRunLauncher) remainingPodsInNamespaces(ctx context.Context, namespaces []string) ([]string, error) {
 	var remaining []string
 	for _, namespace := range namespaces {
 		namespace = strings.TrimSpace(namespace)
@@ -939,14 +939,14 @@ func (l *KubernetesNativeLauncher) remainingPodsInNamespaces(ctx context.Context
 	return remaining, nil
 }
 
-func (l *KubernetesNativeLauncher) ensurePlaywrightForNativePhase(ctx context.Context, req NativeLaunchRequest) error {
-	slotName, _ := stringFromMap(req.Lease.Metadata, "native_slot_name")
+func (l *KubernetesRunLauncher) ensurePlaywrightForNativePhase(ctx context.Context, req RunLaunchRequest) error {
+	slotName, _ := stringFromMap(req.Lease.Metadata, "runner_slot_name")
 	slotName = strings.TrimSpace(slotName)
 	return l.ensurePlaywrightForSlot(ctx, req.Lease, slotName, false)
 }
 
-func (l *KubernetesNativeLauncher) ensurePlaywrightForSlot(ctx context.Context, lease Lease, slotName string, waitForReady bool) error {
-	if !l.Settings.NativeRunnerPlaywrightEnabled {
+func (l *KubernetesRunLauncher) ensurePlaywrightForSlot(ctx context.Context, lease Lease, slotName string, waitForReady bool) error {
+	if !l.Settings.RunnerPlaywrightEnabled {
 		return nil
 	}
 	slotName = strings.TrimSpace(slotName)
@@ -970,7 +970,7 @@ func (l *KubernetesNativeLauncher) ensurePlaywrightForSlot(ctx context.Context, 
 	return l.waitForDeploymentReady(ctx, slotName, name, 2*time.Minute)
 }
 
-func (l *KubernetesNativeLauncher) ensureNamespace(ctx context.Context, name string, labels map[string]string) error {
+func (l *KubernetesRunLauncher) ensureNamespace(ctx context.Context, name string, labels map[string]string) error {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return nil
@@ -990,7 +990,7 @@ func (l *KubernetesNativeLauncher) ensureNamespace(ctx context.Context, name str
 	return err
 }
 
-func (l *KubernetesNativeLauncher) deleteNamespace(ctx context.Context, name string) error {
+func (l *KubernetesRunLauncher) deleteNamespace(ctx context.Context, name string) error {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return nil
@@ -1002,7 +1002,7 @@ func (l *KubernetesNativeLauncher) deleteNamespace(ctx context.Context, name str
 	return nil
 }
 
-func (l *KubernetesNativeLauncher) deleteNamespaceAndWait(ctx context.Context, name string) error {
+func (l *KubernetesRunLauncher) deleteNamespaceAndWait(ctx context.Context, name string) error {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return nil
@@ -1032,12 +1032,12 @@ func (l *KubernetesNativeLauncher) deleteNamespaceAndWait(ctx context.Context, n
 	}
 }
 
-func (l *KubernetesNativeLauncher) ensureTestSlotInstallerAccess(ctx context.Context, lease Lease, namespace string) error {
+func (l *KubernetesRunLauncher) ensureTestSlotInstallerAccess(ctx context.Context, lease Lease, namespace string) error {
 	namespace = strings.TrimSpace(namespace)
 	if namespace == "" {
 		return nil
 	}
-	slotName, _ := stringFromMap(lease.Metadata, "native_slot_name")
+	slotName, _ := stringFromMap(lease.Metadata, "runner_slot_name")
 	body := map[string]any{
 		"apiVersion": "rbac.authorization.k8s.io/v1",
 		"kind":       "RoleBinding",
@@ -1049,12 +1049,12 @@ func (l *KubernetesNativeLauncher) ensureTestSlotInstallerAccess(ctx context.Con
 		"roleRef": map[string]any{
 			"apiGroup": "rbac.authorization.k8s.io",
 			"kind":     "ClusterRole",
-			"name":     firstNonEmpty(l.Settings.NativeRunnerNamespaceRole, "cluster-admin"),
+			"name":     firstNonEmpty(l.Settings.RunnerNamespaceRole, "cluster-admin"),
 		},
 		"subjects": []any{map[string]any{
 			"kind":      "ServiceAccount",
-			"name":      l.Settings.NativeRunnerServiceAccount,
-			"namespace": l.Settings.NativeRunnerNamespace,
+			"name":      l.Settings.RunnerServiceAccount,
+			"namespace": l.Settings.RunnerNamespace,
 		}},
 	}
 	status, _, err := l.request(ctx, http.MethodPost, "/apis/rbac.authorization.k8s.io/v1/namespaces/"+namespace+"/rolebindings", body)
@@ -1064,7 +1064,7 @@ func (l *KubernetesNativeLauncher) ensureTestSlotInstallerAccess(ctx context.Con
 	return err
 }
 
-func (l *KubernetesNativeLauncher) ensureCloneTokenSecret(ctx context.Context, name, token string, lease Lease, slotName string) error {
+func (l *KubernetesRunLauncher) ensureCloneTokenSecret(ctx context.Context, name, token string, lease Lease, slotName string) error {
 	labels := testSlotLabels(lease, slotName)
 	labels["glimmung.romaine.life/test-slot-installer"] = "true"
 	body := map[string]any{
@@ -1072,13 +1072,13 @@ func (l *KubernetesNativeLauncher) ensureCloneTokenSecret(ctx context.Context, n
 		"kind":       "Secret",
 		"metadata": map[string]any{
 			"name":      name,
-			"namespace": l.Settings.NativeRunnerNamespace,
+			"namespace": l.Settings.RunnerNamespace,
 			"labels":    labels,
 		},
 		"type":       "Opaque",
 		"stringData": map[string]string{"token": token},
 	}
-	path := "/api/v1/namespaces/" + l.Settings.NativeRunnerNamespace + "/secrets"
+	path := "/api/v1/namespaces/" + l.Settings.RunnerNamespace + "/secrets"
 	status, _, err := l.request(ctx, http.MethodPost, path, body)
 	if err == nil {
 		return nil
@@ -1097,7 +1097,7 @@ func (l *KubernetesNativeLauncher) ensureCloneTokenSecret(ctx context.Context, n
 	return err
 }
 
-func (l *KubernetesNativeLauncher) ensureTestSlotClusterRoleBindings(ctx context.Context, lease Lease, templates []map[string]any, substitutions map[string]string, slotName string) error {
+func (l *KubernetesRunLauncher) ensureTestSlotClusterRoleBindings(ctx context.Context, lease Lease, templates []map[string]any, substitutions map[string]string, slotName string) error {
 	for _, template := range templates {
 		filled := deepFormat(template, substitutions)
 		name := strings.TrimSpace(mapStringValueOrEmpty(anyMap(filled["metadata"]), "name"))
@@ -1141,8 +1141,8 @@ func (l *KubernetesNativeLauncher) ensureTestSlotClusterRoleBindings(ctx context
 	return nil
 }
 
-func (l *KubernetesNativeLauncher) deleteTestSlotClusterRoleBindings(ctx context.Context, slotName string) error {
-	selector := "glimmung.romaine.life/native-slot-name=" + labelValue(slotName)
+func (l *KubernetesRunLauncher) deleteTestSlotClusterRoleBindings(ctx context.Context, slotName string) error {
+	selector := "glimmung.romaine.life/run-slot-name=" + labelValue(slotName)
 	path := "/apis/rbac.authorization.k8s.io/v1/clusterrolebindings?labelSelector=" + url.QueryEscape(selector)
 	status, list, err := l.request(ctx, http.MethodGet, path, nil)
 	if err != nil {
@@ -1164,31 +1164,31 @@ func (l *KubernetesNativeLauncher) deleteTestSlotClusterRoleBindings(ctx context
 	return nil
 }
 
-func (l *KubernetesNativeLauncher) deleteTestSlotInstaller(ctx context.Context, lease Lease) error {
+func (l *KubernetesRunLauncher) deleteTestSlotInstaller(ctx context.Context, lease Lease) error {
 	for _, path := range []string{
-		"/apis/batch/v1/namespaces/" + l.Settings.NativeRunnerNamespace + "/jobs/" + testSlotInstallerJobName(lease),
-		"/api/v1/namespaces/" + l.Settings.NativeRunnerNamespace + "/secrets/" + testSlotInstallerSecretName(lease),
-		"/apis/batch/v1/namespaces/" + l.Settings.NativeRunnerNamespace + "/jobs/" + testSlotInstallResourceName("glim-helm-install", lease),
-		"/api/v1/namespaces/" + l.Settings.NativeRunnerNamespace + "/secrets/" + testSlotInstallResourceName("glim-helm-clone", lease),
+		"/apis/batch/v1/namespaces/" + l.Settings.RunnerNamespace + "/jobs/" + testSlotInstallerJobName(lease),
+		"/api/v1/namespaces/" + l.Settings.RunnerNamespace + "/secrets/" + testSlotInstallerSecretName(lease),
+		"/apis/batch/v1/namespaces/" + l.Settings.RunnerNamespace + "/jobs/" + testSlotInstallResourceName("glim-helm-install", lease),
+		"/api/v1/namespaces/" + l.Settings.RunnerNamespace + "/secrets/" + testSlotInstallResourceName("glim-helm-clone", lease),
 	} {
 		status, _, err := l.request(ctx, http.MethodDelete, path, deleteOptions("Background"))
 		if err != nil && status != http.StatusNotFound {
 			return err
 		}
 	}
-	if slotName, _ := stringFromMap(lease.Metadata, "native_slot_name"); strings.TrimSpace(slotName) != "" {
-		if err := l.deleteRunnerResourcesBySlot(ctx, "/apis/batch/v1/namespaces/"+l.Settings.NativeRunnerNamespace+"/jobs", slotName); err != nil {
+	if slotName, _ := stringFromMap(lease.Metadata, "runner_slot_name"); strings.TrimSpace(slotName) != "" {
+		if err := l.deleteRunnerResourcesBySlot(ctx, "/apis/batch/v1/namespaces/"+l.Settings.RunnerNamespace+"/jobs", slotName); err != nil {
 			return err
 		}
-		if err := l.deleteRunnerResourcesBySlot(ctx, "/api/v1/namespaces/"+l.Settings.NativeRunnerNamespace+"/secrets", slotName); err != nil {
+		if err := l.deleteRunnerResourcesBySlot(ctx, "/api/v1/namespaces/"+l.Settings.RunnerNamespace+"/secrets", slotName); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (l *KubernetesNativeLauncher) deleteRunnerResourcesBySlot(ctx context.Context, collectionPath, slotName string) error {
-	selector := "glimmung.romaine.life/native-slot-name=" + labelValue(slotName)
+func (l *KubernetesRunLauncher) deleteRunnerResourcesBySlot(ctx context.Context, collectionPath, slotName string) error {
+	selector := "glimmung.romaine.life/run-slot-name=" + labelValue(slotName)
 	status, list, err := l.request(ctx, http.MethodGet, collectionPath+"?labelSelector="+url.QueryEscape(selector), nil)
 	if err != nil {
 		if status == http.StatusNotFound || status == http.StatusForbidden {
@@ -1209,30 +1209,30 @@ func (l *KubernetesNativeLauncher) deleteRunnerResourcesBySlot(ctx context.Conte
 	return nil
 }
 
-func (l *KubernetesNativeLauncher) ensureAttemptSecret(ctx context.Context, name, attemptBase, jobID string) (string, error) {
+func (l *KubernetesRunLauncher) ensureAttemptSecret(ctx context.Context, name, attemptBase, jobID string) (string, error) {
 	token := uuid.New().String()
 	body := map[string]any{
 		"apiVersion": "v1",
 		"kind":       "Secret",
 		"metadata": map[string]any{
 			"name":      name,
-			"namespace": l.Settings.NativeRunnerNamespace,
+			"namespace": l.Settings.RunnerNamespace,
 			"labels": map[string]string{
-				"app.kubernetes.io/managed-by":         "glimmung",
-				"glimmung.romaine.life/native-attempt": "true",
-				"glimmung.romaine.life/attempt-base":   labelValue(attemptBase),
-				"glimmung.romaine.life/job-id":         labelValue(jobID),
+				"app.kubernetes.io/managed-by":       "glimmung",
+				"glimmung.romaine.life/run-attempt":  "true",
+				"glimmung.romaine.life/attempt-base": labelValue(attemptBase),
+				"glimmung.romaine.life/job-id":       labelValue(jobID),
 			},
 		},
 		"type":       "Opaque",
 		"stringData": map[string]string{"attempt-token": token},
 	}
-	status, _, err := l.request(ctx, http.MethodPost, "/api/v1/namespaces/"+l.Settings.NativeRunnerNamespace+"/secrets", body)
+	status, _, err := l.request(ctx, http.MethodPost, "/api/v1/namespaces/"+l.Settings.RunnerNamespace+"/secrets", body)
 	if err == nil || status == http.StatusConflict {
 		if status == http.StatusConflict {
-			existingStatus, existing, getErr := l.request(ctx, http.MethodGet, "/api/v1/namespaces/"+l.Settings.NativeRunnerNamespace+"/secrets/"+name, nil)
+			existingStatus, existing, getErr := l.request(ctx, http.MethodGet, "/api/v1/namespaces/"+l.Settings.RunnerNamespace+"/secrets/"+name, nil)
 			if getErr != nil || existingStatus >= 400 {
-				return "", fmt.Errorf("read existing native attempt secret: status=%d err=%w", existingStatus, getErr)
+				return "", fmt.Errorf("read existing runner attempt secret: status=%d err=%w", existingStatus, getErr)
 			}
 			if encoded, ok := anyMap(existing["data"])["attempt-token"].(string); ok && encoded != "" {
 				return encoded, nil
@@ -1243,32 +1243,32 @@ func (l *KubernetesNativeLauncher) ensureAttemptSecret(ctx context.Context, name
 	return "", err
 }
 
-func (l *KubernetesNativeLauncher) createJob(ctx context.Context, manifest map[string]any) error {
-	status, _, err := l.request(ctx, http.MethodPost, "/apis/batch/v1/namespaces/"+l.Settings.NativeRunnerNamespace+"/jobs", manifest)
+func (l *KubernetesRunLauncher) createJob(ctx context.Context, manifest map[string]any) error {
+	status, _, err := l.request(ctx, http.MethodPost, "/apis/batch/v1/namespaces/"+l.Settings.RunnerNamespace+"/jobs", manifest)
 	if err == nil || status == http.StatusConflict {
 		return nil
 	}
 	return err
 }
 
-// GetNativeJobStatus fetches the batch/v1 Job status for a previously
-// launched native-phase Job. Returns Found=false when the Job no longer
+// GetRunnerJobStatus fetches the batch/v1 Job status for a previously
+// launched runner-phase Job. Returns Found=false when the Job no longer
 // exists (TTL-collected by k8s). Used by the run-execution reconciler to
 // detect runs whose backing Job died (DeadlineExceeded, BackoffLimitExceeded,
 // eviction) without the runner ever delivering its completion callback.
-func (l *KubernetesNativeLauncher) GetNativeJobStatus(ctx context.Context, namespace, name string) (NativeJobStatus, error) {
+func (l *KubernetesRunLauncher) GetRunnerJobStatus(ctx context.Context, namespace, name string) (RunnerJobStatus, error) {
 	if strings.TrimSpace(namespace) == "" || strings.TrimSpace(name) == "" {
-		return NativeJobStatus{}, fmt.Errorf("namespace and name are required")
+		return RunnerJobStatus{}, fmt.Errorf("namespace and name are required")
 	}
 	path := "/apis/batch/v1/namespaces/" + namespace + "/jobs/" + name
 	status, job, err := l.request(ctx, http.MethodGet, path, nil)
 	if err != nil {
 		if status == http.StatusNotFound {
-			return NativeJobStatus{Found: false}, nil
+			return RunnerJobStatus{Found: false}, nil
 		}
-		return NativeJobStatus{}, err
+		return RunnerJobStatus{}, err
 	}
-	parsed := parseNativeJobStatus(job)
+	parsed := parseRunnerJobStatus(job)
 	// The Job condition only ever says BackoffLimitExceeded for a
 	// backoffLimit=0 pod that OOM'd / was evicted / crashed. Read the
 	// pod-level reason so the operator can tell those apart. Best-effort
@@ -1287,7 +1287,7 @@ func (l *KubernetesNativeLauncher) GetNativeJobStatus(ctx context.Context, names
 // when present, else the pod's status.reason ("Evicted"). Returns the
 // empty string when no pod exists (TTL race) or no terminal reason was
 // recorded.
-func (l *KubernetesNativeLauncher) podTerminationReasonForJob(ctx context.Context, namespace, jobName string) (string, error) {
+func (l *KubernetesRunLauncher) podTerminationReasonForJob(ctx context.Context, namespace, jobName string) (string, error) {
 	listPath := "/api/v1/namespaces/" + url.PathEscape(namespace) + "/pods?labelSelector=job-name%3D" + url.QueryEscape(jobName)
 	status, decoded, err := l.request(ctx, http.MethodGet, listPath, nil)
 	if err != nil {
@@ -1310,7 +1310,7 @@ func (l *KubernetesNativeLauncher) podTerminationReasonForJob(ctx context.Contex
 	return strings.TrimSpace(mapStringValueOrEmpty(podStatus, "reason")), nil
 }
 
-// GetNativeJobLogs reads a bounded slice of the named Job's pod
+// GetRunnerJobLogs reads a bounded slice of the named Job's pod
 // stdout. Used by the run-execution reconciler to capture logs into
 // the artifact store on terminal transitions (inner-Job observation
 // contract, stage 3). Returns the empty slice with a nil error when:
@@ -1327,7 +1327,7 @@ func (l *KubernetesNativeLauncher) podTerminationReasonForJob(ctx context.Contex
 // that ignores the parameter or against a pod whose lines are
 // individually enormous (base64 evidence tarballs in the original
 // ambience#170 case were exactly that shape).
-func (l *KubernetesNativeLauncher) GetNativeJobLogs(ctx context.Context, namespace, jobName string, maxBytes int64) ([]byte, error) {
+func (l *KubernetesRunLauncher) GetRunnerJobLogs(ctx context.Context, namespace, jobName string, maxBytes int64) ([]byte, error) {
 	if strings.TrimSpace(namespace) == "" || strings.TrimSpace(jobName) == "" {
 		return nil, fmt.Errorf("namespace and jobName are required")
 	}
@@ -1369,7 +1369,7 @@ const (
 // lookupSinglePodForJob resolves a Job's pod name by querying the
 // kubelet's pod LIST for a `job-name=` label match. Returns the empty
 // string when no pod exists for the Job (TTL race or unscheduled).
-func (l *KubernetesNativeLauncher) lookupSinglePodForJob(ctx context.Context, namespace, jobName string) (string, error) {
+func (l *KubernetesRunLauncher) lookupSinglePodForJob(ctx context.Context, namespace, jobName string) (string, error) {
 	listPath := "/api/v1/namespaces/" + url.PathEscape(namespace) + "/pods?labelSelector=job-name%3D" + url.QueryEscape(jobName)
 	status, decoded, err := l.request(ctx, http.MethodGet, listPath, nil)
 	if err != nil {
@@ -1390,7 +1390,7 @@ func (l *KubernetesNativeLauncher) lookupSinglePodForJob(ctx context.Context, na
 // getRaw GETs the given kube apiserver path and returns up to
 // maxBytes of the response body. Mirrors request()'s auth handling
 // but does not json-decode; used for the streaming pod log endpoint.
-func (l *KubernetesNativeLauncher) getRaw(ctx context.Context, path string, maxBytes int64) ([]byte, int, error) {
+func (l *KubernetesRunLauncher) getRaw(ctx context.Context, path string, maxBytes int64) ([]byte, int, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(l.Settings.K8sAPIHost, "/")+path, nil)
 	if err != nil {
 		return nil, 0, err
@@ -1422,10 +1422,10 @@ func (l *KubernetesNativeLauncher) getRaw(ctx context.Context, path string, maxB
 	return body, resp.StatusCode, nil
 }
 
-// parseNativeJobStatus pulls the reconciler-relevant fields out of a
+// parseRunnerJobStatus pulls the reconciler-relevant fields out of a
 // batch/v1 Job object returned by the kube apiserver.
-func parseNativeJobStatus(job map[string]any) NativeJobStatus {
-	out := NativeJobStatus{Found: true}
+func parseRunnerJobStatus(job map[string]any) RunnerJobStatus {
+	out := RunnerJobStatus{Found: true}
 	statusMap := anyMap(job["status"])
 	if active, ok := positiveIntFromMap(statusMap, "active"); ok {
 		out.Active = active
@@ -1445,7 +1445,7 @@ func parseNativeJobStatus(job map[string]any) NativeJobStatus {
 	}
 	for _, raw := range anySlice(statusMap["conditions"]) {
 		typed := anyMap(raw)
-		cond := NativeJobCondition{
+		cond := RunnerJobCondition{
 			Type:    strings.TrimSpace(mapStringValueOrEmpty(typed, "type")),
 			Status:  strings.TrimSpace(mapStringValueOrEmpty(typed, "status")),
 			Reason:  strings.TrimSpace(mapStringValueOrEmpty(typed, "reason")),
@@ -1466,7 +1466,7 @@ func parseNativeJobStatus(job map[string]any) NativeJobStatus {
 	return out
 }
 
-func (l *KubernetesNativeLauncher) waitForJobComplete(ctx context.Context, namespace, name string, timeout time.Duration) error {
+func (l *KubernetesRunLauncher) waitForJobComplete(ctx context.Context, namespace, name string, timeout time.Duration) error {
 	if strings.TrimSpace(namespace) == "" || strings.TrimSpace(name) == "" {
 		return nil
 	}
@@ -1504,7 +1504,7 @@ func (l *KubernetesNativeLauncher) waitForJobComplete(ctx context.Context, names
 	}
 }
 
-func (l *KubernetesNativeLauncher) waitForDeploymentReady(ctx context.Context, namespace, name string, timeout time.Duration) error {
+func (l *KubernetesRunLauncher) waitForDeploymentReady(ctx context.Context, namespace, name string, timeout time.Duration) error {
 	if strings.TrimSpace(namespace) == "" || strings.TrimSpace(name) == "" {
 		return nil
 	}
@@ -1537,7 +1537,7 @@ func (l *KubernetesNativeLauncher) waitForDeploymentReady(ctx context.Context, n
 	}
 }
 
-func (l *KubernetesNativeLauncher) createDeploymentInNamespace(ctx context.Context, namespace string, manifest map[string]any) error {
+func (l *KubernetesRunLauncher) createDeploymentInNamespace(ctx context.Context, namespace string, manifest map[string]any) error {
 	status, _, err := l.request(ctx, http.MethodPost, "/apis/apps/v1/namespaces/"+namespace+"/deployments", manifest)
 	if err == nil || status == http.StatusConflict {
 		return nil
@@ -1545,7 +1545,7 @@ func (l *KubernetesNativeLauncher) createDeploymentInNamespace(ctx context.Conte
 	return err
 }
 
-func (l *KubernetesNativeLauncher) createServiceInNamespace(ctx context.Context, namespace string, manifest map[string]any) error {
+func (l *KubernetesRunLauncher) createServiceInNamespace(ctx context.Context, namespace string, manifest map[string]any) error {
 	status, _, err := l.request(ctx, http.MethodPost, "/api/v1/namespaces/"+namespace+"/services", manifest)
 	if err == nil || status == http.StatusConflict {
 		return nil
@@ -1553,7 +1553,7 @@ func (l *KubernetesNativeLauncher) createServiceInNamespace(ctx context.Context,
 	return err
 }
 
-func (l *KubernetesNativeLauncher) request(ctx context.Context, method, path string, body any) (int, map[string]any, error) {
+func (l *KubernetesRunLauncher) request(ctx context.Context, method, path string, body any) (int, map[string]any, error) {
 	var reader io.Reader
 	if body != nil {
 		payload, err := json.Marshal(body)
@@ -1597,7 +1597,7 @@ func (l *KubernetesNativeLauncher) request(ctx context.Context, method, path str
 	return resp.StatusCode, decoded, nil
 }
 
-func (l *KubernetesNativeLauncher) transport() http.RoundTripper {
+func (l *KubernetesRunLauncher) transport() http.RoundTripper {
 	ca, err := os.ReadFile(l.Settings.K8sCACertPath)
 	if err != nil {
 		return http.DefaultTransport
@@ -1609,12 +1609,12 @@ func (l *KubernetesNativeLauncher) transport() http.RoundTripper {
 	return &http.Transport{TLSClientConfig: &tls.Config{RootCAs: pool}}
 }
 
-func nativeJobManifest(settings Settings, req NativeLaunchRequest, job NativeJobSpec, jobName, secretName, attemptBase string, proxyRuntimes ...providerAPIProxyRuntime) map[string]any {
+func runnerJobManifest(settings Settings, req RunLaunchRequest, job RunnerJobSpec, jobName, secretName, attemptBase string, proxyRuntimes ...providerAPIProxyRuntime) map[string]any {
 	proxyRuntime := providerAPIProxyRuntime{}
 	if len(proxyRuntimes) > 0 {
 		proxyRuntime = proxyRuntimes[0]
 	}
-	req.Phase = CanonicalNativePhase(req.Phase)
+	req.Phase = CanonicalRunnerPhase(req.Phase)
 	for _, canonical := range req.Phase.Jobs {
 		if canonical.ID == job.ID {
 			job = canonical
@@ -1623,7 +1623,7 @@ func nativeJobManifest(settings Settings, req NativeLaunchRequest, job NativeJob
 	}
 	labels := map[string]string{
 		"app.kubernetes.io/managed-by":       "glimmung",
-		"glimmung.romaine.life/native-job":   "true",
+		"glimmung.romaine.life/run-job":      "true",
 		"glimmung.romaine.life/project":      labelValue(req.Lease.Project),
 		"glimmung.romaine.life/workflow":     labelValue(req.Workflow.Name),
 		"glimmung.romaine.life/run-ref":      labelValue(runRefFromData(req.Run)),
@@ -1636,7 +1636,7 @@ func nativeJobManifest(settings Settings, req NativeLaunchRequest, job NativeJob
 		podLabels[k] = v
 	}
 	podLabels["azure.workload.identity/use"] = "true"
-	env := nativeJobEnv(settings, req, job, secretName)
+	env := runnerJobEnv(settings, req, job, secretName)
 	volumeMounts := []any{
 		map[string]any{"name": "glimmung-attempt-token", "mountPath": "/var/run/glimmung", "readOnly": true},
 	}
@@ -1644,7 +1644,7 @@ func nativeJobManifest(settings Settings, req NativeLaunchRequest, job NativeJob
 		map[string]any{"name": "glimmung-attempt-token", "secret": map[string]any{"secretName": secretName}},
 	}
 	podSpec := map[string]any{
-		"serviceAccountName": settings.NativeRunnerServiceAccount,
+		"serviceAccountName": settings.RunnerServiceAccount,
 		"restartPolicy":      "Never",
 	}
 	if proxyRuntime.enabled() {
@@ -1660,7 +1660,7 @@ func nativeJobManifest(settings Settings, req NativeLaunchRequest, job NativeJob
 			map[string]any{"name": "GLIMMUNG_PROVIDER_API_PROXY_CA_SECRET", "value": proxyRuntime.CASecretName},
 			map[string]any{"name": "GLIMMUNG_PROVIDER_API_PROXY_CA_BUNDLE", "value": proxyRuntime.CABundlePath},
 		)
-		if nativeJobRequiresProviderAPIProxy(job) && strings.TrimSpace(proxyRuntime.GitHubClusterIP) != "" {
+		if runnerJobRequiresProviderAPIProxy(job) && strings.TrimSpace(proxyRuntime.GitHubClusterIP) != "" {
 			env = append(env, map[string]any{"name": "GLIMMUNG_PROVIDER_API_PROXY_GITHUB_IP", "value": proxyRuntime.GitHubClusterIP})
 		}
 		volumeMounts = append(volumeMounts,
@@ -1675,14 +1675,14 @@ func nativeJobManifest(settings Settings, req NativeLaunchRequest, job NativeJob
 			map[string]any{"ip": proxyRuntime.ClaudeClusterIP, "hostnames": []any{"api.anthropic.com"}},
 			map[string]any{"ip": proxyRuntime.CodexClusterIP, "hostnames": []any{"chatgpt.com", "api.openai.com"}},
 		}
-		if nativeJobRequiresProviderAPIProxy(job) && strings.TrimSpace(proxyRuntime.GitHubClusterIP) != "" {
+		if runnerJobRequiresProviderAPIProxy(job) && strings.TrimSpace(proxyRuntime.GitHubClusterIP) != "" {
 			hostAliases = append(hostAliases, map[string]any{"ip": proxyRuntime.GitHubClusterIP, "hostnames": []any{"github.com"}})
 		}
 		podSpec["hostAliases"] = hostAliases
 		podSpec["initContainers"] = []any{
 			map[string]any{
 				"name":    "provider-api-proxy-ca-bundle",
-				"image":   nativeJobImage(settings, job),
+				"image":   runnerJobImage(settings, job),
 				"command": []any{"/bin/sh", "-ec", "if [ -f /etc/ssl/certs/ca-certificates.crt ]; then cat /etc/ssl/certs/ca-certificates.crt /proxy-ca/ca.crt > " + proxyRuntime.CABundlePath + "; else cp /proxy-ca/ca.crt " + proxyRuntime.CABundlePath + "; fi && chmod 0444 " + proxyRuntime.CABundlePath},
 				"volumeMounts": []any{
 					map[string]any{"name": "provider-api-proxy-ca", "mountPath": "/proxy-ca", "readOnly": true},
@@ -1693,12 +1693,12 @@ func nativeJobManifest(settings Settings, req NativeLaunchRequest, job NativeJob
 	}
 	container := map[string]any{
 		"name":         dnsLabel(job.ID),
-		"image":        nativeJobImage(settings, job),
+		"image":        runnerJobImage(settings, job),
 		"env":          env,
 		"volumeMounts": volumeMounts,
 	}
 	if job.Managed {
-		container["command"] = []string{nativeRunnerEntrypoint(settings)}
+		container["command"] = []string{runnerEntrypoint(settings)}
 	} else if len(job.Command) > 0 {
 		container["command"] = job.Command
 	}
@@ -1714,7 +1714,7 @@ func nativeJobManifest(settings Settings, req NativeLaunchRequest, job NativeJob
 	if req.Run.IssueRepo != "" {
 		annotations["glimmung.romaine.life/github-policy-repo"] = req.Run.IssueRepo
 	}
-	if branch := nativePolicyBranchName(req); branch != "" {
+	if branch := runnerPolicyBranchName(req); branch != "" {
 		annotations["glimmung.romaine.life/github-policy-ref"] = "refs/heads/" + branch
 	}
 	return map[string]any{
@@ -1722,13 +1722,13 @@ func nativeJobManifest(settings Settings, req NativeLaunchRequest, job NativeJob
 		"kind":       "Job",
 		"metadata": map[string]any{
 			"name":        jobName,
-			"namespace":   settings.NativeRunnerNamespace,
+			"namespace":   settings.RunnerNamespace,
 			"labels":      labels,
 			"annotations": annotations,
 		},
 		"spec": map[string]any{
-			"backoffLimit":            nativeJobBackoffLimit(req.Phase),
-			"ttlSecondsAfterFinished": settings.NativeRunnerJobTTLSeconds,
+			"backoffLimit":            runnerJobBackoffLimit(req.Phase),
+			"ttlSecondsAfterFinished": settings.RunnerJobTTLSeconds,
 			"template": map[string]any{
 				"metadata": map[string]any{
 					"labels":      podLabels,
@@ -1740,40 +1740,40 @@ func nativeJobManifest(settings Settings, req NativeLaunchRequest, job NativeJob
 	}
 }
 
-// nativeTeardownJobBackoffLimit lets a teardown Job absorb a transient
+// runnerTeardownJobBackoffLimit lets a teardown Job absorb a transient
 // pod-start failure (image pull blip, node churn) instead of instantly
 // failing the cleanup phase. Teardown scripts (env-destroy) are idempotent,
 // so re-running a fresh pod is safe. Producer/verify jobs keep backoffLimit=0
 // (Glimmung owns their retries at the attempt level and wants fast failure
 // detection).
-const nativeTeardownJobBackoffLimit = 2
+const runnerTeardownJobBackoffLimit = 2
 
-// nativeJobBackoffLimit returns the Kubernetes Job backoffLimit for a phase's
+// runnerJobBackoffLimit returns the Kubernetes Job backoffLimit for a phase's
 // jobs. Teardown phases are post-verdict cleanup and verdict-neutral, so a
 // bounded retry self-heals transient pod-start blips; every other phase fails
 // fast with backoffLimit=0.
-func nativeJobBackoffLimit(phase PhaseSpec) int {
+func runnerJobBackoffLimit(phase PhaseSpec) int {
 	if phase.Purpose == PhasePurposeTeardown {
-		return nativeTeardownJobBackoffLimit
+		return runnerTeardownJobBackoffLimit
 	}
 	return 0
 }
 
-func nativeJobImage(settings Settings, job NativeJobSpec) string {
+func runnerJobImage(settings Settings, job RunnerJobSpec) string {
 	if job.Managed {
-		return firstNonEmpty(job.Image, settings.NativeRunnerImage)
+		return firstNonEmpty(job.Image, settings.RunnerImage)
 	}
 	return job.Image
 }
 
-func nativeJobEnv(settings Settings, req NativeLaunchRequest, job NativeJobSpec, secretName string) []map[string]any {
+func runnerJobEnv(settings Settings, req RunLaunchRequest, job RunnerJobSpec, secretName string) []map[string]any {
 	metadata := req.Lease.Metadata
-	baseURL := strings.TrimRight(settings.NativeRunnerCallbackBaseURL, "/")
+	baseURL := strings.TrimRight(settings.RunnerCallbackBaseURL, "/")
 	callback := ""
 	if req.Run.CallbackToken != nil {
 		callback = *req.Run.CallbackToken
 	}
-	nativePath := "/v1/run-callbacks/" + callback + "/native"
+	runnerPath := "/v1/run-callbacks/" + callback + "/run"
 	env := []map[string]any{
 		{"name": "GLIMMUNG_BASE_URL", "value": baseURL},
 		{"name": "GLIMMUNG_PROJECT", "value": req.Lease.Project},
@@ -1782,32 +1782,32 @@ func nativeJobEnv(settings Settings, req NativeLaunchRequest, job NativeJobSpec,
 		{"name": "GLIMMUNG_RUN_ID", "value": req.Run.ID},
 		{"name": "GLIMMUNG_RUN_REF", "value": runRefFromData(req.Run)},
 		{"name": "GLIMMUNG_JOB_ID", "value": job.ID},
-		{"name": "GLIMMUNG_ATTEMPT_INDEX", "value": strconv.Itoa(nativeAttemptIndex(req))},
+		{"name": "GLIMMUNG_ATTEMPT_INDEX", "value": strconv.Itoa(runnerAttemptIndex(req))},
 		{"name": "GLIMMUNG_LEASE_REF", "value": leasePublicRef(req.Lease)},
-		{"name": "GLIMMUNG_EVENTS_URL", "value": baseURL + nativePath + "/events"},
-		{"name": "GLIMMUNG_STATUS_URL", "value": baseURL + nativePath + "/status"},
-		{"name": "GLIMMUNG_COMPLETED_URL", "value": baseURL + nativePath + "/completed"},
-		{"name": "GLIMMUNG_GITHUB_TOKEN_URL", "value": baseURL + nativePath + "/github-token"},
-		{"name": "GLIMMUNG_GITHUB_AGENT_TOKEN_URL", "value": baseURL + nativePath + "/github-agent-token"},
-		{"name": "GLIMMUNG_PR_TOUCHPOINT_URL", "value": baseURL + nativePath + "/pr-touchpoint"},
-		{"name": "GLIMMUNG_PR_MERGE_URL", "value": baseURL + nativePath + "/pr-merge"},
+		{"name": "GLIMMUNG_EVENTS_URL", "value": baseURL + runnerPath + "/events"},
+		{"name": "GLIMMUNG_STATUS_URL", "value": baseURL + runnerPath + "/status"},
+		{"name": "GLIMMUNG_COMPLETED_URL", "value": baseURL + runnerPath + "/completed"},
+		{"name": "GLIMMUNG_GITHUB_TOKEN_URL", "value": baseURL + runnerPath + "/github-token"},
+		{"name": "GLIMMUNG_GITHUB_AGENT_TOKEN_URL", "value": baseURL + runnerPath + "/github-agent-token"},
+		{"name": "GLIMMUNG_PR_TOUCHPOINT_URL", "value": baseURL + runnerPath + "/pr-touchpoint"},
+		{"name": "GLIMMUNG_PR_MERGE_URL", "value": baseURL + runnerPath + "/pr-merge"},
 		// Remote-host execution primitives (docs/remote-host-execution.md).
 		// The phase script POSTs a freshly-generated public key to the
 		// ssh-cert URL and POSTs an empty body to the tailscale-authkey
 		// URL. Same auth model as the other run-callback URLs above —
 		// callback token is baked into the path; X-Glimmung-Attempt-Token
 		// header carries the secret.
-		{"name": "GLIMMUNG_SSH_CERT_URL", "value": baseURL + nativePath + "/ssh-cert"},
-		{"name": "GLIMMUNG_TAILSCALE_AUTHKEY_URL", "value": baseURL + nativePath + "/tailscale-authkey"},
+		{"name": "GLIMMUNG_SSH_CERT_URL", "value": baseURL + runnerPath + "/ssh-cert"},
+		{"name": "GLIMMUNG_TAILSCALE_AUTHKEY_URL", "value": baseURL + runnerPath + "/tailscale-authkey"},
 		{"name": "GLIMMUNG_ATTEMPT_TOKEN", "valueFrom": map[string]any{"secretKeyRef": map[string]any{"name": secretName, "key": "attempt-token"}}},
 	}
 	seen := envNameSet(env)
-	for _, key := range []string{"issue_repo", "issue_number", "issue_title", "issue_body", "native_slot_index", "native_slot_name", "entrypoint_job_id", "entrypoint_step_slug", "work_context_id", "work_context_branch", "work_context_base_ref", "work_context_state"} {
+	for _, key := range []string{"issue_repo", "issue_number", "issue_title", "issue_body", "runner_slot_index", "runner_slot_name", "entrypoint_job_id", "entrypoint_step_slug", "work_context_id", "work_context_branch", "work_context_base_ref", "work_context_state"} {
 		if value, ok := metadata[key]; ok {
 			env = appendLiteralEnv(env, seen, "GLIMMUNG_"+envName(key), fmt.Sprint(value))
 		}
 	}
-	if slotName := mapStringValueOrEmpty(metadata, "native_slot_name"); slotName != "" {
+	if slotName := mapStringValueOrEmpty(metadata, "runner_slot_name"); slotName != "" {
 		env = appendLiteralEnv(env, seen, "GLIMMUNG_VALIDATION_NAMESPACE", slotName)
 	}
 	if phaseInputs := anyMap(metadata["phase_inputs"]); len(phaseInputs) > 0 {
@@ -1843,16 +1843,16 @@ func nativeJobEnv(settings Settings, req NativeLaunchRequest, job NativeJobSpec,
 			env = appendLiteralEnv(env, seen, "GLIMMUNG_AGENT_RUNTIME_JSON", string(payload))
 		}
 	}
-	if settings.NativeRunnerPlaywrightEnabled {
-		if slotName, ok := metadata["native_slot_name"].(string); ok && slotName != "" {
-			endpoint := fmt.Sprintf("ws://%s.%s.svc.cluster.local:%s", playwrightResourceName(req.Lease.Project, slotName), slotName, settings.NativeRunnerPlaywrightPort)
+	if settings.RunnerPlaywrightEnabled {
+		if slotName, ok := metadata["runner_slot_name"].(string); ok && slotName != "" {
+			endpoint := fmt.Sprintf("ws://%s.%s.svc.cluster.local:%s", playwrightResourceName(req.Lease.Project, slotName), slotName, settings.RunnerPlaywrightPort)
 			env = appendLiteralEnv(env, seen, "GLIMMUNG_PLAYWRIGHT_WS_ENDPOINT", endpoint)
 			env = appendLiteralEnv(env, seen, "PLAYWRIGHT_WS_ENDPOINT", endpoint)
 			env = appendLiteralEnv(env, seen, "PW_TEST_CONNECT_WS_ENDPOINT", endpoint)
 		}
 	}
 	if job.Managed {
-		env = appendLiteralEnv(env, seen, "GLIMMUNG_RUNNER_JOB_SPEC", nativeRunnerJobSpecJSON(job))
+		env = appendLiteralEnv(env, seen, "GLIMMUNG_RUNNER_JOB_SPEC", runnerJobSpecJSON(job))
 	}
 	jobEnvNames := make([]string, 0, len(job.Env))
 	for name := range job.Env {
@@ -1865,7 +1865,7 @@ func nativeJobEnv(settings Settings, req NativeLaunchRequest, job NativeJobSpec,
 	return env
 }
 
-func nativePolicyBranchName(req NativeLaunchRequest) string {
+func runnerPolicyBranchName(req RunLaunchRequest) string {
 	metadata := req.Lease.Metadata
 	if branch := strings.TrimSpace(fmt.Sprint(firstAny(metadata["implementation_branch"], metadata["implementationBranch"]))); branch != "" && branch != "<nil>" {
 		return branch
@@ -1877,18 +1877,18 @@ func nativePolicyBranchName(req NativeLaunchRequest) string {
 		}
 	}
 	if issueNumber > 0 && strings.TrimSpace(req.Run.ID) != "" {
-		return "glimmung/issue-" + nativePolicyRefSegment(strconv.Itoa(issueNumber)) + "/" + nativePolicyRefSegment(req.Run.ID)
+		return "glimmung/issue-" + runnerPolicyRefSegment(strconv.Itoa(issueNumber)) + "/" + runnerPolicyRefSegment(req.Run.ID)
 	}
 	if branch := strings.TrimSpace(fmt.Sprint(metadata["work_context_branch"])); branch != "" && branch != "<nil>" {
 		return branch
 	}
 	if strings.TrimSpace(req.Run.ID) != "" {
-		return "glimmung/" + nativePolicyRefSegment(req.Run.ID)
+		return "glimmung/" + runnerPolicyRefSegment(req.Run.ID)
 	}
 	return ""
 }
 
-func nativePolicyRefSegment(value string) string {
+func runnerPolicyRefSegment(value string) string {
 	var b strings.Builder
 	lastDash := false
 	for _, r := range strings.ToLower(strings.TrimSpace(value)) {
@@ -1910,11 +1910,11 @@ func nativePolicyRefSegment(value string) string {
 	return out
 }
 
-func nativeRunnerEntrypoint(settings Settings) string {
-	return firstNonEmpty(settings.NativeRunnerEntrypoint, "/app/glimmung-native-runner")
+func runnerEntrypoint(settings Settings) string {
+	return firstNonEmpty(settings.RunnerEntrypoint, "/app/glimmung-runner")
 }
 
-func nativeRunnerJobSpecJSON(job NativeJobSpec) string {
+func runnerJobSpecJSON(job RunnerJobSpec) string {
 	payload, err := json.Marshal(job)
 	if err != nil {
 		return "{}"
@@ -2014,7 +2014,7 @@ func defaultTestSlotClusterRoleBindings(project Project) []map[string]any {
 }
 
 func testSlotSubstitutions(lease Lease, project Project, slotName, sessionsNamespace string) map[string]string {
-	slotIndex := mapStringValueOrEmpty(lease.Metadata, "native_slot_index")
+	slotIndex := mapStringValueOrEmpty(lease.Metadata, "runner_slot_index")
 	if slotIndex == "" {
 		slotIndex = trailingSlotIndex(slotName)
 	}
@@ -2043,7 +2043,7 @@ func testSlotSessionsNamespace(slotName string, project Project) string {
 }
 
 func testSlotSessionsNamespaceForLease(lease Lease, project Project, slotName string) string {
-	if value, ok := stringFromMap(lease.Metadata, "native_sessions_namespace"); ok && strings.TrimSpace(value) != "" {
+	if value, ok := stringFromMap(lease.Metadata, "runner_sessions_namespace"); ok && strings.TrimSpace(value) != "" {
 		return strings.TrimSpace(value)
 	}
 	return testSlotSessionsNamespace(slotName, project)
@@ -2093,7 +2093,7 @@ func testSlotHelmReleaseName(slotName, renderMode string) string {
 }
 
 func testSlotInstallJobManifest(settings Settings, config testSlotHelmSettings, lease Lease, project Project, substitutions map[string]string, renderMode string) map[string]any {
-	slotName, _ := stringFromMap(lease.Metadata, "native_slot_name")
+	slotName, _ := stringFromMap(lease.Metadata, "runner_slot_name")
 	renderMode = firstNonEmpty(strings.TrimSpace(renderMode), testSlotRenderModeHot)
 	jobName := testSlotHelmJobName(lease, renderMode)
 	secretName := testSlotHelmSecretName(lease, renderMode)
@@ -2118,7 +2118,7 @@ func testSlotInstallJobManifest(settings Settings, config testSlotHelmSettings, 
 		"fi\n" +
 		helmUpgradeInstallCommand(config, releaseName, slotName, substitutions, renderMode) + "\n"
 	podSpec := map[string]any{
-		"serviceAccountName": settings.NativeRunnerServiceAccount,
+		"serviceAccountName": settings.RunnerServiceAccount,
 		"restartPolicy":      "Never",
 		"volumes": []any{
 			map[string]any{"name": "workspace", "emptyDir": map[string]any{}},
@@ -2151,13 +2151,13 @@ func testSlotInstallJobManifest(settings Settings, config testSlotHelmSettings, 
 		"kind":       "Job",
 		"metadata": map[string]any{
 			"name":        jobName,
-			"namespace":   settings.NativeRunnerNamespace,
+			"namespace":   settings.RunnerNamespace,
 			"labels":      labels,
-			"annotations": map[string]string{"glimmung.romaine.life/native-slot-name": slotName},
+			"annotations": map[string]string{"glimmung.romaine.life/run-slot-name": slotName},
 		},
 		"spec": map[string]any{
 			"backoffLimit":            1,
-			"ttlSecondsAfterFinished": settings.NativeRunnerJobTTLSeconds,
+			"ttlSecondsAfterFinished": settings.RunnerJobTTLSeconds,
 			"template": map[string]any{
 				"metadata": map[string]any{"labels": labels},
 				"spec":     podSpec,
@@ -2167,7 +2167,7 @@ func testSlotInstallJobManifest(settings Settings, config testSlotHelmSettings, 
 }
 
 func testSlotUninstallJobManifest(settings Settings, config testSlotHelmSettings, lease Lease, project Project, renderMode string) map[string]any {
-	slotName, _ := stringFromMap(lease.Metadata, "native_slot_name")
+	slotName, _ := stringFromMap(lease.Metadata, "runner_slot_name")
 	renderMode = firstNonEmpty(strings.TrimSpace(renderMode), testSlotRenderModeHot)
 	jobName := testSlotHelmUninstallJobName(lease, renderMode)
 	labels := testSlotLabels(lease, slotName)
@@ -2179,7 +2179,7 @@ func testSlotUninstallJobManifest(settings Settings, config testSlotHelmSettings
 		"  helm uninstall " + shellQuote(releaseName) + " --namespace " + shellQuote(slotName) + " --wait --timeout 180s\n" +
 		"fi\n"
 	podSpec := map[string]any{
-		"serviceAccountName": settings.NativeRunnerServiceAccount,
+		"serviceAccountName": settings.RunnerServiceAccount,
 		"restartPolicy":      "Never",
 		"containers": []any{map[string]any{
 			"name":    "uninstall",
@@ -2197,13 +2197,13 @@ func testSlotUninstallJobManifest(settings Settings, config testSlotHelmSettings
 		"kind":       "Job",
 		"metadata": map[string]any{
 			"name":        jobName,
-			"namespace":   settings.NativeRunnerNamespace,
+			"namespace":   settings.RunnerNamespace,
 			"labels":      labels,
-			"annotations": map[string]string{"glimmung.romaine.life/native-slot-name": slotName},
+			"annotations": map[string]string{"glimmung.romaine.life/run-slot-name": slotName},
 		},
 		"spec": map[string]any{
 			"backoffLimit":            1,
-			"ttlSecondsAfterFinished": settings.NativeRunnerJobTTLSeconds,
+			"ttlSecondsAfterFinished": settings.RunnerJobTTLSeconds,
 			"template": map[string]any{
 				"metadata": map[string]any{"labels": labels},
 				"spec":     podSpec,
@@ -2258,13 +2258,13 @@ func stripClusterScopedCommand() string {
 
 func testSlotLabels(lease Lease, slotName string) map[string]string {
 	labels := map[string]string{
-		"app.kubernetes.io/managed-by":           "glimmung",
-		"glimmung.romaine.life/test-slot":        "true",
-		"glimmung.romaine.life/project":          labelValue(lease.Project),
-		"glimmung.romaine.life/native-slot-name": labelValue(slotName),
+		"app.kubernetes.io/managed-by":        "glimmung",
+		"glimmung.romaine.life/test-slot":     "true",
+		"glimmung.romaine.life/project":       labelValue(lease.Project),
+		"glimmung.romaine.life/run-slot-name": labelValue(slotName),
 	}
-	if value := mapStringValueOrEmpty(lease.Metadata, "native_slot_index"); value != "" {
-		labels["glimmung.romaine.life/native-slot-index"] = labelValue(value)
+	if value := mapStringValueOrEmpty(lease.Metadata, "runner_slot_index"); value != "" {
+		labels["glimmung.romaine.life/run-slot-index"] = labelValue(value)
 	}
 	if ref := LeasePublicRefFromLease(lease); ref != "" {
 		labels["glimmung.romaine.life/lease-ref"] = labelValue(ref)
@@ -2396,7 +2396,7 @@ func playwrightResourceName(_ string, slotName string) string {
 // other in-cluster callers connect to this URL to drive a Chromium running
 // inside the lease, instead of spawning one on a shared host.
 func PlaywrightWSEndpointFor(settings Settings, slotName string) *string {
-	if !settings.NativeRunnerPlaywrightEnabled {
+	if !settings.RunnerPlaywrightEnabled {
 		return nil
 	}
 	slot := strings.TrimSpace(slotName)
@@ -2407,7 +2407,7 @@ func PlaywrightWSEndpointFor(settings Settings, slotName string) *string {
 	if name == "" {
 		return nil
 	}
-	port := strings.TrimSpace(settings.NativeRunnerPlaywrightPort)
+	port := strings.TrimSpace(settings.RunnerPlaywrightPort)
 	if port == "" {
 		port = "3000"
 	}
@@ -2417,17 +2417,17 @@ func PlaywrightWSEndpointFor(settings Settings, slotName string) *string {
 
 func playwrightLabels(lease Lease, name string) map[string]string {
 	labels := map[string]string{
-		"app.kubernetes.io/managed-by":           "glimmung",
-		"app.kubernetes.io/part-of":              "glimmung-test-slot",
-		"app.kubernetes.io/name":                 name,
-		"glimmung.romaine.life/slot-playwright":  "true",
-		"glimmung.romaine.life/resource-scope":   "tool",
-		"glimmung.romaine.life/tool":             "playwright",
-		"glimmung.romaine.life/project":          labelValue(lease.Project),
-		"glimmung.romaine.life/native-slot-name": labelValue(mapStringValueOrEmpty(lease.Metadata, "native_slot_name")),
+		"app.kubernetes.io/managed-by":          "glimmung",
+		"app.kubernetes.io/part-of":             "glimmung-test-slot",
+		"app.kubernetes.io/name":                name,
+		"glimmung.romaine.life/slot-playwright": "true",
+		"glimmung.romaine.life/resource-scope":  "tool",
+		"glimmung.romaine.life/tool":            "playwright",
+		"glimmung.romaine.life/project":         labelValue(lease.Project),
+		"glimmung.romaine.life/run-slot-name":   labelValue(mapStringValueOrEmpty(lease.Metadata, "runner_slot_name")),
 	}
-	if value := mapStringValueOrEmpty(lease.Metadata, "native_slot_index"); value != "" {
-		labels["glimmung.romaine.life/native-slot-index"] = labelValue(value)
+	if value := mapStringValueOrEmpty(lease.Metadata, "runner_slot_index"); value != "" {
+		labels["glimmung.romaine.life/run-slot-index"] = labelValue(value)
 	}
 	if ref := LeasePublicRefFromLease(lease); ref != "" {
 		labels["glimmung.romaine.life/lease-ref"] = labelValue(ref)
@@ -2449,7 +2449,7 @@ func playwrightResourceTargets(lease Lease, slotName string) []playwrightResourc
 }
 
 func playwrightDeployment(settings Settings, namespace, name string, labels map[string]string) map[string]any {
-	port, err := strconv.Atoi(settings.NativeRunnerPlaywrightPort)
+	port, err := strconv.Atoi(settings.RunnerPlaywrightPort)
 	if err != nil || port <= 0 {
 		port = 3000
 	}
@@ -2469,7 +2469,7 @@ func playwrightDeployment(settings Settings, namespace, name string, labels map[
 				"spec": map[string]any{
 					"containers": []any{map[string]any{
 						"name":  "playwright",
-						"image": settings.NativeRunnerPlaywrightImage,
+						"image": settings.RunnerPlaywrightImage,
 						"command": []string{
 							"npx", "playwright", "run-server",
 							"--host", "0.0.0.0",
@@ -2489,7 +2489,7 @@ func playwrightDeployment(settings Settings, namespace, name string, labels map[
 }
 
 func playwrightService(settings Settings, namespace, name string, labels map[string]string) map[string]any {
-	port, err := strconv.Atoi(settings.NativeRunnerPlaywrightPort)
+	port, err := strconv.Atoi(settings.RunnerPlaywrightPort)
 	if err != nil || port <= 0 {
 		port = 3000
 	}
@@ -2513,7 +2513,7 @@ func mapStringValueOrEmpty(values map[string]any, key string) string {
 	return value
 }
 
-func nativeAttemptIndex(req NativeLaunchRequest) int {
+func runnerAttemptIndex(req RunLaunchRequest) int {
 	if v, ok := req.Lease.Metadata["attempt_index"]; ok {
 		if n, err := strconv.Atoi(fmt.Sprint(v)); err == nil && n >= 0 {
 			return n
@@ -2525,7 +2525,7 @@ func nativeAttemptIndex(req NativeLaunchRequest) int {
 	return 0
 }
 
-func nativeJobName(attemptBase, jobID string) string {
+func runnerJobName(attemptBase, jobID string) string {
 	suffix := dnsLabel(jobID)
 	candidate := attemptBase + "-" + suffix
 	if len(candidate) <= 63 {

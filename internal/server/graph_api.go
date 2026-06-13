@@ -342,13 +342,13 @@ func runCycleGraphProjectionByNumber(store ReadStore) http.HandlerFunc {
 			}
 		}
 		projection := buildRunGraphProjection(publicids.IssueRef(issue.Project, issue.Number), []RunReport{selected}, workflowsByKey, touchpoints, signals)
-		if nativeStore, ok := store.(NativeRunStore); ok && nativeStore != nil && len(projection.Runs) == 1 && selected.ID != "" {
-			logs, err := nativeStore.ListNativeEventsByID(r.Context(), selected.Project, selected.ID, nil, nil, nil, nil, nil)
+		if runnerStore, ok := store.(RunnerStore); ok && runnerStore != nil && len(projection.Runs) == 1 && selected.ID != "" {
+			logs, err := runnerStore.ListRunnerEventsByID(r.Context(), selected.Project, selected.ID, nil, nil, nil, nil, nil)
 			if err != nil && !errors.Is(err, ErrNotFound) {
-				writeInternalError(w, r, err, "list native events failed")
+				writeInternalError(w, r, err, "list runner events failed")
 				return
 			}
-			applyNativeEventsToProjectionRun(&projection.Runs[0], logs.Events)
+			applyRunnerEventsToProjectionRun(&projection.Runs[0], logs.Events)
 		}
 		writeJSON(w, http.StatusOK, projection)
 	}
@@ -909,7 +909,7 @@ func runGraphMetadata(run RunReport) map[string]any {
 			"stages": []map[string]any{{
 				"stage_id": attempt.Phase,
 				"name":     attempt.Phase,
-				"kind":     firstNonEmpty(attempt.PhaseKind, workflowKindNativeK8sJob),
+				"kind":     firstNonEmpty(attempt.PhaseKind, workflowKindRunnerK8sJob),
 				"state":    state,
 				"jobs": []map[string]any{{
 					"job_id":       firstNonEmpty(attempt.WorkflowFilename, attempt.Phase, "phase"),
@@ -1244,7 +1244,7 @@ func runProjectionPhases(run RunReport, workflow Workflow) []RunProjectionPhase 
 		reason := projectionPhaseReason(state, attempts, run.AbortReason)
 		phase := PhaseSpec{
 			Name:             name,
-			Kind:             firstNonEmpty(attempt.PhaseKind, workflowKindNativeK8sJob),
+			Kind:             firstNonEmpty(attempt.PhaseKind, workflowKindRunnerK8sJob),
 			WorkflowFilename: attempt.WorkflowFilename,
 		}
 		phases = append(phases, RunProjectionPhase{
@@ -1670,7 +1670,7 @@ func projectionFailureReason(reason string) string {
 		return "timeout"
 	case strings.Contains(normalized, "cancel"):
 		return "cancelled"
-	case strings.Contains(normalized, "native_dispatch_failed"):
+	case strings.Contains(normalized, "runner_dispatch_failed"):
 		return "dispatch_failed"
 	case strings.Contains(normalized, "admission_failed"):
 		return "admission_failed"
@@ -1917,7 +1917,7 @@ func runProjectionAttempts(attempts []RunReportAttempt) []RunProjectionAttempt {
 		out = append(out, RunProjectionAttempt{
 			AttemptIndex:       attempt.AttemptIndex,
 			Phase:              attempt.Phase,
-			PhaseKind:          firstNonEmpty(attempt.PhaseKind, workflowKindNativeK8sJob),
+			PhaseKind:          firstNonEmpty(attempt.PhaseKind, workflowKindRunnerK8sJob),
 			State:              projectionAttemptState(attempt),
 			CarryForward:       attempt.CarryForward,
 			Conclusion:         attempt.Conclusion,
@@ -2028,7 +2028,7 @@ func runProjectionEvidence(run RunReport, touchpoints []TouchpointRow) []RunProj
 			})
 		}
 		if attempt.LogArchiveURL != nil && *attempt.LogArchiveURL != "" {
-			addRef("log", *attempt.LogArchiveURL, "native events", evidenceURL(*attempt.LogArchiveURL))
+			addRef("log", *attempt.LogArchiveURL, "runner events", evidenceURL(*attempt.LogArchiveURL))
 		}
 	}
 	for _, tp := range touchpoints {
@@ -2097,7 +2097,7 @@ func runEvidenceArtifactPathAndURL(run RunReport, ref string) (string, string) {
 	return "", ""
 }
 
-func applyNativeEventsToProjectionRun(run *RunProjectionRun, events []NativeRunLogEvent) {
+func applyRunnerEventsToProjectionRun(run *RunProjectionRun, events []RunnerLogEvent) {
 	if run == nil || len(events) == 0 {
 		return
 	}
@@ -2111,7 +2111,7 @@ func applyNativeEventsToProjectionRun(run *RunProjectionRun, events []NativeRunL
 		phaseFailed := phase.State == "failed"
 		for jobIndex := range phase.Jobs {
 			job := &phase.Jobs[jobIndex]
-			jobEvents := nativeEventsForProjectionJob(events, latestAttempt, phase.Name, job.ID)
+			jobEvents := runnerEventsForProjectionJob(events, latestAttempt, phase.Name, job.ID)
 			if len(jobEvents) == 0 {
 				continue
 			}
@@ -2142,7 +2142,7 @@ func applyNativeEventsToProjectionRun(run *RunProjectionRun, events []NativeRunL
 				}
 				stepIndex, ok := stepBySlug[event.StepSlug]
 				if !ok {
-					job.Steps = append(job.Steps, projectionStepFromNativeEvent(event))
+					job.Steps = append(job.Steps, projectionStepFromRunnerEvent(event))
 					stepIndex = len(job.Steps) - 1
 					stepBySlug[event.StepSlug] = stepIndex
 				}
@@ -2183,7 +2183,7 @@ func applyNativeEventsToProjectionRun(run *RunProjectionRun, events []NativeRunL
 	}
 }
 
-func applyDynamicGroupExpandedToProjectionSteps(steps []RunProjectionStep, event NativeRunLogEvent) []RunProjectionStep {
+func applyDynamicGroupExpandedToProjectionSteps(steps []RunProjectionStep, event RunnerLogEvent) []RunProjectionStep {
 	group := strings.TrimSpace(stringValue(event.Metadata["group"]))
 	if group == "" {
 		return steps
@@ -2222,7 +2222,7 @@ func applyDynamicGroupExpandedToProjectionSteps(steps []RunProjectionStep, event
 	return out
 }
 
-func dynamicExpansionProjectionSteps(event NativeRunLogEvent) []RunProjectionStep {
+func dynamicExpansionProjectionSteps(event RunnerLogEvent) []RunProjectionStep {
 	items, ok := event.Metadata["steps"].([]any)
 	if !ok || len(items) == 0 {
 		return nil
@@ -2252,7 +2252,7 @@ func dynamicExpansionProjectionSteps(event NativeRunLogEvent) []RunProjectionSte
 	return out
 }
 
-func projectionStepFromNativeEvent(event NativeRunLogEvent) RunProjectionStep {
+func projectionStepFromRunnerEvent(event RunnerLogEvent) RunProjectionStep {
 	return RunProjectionStep{
 		Slug:       firstNonEmpty(event.StepSlug, "step"),
 		Title:      stringPointerOrNil(firstNonEmpty(stringValue(event.Metadata["title"]), event.StepSlug)),
@@ -2283,8 +2283,8 @@ func resetUnobservedFailedSteps(job *RunProjectionJob, observedStepSlug map[stri
 	}
 }
 
-func nativeEventsForProjectionJob(events []NativeRunLogEvent, attemptIndex int, phase, jobID string) []NativeRunLogEvent {
-	out := make([]NativeRunLogEvent, 0)
+func runnerEventsForProjectionJob(events []RunnerLogEvent, attemptIndex int, phase, jobID string) []RunnerLogEvent {
+	out := make([]RunnerLogEvent, 0)
 	for _, event := range events {
 		if event.AttemptIndex != attemptIndex {
 			continue

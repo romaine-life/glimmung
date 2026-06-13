@@ -1,7 +1,7 @@
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: glimmung-native-gateway-admin
+  name: glimmung-runner-gateway-admin
   labels:
     rbac.authorization.k8s.io/aggregate-to-admin: "true"
 rules:

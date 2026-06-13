@@ -1,7 +1,7 @@
 # Workflow Execution Contract
 
 This contract applies to workflow registration, schema snapshots, phase/job
-shape, native Kubernetes job launch, managed evidence gates, callback tokens,
+shape, runner Kubernetes job launch, managed evidence gates, callback tokens,
 and workflow sync helpers.
 
 ## Product Model
@@ -23,8 +23,8 @@ after registration changes.
   cycles.
 - `docs/workflow-shape.md` owns required phases, linear topology, job
   concurrency, evidence gate semantics, and path-typed identity.
-- Native Kubernetes Jobs own execution process state while running.
-- Native job event rows own hot execution telemetry.
+- Runner Kubernetes Jobs own execution process state while running.
+- Runner job event rows own hot execution telemetry.
 - Workflow import/sync inputs are admin conveniences only. They are not
   required in consumer repositories and are never the runtime source of truth.
 
@@ -48,7 +48,7 @@ after registration changes.
   project stage names and outputs inside `prepare` are project-owned.
 - Do not delete historical schemas still referenced by run history.
 - Do not start a workflow-execution background reconciler (run queue,
-  dispatch timeout, completion sweep, native Job inspection, etc.) outside
+  dispatch timeout, completion sweep, runner Job inspection, etc.) outside
   the `settings.ControlPlaneLoopsEnabled` gate in `cmd/glimmung-go/main.go`.
   The control-plane isolation boundary belongs to the
   [Test Slots contract](../test-slots/contract.md); a workflow-execution
@@ -96,17 +96,17 @@ after registration changes.
   Registration rejects `when` on verification and review-gate phases/jobs,
   on entry phases, and on a phase whose every job is conditional.
 - A step-scoped fail-closed abort is represented by a typed `step_aborted`
-  native event and a durable aborted step state. A failed or aborted job whose
+  runner event and a durable aborted step state. A failed or aborted job whose
   cause is step-scoped must not project with every step succeeded or
   not-started.
 - A phase/job dispatch failure before a Kubernetes Job exists is represented as
   a failed workflow-owned `dispatch` step. Declared workflow steps remain
   `not_started`; the synthetic dispatch step owns the terminal failure instead
   of leaving the human UI without a failed node.
-- `touchpoint_gate` is a gated native phase name, not an executor kind:
+- `touchpoint_gate` is a gated runner phase name, not an executor kind:
   reaching the `purpose: review_gate` phase creates a durable parked `k8s_job`
   attempt at the human decision boundary, and approve later releases that same
-  attempt's managed `pr_merge` job through the ordinary native event,
+  attempt's managed `pr_merge` job through the ordinary runner event,
   completion, watcher, and recovery paths.
 - Phase advancement happens only after all registered jobs in the phase reach
   terminal callback state.
@@ -118,24 +118,24 @@ after registration changes.
   synthesizing that phase output.
 - Dynamic verification groups are runtime-expanded inside one managed job from
   bounded plan outputs (`test_cases_json` or `test_cases_count`, plus
-  group-specific aliases). Expanded case steps are emitted as durable native
+  group-specific aliases). Expanded case steps are emitted as durable runner
   step events with concrete slugs and group metadata; template steps must not
   remain the only visible execution record after expansion.
 - Evidence verification gates are canonicalized into managed Glimmung runner
   jobs.
 - Dispatch may include bounded string `inputs`. These are durable run facts,
-  persisted on the Run as `run_inputs`, copied into every native lease's
-  metadata, exposed to native pods as `GLIMMUNG_RUN_INPUT_*`, and preserved
-  across recycle attempts. Native `checkout.ref` and `extra_checkouts[].ref`
+  persisted on the Run as `run_inputs`, copied into every runner lease's
+  metadata, exposed to runner pods as `GLIMMUNG_RUN_INPUT_*`, and preserved
+  across recycle attempts. Runner `checkout.ref` and `extra_checkouts[].ref`
   may use exact run-input templates such as `${{ inputs.git_ref }}`; the
-  launcher resolves them before emitting the native runner job spec so the
+  launcher resolves them before emitting the runner job spec so the
   runner receives a concrete ref.
 - Runs use the workflow schema snapshot captured at run/cycle creation, not a
   later logical workflow update.
 
 ## Failure And Recovery
 
-- A failed native Job produces durable job/phase failure state through the
+- A failed runner Job produces durable job/phase failure state through the
   completion callback path, not a retired failure route.
 - Teardown phases (`purpose: teardown`) are verdict-neutral. A teardown job's
   outcome never sets the run verdict: a failed teardown must not abort an
@@ -156,7 +156,7 @@ after registration changes.
 
 ## Observability
 
-- Native event streams should identify project, issue, run, cycle, phase, job,
+- Runner event streams should identify project, issue, run, cycle, phase, job,
   step, conclusion, and relevant log tail or archive link.
 - A pod that dies for a pod-level reason (OOMKilled, Evicted) must surface that
   reason, not just the Job condition. The Kubernetes Job condition collapses to
@@ -179,9 +179,9 @@ after registration changes.
 - Control-pin changes include tests for pin enforcement on re-registration,
   pinned-patch rejection, the closed pin-target grammar, and ledger/actor
   attribution on the write surface.
-- Native launcher/callback changes include multi-job phase behavior when the
+- Runner launcher/callback changes include multi-job phase behavior when the
   change can affect phase completion.
-- Dispatch-input changes include tests for run persistence, native lease/env
+- Dispatch-input changes include tests for run persistence, runner lease/env
   propagation, checkout-ref resolution, missing-input failure, and recycle
   preservation when applicable.
 - Verification-case shape changes include tests for required case IDs, bounded

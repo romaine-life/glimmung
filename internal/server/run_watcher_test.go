@@ -34,9 +34,9 @@ func TestWatchPathIncludesLabelSelectorAndBookmarks(t *testing.T) {
 		}
 	}
 	// The outer selector pins both managed-by=glimmung and the
-	// native-job=true qualifier that distinguishes phase Jobs from
+	// run-job=true qualifier that distinguishes phase Jobs from
 	// test-slot installer Jobs (which also carry managed-by=glimmung).
-	if !strings.Contains(got, "managed-by%3Dglimmung") || !strings.Contains(got, "native-job%3Dtrue") {
+	if !strings.Contains(got, "managed-by%3Dglimmung") || !strings.Contains(got, "run-job%3Dtrue") {
 		t.Fatalf("outer selector missing phase-Job filters: %s", got)
 	}
 	inner := &k8sJobWatcher{labelSelector: watchInnerSelector}
@@ -70,46 +70,46 @@ func TestKindClassifiesOuterAndInnerByLabel(t *testing.T) {
 func TestDeriveTerminalFromStatusMapsK8sReasonsToEnum(t *testing.T) {
 	cases := []struct {
 		name           string
-		status         NativeJobStatus
+		status         RunnerJobStatus
 		wantConclusion string
 		wantReason     string
 	}{
 		{
 			name: "Complete=True with no Failed -> callback_lost",
-			status: NativeJobStatus{
-				Conditions: []NativeJobCondition{{Type: "Complete", Status: "True"}},
+			status: RunnerJobStatus{
+				Conditions: []RunnerJobCondition{{Type: "Complete", Status: "True"}},
 			},
 			wantConclusion: "failed",
 			wantReason:     JobTerminalReasonCallbackLost,
 		},
 		{
 			name: "Failed=True reason=DeadlineExceeded -> deadline_exceeded",
-			status: NativeJobStatus{
-				Conditions: []NativeJobCondition{{Type: "Failed", Status: "True", Reason: "DeadlineExceeded"}},
+			status: RunnerJobStatus{
+				Conditions: []RunnerJobCondition{{Type: "Failed", Status: "True", Reason: "DeadlineExceeded"}},
 			},
 			wantConclusion: "timed_out",
 			wantReason:     JobTerminalReasonDeadlineExceeded,
 		},
 		{
 			name: "Failed=True reason=BackoffLimitExceeded -> backoff_exceeded",
-			status: NativeJobStatus{
-				Conditions: []NativeJobCondition{{Type: "Failed", Status: "True", Reason: "BackoffLimitExceeded"}},
+			status: RunnerJobStatus{
+				Conditions: []RunnerJobCondition{{Type: "Failed", Status: "True", Reason: "BackoffLimitExceeded"}},
 			},
 			wantConclusion: "timed_out",
 			wantReason:     JobTerminalReasonBackoffExceeded,
 		},
 		{
 			name: "Failed=True reason= -> job_failed",
-			status: NativeJobStatus{
-				Conditions: []NativeJobCondition{{Type: "Failed", Status: "True"}},
+			status: RunnerJobStatus{
+				Conditions: []RunnerJobCondition{{Type: "Failed", Status: "True"}},
 			},
 			wantConclusion: "failed",
 			wantReason:     JobTerminalReasonJobFailed,
 		},
 		{
 			name: "BackoffLimitExceeded + pod OOMKilled -> oom_killed",
-			status: NativeJobStatus{
-				Conditions:           []NativeJobCondition{{Type: "Failed", Status: "True", Reason: "BackoffLimitExceeded"}},
+			status: RunnerJobStatus{
+				Conditions:           []RunnerJobCondition{{Type: "Failed", Status: "True", Reason: "BackoffLimitExceeded"}},
 				PodTerminationReason: "OOMKilled",
 			},
 			wantConclusion: "timed_out",
@@ -117,8 +117,8 @@ func TestDeriveTerminalFromStatusMapsK8sReasonsToEnum(t *testing.T) {
 		},
 		{
 			name: "BackoffLimitExceeded + pod Evicted -> evicted",
-			status: NativeJobStatus{
-				Conditions:           []NativeJobCondition{{Type: "Failed", Status: "True", Reason: "BackoffLimitExceeded"}},
+			status: RunnerJobStatus{
+				Conditions:           []RunnerJobCondition{{Type: "Failed", Status: "True", Reason: "BackoffLimitExceeded"}},
 				PodTerminationReason: "Evicted",
 			},
 			wantConclusion: "timed_out",
@@ -158,8 +158,8 @@ func TestRefineTerminalReasonFromPod(t *testing.T) {
 // reason enum maps to oom_killed, so an operator reading the run report
 // sees "OOMKilled" rather than only the bare enum.
 func TestDeriveTerminalSummaryCarriesPodReason(t *testing.T) {
-	status := NativeJobStatus{
-		Conditions:           []NativeJobCondition{{Type: "Failed", Status: "True", Reason: "BackoffLimitExceeded"}},
+	status := RunnerJobStatus{
+		Conditions:           []RunnerJobCondition{{Type: "Failed", Status: "True", Reason: "BackoffLimitExceeded"}},
 		PodTerminationReason: "OOMKilled",
 	}
 	_, _, summary := deriveTerminalFromStatus(status, "glim-verify")
@@ -233,7 +233,7 @@ func TestWatchListAndSyncDispatchesTerminalJobsAndReturnsResourceVersion(t *test
 		tokenRunID:         "r1",
 		tokenProject:       "proj",
 		appendIdx:          1,
-		nativeExpectedJobs: []string{"env-prep"},
+		runnerExpectedJobs: []string{"env-prep"},
 		leaseResult:        Lease{Project: "proj", LeaseNumber: intPtr(1), State: "claimed", Metadata: map[string]any{}},
 	}
 	store.run = &RunReplayData{
@@ -249,8 +249,8 @@ func TestWatchListAndSyncDispatchesTerminalJobsAndReturnsResourceVersion(t *test
 		Project: "proj",
 		Name:    "wf",
 		Phases: []PhaseSpec{
-			{Name: "env-prep", Kind: "k8s_job", Jobs: []NativeJobSpec{{ID: "env-prep"}}},
-			{Name: "cleanup", Kind: "k8s_job", RunOn: PhaseRunOnAlways, Purpose: PhasePurposeTeardown, DependsOn: []string{"env-prep"}, Jobs: []NativeJobSpec{{ID: "env-destroy"}}},
+			{Name: "env-prep", Kind: "k8s_job", Jobs: []RunnerJobSpec{{ID: "env-prep"}}},
+			{Name: "cleanup", Kind: "k8s_job", RunOn: PhaseRunOnAlways, Purpose: PhasePurposeTeardown, DependsOn: []string{"env-prep"}, Jobs: []RunnerJobSpec{{ID: "env-destroy"}}},
 		},
 	}
 	listStore := &runReportListStore{
@@ -269,7 +269,7 @@ func TestWatchListAndSyncDispatchesTerminalJobsAndReturnsResourceVersion(t *test
 		}},
 	}
 	events := newInnerJobEventStore(listStore)
-	launcher := &fakeNativeLauncher{}
+	launcher := &fakeRunLauncher{}
 
 	wch := &k8sJobWatcher{
 		watcherDeps: watcherDeps{
@@ -281,7 +281,7 @@ func TestWatchListAndSyncDispatchesTerminalJobsAndReturnsResourceVersion(t *test
 			completionStore: store,
 			jobStore:        store,
 			eventStore:      events,
-			nativeLauncher:  launcher,
+			runLauncher:     launcher,
 			statusGetter:    &fakeJobStatusGetter{},
 			namespace:       "glimmung-runs",
 		},
@@ -294,9 +294,9 @@ func TestWatchListAndSyncDispatchesTerminalJobsAndReturnsResourceVersion(t *test
 	if rv != "999" {
 		t.Fatalf("resourceVersion=%q, want 999", rv)
 	}
-	got, ok := store.nativeCompletions["env-prep"]
+	got, ok := store.runnerCompletions["env-prep"]
 	if !ok {
-		t.Fatalf("expected env-prep to be synthesized; completions=%v", store.nativeCompletions)
+		t.Fatalf("expected env-prep to be synthesized; completions=%v", store.runnerCompletions)
 	}
 	if got.Conclusion != "timed_out" {
 		t.Fatalf("conclusion=%q", got.Conclusion)
@@ -352,7 +352,7 @@ func TestWatchStreamDispatchesModifiedTerminalEvent(t *testing.T) {
 		tokenRunID:         "r1",
 		tokenProject:       "proj",
 		appendIdx:          1,
-		nativeExpectedJobs: []string{"env-prep"},
+		runnerExpectedJobs: []string{"env-prep"},
 		leaseResult:        Lease{Project: "proj", LeaseNumber: intPtr(1), State: "claimed", Metadata: map[string]any{}},
 	}
 	store.run = &RunReplayData{
@@ -368,8 +368,8 @@ func TestWatchStreamDispatchesModifiedTerminalEvent(t *testing.T) {
 		Project: "proj",
 		Name:    "wf",
 		Phases: []PhaseSpec{
-			{Name: "env-prep", Kind: "k8s_job", Jobs: []NativeJobSpec{{ID: "env-prep"}}},
-			{Name: "cleanup", Kind: "k8s_job", RunOn: PhaseRunOnAlways, Purpose: PhasePurposeTeardown, DependsOn: []string{"env-prep"}, Jobs: []NativeJobSpec{{ID: "env-destroy"}}},
+			{Name: "env-prep", Kind: "k8s_job", Jobs: []RunnerJobSpec{{ID: "env-prep"}}},
+			{Name: "cleanup", Kind: "k8s_job", RunOn: PhaseRunOnAlways, Purpose: PhasePurposeTeardown, DependsOn: []string{"env-prep"}, Jobs: []RunnerJobSpec{{ID: "env-destroy"}}},
 		},
 	}
 	listStore := &runReportListStore{
@@ -397,7 +397,7 @@ func TestWatchStreamDispatchesModifiedTerminalEvent(t *testing.T) {
 			completionStore: store,
 			jobStore:        store,
 			eventStore:      events,
-			nativeLauncher:  &fakeNativeLauncher{},
+			runLauncher:     &fakeRunLauncher{},
 			statusGetter:    &fakeJobStatusGetter{},
 			namespace:       "glimmung-runs",
 		},
@@ -410,9 +410,9 @@ func TestWatchStreamDispatchesModifiedTerminalEvent(t *testing.T) {
 	if err != errWatchClosedNormally && err != nil {
 		t.Fatalf("watch: %v", err)
 	}
-	got, ok := store.nativeCompletions["env-prep"]
+	got, ok := store.runnerCompletions["env-prep"]
 	if !ok {
-		t.Fatalf("synthesis did not fire; completions=%v", store.nativeCompletions)
+		t.Fatalf("synthesis did not fire; completions=%v", store.runnerCompletions)
 	}
 	if got.TerminalReason != JobTerminalReasonBackoffExceeded {
 		t.Fatalf("terminal_reason=%q", got.TerminalReason)

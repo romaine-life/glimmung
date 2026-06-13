@@ -24,7 +24,7 @@ type RunDispatchTimeoutStore interface {
 	AbortRunByID(ctx context.Context, project, runID, reason string) (AbortRunResult, error)
 }
 
-// activeJobFailureGracePeriod gives the native runner a small window after
+// activeJobFailureGracePeriod gives the runner a small window after
 // k8s marks a Job terminally Failed before the reconciler synthesizes a
 // completion. The completion callback may already be in flight; without a
 // grace period we race and double-complete. 60s is well inside the runner's
@@ -150,11 +150,11 @@ func currentRunReconcilerArtifactWriter() ArtifactWriter {
 // returns the /v1/artifacts/... URL the run-report UI dereferences.
 // Empty return means the caller should keep the Grafana Loki fallback
 // link — either because the artifact writer is unconfigured, the
-// launcher does not implement NativeJobLogsFetcher, the fetch
+// launcher does not implement RunnerJobLogsFetcher, the fetch
 // returned no bytes (TTL'd pod), or the upload failed transiently.
 // Errors from the upload path are logged via logf but not returned;
 // the caller does not block the watcher tick on capture failures.
-func captureInnerJobLogs(ctx context.Context, fetcher NativeJobLogsFetcher, writer ArtifactWriter, project, runID, namespace, jobName string, logf func(string, ...any)) string {
+func captureInnerJobLogs(ctx context.Context, fetcher RunnerJobLogsFetcher, writer ArtifactWriter, project, runID, namespace, jobName string, logf func(string, ...any)) string {
 	if fetcher == nil || writer == nil {
 		return ""
 	}
@@ -165,7 +165,7 @@ func captureInnerJobLogs(ctx context.Context, fetcher NativeJobLogsFetcher, writ
 	if project == "" || runID == "" || namespace == "" || jobName == "" {
 		return ""
 	}
-	body, err := fetcher.GetNativeJobLogs(ctx, namespace, jobName, 0)
+	body, err := fetcher.GetRunnerJobLogs(ctx, namespace, jobName, 0)
 	if err != nil {
 		if logf != nil {
 			logf("inner-job log capture fetch failed namespace=%s job=%s: %v", namespace, jobName, err)
@@ -194,18 +194,18 @@ func innerJobLogBlobPath(project, runID, namespace, jobName string) string {
 		"/inner_jobs/" + url.PathEscape(namespace) + "/" + url.PathEscape(jobName) + ".log"
 }
 
-func StartRunDispatchTimeoutReconciler(ctx context.Context, settings Settings, store ReadStore, nativeLauncher NativeLauncher, logf func(string, ...any)) {
-	timeout := time.Duration(settings.NativeRunnerDispatchTimeoutSeconds) * time.Second
+func StartRunDispatchTimeoutReconciler(ctx context.Context, settings Settings, store ReadStore, runLauncher RunLauncher, logf func(string, ...any)) {
+	timeout := time.Duration(settings.RunnerDispatchTimeoutSeconds) * time.Second
 	timeoutStore, _ := store.(RunDispatchTimeoutStore)
-	jobStatusGetter, _ := nativeLauncher.(NativeJobStatusGetter)
-	logsFetcher, _ := nativeLauncher.(NativeJobLogsFetcher)
+	jobStatusGetter, _ := runLauncher.(RunnerJobStatusGetter)
+	logsFetcher, _ := runLauncher.(RunnerJobLogsFetcher)
 	if timeout <= 0 && jobStatusGetter == nil {
 		return
 	}
 	if timeoutStore == nil {
 		return
 	}
-	namespace := strings.TrimSpace(settings.NativeRunnerNamespace)
+	namespace := strings.TrimSpace(settings.RunnerNamespace)
 	urlBuilder := settingsLogArchiveURLBuilder{settings: settings}
 	go func() {
 		// Reconciler cadence: 1h. After the cluster-wide k8s Watch
@@ -217,7 +217,7 @@ func StartRunDispatchTimeoutReconciler(ctx context.Context, settings Settings, s
 		defer ticker.Stop()
 		for {
 			if timeout > 0 {
-				expired, err := ExpireRunDispatchTimeouts(ctx, timeoutStore, nativeLauncher, timeout, time.Now().UTC())
+				expired, err := ExpireRunDispatchTimeouts(ctx, timeoutStore, runLauncher, timeout, time.Now().UTC())
 				if err != nil && logf != nil {
 					logf("run dispatch-timeout reconcile failed: %v", err)
 				}
@@ -226,7 +226,7 @@ func StartRunDispatchTimeoutReconciler(ctx context.Context, settings Settings, s
 				}
 			}
 			if jobStatusGetter != nil && namespace != "" {
-				completed, err := ExpireFailedActiveJobs(ctx, timeoutStore, nativeLauncher, jobStatusGetter, namespace, urlBuilder, activeJobFailureGracePeriod, time.Now().UTC())
+				completed, err := ExpireFailedActiveJobs(ctx, timeoutStore, runLauncher, jobStatusGetter, namespace, urlBuilder, activeJobFailureGracePeriod, time.Now().UTC())
 				if err != nil && logf != nil {
 					logf("run active-job failure reconcile failed: %v", err)
 				}
@@ -253,7 +253,7 @@ func StartRunDispatchTimeoutReconciler(ctx context.Context, settings Settings, s
 	}()
 }
 
-func ExpireRunDispatchTimeouts(ctx context.Context, store RunDispatchTimeoutStore, nativeLauncher NativeLauncher, timeout time.Duration, now time.Time) (int, error) {
+func ExpireRunDispatchTimeouts(ctx context.Context, store RunDispatchTimeoutStore, runLauncher RunLauncher, timeout time.Duration, now time.Time) (int, error) {
 	if timeout <= 0 {
 		return 0, nil
 	}
@@ -279,7 +279,7 @@ func ExpireRunDispatchTimeouts(ctx context.Context, store RunDispatchTimeoutStor
 			if !ok {
 				continue
 			}
-			completed, err := completeDispatchTimedOutPhase(ctx, store, nativeLauncher, run, phase, timeout)
+			completed, err := completeDispatchTimedOutPhase(ctx, store, runLauncher, run, phase, timeout)
 			if err != nil {
 				return expired, err
 			}
@@ -294,21 +294,21 @@ func ExpireRunDispatchTimeouts(ctx context.Context, store RunDispatchTimeoutStor
 	return expired, nil
 }
 
-func completeDispatchTimedOutPhase(ctx context.Context, store RunDispatchTimeoutStore, nativeLauncher NativeLauncher, run RunReport, phaseName string, timeout time.Duration) (bool, error) {
+func completeDispatchTimedOutPhase(ctx context.Context, store RunDispatchTimeoutStore, runLauncher RunLauncher, run RunReport, phaseName string, timeout time.Duration) (bool, error) {
 	completionStore, ok := any(store).(RunCompletionStore)
 	if !ok || completionStore == nil {
 		return false, nil
 	}
-	jobStore, ok := any(store).(NativeJobCompletionStore)
-	if !ok || jobStore == nil || nativeLauncher == nil {
+	jobStore, ok := any(store).(RunnerJobCompletionStore)
+	if !ok || jobStore == nil || runLauncher == nil {
 		return false, nil
 	}
 	jobIDs := timedOutJobIDs(run, phaseName)
 	if len(jobIDs) == 0 {
 		return false, nil
 	}
-	summary := fmt.Sprintf("native phase %q exceeded dispatch timeout after %s", phaseName, timeout)
-	var ready *NativeJobCompletionResult
+	summary := fmt.Sprintf("runner phase %q exceeded dispatch timeout after %s", phaseName, timeout)
+	var ready *RunnerJobCompletionResult
 	for _, id := range jobIDs {
 		jobID := id
 		payload := CompletionPayload{
@@ -316,7 +316,7 @@ func completeDispatchTimedOutPhase(ctx context.Context, store RunDispatchTimeout
 			Conclusion:      "timed_out",
 			SummaryMarkdown: &summary,
 		}
-		result, err := jobStore.RecordNativeJobCompletion(ctx, run.Project, run.ID, payload)
+		result, err := jobStore.RecordRunnerJobCompletion(ctx, run.Project, run.ID, payload)
 		if err != nil {
 			return false, err
 		}
@@ -327,7 +327,7 @@ func completeDispatchTimedOutPhase(ctx context.Context, store RunDispatchTimeout
 	if ready == nil {
 		return true, nil
 	}
-	_, err := processSyntheticRunCompletion(ctx, completionStore, nativeLauncher, run.Project, run.ID, ready.PhasePayload)
+	_, err := processSyntheticRunCompletion(ctx, completionStore, runLauncher, run.Project, run.ID, ready.PhasePayload)
 	return true, err
 }
 
@@ -350,10 +350,10 @@ func timedOutJobIDs(run RunReport, phaseName string) []string {
 	return nil
 }
 
-func processSyntheticRunCompletion(ctx context.Context, store RunCompletionStore, nativeLauncher NativeLauncher, project, runID string, payload CompletionPayload) (*RunCallbackResult, error) {
+func processSyntheticRunCompletion(ctx context.Context, store RunCompletionStore, runLauncher RunLauncher, project, runID string, payload CompletionPayload) (*RunCallbackResult, error) {
 	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, "/", nil)
 	w := &captureResponseWriter{header: http.Header{}}
-	result := processRunCompletion(ctx, w, req, store, nativeLauncher, project, runID, payload)
+	result := processRunCompletion(ctx, w, req, store, runLauncher, project, runID, payload)
 	if result == nil {
 		status := w.status
 		if status == 0 {
@@ -424,12 +424,12 @@ func phaseDispatchTime(phase RunPhaseExecution) (time.Time, bool) {
 
 // ExpireFailedActiveJobs walks in-progress runs and, for each active job
 // whose backing k8s Job has terminally failed without a completion callback,
-// synthesizes a failed completion through the same path the native runner
+// synthesizes a failed completion through the same path the runner
 // would have used. Without this, a runner pod killed mid-step (DeadlineExceeded,
 // OOM, eviction) leaves the run permanently "in_progress" with the phase
 // showing as "active" — invisible to dashboards and gates, and impossible for
 // the verify-loop budget to retry. See run-execution-reconciler design notes.
-func ExpireFailedActiveJobs(ctx context.Context, store RunDispatchTimeoutStore, nativeLauncher NativeLauncher, statusGetter NativeJobStatusGetter, namespace string, urlBuilder LogArchiveURLBuilder, grace time.Duration, now time.Time) (int, error) {
+func ExpireFailedActiveJobs(ctx context.Context, store RunDispatchTimeoutStore, runLauncher RunLauncher, statusGetter RunnerJobStatusGetter, namespace string, urlBuilder LogArchiveURLBuilder, grace time.Duration, now time.Time) (int, error) {
 	if statusGetter == nil {
 		return 0, nil
 	}
@@ -438,7 +438,7 @@ func ExpireFailedActiveJobs(ctx context.Context, store RunDispatchTimeoutStore, 
 		return 0, nil
 	}
 	completionStore, _ := any(store).(RunCompletionStore)
-	jobStore, _ := any(store).(NativeJobCompletionStore)
+	jobStore, _ := any(store).(RunnerJobCompletionStore)
 	if completionStore == nil || jobStore == nil {
 		return 0, nil
 	}
@@ -460,7 +460,7 @@ func ExpireFailedActiveJobs(ctx context.Context, store RunDispatchTimeoutStore, 
 			if run.State != "in_progress" || run.ID == "" {
 				continue
 			}
-			n, err := reconcileFailedActiveJobsForRun(ctx, completionStore, jobStore, nativeLauncher, statusGetter, run, namespace, urlBuilder, grace, now)
+			n, err := reconcileFailedActiveJobsForRun(ctx, completionStore, jobStore, runLauncher, statusGetter, run, namespace, urlBuilder, grace, now)
 			if err != nil {
 				return completed, err
 			}
@@ -470,7 +470,7 @@ func ExpireFailedActiveJobs(ctx context.Context, store RunDispatchTimeoutStore, 
 	return completed, nil
 }
 
-func reconcileFailedActiveJobsForRun(ctx context.Context, completionStore RunCompletionStore, jobStore NativeJobCompletionStore, nativeLauncher NativeLauncher, statusGetter NativeJobStatusGetter, run RunReport, namespace string, urlBuilder LogArchiveURLBuilder, grace time.Duration, now time.Time) (int, error) {
+func reconcileFailedActiveJobsForRun(ctx context.Context, completionStore RunCompletionStore, jobStore RunnerJobCompletionStore, runLauncher RunLauncher, statusGetter RunnerJobStatusGetter, run RunReport, namespace string, urlBuilder LogArchiveURLBuilder, grace time.Duration, now time.Time) (int, error) {
 	completed := 0
 	for _, phase := range run.PhaseExecutions {
 		// Only "active" phases can have jobs stuck without callbacks.
@@ -509,7 +509,7 @@ func reconcileFailedActiveJobsForRun(ctx context.Context, completionStore RunCom
 				TerminalReason:  terminalReason,
 				LogArchiveURL:   logURL,
 			}
-			result, err := jobStore.RecordNativeJobCompletion(ctx, run.Project, run.ID, payload)
+			result, err := jobStore.RecordRunnerJobCompletion(ctx, run.Project, run.ID, payload)
 			if err != nil {
 				return completed, err
 			}
@@ -517,7 +517,7 @@ func reconcileFailedActiveJobsForRun(ctx context.Context, completionStore RunCom
 			metrics.RecordRunPhaseJobTerminal(conclusion, NormalizeJobTerminalReason(terminalReason))
 			metrics.RecordRunReconcilerCaught("outer")
 			if result.CompletionReady {
-				if _, err := processSyntheticRunCompletion(ctx, completionStore, nativeLauncher, run.Project, run.ID, result.PhasePayload); err != nil {
+				if _, err := processSyntheticRunCompletion(ctx, completionStore, runLauncher, run.Project, run.ID, result.PhasePayload); err != nil {
 					return completed, err
 				}
 			}
@@ -530,8 +530,8 @@ func reconcileFailedActiveJobsForRun(ctx context.Context, completionStore RunCom
 // the grace period and terminally failed (or has been garbage-collected from
 // k8s entirely), returns the synthetic completion conclusion, the
 // JobTerminalReason* enum value, and a summary the dashboard can render.
-func evaluateActiveJobFailure(ctx context.Context, statusGetter NativeJobStatusGetter, namespace, name string, grace time.Duration, now time.Time) (bool, string, string, string, error) {
-	status, err := statusGetter.GetNativeJobStatus(ctx, namespace, name)
+func evaluateActiveJobFailure(ctx context.Context, statusGetter RunnerJobStatusGetter, namespace, name string, grace time.Duration, now time.Time) (bool, string, string, string, error) {
+	status, err := statusGetter.GetRunnerJobStatus(ctx, namespace, name)
 	if err != nil {
 		return false, "", "", "", err
 	}
@@ -539,7 +539,7 @@ func evaluateActiveJobFailure(ctx context.Context, statusGetter NativeJobStatusG
 		// k8s no longer has the Job (TTL-collected). The run lost its
 		// execution surface and cannot be observed further — fail it so
 		// the verify loop or cleanup phase can run.
-		summary := fmt.Sprintf("native job %q was garbage-collected from kubernetes without a completion callback", name)
+		summary := fmt.Sprintf("runner job %q was garbage-collected from kubernetes without a completion callback", name)
 		return true, "failed", JobTerminalReasonPodGone, summary, nil
 	}
 	if status.IsTerminallySucceeded() && !status.IsTerminallyFailed() {
@@ -551,7 +551,7 @@ func evaluateActiveJobFailure(ctx context.Context, statusGetter NativeJobStatusG
 		if grace > 0 && !status.TerminalTime().IsZero() && now.Sub(status.TerminalTime()) < grace {
 			return false, "", "", "", nil
 		}
-		summary := fmt.Sprintf("native job %q completed in kubernetes but its completion callback was never received", name)
+		summary := fmt.Sprintf("runner job %q completed in kubernetes but its completion callback was never received", name)
 		return true, "failed", JobTerminalReasonCallbackLost, summary, nil
 	}
 	if !status.IsTerminallyFailed() {
@@ -581,7 +581,7 @@ func evaluateActiveJobFailure(ctx context.Context, statusGetter NativeJobStatusG
 		terminalReason = JobTerminalReasonBackoffExceeded
 	}
 	terminalReason = refineTerminalReasonFromPod(terminalReason, status.PodTerminationReason)
-	summary := fmt.Sprintf("native job %q ended with kubernetes condition Failed=true reason=%q: %s", name, reason, strings.TrimSpace(message))
+	summary := fmt.Sprintf("runner job %q ended with kubernetes condition Failed=true reason=%q: %s", name, reason, strings.TrimSpace(message))
 	if status.PodTerminationReason != "" {
 		summary += fmt.Sprintf(" [pod: %s]", status.PodTerminationReason)
 	}
@@ -592,7 +592,7 @@ func evaluateActiveJobFailure(ctx context.Context, statusGetter NativeJobStatusG
 // inner_jobs[] and, for each child still active whose k8s Job has
 // terminally succeeded or failed past the grace period, emits an
 // inner_job_terminated event. The event flows through the same
-// applyNativeEventToExecutionsRaw path runner-emitted events use; the
+// applyRunnerEventToExecutionsRaw path runner-emitted events use; the
 // run-report API then surfaces the terminal state and reason on the
 // inner-Job row.
 //
@@ -606,11 +606,11 @@ func evaluateActiveJobFailure(ctx context.Context, statusGetter NativeJobStatusG
 // identity means the same termination emitted twice collides on the
 // docID and the second write is silently dropped. The next reconciler
 // tick sees the inner Job in state=succeeded/failed and skips it.
-func ExpireInnerJobTerminations(ctx context.Context, store RunDispatchTimeoutStore, statusGetter NativeJobStatusGetter, logsFetcher NativeJobLogsFetcher, artifactWriter ArtifactWriter, urlBuilder LogArchiveURLBuilder, grace time.Duration, now time.Time, logf func(string, ...any)) (int, error) {
+func ExpireInnerJobTerminations(ctx context.Context, store RunDispatchTimeoutStore, statusGetter RunnerJobStatusGetter, logsFetcher RunnerJobLogsFetcher, artifactWriter ArtifactWriter, urlBuilder LogArchiveURLBuilder, grace time.Duration, now time.Time, logf func(string, ...any)) (int, error) {
 	if statusGetter == nil {
 		return 0, nil
 	}
-	eventStore, ok := any(store).(NativeRunStore)
+	eventStore, ok := any(store).(RunnerStore)
 	if !ok || eventStore == nil {
 		return 0, nil
 	}
@@ -649,7 +649,7 @@ func ExpireInnerJobTerminations(ctx context.Context, store RunDispatchTimeoutSto
 					if !ok {
 						continue
 					}
-					if _, err := eventStore.RecordNativeEventByID(ctx, run.Project, run.ID, event); err != nil {
+					if _, err := eventStore.RecordRunnerEventByID(ctx, run.Project, run.ID, event); err != nil {
 						if errors.Is(err, ErrConflict) {
 							// Already emitted — idempotent success.
 							continue
@@ -667,11 +667,11 @@ func ExpireInnerJobTerminations(ctx context.Context, store RunDispatchTimeoutSto
 
 // buildInnerJobTermination polls the inner Job's k8s status and, if
 // terminal past the grace period, constructs the inner_job_terminated
-// event the store applies via applyNativeEventToExecutionsRaw.
-func buildInnerJobTermination(ctx context.Context, statusGetter NativeJobStatusGetter, logsFetcher NativeJobLogsFetcher, artifactWriter ArtifactWriter, project, runID, phaseName string, ij InnerJobRef, urlBuilder LogArchiveURLBuilder, grace time.Duration, now time.Time, logf func(string, ...any)) (NativeRunEventRequest, bool, error) {
-	status, err := statusGetter.GetNativeJobStatus(ctx, ij.Namespace, ij.JobName)
+// event the store applies via applyRunnerEventToExecutionsRaw.
+func buildInnerJobTermination(ctx context.Context, statusGetter RunnerJobStatusGetter, logsFetcher RunnerJobLogsFetcher, artifactWriter ArtifactWriter, project, runID, phaseName string, ij InnerJobRef, urlBuilder LogArchiveURLBuilder, grace time.Duration, now time.Time, logf func(string, ...any)) (RunnerEventRequest, bool, error) {
+	status, err := statusGetter.GetRunnerJobStatus(ctx, ij.Namespace, ij.JobName)
 	if err != nil {
-		return NativeRunEventRequest{}, false, err
+		return RunnerEventRequest{}, false, err
 	}
 	var state, reason, completedAt string
 	switch {
@@ -683,20 +683,20 @@ func buildInnerJobTermination(ctx context.Context, statusGetter NativeJobStatusG
 		completedAt = now.UTC().Format(time.RFC3339Nano)
 	case status.IsTerminallySucceeded() && !status.IsTerminallyFailed():
 		if grace > 0 && !status.TerminalTime().IsZero() && now.Sub(status.TerminalTime()) < grace {
-			return NativeRunEventRequest{}, false, nil
+			return RunnerEventRequest{}, false, nil
 		}
 		state = "succeeded"
 		reason = ""
 		completedAt = formatTerminalTime(status.TerminalTime(), now)
 	case status.IsTerminallyFailed():
 		if grace > 0 && !status.TerminalTime().IsZero() && now.Sub(status.TerminalTime()) < grace {
-			return NativeRunEventRequest{}, false, nil
+			return RunnerEventRequest{}, false, nil
 		}
 		state = "failed"
 		reason = refineTerminalReasonFromPod(mapK8sFailedReasonToInnerJobReason(status.FailureReason()), status.PodTerminationReason)
 		completedAt = formatTerminalTime(status.TerminalTime(), now)
 	default:
-		return NativeRunEventRequest{}, false, nil
+		return RunnerEventRequest{}, false, nil
 	}
 	parentJobID := ij.ParentJobID
 	var parentStepSlug *string
@@ -714,7 +714,7 @@ func buildInnerJobTermination(ctx context.Context, statusGetter NativeJobStatusG
 	}
 	// Prefer the durable artifact-store capture (stage 3 of the
 	// inner-Job contract); fall back to the Grafana Loki deep-link
-	// when either the launcher cannot fetch logs (no NativeJobLogsFetcher
+	// when either the launcher cannot fetch logs (no RunnerJobLogsFetcher
 	// support) or the artifact writer is unconfigured, or the upload
 	// failed transiently. The Grafana fallback works while Loki has the
 	// data; the artifact URL works forever.
@@ -732,7 +732,7 @@ func buildInnerJobTermination(ctx context.Context, statusGetter NativeJobStatusG
 			metadata["log_archive_url"] = logURL
 		}
 	}
-	return NativeRunEventRequest{
+	return RunnerEventRequest{
 		JobID:    parentJobID,
 		Seq:      innerJobTerminationSeq(ij),
 		Event:    "inner_job_terminated",

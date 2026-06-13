@@ -21,7 +21,7 @@ import (
 // `payload` holds the authored config a register/sync replaces wholesale (with
 // an immutable version minted in `project_config_schemas` on every change),
 // while `status` holds the reconciler outputs (managed_auth_origin_status,
-// native_standby_workload_identity_status) that the status setters own. Reads
+// runner_standby_workload_identity_status) that the status setters own. Reads
 // merge the two so the returned shape is unchanged. See
 // docs/durable-project-config.md.
 //
@@ -59,7 +59,7 @@ const insertProjectConfigSchemaSQL = `
 // docs/durable-project-config.md.
 var serverManagedProjectStatusKeys = []string{
 	"managed_auth_origin_status",
-	"native_standby_workload_identity_status",
+	"runner_standby_workload_identity_status",
 }
 
 func isServerManagedProjectStatusKey(key string) bool {
@@ -467,32 +467,32 @@ func (s *ProjectsStore) mutateStatus(ctx context.Context, name string, mutate fu
 	return rec, nil
 }
 
-// SetTestEnvironmentCount updates metadata.native_standby_dns.count and
+// SetTestEnvironmentCount updates metadata.runner_standby_dns.count and
 // strips the embedded `slots` array. The count under
-// metadata.native_standby_workload_identity is mirrored when that nested map
+// metadata.runner_standby_workload_identity is mirrored when that nested map
 // exists. This is authored config, so it re-versions.
 func (s *ProjectsStore) SetTestEnvironmentCount(ctx context.Context, name string, count int) (ProjectRecord, error) {
 	return s.mutateProject(ctx, name, func(metadata map[string]any) error {
-		standbyDNS, _ := metadata["native_standby_dns"].(map[string]any)
+		standbyDNS, _ := metadata["runner_standby_dns"].(map[string]any)
 		if standbyDNS == nil {
 			standbyDNS = map[string]any{}
 		}
 		standbyDNS["count"] = count
 		delete(standbyDNS, "slots")
-		metadata["native_standby_dns"] = standbyDNS
-		if wi, ok := metadata["native_standby_workload_identity"].(map[string]any); ok {
+		metadata["runner_standby_dns"] = standbyDNS
+		if wi, ok := metadata["runner_standby_workload_identity"].(map[string]any); ok {
 			wi["count"] = count
-			metadata["native_standby_workload_identity"] = wi
+			metadata["runner_standby_workload_identity"] = wi
 		}
 		return nil
 	})
 }
 
-// SetNativeWorkloadIdentityStatus sets the reconciler-owned
-// native_standby_workload_identity_status in the status column.
-func (s *ProjectsStore) SetNativeWorkloadIdentityStatus(ctx context.Context, name string, status any) (ProjectRecord, error) {
+// SetRunnerWorkloadIdentityStatus sets the reconciler-owned
+// runner_standby_workload_identity_status in the status column.
+func (s *ProjectsStore) SetRunnerWorkloadIdentityStatus(ctx context.Context, name string, status any) (ProjectRecord, error) {
 	return s.mutateStatus(ctx, name, func(current map[string]any) error {
-		current["native_standby_workload_identity_status"] = status
+		current["runner_standby_workload_identity_status"] = status
 		return nil
 	})
 }
@@ -534,17 +534,17 @@ func (s *ProjectsStore) SetTestLeaseHotSwapMinTTL(ctx context.Context, name stri
 	})
 }
 
-// StripLegacySlotsArray removes metadata.native_standby_dns.slots[].
+// StripLegacySlotsArray removes metadata.runner_standby_dns.slots[].
 // Called by the one-shot slot-storage cleanup in internal/server/.
 // Idempotent: re-running is harmless.
 func (s *ProjectsStore) StripLegacySlotsArray(ctx context.Context, name string) error {
 	_, err := s.mutateProject(ctx, name, func(metadata map[string]any) error {
-		standbyDNS, _ := metadata["native_standby_dns"].(map[string]any)
+		standbyDNS, _ := metadata["runner_standby_dns"].(map[string]any)
 		if standbyDNS == nil {
 			return nil
 		}
 		delete(standbyDNS, "slots")
-		metadata["native_standby_dns"] = standbyDNS
+		metadata["runner_standby_dns"] = standbyDNS
 		return nil
 	})
 	return err

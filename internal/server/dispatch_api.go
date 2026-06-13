@@ -119,7 +119,7 @@ type RunDispatchStore interface {
 	ReleaseIssueLock(ctx context.Context, project string, issueNumber int, holderID string)
 	CreateRun(ctx context.Context, req CreateRunRequest) (CreatedRun, error)
 	StartRunCycle(ctx context.Context, req StartRunCycleRequest) (int, error)
-	RecordNativeJobsSkipped(ctx context.Context, project, runID, phase string, skipped map[string]string) error
+	RecordRunnerJobsSkipped(ctx context.Context, project, runID, phase string, skipped map[string]string) error
 	AcquireLease(ctx context.Context, req LeaseAcquireRequest) (Lease, error)
 	ReadLeaseByRef(ctx context.Context, project, ref string) (Lease, error)
 	CancelLeaseByRef(ctx context.Context, project, ref string) (CancelLeaseResult, error)
@@ -153,7 +153,7 @@ type PublicDispatchResult struct {
 }
 
 // dispatchRunHandler handles POST /v1/runs/dispatch (admin-only).
-func dispatchRunHandler(settings Settings, store ReadStore, nativeLauncher NativeLauncher) http.HandlerFunc {
+func dispatchRunHandler(settings Settings, store ReadStore, runLauncher RunLauncher) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		dispatchStore, ok := store.(RunDispatchStore)
 		if !ok || dispatchStore == nil {
@@ -171,7 +171,7 @@ func dispatchRunHandler(settings Settings, store ReadStore, nativeLauncher Nativ
 			writeUnavailable(w, r, "global agent runtime config is invalid", "invalid_agent_runtime_config")
 			return
 		}
-		result, problem := dispatchRunWithAgentRuntime(r.Context(), dispatchStore, nativeLauncher, globalRuntime, req)
+		result, problem := dispatchRunWithAgentRuntime(r.Context(), dispatchStore, runLauncher, globalRuntime, req)
 		if problem != nil {
 			writeProblem(w, problem.status, problem.message)
 			return
@@ -185,11 +185,11 @@ type dispatchProblem struct {
 	message string
 }
 
-func dispatchRun(ctx context.Context, dispatchStore RunDispatchStore, nativeLauncher NativeLauncher, req DispatchRunRequest) (PublicDispatchResult, *dispatchProblem) {
-	return dispatchRunWithAgentRuntime(ctx, dispatchStore, nativeLauncher, agentruntime.DefaultConfig(), req)
+func dispatchRun(ctx context.Context, dispatchStore RunDispatchStore, runLauncher RunLauncher, req DispatchRunRequest) (PublicDispatchResult, *dispatchProblem) {
+	return dispatchRunWithAgentRuntime(ctx, dispatchStore, runLauncher, agentruntime.DefaultConfig(), req)
 }
 
-func dispatchRunWithAgentRuntime(ctx context.Context, dispatchStore RunDispatchStore, nativeLauncher NativeLauncher, globalRuntime agentruntime.Config, req DispatchRunRequest) (PublicDispatchResult, *dispatchProblem) {
+func dispatchRunWithAgentRuntime(ctx context.Context, dispatchStore RunDispatchStore, runLauncher RunLauncher, globalRuntime agentruntime.Config, req DispatchRunRequest) (PublicDispatchResult, *dispatchProblem) {
 	if req.Project == "" {
 		return PublicDispatchResult{}, &dispatchProblem{status: http.StatusBadRequest, message: "project required"}
 	}
@@ -273,8 +273,8 @@ func dispatchRunWithAgentRuntime(ctx context.Context, dispatchStore RunDispatchS
 		return PublicDispatchResult{}, &dispatchProblem{status: http.StatusUnprocessableEntity, message: "resolve agent runtime: " + err.Error()}
 	}
 
-	if nativeLauncher == nil {
-		return PublicDispatchResult{}, &dispatchProblem{status: http.StatusServiceUnavailable, message: "native launcher not configured"}
+	if runLauncher == nil {
+		return PublicDispatchResult{}, &dispatchProblem{status: http.StatusServiceUnavailable, message: "run launcher not configured"}
 	}
 
 	initPhase, ok := workflowEntryPhase(wf.Phases)
@@ -282,12 +282,12 @@ func dispatchRunWithAgentRuntime(ctx context.Context, dispatchStore RunDispatchS
 		return PublicDispatchResult{}, &dispatchProblem{status: http.StatusUnprocessableEntity, message: "workflow has no entry phase"}
 	}
 	phaseKind := workflowPhaseKind(initPhase.Kind)
-	if err := validateNativeWorkflowKind(phaseKind); err != nil {
+	if err := validateRunnerWorkflowKind(phaseKind); err != nil {
 		return PublicDispatchResult{}, &dispatchProblem{status: http.StatusUnprocessableEntity, message: err.Error()}
 	}
 
 	holderID := newDispatchID()
-	leaseTTLSeconds := nativeRunLeaseTTLSeconds(wf)
+	leaseTTLSeconds := runnerLeaseTTLSeconds(wf)
 	if err := dispatchStore.ClaimIssueLock(ctx, req.Project, req.IssueNumber, holderID, leaseTTLSeconds); err != nil {
 		if errors.Is(err, ErrAlreadyRunning) {
 			return PublicDispatchResult{
@@ -337,7 +337,7 @@ func dispatchRunWithAgentRuntime(ctx context.Context, dispatchStore RunDispatchS
 			EvidenceRequirements: evidenceRequirements,
 			AgentRuntime:         agentRuntime,
 		}, issue, issueRepo, initPhase.Name, 0, nil),
-		TTLSeconds: nativeLeaseTTLP(leaseTTLSeconds),
+		TTLSeconds: runnerLeaseTTLP(leaseTTLSeconds),
 	}, dispatchStore.AcquireLease)
 	if err != nil {
 		dispatchStore.ReleaseIssueLock(ctx, req.Project, req.IssueNumber, holderID)
@@ -356,7 +356,7 @@ func dispatchRunWithAgentRuntime(ctx context.Context, dispatchStore RunDispatchS
 	if initialLease.State != "claimed" {
 		_, _ = dispatchStore.CancelLeaseByRef(ctx, req.Project, initialLeaseRef)
 		dispatchStore.ReleaseIssueLock(ctx, req.Project, req.IssueNumber, holderID)
-		detail := nativeLeaseNotClaimedError(initialLease).Error() + "; run was not created"
+		detail := runnerLeaseNotClaimedError(initialLease).Error() + "; run was not created"
 		return PublicDispatchResult{
 			State:       "dispatch_failed",
 			IssueRef:    &issueRef,
@@ -412,7 +412,7 @@ func dispatchRunWithAgentRuntime(ctx context.Context, dispatchStore RunDispatchS
 		EvidenceRequirements: evidenceRequirements,
 		AgentRuntime:         agentRuntime,
 	}
-	admission, err := admitRunCycle(ctx, dispatchStore, nativeLauncher, runData, wf, issue, issueRepo, LeasePurposeDispatch)
+	admission, err := admitRunCycle(ctx, dispatchStore, runLauncher, runData, wf, issue, issueRepo, LeasePurposeDispatch)
 	if err != nil {
 		_, _ = dispatchStore.CancelLeaseByRef(ctx, req.Project, initialLeaseRef)
 		return PublicDispatchResult{}, &dispatchProblem{status: http.StatusInternalServerError, message: "admit run cycle failed"}

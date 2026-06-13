@@ -549,7 +549,7 @@ func (s *fakeLeaseStore) writeSlotStatusLocked(project string, status TestEnviro
 		if s.projects[i].Metadata == nil {
 			s.projects[i].Metadata = map[string]any{}
 		}
-		standby, _ := s.projects[i].Metadata["native_standby_dns"].(map[string]any)
+		standby, _ := s.projects[i].Metadata["runner_standby_dns"].(map[string]any)
 		if standby == nil {
 			standby = map[string]any{}
 		}
@@ -569,7 +569,7 @@ func (s *fakeLeaseStore) writeSlotStatusLocked(project string, status TestEnviro
 			slots = append(slots, testSlotStatusMap(status))
 		}
 		standby["slots"] = slots
-		s.projects[i].Metadata["native_standby_dns"] = standby
+		s.projects[i].Metadata["runner_standby_dns"] = standby
 		s.etag++
 		return s.projects[i].WithETag(s.currentEtagLocked()), nil
 	}
