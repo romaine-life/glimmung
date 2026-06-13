@@ -479,6 +479,36 @@ func TestStateEventsStreamsInitialStateEvent(t *testing.T) {
 	}
 }
 
+func TestTestEnvironmentNameFallsBackToNativeStandbyPrefix(t *testing.T) {
+	project := Project{
+		ID:   "tank-operator",
+		Name: "tank-operator",
+		Metadata: map[string]any{
+			"runner_standby_dns": map[string]any{"count": float64(11)},
+			"native_standby_dns": map[string]any{"slot_prefix": "tank-operator-slot"},
+		},
+	}
+
+	if got := testEnvironmentName("tank-operator", 10, project, Lease{}); got != "tank-operator-slot-10" {
+		t.Fatalf("testEnvironmentName = %q, want tank-operator-slot-10", got)
+	}
+}
+
+func TestTestEnvironmentNamePrefersExplicitRunnerPrefix(t *testing.T) {
+	project := Project{
+		ID:   "tank-operator",
+		Name: "tank-operator",
+		Metadata: map[string]any{
+			"runner_standby_dns": map[string]any{"slot_prefix": "tank-runner-slot"},
+			"native_standby_dns": map[string]any{"slot_prefix": "tank-operator-slot"},
+		},
+	}
+
+	if got := testEnvironmentName("tank-operator", 10, project, Lease{}); got != "tank-runner-slot-10" {
+		t.Fatalf("testEnvironmentName = %q, want tank-runner-slot-10", got)
+	}
+}
+
 func intPtr(value int) *int {
 	return &value
 }

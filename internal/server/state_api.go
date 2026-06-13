@@ -697,12 +697,25 @@ func projectTestSlotCount(_ Settings, project Project) int {
 
 func testEnvironmentName(project string, slotIndex int, projectDoc Project, _ Lease) string {
 	prefix := firstNonEmpty(projectDoc.Name, projectDoc.ID, project)
+	foundPrefix := false
 	if standbyDNS, ok := mapFromMap(projectDoc.Metadata, "runner_standby_dns"); ok {
 		if value, ok := stringFromMap(standbyDNS, "slot_prefix"); ok && strings.TrimSpace(value) != "" {
 			prefix = strings.Trim(strings.TrimSpace(value), ".")
+			foundPrefix = true
 		}
 		if value, ok := stringFromMap(standbyDNS, "slotPrefix"); ok && strings.TrimSpace(value) != "" {
 			prefix = strings.Trim(strings.TrimSpace(value), ".")
+			foundPrefix = true
+		}
+	}
+	if !foundPrefix {
+		if standbyDNS, ok := mapFromMap(projectDoc.Metadata, "native_standby_dns"); ok {
+			if value, ok := stringFromMap(standbyDNS, "slot_prefix"); ok && strings.TrimSpace(value) != "" {
+				prefix = strings.Trim(strings.TrimSpace(value), ".")
+			}
+			if value, ok := stringFromMap(standbyDNS, "slotPrefix"); ok && strings.TrimSpace(value) != "" {
+				prefix = strings.Trim(strings.TrimSpace(value), ".")
+			}
 		}
 	}
 	return prefix + "-" + strconv.Itoa(slotIndex)

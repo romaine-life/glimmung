@@ -1918,3 +1918,33 @@ func TestAppendTestSlotHotSwapHistoryResolvesSlotLease(t *testing.T) {
 		t.Fatalf("body=%s, want lease_extension", rec.Body.String())
 	}
 }
+
+func TestTestSlotPrefixFallsBackToNativeStandbyPrefix(t *testing.T) {
+	project := Project{
+		ID:   "tank-operator",
+		Name: "tank-operator",
+		Metadata: map[string]any{
+			"runner_standby_dns": map[string]any{"count": float64(11)},
+			"native_standby_dns": map[string]any{"slot_prefix": "tank-operator-slot"},
+		},
+	}
+
+	if got := testSlotPrefix(project); got != "tank-operator-slot" {
+		t.Fatalf("testSlotPrefix = %q, want tank-operator-slot", got)
+	}
+}
+
+func TestTestSlotPrefixPrefersExplicitRunnerPrefix(t *testing.T) {
+	project := Project{
+		ID:   "tank-operator",
+		Name: "tank-operator",
+		Metadata: map[string]any{
+			"runner_standby_dns": map[string]any{"slot_prefix": "tank-runner-slot"},
+			"native_standby_dns": map[string]any{"slot_prefix": "tank-operator-slot"},
+		},
+	}
+
+	if got := testSlotPrefix(project); got != "tank-runner-slot" {
+		t.Fatalf("testSlotPrefix = %q, want tank-runner-slot", got)
+	}
+}
