@@ -44,10 +44,10 @@ Glimmung-managed workflows must declare:
 1. **prepare** — exactly one phase named `prepare` with `depends_on=[]`
    (the entry phase). Project owns what goes here; common shape is
    "build a container image and deploy it to a per-run validation
-   namespace." When a workflow runs independent planning and
-   implementation jobs later, `prepare` is also the place to produce any
-   shared issue contract that both branches may consume without seeing
-   each other's output.
+   namespace." The platform mandates no project stage names inside it —
+   the retired issue-contract entry mandate is deleted; registration
+   rejects nothing about a prepare phase's job ids or outputs beyond the
+   generic rules.
 2. **testing** — exactly one bounded verification phase with `verify=True`.
    The workflow row declares `constraints.verification.shape`, which selects
    the verification phase shape for that workflow. Supported profiles are

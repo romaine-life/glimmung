@@ -25,7 +25,7 @@ func whenTestRegister() WorkflowRegister {
 		Name:    "agent-run",
 		Vars:    map[string]string{"feature_type": "effect"},
 		Phases: []PhaseSpec{
-			{Name: "prepare", Outputs: []string{IssueContractOutputKey}, Jobs: []NativeJobSpec{{ID: IssueContractJobID}}},
+			{Name: "prepare", Outputs: []string{"issue_contract"}, Jobs: []NativeJobSpec{{ID: "issue-contract"}}},
 			{Name: "work", DependsOn: []string{"prepare"}, Jobs: []NativeJobSpec{
 				{ID: "test-plan", When: "${{ vars.feature_type }} != 'effect'"},
 				{ID: "implement"},

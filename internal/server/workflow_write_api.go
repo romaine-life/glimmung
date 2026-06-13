@@ -31,9 +31,6 @@ const (
 
 	PhaseNamePrepare = "prepare"
 
-	IssueContractJobID     = "issue-contract"
-	IssueContractOutputKey = "issue_contract"
-
 	MaxVerificationDynamicBlockItemCount = 10
 
 	VerificationCaseJobCount             = 10
@@ -802,9 +799,6 @@ func ValidateWorkflowRegister(req WorkflowRegister) error {
 			if len(phase.DependsOn) != 0 {
 				return ValidationError{Message: fmt.Sprintf("workflow %s entry phase %q must not declare depends_on", req.Name, name)}
 			}
-			if err := validatePrepareIssueContract(req.Name, phase); err != nil {
-				return err
-			}
 		} else {
 			if len(phase.DependsOn) != 1 {
 				return ValidationError{Message: fmt.Sprintf("workflow %s phase %q must declare exactly one depends_on entry", req.Name, name)}
@@ -955,30 +949,6 @@ func validateWorkflowConstraints(workflowName string, constraints WorkflowConstr
 	}
 	if constraints.Verification.Shape == VerificationShapeBoundedCaseJobs && constraints.Verification.MaxCases == 0 {
 		return ValidationError{Message: fmt.Sprintf("workflow %s constraints.verification.max_cases is required for shape=%q", workflowName, VerificationShapeBoundedCaseJobs)}
-	}
-	return nil
-}
-
-func validatePrepareIssueContract(workflowName string, phase PhaseSpec) error {
-	hasOutput := false
-	for _, output := range phase.Outputs {
-		if strings.TrimSpace(output) == IssueContractOutputKey {
-			hasOutput = true
-			break
-		}
-	}
-	if !hasOutput {
-		return ValidationError{Message: fmt.Sprintf("workflow %s entry phase %q must declare output %q", workflowName, PhaseNamePrepare, IssueContractOutputKey)}
-	}
-	hasJob := false
-	for _, job := range phase.Jobs {
-		if strings.TrimSpace(job.ID) == IssueContractJobID {
-			hasJob = true
-			break
-		}
-	}
-	if !hasJob {
-		return ValidationError{Message: fmt.Sprintf("workflow %s entry phase %q must declare job %q", workflowName, PhaseNamePrepare, IssueContractJobID)}
 	}
 	return nil
 }
