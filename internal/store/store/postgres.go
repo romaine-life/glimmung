@@ -9006,6 +9006,17 @@ func (s *Store) CreateRun(ctx context.Context, req server.CreateRunRequest) (ser
 		return server.CreatedRun{}, err
 	}
 
+	// Structural backstop: a run cannot be persisted unless its inputs satisfy
+	// the workflow's declared dispatch_inputs. Dispatch handlers resolve inputs
+	// (applying declared defaults) before reaching here, but enforcing it at the
+	// single run-creation chokepoint means no path — normal, synthetic, or a
+	// future one — can create a run that leaves a `${{ inputs.X }}` phase
+	// template unsatisfiable (which previously stranded a dispatch_failed run and
+	// its lease when synthetic dispatch skipped input resolution).
+	if err := server.ValidateRunInputs(wf.DispatchInputs, req.RunInputs); err != nil {
+		return server.CreatedRun{}, fmt.Errorf("run inputs do not satisfy workflow dispatch_inputs: %w", err)
+	}
+
 	originKind := "dispatch"
 	if req.TriggerSource != nil {
 		if k, ok := req.TriggerSource["kind"].(string); ok && k != "" {

@@ -131,3 +131,30 @@ func resolveDispatchRunInputs(declared []DispatchInputSpec, supplied map[string]
 	}
 	return resolved, nil
 }
+
+// ValidateRunInputs is the structural backstop enforced at run creation. A run's
+// inputs must satisfy the workflow's declared DispatchInputs: every declared
+// input is present (resolution fills declared defaults, so a resolved set always
+// covers them) and every present key is declared. It exists so no dispatch path
+// — normal, synthetic, or a future one — can persist a run whose inputs leave a
+// `${{ inputs.X }}` phase template unsatisfiable. Dispatch handlers resolve
+// inputs with resolveDispatchRunInputs first (which applies declared defaults
+// and rejects missing-required up front); this guards the persistence boundary
+// itself so the contract holds even if a caller forgets to.
+func ValidateRunInputs(declared []DispatchInputSpec, runInputs map[string]string) error {
+	declaredByName := make(map[string]struct{}, len(declared))
+	for _, input := range declared {
+		declaredByName[input.Name] = struct{}{}
+	}
+	for _, key := range sortedRunInputKeys(runInputs) {
+		if _, ok := declaredByName[key]; !ok {
+			return fmt.Errorf("run input %q is not declared by the workflow's dispatch_inputs", key)
+		}
+	}
+	for _, input := range declared {
+		if _, ok := runInputs[input.Name]; !ok {
+			return fmt.Errorf("run input %q is declared by the workflow but is missing from the run's resolved inputs; dispatch must resolve inputs (applying declared defaults) before creating the run", input.Name)
+		}
+	}
+	return nil
+}
