@@ -682,6 +682,21 @@ func ValidateWorkflowRegister(req WorkflowRegister) error {
 			if err := validateVerificationJob(req.Name, phase, constraints.Verification); err != nil {
 				return err
 			}
+			// Evidence upload is a Glimmung-owned managed primitive. Like the
+			// pr_merge/pr_touchpoint job assertions, registration locks the
+			// invariant so a hand-built workflow that strips the managed step
+			// is rejected. Canonicalization auto-appends the step to every
+			// verification job BEFORE validation runs, so conforming (and
+			// later re-registered legacy) workflows pass; only a workflow that
+			// deliberately bypassed canonicalization can fail here.
+			for _, job := range phase.Jobs {
+				if !jobHasEvidenceUploadStep(job) {
+					return ValidationError{Message: fmt.Sprintf(
+						"workflow %s verification phase %q job %q is missing the managed %q step %q; it is auto-injected during canonicalization and must not be stripped",
+						req.Name, name, job.ID, JobPrimitiveEvidenceUpload, EvidenceUploadStepSlug,
+					)}
+				}
+			}
 			testingCount++
 		} else if purpose == PhasePurposeVerification {
 			return ValidationError{Message: fmt.Sprintf("workflow %s phase %q purpose=%q must set verify=true", req.Name, name, PhasePurposeVerification)}

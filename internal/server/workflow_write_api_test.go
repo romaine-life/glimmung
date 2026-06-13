@@ -62,7 +62,12 @@ func verificationCaseJobsForTest() []NativeJobSpec {
 }
 
 func singleVerificationJobForTest() NativeJobSpec {
-	return NativeJobSpec{
+	// Mirrors the canonical (post-canonicalization) shape a real registration
+	// produces: the project's evidence-producing steps followed by the managed
+	// evidence_upload step that CanonicalNativePhase auto-appends to every
+	// verification job. appendManagedEvidenceUploadStep is idempotent, so tests
+	// that also run normalizeWorkflowRegister do not double-append.
+	return appendManagedEvidenceUploadStep(NativeJobSpec{
 		ID:             "llm-verify",
 		Managed:        true,
 		TimeoutSeconds: intPtr(2400),
@@ -76,16 +81,19 @@ func singleVerificationJobForTest() NativeJobSpec {
 			{Slug: "upload-screenshots", Run: "echo upload"},
 			{Slug: "emit", Run: "echo emit"},
 		},
-	}
+	})
 }
 
 func boundedVerificationJobsForTest(count int) []NativeJobSpec {
 	jobs := make([]NativeJobSpec, 0, count)
 	for i := 1; i <= count; i++ {
-		jobs = append(jobs, NativeJobSpec{
+		// Canonical shape: each bounded case job carries the managed
+		// evidence_upload step CanonicalNativePhase auto-appends. Idempotent,
+		// so a later normalizeWorkflowRegister does not double-append.
+		jobs = append(jobs, appendManagedEvidenceUploadStep(NativeJobSpec{
 			ID:             verificationCaseJobID(i),
 			TimeoutSeconds: intPtr(300),
-		})
+		}))
 	}
 	return jobs
 }
@@ -1356,5 +1364,174 @@ func TestValidateWorkflowAcceptsNonRequiredInputWithDefault(t *testing.T) {
 	}
 	if err := ValidateWorkflowRegister(req); err != nil {
 		t.Fatalf("ValidateWorkflowRegister: %v", err)
+	}
+}
+
+func TestCanonicalNativePhaseAppendsEvidenceUploadStepToVerificationJobs(t *testing.T) {
+	phase := PhaseSpec{
+		Name:   "verify",
+		Verify: true,
+		Jobs: []NativeJobSpec{
+			{ID: "llm-verify", Managed: true, TimeoutSeconds: intPtr(2400), Steps: []NativeStepSpec{
+				{Slug: "run-verification", Type: "run", Run: "echo verify"},
+				{Slug: "collect-evidence", Type: "run", Run: "echo collect"},
+			}},
+		},
+	}
+
+	got := CanonicalNativePhase(phase)
+
+	if len(got.Jobs) != 1 {
+		t.Fatalf("jobs=%d, want 1", len(got.Jobs))
+	}
+	steps := got.Jobs[0].Steps
+	if len(steps) != 3 {
+		t.Fatalf("steps=%#v, want 3 (2 project + 1 managed)", steps)
+	}
+	last := steps[len(steps)-1]
+	if last.Slug != EvidenceUploadStepSlug {
+		t.Fatalf("appended step slug=%q, want %q (must be last, after project evidence steps)", last.Slug, EvidenceUploadStepSlug)
+	}
+	if last.Type != "run" || !strings.Contains(last.Run, "upload-evidence") {
+		t.Fatalf("managed step=%#v, want run invoking upload-evidence subcommand", last)
+	}
+	// Project steps must be preserved and stay ahead of the managed step.
+	if steps[0].Slug != "run-verification" || steps[1].Slug != "collect-evidence" {
+		t.Fatalf("project steps reordered: %#v", steps)
+	}
+}
+
+func TestCanonicalNativePhaseEvidenceUploadStepIsIdempotent(t *testing.T) {
+	phase := PhaseSpec{
+		Name:   "verify",
+		Verify: true,
+		Jobs: []NativeJobSpec{
+			{ID: "llm-verify", Managed: true, TimeoutSeconds: intPtr(2400), Steps: []NativeStepSpec{
+				{Slug: "run-verification", Type: "run", Run: "echo verify"},
+			}},
+		},
+	}
+
+	once := CanonicalNativePhase(phase)
+	twice := CanonicalNativePhase(once)
+
+	for i, job := range twice.Jobs {
+		count := 0
+		for _, step := range job.Steps {
+			if step.Slug == EvidenceUploadStepSlug {
+				count++
+			}
+		}
+		if count != 1 {
+			t.Fatalf("job[%d] has %d evidence_upload steps after re-canonicalization, want exactly 1", i, count)
+		}
+	}
+}
+
+func TestCanonicalNativePhaseAppendsEvidenceUploadToEveryBoundedCaseJob(t *testing.T) {
+	// Build raw case jobs (no managed step) so this genuinely exercises the
+	// canonicalization append across every job in a multi-job verification phase.
+	jobs := make([]NativeJobSpec, 0, DefaultVerificationBoundedCaseCount)
+	for i := 1; i <= DefaultVerificationBoundedCaseCount; i++ {
+		jobs = append(jobs, NativeJobSpec{ID: verificationCaseJobID(i), TimeoutSeconds: intPtr(300)})
+	}
+	phase := PhaseSpec{Name: "verify", Verify: true, Jobs: jobs}
+
+	got := CanonicalNativePhase(phase)
+
+	if len(got.Jobs) != DefaultVerificationBoundedCaseCount {
+		t.Fatalf("jobs=%d, want %d", len(got.Jobs), DefaultVerificationBoundedCaseCount)
+	}
+	for _, job := range got.Jobs {
+		if !jobHasEvidenceUploadStep(job) {
+			t.Fatalf("bounded case job %q is missing the managed evidence_upload step", job.ID)
+		}
+	}
+}
+
+func TestCanonicalNativePhaseDoesNotAppendEvidenceUploadToNonVerificationPhase(t *testing.T) {
+	phase := PhaseSpec{
+		Name: "work",
+		Jobs: []NativeJobSpec{
+			{ID: "implement", Managed: true, Steps: []NativeStepSpec{{Slug: "implement", Type: "run", Run: "echo work"}}},
+		},
+	}
+
+	got := CanonicalNativePhase(phase)
+
+	if jobHasEvidenceUploadStep(got.Jobs[0]) {
+		t.Fatalf("non-verification phase job unexpectedly carries the managed evidence_upload step: %#v", got.Jobs[0].Steps)
+	}
+}
+
+func TestValidateWorkflowRegisterAcceptsCanonicalizedEvidenceUploadStep(t *testing.T) {
+	// A normally-registered workflow: normalize (which canonicalizes and
+	// auto-appends the managed step) then validate. The assertion must pass
+	// because canonicalization injected the step on every verification job.
+	req := workflowWithJobTimeout(intPtr(300))
+	normalizeWorkflowRegister(&req)
+
+	if err := ValidateWorkflowRegister(req); err != nil {
+		t.Fatalf("ValidateWorkflowRegister: %v", err)
+	}
+	for _, job := range req.Phases[1].Jobs {
+		if !jobHasEvidenceUploadStep(job) {
+			t.Fatalf("verification job %q missing managed evidence_upload step after normalize", job.ID)
+		}
+	}
+}
+
+func TestValidateWorkflowRegisterRejectsVerificationJobMissingEvidenceUploadStep(t *testing.T) {
+	// Simulate a hand-built workflow that bypassed canonicalization (or
+	// stripped the managed step): a verification job whose steps do not carry
+	// evidence_upload. Drive validation WITHOUT the auto-append by using the
+	// single-job shape and replacing its steps with a non-managed set, then
+	// validating directly (no normalize).
+	req := workflowWithJobTimeout(intPtr(2400))
+	req.Constraints.Verification.Shape = VerificationShapeSingleJob
+	req.Phases[1].Jobs = []NativeJobSpec{{
+		ID:             "llm-verify",
+		Managed:        true,
+		TimeoutSeconds: intPtr(2400),
+		Steps:          []NativeStepSpec{{Slug: "run-verification", Type: "run", Run: "echo verify"}},
+	}}
+
+	err := ValidateWorkflowRegister(req)
+	if err == nil || !strings.Contains(err.Error(), "managed") || !strings.Contains(err.Error(), EvidenceUploadStepSlug) {
+		t.Fatalf("ValidateWorkflowRegister err=%v, want rejection naming the managed %q step", err, EvidenceUploadStepSlug)
+	}
+}
+
+func TestRegisterWorkflowEndToEndInjectsEvidenceUploadStep(t *testing.T) {
+	store := &fakeWorkflowWriteStore{fakeReadStore: fakeReadStore{projects: []Project{{ID: "spirelens", Name: "spirelens"}}}}
+	handler := NewWithDependencies(Settings{}, store, fakeAdminAuthenticator{})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/workflows", workflowRegisterBody(t, WorkflowRegister{
+		Project: "spirelens",
+		Name:    "agent-run",
+		Phases: []PhaseSpec{
+			{Name: "prepare", Outputs: []string{"issue_contract"}, Jobs: []NativeJobSpec{{ID: "issue-contract"}}},
+			{Name: "verify", Verify: true, RecyclePolicy: &RecyclePolicy{MaxAttempts: 1, On: []string{"verify_fail"}, LandsAt: "prepare"}, DependsOn: []string{"prepare"}, Jobs: verificationCaseJobsForTest()},
+			{Name: "cleanup_early", RunOn: PhaseRunOnAlways, Purpose: PhasePurposeTeardown, When: "${{ run.preserve_test_env }} == 'false'", DependsOn: []string{"verify"}, Jobs: []NativeJobSpec{{ID: "cleanup-early"}}},
+			{Name: "touchpoint", RunOn: PhaseRunOnSuccess, Purpose: PhasePurposeReviewTouchpoint, DependsOn: []string{"cleanup_early"}, Jobs: []NativeJobSpec{{ID: PRTouchpointJobID, Primitive: JobPrimitivePRTouchpoint}}},
+			{Name: "touchpoint_gate", Kind: "k8s_job", Purpose: PhasePurposeReviewGate, DependsOn: []string{"touchpoint"}, Jobs: []NativeJobSpec{{ID: PRMergeJobID, Primitive: JobPrimitivePRMerge}}},
+			{Name: "cleanup_final", RunOn: PhaseRunOnAlways, Purpose: PhasePurposeTeardown, DependsOn: []string{"touchpoint_gate"}},
+		},
+	}))
+	req.Header.Set("Authorization", "Bearer token")
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	verify := store.upsert.Phases[1]
+	if verify.Name != "verify" {
+		t.Fatalf("phase[1]=%q, want verify", verify.Name)
+	}
+	for _, job := range verify.Jobs {
+		if !jobHasEvidenceUploadStep(job) {
+			t.Fatalf("registered verification job %q is missing the managed evidence_upload step", job.ID)
+		}
 	}
 }

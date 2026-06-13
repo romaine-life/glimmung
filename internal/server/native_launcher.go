@@ -1851,6 +1851,23 @@ func nativeJobEnv(settings Settings, req NativeLaunchRequest, job NativeJobSpec,
 			env = appendLiteralEnv(env, seen, "PW_TEST_CONNECT_WS_ENDPOINT", endpoint)
 		}
 	}
+	// Evidence-upload primitive (docs/design/evidence-upload-primitive.md):
+	// the managed evidence_upload step canonicalization appends to each
+	// verification job invokes the runner's own `upload-evidence` subcommand,
+	// so the verification pod needs the entrypoint binary path and the local
+	// evidence directory. GLIMMUNG_NATIVE_RUNNER_BIN tracks the same entrypoint
+	// used for the container command, so the rendered step and the pod stay in
+	// sync. GLIMMUNG_EVIDENCE_DIR is a fixed path under the per-run working dir
+	// (the project default GLIMMUNG_WORKING_DIR = /tmp/glimmung-<run-ref>), and
+	// is injected only into verification-phase pods. The storage account and
+	// container the step reads (AGENT_SCREENSHOT_STORAGE_ACCOUNT /
+	// AGENT_SCREENSHOT_CONTAINER) already arrive via the project's job env —
+	// the same env the current upload bash consumes — so they are not re-set
+	// here.
+	env = appendLiteralEnv(env, seen, "GLIMMUNG_NATIVE_RUNNER_BIN", nativeRunnerEntrypoint(settings))
+	if phaseProducesEvidence(req.Phase) {
+		env = appendLiteralEnv(env, seen, "GLIMMUNG_EVIDENCE_DIR", nativeEvidenceDir(req))
+	}
 	if job.Managed {
 		env = appendLiteralEnv(env, seen, "GLIMMUNG_RUNNER_JOB_SPEC", nativeRunnerJobSpecJSON(job))
 	}
@@ -1912,6 +1929,20 @@ func nativePolicyRefSegment(value string) string {
 
 func nativeRunnerEntrypoint(settings Settings) string {
 	return firstNonEmpty(settings.NativeRunnerEntrypoint, "/app/glimmung-native-runner")
+}
+
+// nativeEvidenceDir is the fixed local directory the managed evidence_upload
+// step uploads from, derived consistently with the project's working-dir
+// convention (GLIMMUNG_WORKING_DIR defaults to /tmp/glimmung-<run-ref>). The
+// upload subcommand treats an empty/absent directory as a success no-op, so
+// injecting the path unconditionally for verification pods is safe even before
+// projects are wired to write evidence into it (Stage 3).
+func nativeEvidenceDir(req NativeLaunchRequest) string {
+	runRef := strings.TrimSpace(runRefFromData(req.Run))
+	if runRef == "" {
+		runRef = "localdev"
+	}
+	return "/tmp/glimmung-" + runRef + "/evidence"
 }
 
 func nativeRunnerJobSpecJSON(job NativeJobSpec) string {

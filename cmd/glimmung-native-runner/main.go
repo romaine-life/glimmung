@@ -205,6 +205,24 @@ type githubTokenResult struct {
 }
 
 func main() {
+	// Subcommand dispatch. With no args the binary is the managed-job
+	// ENTRYPOINT and runs the job/step loop below. With a subcommand it is a
+	// managed primitive invoked by a rendered step in the SAME pod — currently
+	// only `upload-evidence`, the evidence-upload primitive (a step, not a
+	// job, because the evidence lives on the verification pod's local disk).
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "upload-evidence":
+			if err := runUploadEvidence(context.Background(), os.Args[2:]); err != nil {
+				log.Printf("upload-evidence failed: %v", err)
+				os.Exit(1)
+			}
+			return
+		default:
+			log.Printf("unknown subcommand %q", os.Args[1])
+			os.Exit(2)
+		}
+	}
 	cfg, err := runnerConfigFromEnv()
 	if err != nil {
 		log.Printf("configure runner: %v", err)

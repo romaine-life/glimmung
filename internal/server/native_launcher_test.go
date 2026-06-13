@@ -1588,3 +1588,58 @@ func TestNativeJobEnvCarriesPriorVerification(t *testing.T) {
 		}
 	}
 }
+
+func TestNativeJobEnvInjectsEvidenceDirForVerificationPhase(t *testing.T) {
+	runDisplay := "3.1"
+	req := NativeLaunchRequest{
+		Lease:    Lease{Project: "spirelens"},
+		Workflow: Workflow{Name: "agent-run"},
+		Phase:    PhaseSpec{Name: "verify", Verify: true},
+		Run: RunReplayData{
+			ID:               "run-1",
+			Project:          "spirelens",
+			IssueNumber:      12,
+			RunDisplayNumber: &runDisplay,
+		},
+	}
+	env := nativeManifestEnvList(nativeJobEnv(Settings{}, req, NativeJobSpec{ID: "llm-verify", Managed: true}, "secret"))
+
+	if env["GLIMMUNG_EVIDENCE_DIR"] == "" {
+		t.Fatalf("expected GLIMMUNG_EVIDENCE_DIR for verification phase; env=%v", env)
+	}
+	if !strings.HasPrefix(env["GLIMMUNG_EVIDENCE_DIR"], "/tmp/glimmung-") || !strings.HasSuffix(env["GLIMMUNG_EVIDENCE_DIR"], "/evidence") {
+		t.Fatalf("evidence dir=%q, want /tmp/glimmung-<run-ref>/evidence", env["GLIMMUNG_EVIDENCE_DIR"])
+	}
+	// The runner binary path the managed step invokes is exposed and tracks the
+	// configured entrypoint.
+	if env["GLIMMUNG_NATIVE_RUNNER_BIN"] != "/app/glimmung-native-runner" {
+		t.Fatalf("runner bin=%q, want default entrypoint", env["GLIMMUNG_NATIVE_RUNNER_BIN"])
+	}
+}
+
+func TestNativeJobEnvOmitsEvidenceDirForNonVerificationPhase(t *testing.T) {
+	req := NativeLaunchRequest{
+		Lease:    Lease{Project: "spirelens"},
+		Workflow: Workflow{Name: "agent-run"},
+		Phase:    PhaseSpec{Name: "prepare"},
+		Run:      RunReplayData{ID: "run-1", Project: "spirelens", IssueNumber: 12},
+	}
+	env := nativeManifestEnvList(nativeJobEnv(Settings{}, req, NativeJobSpec{ID: "env-prep"}, "secret"))
+
+	if _, ok := env["GLIMMUNG_EVIDENCE_DIR"]; ok {
+		t.Fatalf("non-verification phase must not carry GLIMMUNG_EVIDENCE_DIR; env=%v", env)
+	}
+}
+
+// nativeManifestEnvList flattens the launcher's env entry slice into a name->value map.
+func nativeManifestEnvList(entries []map[string]any) map[string]string {
+	out := map[string]string{}
+	for _, entry := range entries {
+		name, _ := entry["name"].(string)
+		value, _ := entry["value"].(string)
+		if name != "" {
+			out[name] = value
+		}
+	}
+	return out
+}
