@@ -1001,6 +1001,55 @@ func TestEnsureTestSlotPreliminariesDoesNotCreatePlaywrightRuntime(t *testing.T)
 	}
 }
 
+func TestEnsureTestSlotInstallerAccessReplacesStaleRoleBinding(t *testing.T) {
+	tokenPath := tempTokenFile(t)
+	var paths []string
+	roleBindingPosts := 0
+	launcher := &KubernetesRunLauncher{
+		Settings: Settings{
+			K8sAPIHost:           "https://kube.test",
+			K8sSATokenPath:       tokenPath,
+			RunnerNamespace:      "glimmung-runs",
+			RunnerServiceAccount: "glimmung-runner",
+			RunnerNamespaceRole:  "cluster-admin",
+		},
+		HTTPClient: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			paths = append(paths, req.Method+" "+req.URL.Path)
+			status := http.StatusOK
+			body := `{}`
+			if req.Method == http.MethodPost && req.URL.Path == "/apis/rbac.authorization.k8s.io/v1/namespaces/tank-operator-slot-11/rolebindings" {
+				roleBindingPosts++
+				if roleBindingPosts == 1 {
+					status = http.StatusConflict
+					body = `{"message":"already exists"}`
+				}
+			}
+			return &http.Response{
+				StatusCode: status,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader(body)),
+			}, nil
+		})},
+	}
+	lease := Lease{
+		Project: "tank-operator",
+		Metadata: map[string]any{
+			"runner_slot_name":  "tank-operator-slot-11",
+			"runner_slot_index": "11",
+		},
+	}
+
+	if err := launcher.ensureTestSlotInstallerAccess(context.Background(), lease, "tank-operator-slot-11"); err != nil {
+		t.Fatalf("ensureTestSlotInstallerAccess: %v", err)
+	}
+	if roleBindingPosts != 2 {
+		t.Fatalf("roleBindingPosts=%d, want 2; paths=%#v", roleBindingPosts, paths)
+	}
+	if !containsPath(paths, "DELETE /apis/rbac.authorization.k8s.io/v1/namespaces/tank-operator-slot-11/rolebindings/glim-test-slot-installer") {
+		t.Fatalf("expected stale RoleBinding delete, paths=%#v", paths)
+	}
+}
+
 func TestEnsureTestSlotPreliminariesRunsWarmHelmOnly(t *testing.T) {
 	tokenPath := tempTokenFile(t)
 	var paths []string
