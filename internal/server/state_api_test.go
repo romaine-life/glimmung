@@ -342,13 +342,13 @@ func TestStateSnapshotEmitsEmptyStateForUnseededSlots(t *testing.T) {
 	}
 }
 
-func TestStateSnapshotDoesNotInferNativeSlotsFromAppType(t *testing.T) {
+func TestStateSnapshotDoesNotInferSlotsFromAppType(t *testing.T) {
 	now := time.Date(2026, 5, 11, 3, 0, 0, 0, time.UTC)
 	store := fakeStateStore{
 		fakeReadStore: fakeReadStore{projects: []Project{{
 			ID:        "glimmung",
 			Name:      "glimmung",
-			Metadata:  map[string]any{"app_type": "native_web_app"},
+			Metadata:  map[string]any{"app_type": "webapp"},
 			CreatedAt: now,
 		}}},
 	}
@@ -479,28 +479,12 @@ func TestStateEventsStreamsInitialStateEvent(t *testing.T) {
 	}
 }
 
-func TestTestEnvironmentNameFallsBackToNativeStandbyPrefix(t *testing.T) {
-	project := Project{
-		ID:   "tank-operator",
-		Name: "tank-operator",
-		Metadata: map[string]any{
-			"runner_standby_dns": map[string]any{"count": float64(11)},
-			"native_standby_dns": map[string]any{"slot_prefix": "tank-operator-slot"},
-		},
-	}
-
-	if got := testEnvironmentName("tank-operator", 10, project, Lease{}); got != "tank-operator-slot-10" {
-		t.Fatalf("testEnvironmentName = %q, want tank-operator-slot-10", got)
-	}
-}
-
-func TestTestEnvironmentNamePrefersExplicitRunnerPrefix(t *testing.T) {
+func TestTestEnvironmentNameUsesRunnerPrefix(t *testing.T) {
 	project := Project{
 		ID:   "tank-operator",
 		Name: "tank-operator",
 		Metadata: map[string]any{
 			"runner_standby_dns": map[string]any{"slot_prefix": "tank-runner-slot"},
-			"native_standby_dns": map[string]any{"slot_prefix": "tank-operator-slot"},
 		},
 	}
 

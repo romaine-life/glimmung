@@ -248,7 +248,7 @@ func TestGitHubWebhookMissingSignature(t *testing.T) {
 
 func TestRunnerRunStatusByNumber(t *testing.T) {
 	store := &fakeRunMutationStore{
-		runID:  "run-native",
+		runID:  "run-runner",
 		runRef: "proj#10/runs/1",
 		runnerStatus: RunnerStatusResponse{
 			Project:      "proj",
@@ -273,7 +273,7 @@ func TestRunnerRunStatusByNumber(t *testing.T) {
 
 func TestRunnerRunStatusByCallbackToken(t *testing.T) {
 	store := &fakeRunMutationStore{
-		runID:  "run-native",
+		runID:  "run-runner",
 		runRef: "proj#10/runs/1",
 		runnerStatus: RunnerStatusResponse{
 			Project:      "proj",

@@ -244,10 +244,7 @@ func managedAuthOriginsFromProject(project Project) (enabled bool, recordBase, p
 	}
 	enabled = true
 
-	standby, ok := mapFromMap(project.Metadata, "runner_standby_dns")
-	if !ok {
-		standby, _ = mapFromMap(project.Metadata, "nativeStandbyDns")
-	}
+	standby, _ := mapFromMap(project.Metadata, "runner_standby_dns")
 	recordBase = firstNonEmpty(
 		stringMapValue(standby, "record_base"),
 		stringMapValue(standby, "recordBase"),

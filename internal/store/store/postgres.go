@@ -3210,16 +3210,6 @@ func normalizeWorkflowRegister(req *server.WorkflowRegister) {
 	}
 }
 
-func isNativeWebappKind(kind string) bool {
-	switch strings.ToLower(strings.TrimSpace(kind)) {
-	case "native_webapp", "native-webapp", "native webapp",
-		"native_web_app", "native-web-app", "native web app":
-		return true
-	default:
-		return false
-	}
-}
-
 func boolValue(value any) bool {
 	typed, ok := value.(bool)
 	return ok && typed
@@ -5197,14 +5187,6 @@ func (s *Store) runnerSlotPrefix(ctx context.Context, project string) string {
 	rec, err := s.pgProjects.Read(ctx, project)
 	if err == nil {
 		if standby, ok := rec.Metadata["runner_standby_dns"].(map[string]any); ok {
-			if prefix, ok := standby["slot_prefix"].(string); ok && strings.TrimSpace(prefix) != "" {
-				return strings.Trim(strings.TrimSpace(prefix), ".")
-			}
-			if prefix, ok := standby["slotPrefix"].(string); ok && strings.TrimSpace(prefix) != "" {
-				return strings.Trim(strings.TrimSpace(prefix), ".")
-			}
-		}
-		if standby, ok := rec.Metadata["native_standby_dns"].(map[string]any); ok {
 			if prefix, ok := standby["slot_prefix"].(string); ok && strings.TrimSpace(prefix) != "" {
 				return strings.Trim(strings.TrimSpace(prefix), ".")
 			}
