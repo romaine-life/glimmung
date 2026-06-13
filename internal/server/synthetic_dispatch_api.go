@@ -139,6 +139,17 @@ func syntheticDispatchRunWithAgentRuntime(ctx context.Context, store RunDispatch
 	}); err != nil {
 		return PublicDispatchResult{}, &dispatchProblem{status: http.StatusUnprocessableEntity, message: err.Error()}
 	}
+	// Resolve dispatch inputs exactly as the ordinary dispatch path does: apply
+	// the workflow's declared defaults (e.g. git_ref -> main) and reject a
+	// genuinely-missing required input here, before any run row or lease/lock is
+	// created. Synthetic dispatch carries no caller-supplied inputs today, so
+	// this resolves to the declared defaults; running it still matters so the
+	// run's RunInputs satisfy every `${{ inputs.X }}` phase template (e.g. a
+	// phase checkout.ref of `${{ inputs.git_ref }}`) at render time.
+	resolvedInputs, inputErr := resolveDispatchRunInputs(wf.DispatchInputs, nil)
+	if inputErr != nil {
+		return PublicDispatchResult{}, &dispatchProblem{status: http.StatusUnprocessableEntity, message: inputErr.Error()}
+	}
 	startPhase, startIndex := phaseWithIndex(wf.Phases, req.StartAtPhase)
 	if startPhase == nil {
 		return PublicDispatchResult{}, &dispatchProblem{status: http.StatusUnprocessableEntity, message: fmt.Sprintf("start_at_phase %q is not registered on workflow %q", req.StartAtPhase, wf.Name)}
@@ -217,6 +228,7 @@ func syntheticDispatchRunWithAgentRuntime(ctx context.Context, store RunDispatch
 		SuppliedAttempts:        suppliedAttempts,
 		ValidationURL:           req.ExecutionContext.ValidationURL,
 		TriggerSource:           triggerSource,
+		RunInputs:               resolvedInputs,
 		EvidenceRequirements:    evidenceRequirements,
 		AgentRuntime:            agentRuntime,
 		PreserveTestEnv:         issue.PreserveTestEnv,
@@ -243,6 +255,7 @@ func syntheticDispatchRunWithAgentRuntime(ctx context.Context, store RunDispatch
 		SlotLeaseRef:         &req.ExecutionContext.SlotLeaseRef,
 		EntrypointPhase:      &startPhase.Name,
 		TriggerSource:        triggerSource,
+		RunInputs:            resolvedInputs,
 		EvidenceRequirements: evidenceRequirements,
 		AgentRuntime:         agentRuntime,
 		PreserveTestEnv:      issue.PreserveTestEnv,
