@@ -28,8 +28,9 @@ GET /v1/projects/{project}/issues/{issue_number}/runs/{run_number}/report
 
 It is derived from the Run document and includes attempt summaries,
 cumulative cost, validation URL, typed evidence, screenshot markdown kept only
-as migrated display content, abort reason, and the terminal timestamp when
-present.
+as migrated display content, abort reason, reviewer attribution (who approved,
+rejected, or cancelled the touchpoint gate, and when), and the terminal
+timestamp when present.
 
 A RunReport may eventually include:
 

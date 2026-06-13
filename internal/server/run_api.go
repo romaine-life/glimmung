@@ -175,6 +175,9 @@ type RunReport struct {
 	AgentRuntime         agentruntime.Snapshot   `json:"agent_runtime"`
 	AbortReason          *string                 `json:"abort_reason"`
 	TerminalObservation  *RunTerminalObservation `json:"terminal_observation,omitempty"`
+	ReviewedBy           *string                 `json:"reviewed_by,omitempty"`
+	ReviewedAt           *time.Time              `json:"reviewed_at,omitempty"`
+	ReviewDecision       *string                 `json:"review_decision,omitempty"`
 	StartedAt            time.Time               `json:"started_at"`
 	CompletedAt          *time.Time              `json:"completed_at"`
 	UpdatedAt            time.Time               `json:"updated_at"`
