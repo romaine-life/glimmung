@@ -153,7 +153,7 @@ func TestRegisterWorkflowUpsertsWorkflow(t *testing.T) {
 	if len(store.upsert.Phases) != 6 {
 		t.Fatalf("phases=%#v", store.upsert.Phases)
 	}
-	if store.upsert.Phases[0].Kind != "k8s_job" || store.upsert.Phases[0].WorkflowRef != "main" {
+	if store.upsert.Phases[0].Kind != "k8s_job" || store.upsert.Phases[0].WorkflowRef != CanonicalGitRefDefault {
 		t.Fatalf("phase defaults=%#v", store.upsert.Phases[0])
 	}
 }
@@ -1233,10 +1233,43 @@ func dispatchInputsWorkflowFixture() WorkflowRegister {
 func TestValidateWorkflowAcceptsDeclaredDispatchInput(t *testing.T) {
 	req := dispatchInputsWorkflowFixture()
 	req.DispatchInputs = []DispatchInputSpec{
-		{Name: "git_ref", Required: true},
+		{Name: CanonicalGitRefInput, Required: true, Default: CanonicalGitRefDefault},
 	}
 	if err := ValidateWorkflowRegister(req); err != nil {
 		t.Fatalf("ValidateWorkflowRegister: %v", err)
+	}
+}
+
+func TestValidateWorkflowRequiresGitRefForProjectCheckouts(t *testing.T) {
+	req := dispatchInputsWorkflowFixture()
+	req.Phases[0].Jobs[0].Checkout.Ref = "main"
+	req.DispatchInputs = []DispatchInputSpec{
+		{Name: CanonicalGitRefInput, Required: true, Default: CanonicalGitRefDefault},
+	}
+	err := ValidateWorkflowRegister(req)
+	if err == nil || !strings.Contains(err.Error(), "checkout.ref must be") || !strings.Contains(err.Error(), CanonicalGitRefTemplate) {
+		t.Fatalf("err=%v, want canonical checkout ref rejection", err)
+	}
+}
+
+func TestValidateWorkflowRequiresGitRefDeclarationForProjectCheckouts(t *testing.T) {
+	req := dispatchInputsWorkflowFixture()
+	req.Phases[0].Jobs[0].Checkout.Ref = "main"
+	req.DispatchInputs = nil
+	err := ValidateWorkflowRegister(req)
+	if err == nil || !strings.Contains(err.Error(), "dispatch_inputs") || !strings.Contains(err.Error(), CanonicalGitRefInput) {
+		t.Fatalf("err=%v, want mandatory git_ref declaration rejection", err)
+	}
+}
+
+func TestValidateWorkflowRequiresGitRefDefaultForProjectCheckouts(t *testing.T) {
+	req := dispatchInputsWorkflowFixture()
+	req.DispatchInputs = []DispatchInputSpec{
+		{Name: CanonicalGitRefInput, Required: true},
+	}
+	err := ValidateWorkflowRegister(req)
+	if err == nil || !strings.Contains(err.Error(), "non-empty default") || !strings.Contains(err.Error(), CanonicalGitRefInput) {
+		t.Fatalf("err=%v, want git_ref default rejection", err)
 	}
 }
 
@@ -1256,7 +1289,9 @@ func TestValidateWorkflowRejectsUndeclaredDispatchInputRef(t *testing.T) {
 
 func TestValidateWorkflowRejectsUndeclaredDispatchInputRefInExtraCheckouts(t *testing.T) {
 	req := dispatchInputsWorkflowFixture()
-	req.Phases[0].Jobs[0].Checkout = &NativeCheckoutSpec{Ref: "main", Path: "/workspace/ambience"}
+	req.DispatchInputs = []DispatchInputSpec{
+		{Name: CanonicalGitRefInput, Required: true, Default: CanonicalGitRefDefault},
+	}
 	req.Phases[0].Jobs[0].ExtraCheckouts = []NativeCheckoutSpec{
 		{Repo: "owner/extras", Ref: "${{ inputs.extras_ref }}", Path: "/workspace/extras"},
 	}
@@ -1268,7 +1303,6 @@ func TestValidateWorkflowRejectsUndeclaredDispatchInputRefInExtraCheckouts(t *te
 
 func TestValidateWorkflowRejectsUndeclaredDispatchInputRefInWorkflowRef(t *testing.T) {
 	req := dispatchInputsWorkflowFixture()
-	req.Phases[0].Jobs[0].Checkout = &NativeCheckoutSpec{Ref: "main", Path: "/workspace/ambience"}
 	req.Phases[0].WorkflowRef = "${{ inputs.git_ref }}"
 	err := ValidateWorkflowRegister(req)
 	if err == nil || !strings.Contains(err.Error(), "git_ref") {
@@ -1279,8 +1313,8 @@ func TestValidateWorkflowRejectsUndeclaredDispatchInputRefInWorkflowRef(t *testi
 func TestValidateWorkflowRejectsDuplicateDispatchInputName(t *testing.T) {
 	req := dispatchInputsWorkflowFixture()
 	req.DispatchInputs = []DispatchInputSpec{
-		{Name: "git_ref", Required: true},
-		{Name: "git_ref", Required: true},
+		{Name: CanonicalGitRefInput, Required: true, Default: CanonicalGitRefDefault},
+		{Name: CanonicalGitRefInput, Required: true, Default: CanonicalGitRefDefault},
 	}
 	err := ValidateWorkflowRegister(req)
 	if err == nil || !strings.Contains(err.Error(), "duplicates") {
@@ -1302,7 +1336,8 @@ func TestValidateWorkflowRejectsInvalidDispatchInputName(t *testing.T) {
 func TestValidateWorkflowRejectsNonRequiredInputWithoutDefault(t *testing.T) {
 	req := dispatchInputsWorkflowFixture()
 	req.DispatchInputs = []DispatchInputSpec{
-		{Name: "git_ref", Required: false},
+		{Name: CanonicalGitRefInput, Required: true, Default: CanonicalGitRefDefault},
+		{Name: "extras_ref", Required: false},
 	}
 	err := ValidateWorkflowRegister(req)
 	if err == nil || !strings.Contains(err.Error(), "not required but has no default") {
@@ -1313,7 +1348,11 @@ func TestValidateWorkflowRejectsNonRequiredInputWithoutDefault(t *testing.T) {
 func TestValidateWorkflowAcceptsNonRequiredInputWithDefault(t *testing.T) {
 	req := dispatchInputsWorkflowFixture()
 	req.DispatchInputs = []DispatchInputSpec{
-		{Name: "git_ref", Default: "main"},
+		{Name: CanonicalGitRefInput, Required: true, Default: CanonicalGitRefDefault},
+		{Name: "extras_ref", Default: "support"},
+	}
+	req.Phases[0].Jobs[0].ExtraCheckouts = []NativeCheckoutSpec{
+		{Repo: "owner/extras", Ref: "${{ inputs.extras_ref }}", Path: "/workspace/extras"},
 	}
 	if err := ValidateWorkflowRegister(req); err != nil {
 		t.Fatalf("ValidateWorkflowRegister: %v", err)

@@ -552,12 +552,16 @@ contracts, threat model, and orchestrator-side flow.
 ## Dispatch inputs
 
 Workflows can declare dispatch-time inputs that the dispatcher fills in before
-the run is created. Every `${{ inputs.X }}` reference inside a native
-`checkout.ref`, `extra_checkouts[].ref`, or phase `workflow_ref` must be backed
-by a declared input — registration is rejected at the `ValidateWorkflowRegister`
-boundary otherwise. The contract is symmetric: a dispatch payload that sends an
-input the workflow does not declare is also rejected, so caller-supplied values
-cannot silently flow into `Run.RunInputs`.
+the run is created. Project checkouts must expose the canonical `git_ref`
+input and set every primary `checkout.ref` to `${{ inputs.git_ref }}`. A phase
+with a project checkout must leave `workflow_ref` blank (normalized to the same
+template) or set it to `${{ inputs.git_ref }}` explicitly. Every other
+`${{ inputs.X }}` reference inside a native `checkout.ref`,
+`extra_checkouts[].ref`, or phase `workflow_ref` must be backed by a declared
+input — registration is rejected at the `ValidateWorkflowRegister` boundary
+otherwise. The contract is symmetric: a dispatch payload that sends an input
+the workflow does not declare is also rejected, so caller-supplied values cannot
+silently flow into `Run.RunInputs`.
 
 ```yaml
 dispatch_inputs:
@@ -572,6 +576,10 @@ Rules:
 - `name` follows the run-input identifier pattern (letters, numbers,
   underscores, hyphens; starts with a letter or underscore). Duplicate names
   are rejected.
+- Any workflow that checks out the project repo must declare `git_ref` with
+  `required: true` and a non-empty `default`. `main` is the canonical default
+  for romaine-life repositories unless the project has an explicit reason to
+  use another ref.
 - `required: true` makes the dispatcher's omission a 422. There is no
   server-side guess. A required input may set a `default` so a no-input
   dispatch succeeds against the declared default; a no-input dispatch against

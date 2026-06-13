@@ -515,7 +515,11 @@ func normalizeWorkflowRegisterWithDefaultKind(req *WorkflowRegister, defaultKind
 		req.Phases[i].RunOn = strings.TrimSpace(req.Phases[i].RunOn)
 		req.Phases[i].Purpose = strings.TrimSpace(req.Phases[i].Purpose)
 		if req.Phases[i].WorkflowRef == "" {
-			req.Phases[i].WorkflowRef = "main"
+			if nativePhaseHasPrimaryCheckout(req.Phases[i]) {
+				req.Phases[i].WorkflowRef = CanonicalGitRefTemplate
+			} else {
+				req.Phases[i].WorkflowRef = CanonicalGitRefDefault
+			}
 		}
 		if req.Phases[i].Inputs == nil {
 			req.Phases[i].Inputs = map[string]string{}
@@ -842,6 +846,9 @@ func ValidateWorkflowRegister(req WorkflowRegister) error {
 	if err := phaserefs.Validate(phaseRefs); err != nil {
 		return ValidationError{Message: err.Error()}
 	}
+	if err := validateMandatoryGitRefFeature(req.Name, req.Phases, declaredInputs); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -924,6 +931,86 @@ func validateDispatchInputRefs(workflowName string, phases []PhaseSpec, declared
 		}
 	}
 	return nil
+}
+
+func validateMandatoryGitRefFeature(workflowName string, phases []PhaseSpec, declared map[string]DispatchInputSpec) error {
+	requiresGitRef := false
+	for _, phase := range phases {
+		for _, job := range phase.Jobs {
+			if job.Checkout == nil {
+				continue
+			}
+			requiresGitRef = true
+		}
+	}
+	if !requiresGitRef {
+		return nil
+	}
+	input, ok := declared[CanonicalGitRefInput]
+	if !ok {
+		return ValidationError{Message: fmt.Sprintf(
+			"workflow %s uses project checkouts and must declare dispatch_inputs entry %q",
+			workflowName,
+			CanonicalGitRefInput,
+		)}
+	}
+	if !input.Required {
+		return ValidationError{Message: fmt.Sprintf(
+			"workflow %s dispatch_inputs.%s must set required=true; project checkout refs are mandatory run inputs",
+			workflowName,
+			CanonicalGitRefInput,
+		)}
+	}
+	if strings.TrimSpace(input.Default) == "" {
+		return ValidationError{Message: fmt.Sprintf(
+			"workflow %s dispatch_inputs.%s must declare a non-empty default such as %q",
+			workflowName,
+			CanonicalGitRefInput,
+			CanonicalGitRefDefault,
+		)}
+	}
+	for _, phase := range phases {
+		phaseHasPrimaryCheckout := false
+		for _, job := range phase.Jobs {
+			if job.Checkout == nil {
+				continue
+			}
+			phaseHasPrimaryCheckout = true
+			ref := strings.TrimSpace(job.Checkout.Ref)
+			if ref != CanonicalGitRefTemplate {
+				return ValidationError{Message: fmt.Sprintf(
+					"workflow %s phase %q job %q checkout.ref must be %q so project checkouts are dispatchable via git_ref; got %q",
+					workflowName,
+					phase.Name,
+					job.ID,
+					CanonicalGitRefTemplate,
+					job.Checkout.Ref,
+				)}
+			}
+		}
+		if phaseHasPrimaryCheckout {
+			ref := strings.TrimSpace(phase.WorkflowRef)
+			if ref != "" && ref != CanonicalGitRefTemplate {
+				return ValidationError{Message: fmt.Sprintf(
+					"workflow %s phase %q workflow_ref must be %q when the phase has a project checkout; got %q",
+					workflowName,
+					phase.Name,
+					CanonicalGitRefTemplate,
+					phase.WorkflowRef,
+				)}
+			}
+		}
+	}
+	return nil
+}
+
+func nativePhaseHasPrimaryCheckout(phase PhaseSpec) bool {
+	for _, job := range phase.Jobs {
+		if job.Checkout != nil {
+			return true
+		}
+	}
+	return false
 }
 
 func validateWorkflowConstraints(workflowName string, constraints WorkflowConstraints) error {

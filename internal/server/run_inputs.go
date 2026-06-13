@@ -10,6 +10,10 @@ import (
 const (
 	maxRunInputCount       = 32
 	maxRunInputValueLength = 512
+
+	CanonicalGitRefInput    = "git_ref"
+	CanonicalGitRefDefault  = "main"
+	CanonicalGitRefTemplate = "${{ inputs.git_ref }}"
 )
 
 var (
