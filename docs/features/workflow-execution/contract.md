@@ -43,6 +43,9 @@ after registration changes.
 - Do not reintroduce `skip_when_preserve_test_env`; registration rejects the
   retired field with a pointer at the
   `when: "${{ run.preserve_test_env }} == 'false'"` replacement.
+- Do not reintroduce the retired issue-contract entry-phase mandate. The
+  platform validates the generic prepare/verify/teardown skeleton only;
+  project stage names and outputs inside `prepare` are project-owned.
 - Do not delete historical schemas still referenced by run history.
 - Do not start a workflow-execution background reconciler (run queue,
   dispatch timeout, completion sweep, native Job inspection, etc.) outside

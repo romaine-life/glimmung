@@ -200,7 +200,7 @@ func newDispatchTestHandler(store ReadStore, nativeLauncher NativeLauncher) http
 // dispatch flow against an in-memory workflow use this.
 func gatedTestPhases() []PhaseSpec {
 	return []PhaseSpec{
-		{Name: "prepare", Kind: "k8s_job", WorkflowFilename: "k8s_job:prepare", Outputs: []string{IssueContractOutputKey}, Jobs: []NativeJobSpec{{ID: IssueContractJobID, Image: "runner:latest"}}},
+		{Name: "prepare", Kind: "k8s_job", WorkflowFilename: "k8s_job:prepare", Outputs: []string{"issue_contract"}, Jobs: []NativeJobSpec{{ID: "issue-contract", Image: "runner:latest"}}},
 		{Name: "verify", Kind: "k8s_job", WorkflowFilename: "k8s_job:verify", DependsOn: []string{"prepare"}, Verify: true, RecyclePolicy: &RecyclePolicy{MaxAttempts: 1, On: []string{"verify_fail"}, LandsAt: "prepare"}, Jobs: verificationCaseJobsForTest()},
 		{Name: "cleanup_early", Kind: "k8s_job", WorkflowFilename: "k8s_job:cleanup_early", DependsOn: []string{"verify"}, RunOn: PhaseRunOnAlways, Purpose: PhasePurposeTeardown, When: "${{ run.preserve_test_env }} == 'false'", Jobs: []NativeJobSpec{{ID: "cleanup", Image: "runner:latest"}}},
 		{Name: "touchpoint", Kind: "k8s_job", WorkflowFilename: "k8s_job:touchpoint", DependsOn: []string{"cleanup_early"}, RunOn: PhaseRunOnSuccess, Purpose: PhasePurposeReviewTouchpoint, Jobs: []NativeJobSpec{{ID: PRTouchpointJobID, Primitive: JobPrimitivePRTouchpoint, Managed: true}}},
@@ -295,15 +295,23 @@ func TestDispatchRunNoWorkflowRegistered(t *testing.T) {
 	}
 }
 
-func TestDispatchRunRejectsWorkflowWithoutIssueContract(t *testing.T) {
+// Dispatch re-validates the loaded workflow and fails before creating a run
+// or lease when the shape is invalid. (The retired issue-contract entry
+// mandate is gone; an explicit shape violation stands in for it.)
+func TestDispatchRunRejectsInvalidWorkflowBeforeRunCreation(t *testing.T) {
 	store := minimalDispatchStore()
-	store.wf.Phases[0].Outputs = nil
+	for i := range store.wf.Phases {
+		if store.wf.Phases[i].Verify {
+			store.wf.Phases[i].RecyclePolicy = nil
+		}
+	}
+	store.workflows = []Workflow{*store.wf}
 	rec := httptest.NewRecorder()
 	newDispatchTestHandler(store, &fakeNativeLauncher{}).ServeHTTP(rec, dispatchRequest("proj", 1))
 	if rec.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), IssueContractOutputKey) {
+	if !strings.Contains(rec.Body.String(), "recycle_policy") {
 		t.Fatalf("body=%s", rec.Body.String())
 	}
 	if store.runReq != nil || store.leaseReq != nil {

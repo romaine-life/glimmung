@@ -817,7 +817,7 @@ func TestNormalizeWorkflowRegisterForProjectDefaultsToK8sJob(t *testing.T) {
 		Project: "glimmung",
 		Name:    "agent-run",
 		Phases: []server.PhaseSpec{
-			{Name: "prepare", Outputs: []string{server.IssueContractOutputKey}, Jobs: []server.NativeJobSpec{{ID: server.IssueContractJobID}}},
+			{Name: "prepare", Outputs: []string{"issue_contract"}, Jobs: []server.NativeJobSpec{{ID: "issue-contract"}}},
 			{Name: "test", Verify: true, RecyclePolicy: &server.RecyclePolicy{MaxAttempts: 1, On: []string{"verify_fail"}, LandsAt: "prepare"}, DependsOn: []string{"prepare"}, Jobs: verificationCaseJobsForStoreTest()},
 			{Name: "cleanup_early", RunOn: server.PhaseRunOnAlways, Purpose: server.PhasePurposeTeardown, When: "${{ run.preserve_test_env }} == 'false'", DependsOn: []string{"test"}, Jobs: []server.NativeJobSpec{{ID: "cleanup-early"}}},
 			{Name: "touchpoint", RunOn: server.PhaseRunOnSuccess, Purpose: server.PhasePurposeReviewTouchpoint, DependsOn: []string{"cleanup_early"}, Jobs: []server.NativeJobSpec{{ID: "pr-touchpoint", Primitive: "pr_touchpoint"}}},
@@ -842,7 +842,7 @@ func TestWorkflowDocPersistsCanonicalVerificationConstraints(t *testing.T) {
 		Project: "glimmung",
 		Name:    "agent-run",
 		Phases: []server.PhaseSpec{
-			{Name: "prepare", Outputs: []string{server.IssueContractOutputKey}, Jobs: []server.NativeJobSpec{{ID: server.IssueContractJobID}}},
+			{Name: "prepare", Outputs: []string{"issue_contract"}, Jobs: []server.NativeJobSpec{{ID: "issue-contract"}}},
 			{Name: "test", Verify: true, RecyclePolicy: &server.RecyclePolicy{MaxAttempts: 1, On: []string{"verify_fail"}, LandsAt: "prepare"}, DependsOn: []string{"prepare"}, Jobs: verificationCaseJobsForStoreTest()},
 			{Name: "cleanup_early", RunOn: server.PhaseRunOnAlways, Purpose: server.PhasePurposeTeardown, When: "${{ run.preserve_test_env }} == 'false'", DependsOn: []string{"test"}, Jobs: []server.NativeJobSpec{{ID: "cleanup-early"}}},
 			{Name: "touchpoint", RunOn: server.PhaseRunOnSuccess, Purpose: server.PhasePurposeReviewTouchpoint, DependsOn: []string{"cleanup_early"}, Jobs: []server.NativeJobSpec{{ID: "pr-touchpoint", Primitive: "pr_touchpoint"}}},
@@ -873,7 +873,7 @@ func TestWorkflowDocRoundTripsDispatchInputs(t *testing.T) {
 		Project: "ambience",
 		Name:    "default",
 		Phases: []server.PhaseSpec{
-			{Name: "prepare", Outputs: []string{server.IssueContractOutputKey}, Jobs: []server.NativeJobSpec{{ID: server.IssueContractJobID, Checkout: &server.NativeCheckoutSpec{Ref: "${{ inputs.git_ref }}"}}}},
+			{Name: "prepare", Outputs: []string{"issue_contract"}, Jobs: []server.NativeJobSpec{{ID: "issue-contract", Checkout: &server.NativeCheckoutSpec{Ref: "${{ inputs.git_ref }}"}}}},
 			{Name: "test", Verify: true, RecyclePolicy: &server.RecyclePolicy{MaxAttempts: 1, On: []string{"verify_fail"}, LandsAt: "prepare"}, DependsOn: []string{"prepare"}, Jobs: verificationCaseJobsForStoreTest()},
 			{Name: "cleanup_early", RunOn: server.PhaseRunOnAlways, Purpose: server.PhasePurposeTeardown, When: "${{ run.preserve_test_env }} == 'false'", DependsOn: []string{"test"}, Jobs: []server.NativeJobSpec{{ID: "cleanup-early"}}},
 			{Name: "touchpoint", RunOn: server.PhaseRunOnSuccess, Purpose: server.PhasePurposeReviewTouchpoint, DependsOn: []string{"cleanup_early"}, Jobs: []server.NativeJobSpec{{ID: "pr-touchpoint", Primitive: "pr_touchpoint"}}},
