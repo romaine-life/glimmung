@@ -3036,7 +3036,7 @@ func phaseDocFromSpec(phase server.PhaseSpec) phaseDoc {
 		RunOn:                    phase.RunOn,
 		Purpose:                  phase.Purpose,
 		WorkflowFilename:         phase.WorkflowFilename,
-		WorkflowRef:              firstNonEmpty(phase.WorkflowRef, "main"),
+		WorkflowRef:              firstNonEmpty(phase.WorkflowRef, defaultWorkflowRefForPhase(phase)),
 		Inputs:                   stringMapOrEmpty(phase.Inputs),
 		Outputs:                  sliceOrEmpty(phase.Outputs),
 		Requirements:             mapOrEmpty(phase.Requirements),
@@ -3163,7 +3163,7 @@ func normalizeWorkflowRegister(req *server.WorkflowRegister) {
 		req.Phases[i].RunOn = strings.TrimSpace(req.Phases[i].RunOn)
 		req.Phases[i].Purpose = strings.TrimSpace(req.Phases[i].Purpose)
 		if req.Phases[i].WorkflowRef == "" {
-			req.Phases[i].WorkflowRef = "main"
+			req.Phases[i].WorkflowRef = defaultWorkflowRefForPhase(req.Phases[i])
 		}
 		if req.Phases[i].Inputs == nil {
 			req.Phases[i].Inputs = map[string]string{}
@@ -3268,7 +3268,7 @@ func phaseFromDoc(doc phaseDoc) server.PhaseSpec {
 		RunOn:                    doc.RunOn,
 		Purpose:                  doc.Purpose,
 		WorkflowFilename:         doc.WorkflowFilename,
-		WorkflowRef:              firstNonEmpty(doc.WorkflowRef, "main"),
+		WorkflowRef:              firstNonEmpty(doc.WorkflowRef, defaultWorkflowRefForPhaseDoc(doc)),
 		Inputs:                   stringMapOrEmpty(doc.Inputs),
 		Outputs:                  sliceOrEmpty(doc.Outputs),
 		Requirements:             doc.Requirements,
@@ -3280,6 +3280,24 @@ func phaseFromDoc(doc phaseDoc) server.PhaseSpec {
 		When:                     doc.When,
 		SkipWhenPreserveTestEnv:  doc.SkipWhenPreserveTestEnv,
 	}
+}
+
+func defaultWorkflowRefForPhase(phase server.PhaseSpec) string {
+	for _, job := range phase.Jobs {
+		if job.Checkout != nil {
+			return server.CanonicalGitRefTemplate
+		}
+	}
+	return server.CanonicalGitRefDefault
+}
+
+func defaultWorkflowRefForPhaseDoc(doc phaseDoc) string {
+	for _, job := range doc.Jobs {
+		if job.Checkout != nil {
+			return server.CanonicalGitRefTemplate
+		}
+	}
+	return server.CanonicalGitRefDefault
 }
 
 func jobFromDoc(doc nativeJobDoc) server.NativeJobSpec {

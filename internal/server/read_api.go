@@ -56,11 +56,12 @@ type Workflow struct {
 	// from the schema snapshot alone. Part of the content-hashed schema.
 	Vars map[string]string `json:"vars,omitempty"`
 	// DispatchInputs declares the dispatch-time inputs the workflow needs.
-	// Every `${{ inputs.X }}` reference inside a phase's WorkflowRef or any
-	// job's Checkout/ExtraCheckouts refs must name a declared input. The
-	// dispatcher (dashboard, MCP, replay) reads this list to render forms
-	// and validate payloads; the registration is rejected if a template
-	// reference is not backed by a declaration.
+	// Project checkouts must expose the canonical git_ref input and set
+	// primary checkout refs to `${{ inputs.git_ref }}`. Every other
+	// `${{ inputs.X }}` reference inside a phase's WorkflowRef or any job's
+	// Checkout/ExtraCheckouts refs must name a declared input. The dispatcher
+	// (dashboard, MCP, replay) reads this list to render forms and validate
+	// payloads.
 	DispatchInputs []DispatchInputSpec `json:"dispatch_inputs,omitempty"`
 	Metadata       map[string]any      `json:"metadata"`
 	CreatedAt      time.Time           `json:"created_at"`
