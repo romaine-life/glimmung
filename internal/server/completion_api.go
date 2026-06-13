@@ -43,6 +43,7 @@ type CompletionPayload struct {
 	EvidenceRefs        []string
 	Evidence            []EvidenceArtifact
 	CostUSD             float64
+	AgentUsage          []AgentUsage
 	SummaryMarkdown     *string
 	ScreenshotsMarkdown *string
 	PhaseOutputs        map[string]string
@@ -210,6 +211,7 @@ type NativeRunCompletedRequest struct {
 	Conclusion          string             `json:"conclusion"`
 	AttemptIndex        *int               `json:"attempt_index,omitempty"`
 	CostUSD             float64            `json:"cost_usd,omitempty"`
+	AgentUsage          []AgentUsage       `json:"agent_usage,omitempty"`
 	Verification        map[string]any     `json:"verification"`
 	Evidence            []EvidenceArtifact `json:"evidence,omitempty"`
 	ScreenshotsMarkdown *string            `json:"screenshots_markdown"`
@@ -316,6 +318,7 @@ func completionPayloadFromNative(req NativeRunCompletedRequest) CompletionPayloa
 		Conclusion:          req.Conclusion,
 		AttemptIndex:        req.AttemptIndex,
 		CostUSD:             req.CostUSD,
+		AgentUsage:          req.AgentUsage,
 		SummaryMarkdown:     req.SummaryMarkdown,
 		ScreenshotsMarkdown: req.ScreenshotsMarkdown,
 		PhaseOutputs:        req.Outputs,

@@ -97,12 +97,14 @@ when all jobs have completed.
 
 The native completion contract is enforced at
 `POST /v1/run-callbacks/{callback_token}/native/completed`: the payload must
-include `job_id`. Managed runner payloads include positive `cost_usd` when the
-runner observed agent result lines with top-level `total_cost_usd`; that value
-is the durable job-completion cost. Glimmung records each job completion
-independently, returns a `wait_jobs` response while sibling jobs are still
-pending, and runs the phase decision path only on the transition where the
-final registered job completes. This is the only native terminal callback.
+include `job_id`. Managed runner payloads include positive `cost_usd` and
+`agent_usage` when the runner observes provider usage events such as Codex
+`turn.completed.usage`; the runner prices those tokens from the Run's
+snapshotted agent runtime profile. Missing pricing for an observed usage event
+is a runner error, not a silent zero-cost completion. Glimmung records each job
+completion independently, returns a `wait_jobs` response while sibling jobs are
+still pending, and runs the phase decision path only on the transition where
+the final registered job completes. This is the only native terminal callback.
 Failed jobs report through the same endpoint with a non-`success`
 `conclusion`; the retired `/native/failed` callback must not be reintroduced or
 required by runner images.
@@ -150,6 +152,12 @@ only that snapshot through `GLIMMUNG_AGENT_RUNTIME_JSON`; changing global,
 project, or issue defaults later does not mutate an in-flight or historical
 run. This keeps agent selection containerized: a workflow inserts an agent step
 without forking the workflow per model/provider.
+
+Every runtime profile includes an explicit pricing catalog snapshot. Cost
+telemetry is derived from token usage observed during native execution and that
+snapshotted pricing, then persisted on job completions, attempts, and run
+reports. Provider-emitted `total_cost_usd` result lines are not a live
+contract.
 
 ## Conditional Phases And Jobs (`when` / `vars`)
 

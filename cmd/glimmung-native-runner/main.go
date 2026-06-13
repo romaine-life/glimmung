@@ -106,15 +106,18 @@ type runnerConfig struct {
 }
 
 type nativeRunner struct {
-	cfg              runnerConfig
-	client           *http.Client
-	seq              int
-	outputs          map[string]string
-	completion       completionMetadata
-	caseCompletions  []dynamicCaseCompletion
-	githubTokenCache *githubTokenResult
-	mu               sync.Mutex
-	costUSD          float64
+	cfg                runnerConfig
+	client             *http.Client
+	seq                int
+	outputs            map[string]string
+	completion         completionMetadata
+	caseCompletions    []dynamicCaseCompletion
+	githubTokenCache   *githubTokenResult
+	mu                 sync.Mutex
+	costUSD            float64
+	agentUsage         []agentUsage
+	activeUsageProfile *agentruntime.ResolvedProfile
+	costErr            error
 }
 
 type nativeEventRequest struct {
@@ -133,11 +136,27 @@ type completedRequest struct {
 	Conclusion          string             `json:"conclusion"`
 	AttemptIndex        *int               `json:"attempt_index,omitempty"`
 	CostUSD             float64            `json:"cost_usd,omitempty"`
+	AgentUsage          []agentUsage       `json:"agent_usage,omitempty"`
 	Verification        map[string]any     `json:"verification,omitempty"`
 	Evidence            []evidenceArtifact `json:"evidence,omitempty"`
 	ScreenshotsMarkdown *string            `json:"screenshots_markdown,omitempty"`
 	SummaryMarkdown     *string            `json:"summary_markdown,omitempty"`
 	Outputs             map[string]string  `json:"outputs"`
+}
+
+type agentUsage struct {
+	Provider              string  `json:"provider,omitempty"`
+	Model                 string  `json:"model,omitempty"`
+	ProfileID             string  `json:"profile_id,omitempty"`
+	StepSlug              string  `json:"step_slug,omitempty"`
+	PricingCatalogRef     string  `json:"pricing_catalog_ref,omitempty"`
+	InputTokens           int64   `json:"input_tokens,omitempty"`
+	CachedInputTokens     int64   `json:"cached_input_tokens,omitempty"`
+	OutputTokens          int64   `json:"output_tokens,omitempty"`
+	ReasoningOutputTokens int64   `json:"reasoning_output_tokens,omitempty"`
+	UncachedInputTokens   int64   `json:"uncached_input_tokens,omitempty"`
+	CacheWriteInputTokens int64   `json:"cache_write_input_tokens,omitempty"`
+	CostUSD               float64 `json:"cost_usd"`
 }
 
 type dynamicVerificationFailure struct {
@@ -780,6 +799,9 @@ func (r *nativeRunner) executeStepWithEnv(ctx context.Context, step stepSpec, ou
 	go r.streamLogs(ctx, &wg, step.Slug, "stderr", stderr)
 	wg.Wait()
 	waitErr := cmd.Wait()
+	if costErr := r.observedCostError(); costErr != nil {
+		return 1, costErr
+	}
 	if waitErr == nil {
 		return 0, nil
 	}
@@ -856,6 +878,8 @@ func (r *nativeRunner) executeAgentStep(ctx context.Context, step stepSpec, outp
 		return 1, err
 	}
 	runStep.Shell = "bash"
+	restoreUsageProfile := r.setActiveUsageProfile(profile)
+	defer restoreUsageProfile()
 	return r.executeStepWithEnv(ctx, runStep, outputFile, completionFile, agentEnv)
 }
 
@@ -1215,7 +1239,7 @@ func (r *nativeRunner) forwardLogLine(ctx context.Context, stepSlug, stream, lin
 		line = " "
 	}
 	line = sanitizeForwardedLogLine(line)
-	r.observeLogCost(line)
+	r.observeLogCost(ctx, stepSlug, line)
 	r.observeInnerJobMarker(ctx, stepSlug, line)
 	if stream == "stderr" {
 		fmt.Fprintln(os.Stderr, line)
@@ -1430,6 +1454,7 @@ func (r *nativeRunner) complete(ctx context.Context, conclusion, summary string)
 		Conclusion:   conclusion,
 		AttemptIndex: r.cfg.AttemptIndex,
 		CostUSD:      r.observedCostUSD(),
+		AgentUsage:   r.observedAgentUsage(),
 		Outputs:      r.outputs,
 	}
 	if len(verification) > 0 {
@@ -1449,14 +1474,53 @@ func (r *nativeRunner) complete(ctx context.Context, conclusion, summary string)
 	return r.postJSON(ctx, r.cfg.CompletedURL, req, nil)
 }
 
-func (r *nativeRunner) observeLogCost(line string) {
-	cost, ok := agentcost.FromJSONLogLine(line)
+func (r *nativeRunner) observeLogCost(ctx context.Context, stepSlug, line string) {
+	profile, ok := r.usageProfile()
 	if !ok {
+		if _, observed, _ := agentcost.FromJSONLogLine(line, agentcost.Rate{}); observed {
+			r.recordCostError(fmt.Errorf("price agent usage for step %q: no resolved runtime profile", stepSlug))
+		}
 		return
 	}
+	observation, observed, err := agentcost.FromJSONLogLine(line, profile.Pricing)
+	if !observed {
+		return
+	}
+	if err != nil {
+		r.recordCostError(fmt.Errorf("price agent usage for step %q profile %q: %w", stepSlug, profile.ProfileID, err))
+		return
+	}
+	usage := agentUsage{
+		Provider:              profile.Provider,
+		Model:                 profile.Model,
+		ProfileID:             profile.ProfileID,
+		StepSlug:              stepSlug,
+		PricingCatalogRef:     observation.PricingCatalogRef,
+		InputTokens:           observation.Usage.InputTokens,
+		CachedInputTokens:     observation.Usage.CachedInputTokens,
+		OutputTokens:          observation.Usage.OutputTokens,
+		ReasoningOutputTokens: observation.Usage.ReasoningOutputTokens,
+		UncachedInputTokens:   observation.UncachedInputTokens,
+		CacheWriteInputTokens: observation.CacheWriteInputTokens,
+		CostUSD:               observation.CostUSD,
+	}
 	r.mu.Lock()
-	r.costUSD += cost
+	r.costUSD += observation.CostUSD
+	r.agentUsage = append(r.agentUsage, usage)
 	r.mu.Unlock()
+	_ = r.postEvent(ctx, "agent_usage_observed", &stepSlug, "", nil, map[string]any{
+		"provider":                 usage.Provider,
+		"model":                    usage.Model,
+		"profile_id":               usage.ProfileID,
+		"pricing_catalog_ref":      usage.PricingCatalogRef,
+		"input_tokens":             usage.InputTokens,
+		"cached_input_tokens":      usage.CachedInputTokens,
+		"output_tokens":            usage.OutputTokens,
+		"reasoning_output_tokens":  usage.ReasoningOutputTokens,
+		"uncached_input_tokens":    usage.UncachedInputTokens,
+		"cache_write_input_tokens": usage.CacheWriteInputTokens,
+		"cost_usd":                 usage.CostUSD,
+	})
 }
 
 // observeInnerJobMarker inspects every streamed log line for the
@@ -1489,6 +1553,54 @@ func (r *nativeRunner) observedCostUSD() float64 {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.costUSD
+}
+
+func (r *nativeRunner) observedAgentUsage() []agentUsage {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]agentUsage(nil), r.agentUsage...)
+}
+
+func (r *nativeRunner) observedCostError() error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.costErr
+}
+
+func (r *nativeRunner) recordCostError(err error) {
+	if err == nil {
+		return
+	}
+	r.mu.Lock()
+	if r.costErr == nil {
+		r.costErr = err
+	}
+	r.mu.Unlock()
+}
+
+func (r *nativeRunner) setActiveUsageProfile(profile agentruntime.ResolvedProfile) func() {
+	r.mu.Lock()
+	previous := r.activeUsageProfile
+	current := profile
+	r.activeUsageProfile = &current
+	r.mu.Unlock()
+	return func() {
+		r.mu.Lock()
+		r.activeUsageProfile = previous
+		r.mu.Unlock()
+	}
+}
+
+func (r *nativeRunner) usageProfile() (agentruntime.ResolvedProfile, bool) {
+	r.mu.Lock()
+	active := r.activeUsageProfile
+	if active != nil {
+		profile := *active
+		r.mu.Unlock()
+		return profile, true
+	}
+	r.mu.Unlock()
+	return r.cfg.AgentRuntime.ProfileForSlot(agentruntime.DefaultSlot)
 }
 
 func (r *nativeRunner) collectCompletionMetadata(path string, step stepSpec) error {

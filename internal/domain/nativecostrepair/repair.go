@@ -6,6 +6,7 @@ import (
 	"math"
 
 	"github.com/romaine-life/glimmung/internal/domain/agentcost"
+	"github.com/romaine-life/glimmung/internal/domain/agentruntime"
 )
 
 // Event is the small native log event shape needed to repair persisted cost
@@ -14,6 +15,7 @@ type Event struct {
 	AttemptIndex int
 	JobID        string
 	Event        string
+	StepSlug     string
 	Message      string
 }
 
@@ -40,7 +42,14 @@ func RepairRunPayload(payload map[string]any, events []Event) (Result, error) {
 	if payload == nil {
 		return result, fmt.Errorf("run payload is nil")
 	}
-	costByAttempt, costByAttemptJob := observedCosts(events)
+	runtime, err := runtimeSnapshotFromPayload(payload)
+	if err != nil {
+		return result, err
+	}
+	costByAttempt, costByAttemptJob, err := observedCosts(events, runtime)
+	if err != nil {
+		return result, err
+	}
 	for _, cost := range costByAttempt {
 		result.ObservedCostUSD += cost
 	}
@@ -92,24 +101,48 @@ func RepairRunPayload(payload map[string]any, events []Event) (Result, error) {
 	return result, nil
 }
 
-func observedCosts(events []Event) (map[int]float64, map[int]map[string]float64) {
+func observedCosts(events []Event, runtime agentruntime.Snapshot) (map[int]float64, map[int]map[string]float64, error) {
 	costByAttempt := map[int]float64{}
 	costByAttemptJob := map[int]map[string]float64{}
 	for _, event := range events {
 		if event.Event != "log" {
 			continue
 		}
-		cost, ok := agentcost.FromJSONLogLine(event.Message)
+		profile, ok := runtime.ProfileForSlot(agentruntime.DefaultSlot)
 		if !ok {
+			profile = runtime.Default
+		}
+		observation, observed, err := agentcost.FromJSONLogLine(event.Message, profile.Pricing)
+		if !observed {
 			continue
 		}
+		if err != nil {
+			return nil, nil, fmt.Errorf("price agent usage for attempt %d job %q step %q: %w", event.AttemptIndex, event.JobID, event.StepSlug, err)
+		}
+		cost := observation.CostUSD
 		costByAttempt[event.AttemptIndex] += cost
 		if costByAttemptJob[event.AttemptIndex] == nil {
 			costByAttemptJob[event.AttemptIndex] = map[string]float64{}
 		}
 		costByAttemptJob[event.AttemptIndex][event.JobID] += cost
 	}
-	return costByAttempt, costByAttemptJob
+	return costByAttempt, costByAttemptJob, nil
+}
+
+func runtimeSnapshotFromPayload(payload map[string]any) (agentruntime.Snapshot, error) {
+	raw, ok := payload["agent_runtime"]
+	if !ok || raw == nil {
+		return agentruntime.Snapshot{}, nil
+	}
+	data, err := json.Marshal(raw)
+	if err != nil {
+		return agentruntime.Snapshot{}, fmt.Errorf("marshal agent_runtime snapshot: %w", err)
+	}
+	var runtime agentruntime.Snapshot
+	if err := json.Unmarshal(data, &runtime); err != nil {
+		return agentruntime.Snapshot{}, fmt.Errorf("decode agent_runtime snapshot: %w", err)
+	}
+	return runtime, nil
 }
 
 func repairJobCompletions(attempt map[string]any, attemptPos int, costs map[string]float64, result *Result) {
