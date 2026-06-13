@@ -59,7 +59,7 @@ providerApiProxy:
     tenantIdKvKey: glimmung-tenant-id
   image:
     repository: romainecr.azurecr.io/glimmung-api-proxy
-    tag: api-proxy-ce37be3bb586d5e4eb0f31362aa2f253d76bef24275f7f596c91483b63b89401
+    tag: api-proxy-23a2da6b1a04a666559db49d10659c330ae2b9805f6d2636afeb5c3b12a0ef8c
     pullPolicy: IfNotPresent
   envoyImage: envoyproxy/envoy:v1.34.0
   placeholderBearer: "Bearer managed-by-glimmung"
