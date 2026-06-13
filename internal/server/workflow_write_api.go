@@ -1283,9 +1283,6 @@ func phaseHasPrimitive(phase PhaseSpec, primitive string) bool {
 
 func projectRequiresRunnerWorkflows(project Project) bool {
 	metadata := project.Metadata
-	if boolFromMap(metadata, "native_webapp") || boolFromMap(metadata, "nativeWebapp") {
-		return true
-	}
 	kind := strings.ToLower(firstNonEmpty(
 		stringValue(metadata["app_kind"]),
 		stringValue(metadata["appKind"]),
@@ -1293,15 +1290,5 @@ func projectRequiresRunnerWorkflows(project Project) bool {
 		stringValue(metadata["appType"]),
 		stringValue(metadata["kind"]),
 	))
-	return isNativeWebappKind(kind)
-}
-
-func isNativeWebappKind(kind string) bool {
-	switch strings.ToLower(strings.TrimSpace(kind)) {
-	case "native_webapp", "native-webapp", "native webapp",
-		"native_web_app", "native-web-app", "native web app":
-		return true
-	default:
-		return false
-	}
+	return kind == "webapp"
 }

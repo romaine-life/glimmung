@@ -479,7 +479,7 @@ func newHandlerWithReconcilers(settings Settings, store ReadStore, authResolver 
 	// Sync UX per docs/test-slot-hot-swap.md. The performer wraps
 	// ApplyHotSwap with a real httpK8sJobClient that talks to the k8s
 	// API directly (no kubectl shell-out — glimmung's runtime image
-	// doesn't include kubectl, matching the existing native_launcher
+	// doesn't include kubectl, matching the existing run launcher
 	// pattern of using `request()` over HTTP).
 	k8sClient := newHTTPK8sJobClient(settings)
 	applyPerformer := func(ctx context.Context, opts ApplyHotSwapOptions) (ApplyHotSwapResult, error) {

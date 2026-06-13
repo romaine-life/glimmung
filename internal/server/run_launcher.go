@@ -1065,9 +1065,9 @@ func (l *KubernetesRunLauncher) ensureTestSlotInstallerAccess(ctx context.Contex
 		return err
 	}
 
-	// Existing warm slots may carry the pre-rename subject
-	// glimmung-native-runner. Replace the binding instead of assuming any
-	// existing glim-test-slot-installer RoleBinding is still correct.
+	// Existing warm slots may carry stale subjects. Replace the binding
+	// instead of assuming any existing glim-test-slot-installer RoleBinding
+	// is still correct.
 	bindingPath := "/apis/rbac.authorization.k8s.io/v1/namespaces/" + namespace + "/rolebindings/glim-test-slot-installer"
 	status, _, err = l.request(ctx, http.MethodDelete, bindingPath, deleteOptions("Background"))
 	if err != nil && status != http.StatusNotFound {

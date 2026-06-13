@@ -305,7 +305,7 @@ func admitRunCycle(
 			_, _ = store.CancelLeaseByRef(ctx, run.Project, leaseRef)
 		}
 		leaseErr := runnerLeaseNotClaimedError(lease)
-		_, _ = store.AbortRunByID(ctx, run.Project, run.ID, "native_lease_not_claimed: "+leaseErr.Error())
+		_, _ = store.AbortRunByID(ctx, run.Project, run.ID, "runner_lease_not_claimed: "+leaseErr.Error())
 		detail := leaseErr.Error()
 		return RunCycleAdmissionResult{State: "dispatch_failed", Detail: &detail}, nil
 	}

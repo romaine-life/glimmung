@@ -174,7 +174,7 @@ func TestRegisterWorkflowDefaultsBlankKindToK8sJob(t *testing.T) {
 	store := &fakeWorkflowWriteStore{fakeReadStore: fakeReadStore{projects: []Project{{
 		ID:       "glimmung",
 		Name:     "glimmung",
-		Metadata: map[string]any{"app_type": "native_web_app"},
+		Metadata: map[string]any{"app_type": "webapp"},
 	}}}}
 	handler := NewWithDependencies(Settings{}, store, fakeAdminAuthenticator{})
 
@@ -762,11 +762,11 @@ func TestValidateWorkflowRegisterRejectsInvalidManagedSteps(t *testing.T) {
 	}
 }
 
-func TestRegisterWorkflowRejectsNonNativeKind(t *testing.T) {
+func TestRegisterWorkflowRejectsNonK8sJobForWebapp(t *testing.T) {
 	store := &fakeWorkflowWriteStore{fakeReadStore: fakeReadStore{projects: []Project{{
 		ID:       "glimmung",
 		Name:     "glimmung",
-		Metadata: map[string]any{"native_webapp": true},
+		Metadata: map[string]any{"app_kind": "webapp"},
 	}}}}
 	handler := NewWithDependencies(Settings{}, store, fakeAdminAuthenticator{})
 
