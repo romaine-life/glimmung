@@ -44,6 +44,13 @@ RunReports own factual per-run audit state.
   `payload.kind: "reject"` are first-class glimmung_ui signal kinds; approve
   releases a workflow's `touchpoint_gate` to merge, reject recycles via the
   configured `pr.recycle_policy`.
+- Reviewer decisions are attributed. The authenticated principal that submits
+  an approve / reject / cancel signal is captured on the signal at enqueue time
+  (derived from the session, never the request body, so it cannot be forged)
+  and stamped onto the reviewed run as durable per-run attribution
+  (`reviewed_by`, `reviewed_at`, `review_decision`). A gate never advances while
+  its authorship is dropped: the attribution is written before the gate
+  releases or the recycle dispatches.
 - A run sitting at a `touchpoint_gate` has Run state `review_required`. That
   state is non-terminal: locks stay held, the slot may be alive, projections
   treat the run as active, and the run advances forward when approve fires.
@@ -74,6 +81,10 @@ RunReports own factual per-run audit state.
   Review evidence, including WebM videos and screenshots, is stored and
   rendered by Glimmung rather than copied into the GitHub PR body.
 - Signal drain logs should identify target repo/ref, source, kind, and outcome.
+- Reviewer attribution is durable and queryable: the RunReport exposes
+  `reviewed_by` / `reviewed_at` / `review_decision`, and the run event ledger
+  records each decision as a `touchpoint_approve` / `touchpoint_reject` /
+  `touchpoint_cancel` event carrying the acting principal and origin signal id.
 
 ## Acceptance Checks
 
@@ -81,6 +92,9 @@ RunReports own factual per-run audit state.
 - RunReport changes preserve one-Run scope and include factual evidence fields.
 - Signal changes include tests or evidence for durable enqueue and drain
   behavior.
+- Reviewer-decision changes preserve attribution: the approving, rejecting, or
+  cancelling principal is recorded on the reviewed run and surfaced on the
+  RunReport. A gate release or recycle cannot regress to an anonymous decision.
 - Playbook changes prove dependency/gate/integration behavior for the changed
   path.
 - PR syndication changes show that GitHub remains a projection of Glimmung

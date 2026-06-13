@@ -20,6 +20,12 @@ type SignalEnqueue struct {
 	TargetRef  string
 	Source     string
 	Payload    map[string]any
+	// Actor is the durable attribution identity for the signal: the
+	// authenticated principal that submitted it. For glimmung_ui this is the
+	// human reviewer who clicked approve/reject/cancel. It is derived
+	// server-side from the authenticated session, never from the request body,
+	// so a caller cannot forge the approver.
+	Actor string
 }
 
 type PublicSignal struct {
@@ -85,6 +91,7 @@ func createSignal(store ReadStore) http.HandlerFunc {
 			TargetRef:  body.TargetRef,
 			Source:     source,
 			Payload:    body.Payload,
+			Actor:      signalActor(r.Context()),
 		}
 		sig, err := sigStore.EnqueueSignal(r.Context(), req)
 		switch {
@@ -98,6 +105,20 @@ func createSignal(store ReadStore) http.HandlerFunc {
 		wakeSignalDrain()
 		writeJSON(w, http.StatusOK, sig)
 	}
+}
+
+// signalActor resolves the durable attribution identity for a signal from the
+// authenticated request principal set by requireAdmin. For a human browser
+// reviewer this is their email; for a service principal acting on a human's
+// behalf it is the ActorEmail, falling back to the principal subject. The
+// identity is taken from the session, never the request body, so the recorded
+// approver cannot be forged by the caller.
+func signalActor(ctx context.Context) string {
+	user, ok := adminUser(ctx)
+	if !ok {
+		return ""
+	}
+	return firstNonEmpty(user.ActorEmail, user.Email, user.Sub)
 }
 
 func validPRSignalTarget(repo, ref string) bool {

@@ -1865,11 +1865,18 @@ type runDoc struct {
 	AgentRuntime         agentruntime.Snapshot          `json:"agent_runtime,omitempty"`
 	AbortReason          *string                        `json:"abort_reason"`
 	TerminalObservation  *server.RunTerminalObservation `json:"terminal_observation,omitempty"`
-	EntrypointPhase      *string                        `json:"entrypoint_phase,omitempty"`
-	TriggerSource        map[string]any                 `json:"trigger_source"`
-	RunInputs            map[string]string              `json:"run_inputs,omitempty"`
-	CreatedAt            string                         `json:"created_at"`
-	UpdatedAt            string                         `json:"updated_at"`
+	// ReviewedBy / ReviewedAt / ReviewDecision are the durable per-run review
+	// attribution: which authenticated principal approved, rejected, or
+	// cancelled this run's touchpoint gate, and when. Stamped by the signal
+	// drain when a reviewer decision lands, projected onto the RunReport.
+	ReviewedBy      string            `json:"reviewed_by,omitempty"`
+	ReviewedAt      string            `json:"reviewed_at,omitempty"`
+	ReviewDecision  string            `json:"review_decision,omitempty"`
+	EntrypointPhase *string           `json:"entrypoint_phase,omitempty"`
+	TriggerSource   map[string]any    `json:"trigger_source"`
+	RunInputs       map[string]string `json:"run_inputs,omitempty"`
+	CreatedAt       string            `json:"created_at"`
+	UpdatedAt       string            `json:"updated_at"`
 	// Fields used by mutation operations.
 	CallbackToken     *string `json:"callback_token,omitempty"`
 	IssueLockHolderID *string `json:"issue_lock_holder_id,omitempty"`
@@ -2549,6 +2556,9 @@ func runReportFromDoc(doc runDoc, lineageByID map[string]string) server.RunRepor
 		AgentRuntime:         doc.AgentRuntime,
 		AbortReason:          emptyStringNil(doc.AbortReason),
 		TerminalObservation:  doc.TerminalObservation,
+		ReviewedBy:           optionalNonEmptyStringPtr(doc.ReviewedBy),
+		ReviewedAt:           optionalTimePtr(doc.ReviewedAt),
+		ReviewDecision:       optionalNonEmptyStringPtr(doc.ReviewDecision),
 		StartedAt:            parseTimeOrNow(doc.CreatedAt),
 		CompletedAt:          completed,
 		UpdatedAt:            parseTimeOrNow(doc.UpdatedAt),
@@ -2922,6 +2932,22 @@ func emptyStringNil(value *string) *string {
 		return nil
 	}
 	return value
+}
+
+// optionalTimePtr parses an RFC3339(Nano) timestamp string into a *time.Time,
+// returning nil for an empty or unparseable value. Used to project optional
+// run timestamps (e.g. reviewed_at) onto the report without forcing a zero
+// time onto the wire.
+func optionalTimePtr(value string) *time.Time {
+	if strings.TrimSpace(value) == "" {
+		return nil
+	}
+	t, err := time.Parse(time.RFC3339Nano, value)
+	if err != nil {
+		return nil
+	}
+	t = t.UTC()
+	return &t
 }
 
 func refPtr(refs map[string]string, id *string) *string {
@@ -4956,18 +4982,22 @@ func max(a, b int) int {
 }
 
 type signalDoc struct {
-	ID                string         `json:"id"`
-	SchemaVersion     int            `json:"schema_version"`
-	TargetType        string         `json:"target_type"`
-	TargetRepo        string         `json:"target_repo"`
-	TargetID          string         `json:"target_id"`
-	Source            string         `json:"source"`
-	Payload           map[string]any `json:"payload"`
-	State             string         `json:"state"`
-	EnqueuedAt        string         `json:"enqueued_at"`
-	ProcessedAt       *string        `json:"processed_at,omitempty"`
-	ProcessedDecision *string        `json:"processed_decision,omitempty"`
-	FailureReason     *string        `json:"failure_reason,omitempty"`
+	ID            string         `json:"id"`
+	SchemaVersion int            `json:"schema_version"`
+	TargetType    string         `json:"target_type"`
+	TargetRepo    string         `json:"target_repo"`
+	TargetID      string         `json:"target_id"`
+	Source        string         `json:"source"`
+	Payload       map[string]any `json:"payload"`
+	State         string         `json:"state"`
+	// Actor is the authenticated principal that submitted the signal, captured
+	// at enqueue time. It is the durable attribution origin for the reviewer
+	// decision this signal carries (approve / reject / cancel).
+	Actor             string  `json:"actor,omitempty"`
+	EnqueuedAt        string  `json:"enqueued_at"`
+	ProcessedAt       *string `json:"processed_at,omitempty"`
+	ProcessedDecision *string `json:"processed_decision,omitempty"`
+	FailureReason     *string `json:"failure_reason,omitempty"`
 }
 
 // ---------------------------------------------------------------------------
@@ -5797,6 +5827,7 @@ func (s *Store) EnqueueSignal(ctx context.Context, req server.SignalEnqueue) (se
 		Source:        req.Source,
 		Payload:       payload,
 		State:         "pending",
+		Actor:         req.Actor,
 		EnqueuedAt:    now.Format(time.RFC3339Nano),
 	}
 	data, err := json.Marshal(doc)
@@ -5842,6 +5873,7 @@ func (s *Store) ListGraphSignals(ctx context.Context, filter server.GraphSignalF
 			Source:            doc.Source,
 			Payload:           mapOrEmpty(doc.Payload),
 			State:             firstNonEmpty(doc.State, "pending"),
+			Actor:             doc.Actor,
 			EnqueuedAt:        parseTimeOrNow(doc.EnqueuedAt),
 			ProcessedDecision: doc.ProcessedDecision,
 			FailureReason:     doc.FailureReason,
@@ -5958,7 +5990,74 @@ func queuedSignalFromDoc(doc signalDoc) server.QueuedSignal {
 		Source:     doc.Source,
 		Payload:    mapOrEmpty(doc.Payload),
 		State:      firstNonEmpty(doc.State, "pending"),
+		Actor:      doc.Actor,
 		EnqueuedAt: parseTimeOrZero(doc.EnqueuedAt),
+	}
+}
+
+// RecordTouchpointDecision stamps a human reviewer's touchpoint decision onto
+// the reviewed run as durable per-run attribution and appends a decision event
+// to the run's event ledger. Both writes are required: the canonical
+// reviewed_by fact and its ledger projection land together, so a touchpoint
+// approve / reject / cancel can never advance while its authorship is silently
+// dropped. The ledger event is idempotent on its natural key
+// (run_id, attempt_index, job_id, seq), so a re-drain of the same decision is a
+// safe no-op.
+func (s *Store) RecordTouchpointDecision(ctx context.Context, project, runID string, dec server.TouchpointDecision) error {
+	decision := strings.TrimSpace(dec.Decision)
+	if decision == "" {
+		return fmt.Errorf("touchpoint decision requires a decision kind")
+	}
+	decidedAt := dec.DecidedAt
+	if decidedAt.IsZero() {
+		decidedAt = time.Now().UTC()
+	}
+	decidedAtStr := decidedAt.UTC().Format(time.RFC3339Nano)
+	if _, err := s.pgRuns.PatchPayload(ctx, project, runID, func(raw map[string]any) error {
+		raw["reviewed_by"] = dec.Actor
+		raw["reviewed_at"] = decidedAtStr
+		raw["review_decision"] = decision
+		raw["updated_at"] = decidedAtStr
+		return nil
+	}); err != nil {
+		return fmt.Errorf("stamp run review attribution: %w", err)
+	}
+	if _, err := s.pgRunEvents.Insert(ctx, pgstore.RunEventRow{
+		RunID:        runID,
+		AttemptIndex: dec.AttemptIndex,
+		JobID:        "touchpoint-decision-" + decision,
+		Seq:          0,
+		Project:      project,
+		Event:        "touchpoint_" + decision,
+		Phase:        dec.Phase,
+		Message:      touchpointDecisionMessage(decision, dec.Actor),
+		Metadata: map[string]any{
+			"actor":     dec.Actor,
+			"decision":  decision,
+			"signal_id": dec.SignalID,
+			"feedback":  dec.Feedback,
+		},
+		CreatedAt: decidedAt.UTC(),
+	}); err != nil {
+		return fmt.Errorf("append touchpoint decision event: %w", err)
+	}
+	return nil
+}
+
+func touchpointDecisionMessage(decision, actor string) string {
+	who := strings.TrimSpace(actor)
+	if who == "" {
+		who = "an unattributed principal"
+	}
+	switch decision {
+	case "approve":
+		return fmt.Sprintf("touchpoint approved by %s", who)
+	case "reject":
+		return fmt.Sprintf("changes requested by %s", who)
+	case "cancel":
+		return fmt.Sprintf("touchpoint cancelled by %s", who)
+	default:
+		return fmt.Sprintf("touchpoint %s by %s", decision, who)
 	}
 }
 

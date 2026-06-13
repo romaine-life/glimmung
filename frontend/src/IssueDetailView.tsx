@@ -284,6 +284,7 @@ type RunProjectionSignal = {
   state: string;
   kind?: string;
   feedback?: string;
+  actor?: string;
   processed_decision?: string | null;
   failure_reason?: string | null;
 };
@@ -1761,6 +1762,14 @@ function DrillIn({
   return null;
 }
 
+// reviewDecisionLabel renders the terse, lowercase attribution verb for a
+// reviewer's touchpoint decision, matching the design-system voice.
+function reviewDecisionLabel(decision: string | null): string {
+  if (decision === "reject") return "changes requested by";
+  if (decision === "cancel") return "cancelled by";
+  return "approved by";
+}
+
 function RunMetaSummary({
   run,
   graph,
@@ -1784,6 +1793,9 @@ function RunMetaSummary({
   const parentRunRef = stringOrNull(meta.parent_run_ref);
   const entrypointPhase = stringOrNull(meta.entrypoint_phase);
   const agentRuntime = agentRuntimeFromMetadata(meta);
+  const reviewedBy = stringOrNull(meta.reviewed_by);
+  const reviewedAt = stringOrNull(meta.reviewed_at);
+  const reviewDecision = stringOrNull(meta.review_decision);
   return (
     <div className="run-panel-meta" style={{ marginTop: "0.5rem" }}>
       <div>
@@ -1821,6 +1833,13 @@ function RunMetaSummary({
       {cumulativeCost !== null && (
         <div>
           <span className="key">cost</span> <span className="mono">${cumulativeCost.toFixed(4)}</span>
+        </div>
+      )}
+      {reviewedBy && (
+        <div>
+          <span className="key">{reviewDecisionLabel(reviewDecision)}</span>{" "}
+          <span className="mono">{reviewedBy}</span>
+          {reviewedAt && <span className="dim mono"> · {formatTimestamp(reviewedAt)}</span>}
         </div>
       )}
       {prNumber !== null && repo && (
@@ -3447,9 +3466,14 @@ function TouchpointTab({
           <span className="key">feedback</span>
           <span className="val">
             {pendingSignal ? (
-              <span className={`pill ${pendingSignal.state === "processing" ? "busy" : "info"}`}>
-                {pendingSignal.state}
-              </span>
+              <>
+                <span className={`pill ${pendingSignal.state === "processing" ? "busy" : "info"}`}>
+                  {pendingSignal.state}
+                </span>
+                {pendingSignal.actor && (
+                  <span className="dim mono"> · {pendingSignal.kind ?? "decision"} by {pendingSignal.actor}</span>
+                )}
+              </>
             ) : (
               <span className="dim">clear</span>
             )}

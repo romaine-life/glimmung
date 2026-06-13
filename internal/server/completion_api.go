@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/romaine-life/glimmung/internal/domain/budget"
 	"github.com/romaine-life/glimmung/internal/domain/decision"
@@ -203,6 +204,30 @@ type RunCompletionStore interface {
 
 type NativeJobCompletionStore interface {
 	RecordNativeJobCompletion(ctx context.Context, project, runID string, p CompletionPayload) (NativeJobCompletionResult, error)
+}
+
+// TouchpointDecision is a human reviewer's durable decision on a run's
+// touchpoint gate: who decided, what they decided, and when. The signal drain
+// captures it from the approve / reject / cancel signal and stamps it onto the
+// reviewed run so the decision's authorship survives on run-facing surfaces
+// (RunReport, run event ledger) rather than being discarded once the gate
+// releases.
+type TouchpointDecision struct {
+	// Decision is the reviewer action: "approve", "reject", or "cancel".
+	Decision string
+	// Actor is the authenticated principal that submitted the decision.
+	Actor string
+	// Feedback is the reviewer's optional note (reject / cancel).
+	Feedback string
+	// SignalID is the origin signal, recorded in the decision-ledger event.
+	SignalID string
+	// Phase is the gate phase the decision applies to, for the ledger event.
+	Phase string
+	// AttemptIndex is the run attempt the decision applies to, for the ledger
+	// event's natural key.
+	AttemptIndex int
+	// DecidedAt is when the decision was drained; defaults to now if zero.
+	DecidedAt time.Time
 }
 
 // NativeRunCompletedRequest is the body for POST /run-callbacks/{token}/native/completed.

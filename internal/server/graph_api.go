@@ -37,6 +37,7 @@ type GraphSignal struct {
 	Source            string
 	Payload           map[string]any
 	State             string
+	Actor             string
 	EnqueuedAt        time.Time
 	ProcessedDecision *string
 	FailureReason     *string
@@ -250,6 +251,7 @@ type RunProjectionSignal struct {
 	State             string  `json:"state"`
 	Kind              string  `json:"kind,omitempty"`
 	Feedback          string  `json:"feedback,omitempty"`
+	Actor             string  `json:"actor,omitempty"`
 	ProcessedDecision *string `json:"processed_decision,omitempty"`
 	FailureReason     *string `json:"failure_reason,omitempty"`
 }
@@ -670,6 +672,9 @@ func graphNodeFromRunReport(run RunReport, workflow Workflow) GraphNode {
 		"abort_reason":         run.AbortReason,
 		"cumulative_cost_usd":  run.CumulativeCostUSD,
 		"entrypoint_phase":     run.EntrypointPhase,
+		"reviewed_by":          run.ReviewedBy,
+		"reviewed_at":          run.ReviewedAt,
+		"review_decision":      run.ReviewDecision,
 		"run_graph":            runGraphMetadata(run),
 	}
 	return GraphNode{
@@ -2349,6 +2354,7 @@ func projectionSignals(issueRef string, runs []RunReport, touchpoints []Touchpoi
 			State:             firstNonEmpty(signal.State, "pending"),
 			Kind:              firstNonEmpty(stringValue(signal.Payload["kind"]), stringValue(signal.Payload["state"])),
 			Feedback:          firstNonEmpty(stringValue(signal.Payload["feedback"]), stringValue(signal.Payload["body"])),
+			Actor:             signal.Actor,
 			ProcessedDecision: signal.ProcessedDecision,
 			FailureReason:     signal.FailureReason,
 		})

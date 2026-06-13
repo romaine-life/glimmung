@@ -39,6 +39,52 @@ func TestNativeEventAttemptIndexAcceptsExplicitOrMetadataValue(t *testing.T) {
 	}
 }
 
+func TestRunReportProjectsReviewAttribution(t *testing.T) {
+	t.Parallel()
+	payload, err := json.Marshal(runDoc{
+		ID:             "run-1",
+		Project:        "glimmung",
+		IssueNumber:    167,
+		State:          "passed",
+		ReviewedBy:     "nelson@romaine.life",
+		ReviewedAt:     "2026-06-13T01:30:08.123456789Z",
+		ReviewDecision: "approve",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Round-trip through the jsonb payload to prove the attribution persists in
+	// the durable run document, then project onto the RunReport.
+	doc, err := runDocFromPGRow(pgstore.RunRow{ID: "run-1", Project: "glimmung", IssueNumber: 167, Payload: payload})
+	if err != nil {
+		t.Fatalf("round-trip run doc: %v", err)
+	}
+	report := runReportFromDoc(doc, nil)
+	if report.ReviewedBy == nil || *report.ReviewedBy != "nelson@romaine.life" {
+		t.Fatalf("ReviewedBy=%v, want nelson@romaine.life", report.ReviewedBy)
+	}
+	if report.ReviewDecision == nil || *report.ReviewDecision != "approve" {
+		t.Fatalf("ReviewDecision=%v, want approve", report.ReviewDecision)
+	}
+	if report.ReviewedAt == nil || report.ReviewedAt.IsZero() {
+		t.Fatalf("ReviewedAt=%v, want a parsed timestamp", report.ReviewedAt)
+	}
+
+	// An unreviewed run must not claim attribution: the fields stay absent.
+	bare, err := json.Marshal(runDoc{ID: "run-2", Project: "glimmung", IssueNumber: 167, State: "in_progress"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bareDoc, err := runDocFromPGRow(pgstore.RunRow{ID: "run-2", Project: "glimmung", IssueNumber: 167, Payload: bare})
+	if err != nil {
+		t.Fatalf("round-trip bare run doc: %v", err)
+	}
+	bareReport := runReportFromDoc(bareDoc, nil)
+	if bareReport.ReviewedBy != nil || bareReport.ReviewedAt != nil || bareReport.ReviewDecision != nil {
+		t.Fatalf("unreviewed run must not project attribution: by=%v at=%v decision=%v", bareReport.ReviewedBy, bareReport.ReviewedAt, bareReport.ReviewDecision)
+	}
+}
+
 func TestRunDocFromPGRowRequiresMatchingIssueNumber(t *testing.T) {
 	t.Parallel()
 	payload, err := json.Marshal(runDoc{

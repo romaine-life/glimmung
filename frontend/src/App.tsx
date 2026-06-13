@@ -282,6 +282,9 @@ type RunReport = {
   screenshots_markdown: string | null;
   abort_reason: string | null;
   terminal_observation?: RunTerminalObservation | null;
+  reviewed_by?: string | null;
+  reviewed_at?: string | null;
+  review_decision?: string | null;
   agent_runtime?: AgentRuntimeSnapshot;
   started_at: string;
   completed_at: string | null;

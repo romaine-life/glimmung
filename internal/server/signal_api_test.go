@@ -14,11 +14,13 @@ import (
 
 type fakeSignalStore struct {
 	fakeReadStore
-	result PublicSignal
-	err    error
+	result   PublicSignal
+	err      error
+	captured SignalEnqueue
 }
 
-func (s *fakeSignalStore) EnqueueSignal(_ context.Context, _ SignalEnqueue) (PublicSignal, error) {
+func (s *fakeSignalStore) EnqueueSignal(_ context.Context, req SignalEnqueue) (PublicSignal, error) {
+	s.captured = req
 	if s.err != nil {
 		return PublicSignal{}, s.err
 	}
@@ -100,6 +102,12 @@ func TestCreateSignalRequiresStore(t *testing.T) {
 	}
 }
 
+type recordedTPDecision struct {
+	project string
+	runID   string
+	dec     TouchpointDecision
+}
+
 type fakeSignalDrainStore struct {
 	fakeReadStore
 	pending           []QueuedSignal
@@ -107,6 +115,12 @@ type fakeSignalDrainStore struct {
 	prLockReleased    bool
 	issueLockClaimed  bool
 	createdRun        bool
+	recorded          []recordedTPDecision
+}
+
+func (s *fakeSignalDrainStore) RecordTouchpointDecision(_ context.Context, project, runID string, dec TouchpointDecision) error {
+	s.recorded = append(s.recorded, recordedTPDecision{project: project, runID: runID, dec: dec})
+	return nil
 }
 
 func (s *fakeSignalDrainStore) RecordNativeJobsSkipped(_ context.Context, _, _, _ string, _ map[string]string) error {
@@ -247,6 +261,7 @@ func TestDrainSignalsDispatchesRequestChangesTriage(t *testing.T) {
 		Source:     "glimmung_ui",
 		Payload:    map[string]any{"kind": "reject", "feedback": "fix it"},
 		State:      "pending",
+		Actor:      "nelson@romaine.life",
 		EnqueuedAt: time.Now(),
 	}}}
 
@@ -267,6 +282,86 @@ func TestDrainSignalsDispatchesRequestChangesTriage(t *testing.T) {
 	if !store.prLockReleased {
 		t.Fatal("PR signal lock should release after creating the new queued/dispatched run")
 	}
+	// Migration guard: a changes-requested decision must durably attribute the
+	// reviewer onto the reviewed run before recycling. If this regresses to an
+	// anonymous recycle, the recorded decision disappears and this fails.
+	if len(store.recorded) != 1 {
+		t.Fatalf("expected exactly one recorded touchpoint decision, got %d", len(store.recorded))
+	}
+	rec := store.recorded[0]
+	if rec.runID != "run-1" || rec.dec.Decision != "reject" || rec.dec.Actor != "nelson@romaine.life" {
+		t.Fatalf("recorded decision=%+v, want reject by nelson@romaine.life on run-1", rec.dec)
+	}
+	if rec.dec.SignalID != "signal-1" {
+		t.Fatalf("recorded decision signal_id=%q, want signal-1", rec.dec.SignalID)
+	}
+}
+
+func TestCreateSignalCapturesAuthenticatedActor(t *testing.T) {
+	store := &fakeSignalStore{result: PublicSignal{TargetType: "pr", TargetRepo: "owner/repo", TargetRef: "42", Source: "glimmung_ui", State: "pending"}}
+	handler := NewWithDependencies(Settings{}, store, fakeAdminAuthenticator{user: auth.User{Sub: "u1", Email: "nelson@romaine.life", Role: "admin"}})
+
+	body := `{"target_type":"pr","target_repo":"owner/repo","target_ref":"42","source":"glimmung_ui","payload":{"kind":"approve"}}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/signals", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer admin")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	// The approver identity must be derived from the authenticated session, not
+	// the request body. A caller cannot forge it.
+	if store.captured.Actor != "nelson@romaine.life" {
+		t.Fatalf("captured actor=%q, want nelson@romaine.life", store.captured.Actor)
+	}
+}
+
+func TestSignalActorPrefersHumanIdentity(t *testing.T) {
+	cases := []struct {
+		name string
+		user auth.User
+		want string
+	}{
+		{"browser admin", auth.User{Sub: "u1", Email: "nelson@romaine.life", Role: "admin"}, "nelson@romaine.life"},
+		{"service acting for human", auth.User{Sub: "system:serviceaccount:glimmung-runs:agent", Email: "system:serviceaccount:glimmung-runs:agent", ActorEmail: "human@romaine.life", Role: "service"}, "human@romaine.life"},
+		{"bare service account", auth.User{Sub: "system:serviceaccount:glimmung-runs:agent", Email: "system:serviceaccount:glimmung-runs:agent"}, "system:serviceaccount:glimmung-runs:agent"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.WithValue(context.Background(), adminUserContextKey{}, tc.user)
+			if got := signalActor(ctx); got != tc.want {
+				t.Fatalf("signalActor=%q, want %q", got, tc.want)
+			}
+		})
+	}
+	if got := signalActor(context.Background()); got != "" {
+		t.Fatalf("signalActor with no principal=%q, want empty", got)
+	}
+}
+
+func TestDecideTriageSignalCarriesActor(t *testing.T) {
+	store := &fakeSignalDrainStore{}
+	for _, kind := range []string{"approve", "reject"} {
+		res, err := decideTriageSignal(context.Background(), store, QueuedSignal{
+			ID:         "signal-" + kind,
+			TargetType: "pr",
+			TargetRepo: "owner/repo",
+			TargetID:   "42",
+			Source:     "glimmung_ui",
+			Payload:    map[string]any{"kind": kind, "feedback": "note"},
+			Actor:      "nelson@romaine.life",
+		})
+		if err != nil {
+			t.Fatalf("%s: decideTriageSignal: %v", kind, err)
+		}
+		if res.Actor != "nelson@romaine.life" {
+			t.Fatalf("%s: res.Actor=%q, want nelson@romaine.life", kind, res.Actor)
+		}
+		if res.SignalID != "signal-"+kind {
+			t.Fatalf("%s: res.SignalID=%q, want signal-%s", kind, res.SignalID, kind)
+		}
+	}
 }
 
 func TestTriageActionableRecognizesCancel(t *testing.T) {
@@ -284,11 +379,13 @@ func TestTriageActionableRecognizesCancel(t *testing.T) {
 func TestDecideTriageSignalCancelTargetsReviewGate(t *testing.T) {
 	store := &fakeSignalDrainStore{}
 	res, err := decideTriageSignal(context.Background(), store, QueuedSignal{
+		ID:         "signal-cancel",
 		TargetType: "pr",
 		TargetRepo: "owner/repo",
 		TargetID:   "42",
 		Source:     "glimmung_ui",
 		Payload:    map[string]any{"kind": "cancel", "feedback": "drop it"},
+		Actor:      "nelson@romaine.life",
 	})
 	if err != nil {
 		t.Fatalf("decideTriageSignal: %v", err)
@@ -301,5 +398,8 @@ func TestDecideTriageSignalCancelTargetsReviewGate(t *testing.T) {
 	}
 	if res.Feedback != "drop it" {
 		t.Fatalf("feedback=%q, want %q", res.Feedback, "drop it")
+	}
+	if res.Actor != "nelson@romaine.life" || res.SignalID != "signal-cancel" {
+		t.Fatalf("actor=%q signal_id=%q, want nelson@romaine.life/signal-cancel", res.Actor, res.SignalID)
 	}
 }

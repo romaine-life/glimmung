@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/romaine-life/glimmung/internal/domain/decision"
+	"github.com/romaine-life/glimmung/internal/metrics"
 )
 
 type SignalDrainStore interface {
@@ -22,6 +23,7 @@ type SignalDrainStore interface {
 	ClaimLock(ctx context.Context, scope, key, holderID string, ttlSeconds int, metadata map[string]any) error
 	ReleaseLock(ctx context.Context, scope, key, holderID string) bool
 	FindRunForPR(ctx context.Context, repo string, prNumber int) (RunReplayData, error)
+	RecordTouchpointDecision(ctx context.Context, project, runID string, dec TouchpointDecision) error
 }
 
 type QueuedSignal struct {
@@ -32,6 +34,10 @@ type QueuedSignal struct {
 	Source     string
 	Payload    map[string]any
 	State      string
+	// Actor is the authenticated principal that submitted the signal, set at
+	// enqueue time. The drain threads it onto the durable per-run review
+	// attribution so a touchpoint approve/reject/cancel records who decided.
+	Actor      string
 	EnqueuedAt time.Time
 }
 
@@ -56,6 +62,10 @@ type triageDecisionResult struct {
 	Workflow *Workflow
 	Target   *PhaseSpec
 	Feedback string
+	// Actor and SignalID carry the reviewer attribution from the originating
+	// signal so the durable per-run review record names who decided.
+	Actor    string
+	SignalID string
 }
 
 var signalDrainWake atomic.Value // stores func()
@@ -272,6 +282,8 @@ func decideTriageSignal(ctx context.Context, store SignalDrainStore, signal Queu
 			Run:      run,
 			Workflow: wf,
 			Target:   gate,
+			Actor:    signal.Actor,
+			SignalID: signal.ID,
 		}, nil
 	}
 
@@ -297,6 +309,8 @@ func decideTriageSignal(ctx context.Context, store SignalDrainStore, signal Queu
 			Workflow: wf,
 			Target:   gate,
 			Feedback: triageFeedbackText(signal),
+			Actor:    signal.Actor,
+			SignalID: signal.ID,
 		}, nil
 	}
 
@@ -329,6 +343,8 @@ func decideTriageSignal(ctx context.Context, store SignalDrainStore, signal Queu
 		Workflow: wf,
 		Target:   target,
 		Feedback: triageFeedbackText(signal),
+		Actor:    signal.Actor,
+		SignalID: signal.ID,
 	}, nil
 }
 
@@ -406,6 +422,25 @@ func releaseTouchpointGate(ctx context.Context, store SignalDrainStore, nativeLa
 	if decision.Workflow == nil {
 		return fmt.Errorf("approve drain missing workflow")
 	}
+	attemptIdx, ok := latestAttemptIndexForPhase(decision.Run, decision.Target.Name)
+	if !ok {
+		return fmt.Errorf("approve drain: run is review_required but has no parked attempt for phase %q", decision.Target.Name)
+	}
+	// Stamp the reviewer attribution before releasing the gate: who approved is
+	// recorded as a durable per-run fact + ledger event first, so the merge can
+	// never proceed while its authorship is dropped. The stamp is idempotent,
+	// so a retry after a downstream launch failure re-records cleanly.
+	if err := store.RecordTouchpointDecision(ctx, decision.Run.Project, decision.Run.ID, TouchpointDecision{
+		Decision:     "approve",
+		Actor:        decision.Actor,
+		SignalID:     decision.SignalID,
+		Phase:        decision.Target.Name,
+		AttemptIndex: attemptIdx,
+		DecidedAt:    time.Now().UTC(),
+	}); err != nil {
+		return fmt.Errorf("record approval attribution: %w", err)
+	}
+	metrics.RecordReviewDecision("approve")
 	if err := launchTouchpointGateMerge(ctx, completionStore, nativeLauncher, decision.Run, decision.Workflow, *decision.Target); err != nil {
 		return fmt.Errorf("launch touchpoint gate: %w", err)
 	}
@@ -442,6 +477,18 @@ func cancelTouchpointGate(ctx context.Context, store SignalDrainStore, nativeLau
 	if reason == "" {
 		reason = "touchpoint cancelled by reviewer"
 	}
+	if err := store.RecordTouchpointDecision(ctx, triage.Run.Project, triage.Run.ID, TouchpointDecision{
+		Decision:     "cancel",
+		Actor:        triage.Actor,
+		Feedback:     reason,
+		SignalID:     triage.SignalID,
+		Phase:        gate.Name,
+		AttemptIndex: attemptIdx,
+		DecidedAt:    time.Now().UTC(),
+	}); err != nil {
+		return fmt.Errorf("record cancel attribution: %w", err)
+	}
+	metrics.RecordReviewDecision("cancel")
 	if err := completionStore.CancelReviewGate(ctx, triage.Run.Project, triage.Run.ID, gate.Name, attemptIdx, reason); err != nil {
 		return fmt.Errorf("cancel review gate: %w", err)
 	}
@@ -519,6 +566,17 @@ func launchTouchpointGateMerge(
 	return nil
 }
 
+// latestAttempt returns the attempt index and phase of the run's most recent
+// attempt (slice order), or (0, "") when the run has no attempts. Used to
+// anchor a reviewer-decision ledger event to a reviewed (non-gated) run.
+func latestAttempt(run RunReplayData) (int, string) {
+	if len(run.Attempts) == 0 {
+		return 0, ""
+	}
+	a := run.Attempts[len(run.Attempts)-1]
+	return a.AttemptIndex, a.Phase
+}
+
 func latestAttemptIndexForPhase(run RunReplayData, phase string) (int, bool) {
 	for i := len(run.Attempts) - 1; i >= 0; i-- {
 		attempt := run.Attempts[i]
@@ -537,6 +595,22 @@ func dispatchTriage(ctx context.Context, store SignalDrainStore, nativeLauncher 
 	if nativeLauncher == nil {
 		return errors.New("no native launcher configured")
 	}
+	// Record the reviewer's changes-requested decision on the reviewed run as
+	// durable per-run attribution before recycling. The attribution is about
+	// the run whose PR was reviewed, not the recycle run dispatched below.
+	rejectedAttemptIdx, rejectedAttemptPhase := latestAttempt(run)
+	if err := store.RecordTouchpointDecision(ctx, run.Project, run.ID, TouchpointDecision{
+		Decision:     "reject",
+		Actor:        decision.Actor,
+		Feedback:     decision.Feedback,
+		SignalID:     decision.SignalID,
+		Phase:        rejectedAttemptPhase,
+		AttemptIndex: rejectedAttemptIdx,
+		DecidedAt:    time.Now().UTC(),
+	}); err != nil {
+		return fmt.Errorf("record changes-requested attribution: %w", err)
+	}
+	metrics.RecordReviewDecision("reject")
 	triggerSource := map[string]any{
 		"kind":             "pr_feedback",
 		"triage_signal_id": signal.ID,
