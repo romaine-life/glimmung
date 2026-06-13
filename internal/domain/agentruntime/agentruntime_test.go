@@ -1,6 +1,17 @@
 package agentruntime
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/romaine-life/glimmung/internal/domain/agentcost"
+)
+
+var testPricing = agentcost.Rate{
+	CatalogRef:               "test-catalog",
+	InputPerMillionUSD:       1,
+	CachedInputPerMillionUSD: 0.1,
+	OutputPerMillionUSD:      2,
+}
 
 func TestResolveAppliesExplicitInheritanceAcrossGlobalProjectIssue(t *testing.T) {
 	global := DefaultConfig()
@@ -9,7 +20,7 @@ func TestResolveAppliesExplicitInheritanceAcrossGlobalProjectIssue(t *testing.T)
 	}
 	project := Config{
 		Profiles: map[string]Profile{
-			"project-codex": {Provider: ProviderCodex, Model: "gpt-5.4", ReasoningEffort: "high"},
+			"project-codex": {Provider: ProviderCodex, Model: "gpt-5.4", ReasoningEffort: "high", Pricing: testPricing},
 		},
 		Policy: Policy{
 			Default: PolicyDecision{Mode: ModeOverride, Profile: "project-codex"},

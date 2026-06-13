@@ -291,16 +291,19 @@ The launcher passes the durable job spec to the runner in
 callback APIs.
 
 The runner is also the owner of observed agent cost for managed jobs. When a
-step streams an agent result JSON line with top-level `total_cost_usd`, the
-runner sums those values and sends the positive total as completion
-`cost_usd`. The server stores that completion cost directly; it does not keep a
-second compatibility read path that reparses logs during completion. Positive
-`verification.cost_usd` can still supply the cost for verifier artifacts, but a
-zero verification cost does not erase a positive runner-observed cost.
-Historical runs completed before this contract can be repaired with the
-operator command `glimmung-repair-native-costs`, which copies the already
-durable native event cost facts into the run ledger instead of adding a
-read-time fallback.
+step streams provider usage JSON, such as a Codex `turn.completed` event with a
+top-level `usage` object, the runner prices those tokens with the Run's
+snapshotted agent runtime profile. The completion callback includes the derived
+`cost_usd` plus structured `agent_usage` entries with profile, model, token,
+and pricing catalog details. Missing pricing for observed usage fails the job
+instead of producing a silent zero-cost ledger entry. The server stores that
+completion cost directly; it does not keep a second compatibility read path
+that reparses logs during completion. Positive `verification.cost_usd` can
+still supply the cost for verifier artifacts, but a zero verification cost does
+not erase a positive runner-observed cost. Historical runs completed before
+this contract can be repaired with the operator command
+`glimmung-repair-native-costs`, which copies the already durable native usage
+facts into the run ledger instead of adding a read-time fallback.
 
 Step commands set phase outputs by appending either `key=value` lines or JSON
 objects to `$GLIMMUNG_OUTPUT_FILE`. The runner rejects duplicate keys locally

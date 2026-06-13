@@ -208,6 +208,7 @@ func repairEvents(ctx context.Context, store *pgstore.RunEventsStore, runID stri
 			AttemptIndex: row.AttemptIndex,
 			JobID:        row.JobID,
 			Event:        row.Event,
+			StepSlug:     row.StepSlug,
 			Message:      row.Message,
 		})
 	}

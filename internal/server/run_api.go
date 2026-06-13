@@ -33,6 +33,7 @@ type RunReportAttempt struct {
 	SummaryMarkdown     *string                   `json:"summary_markdown"`
 	Decision            *string                   `json:"decision"`
 	CostUSD             *float64                  `json:"cost_usd"`
+	AgentUsage          []AgentUsage              `json:"agent_usage,omitempty"`
 	LogArchiveURL       *string                   `json:"log_archive_url"`
 	PhaseOutputs        map[string]string         `json:"phase_outputs"`
 	JobCompletions      []RunAttemptJobCompletion `json:"job_completions"`
@@ -121,7 +122,23 @@ type RunAttemptJobCompletion struct {
 	EvidenceRefs        []string             `json:"evidence_refs"`
 	Evidence            []EvidenceArtifact   `json:"evidence"`
 	CostUSD             float64              `json:"cost_usd"`
+	AgentUsage          []AgentUsage         `json:"agent_usage,omitempty"`
 	PhaseOutputs        map[string]string    `json:"phase_outputs"`
+}
+
+type AgentUsage struct {
+	Provider              string  `json:"provider,omitempty"`
+	Model                 string  `json:"model,omitempty"`
+	ProfileID             string  `json:"profile_id,omitempty"`
+	StepSlug              string  `json:"step_slug,omitempty"`
+	PricingCatalogRef     string  `json:"pricing_catalog_ref,omitempty"`
+	InputTokens           int64   `json:"input_tokens,omitempty"`
+	CachedInputTokens     int64   `json:"cached_input_tokens,omitempty"`
+	OutputTokens          int64   `json:"output_tokens,omitempty"`
+	ReasoningOutputTokens int64   `json:"reasoning_output_tokens,omitempty"`
+	UncachedInputTokens   int64   `json:"uncached_input_tokens,omitempty"`
+	CacheWriteInputTokens int64   `json:"cache_write_input_tokens,omitempty"`
+	CostUSD               float64 `json:"cost_usd"`
 }
 
 type RunReport struct {

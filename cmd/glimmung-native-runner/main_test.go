@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/romaine-life/glimmung/internal/domain/agentcost"
 	"github.com/romaine-life/glimmung/internal/domain/agentruntime"
 )
 
@@ -78,13 +79,26 @@ func TestNativeRunnerExecutesStepsAndPublishesOutputs(t *testing.T) {
 			EventsURL:    server.URL + "/events",
 			CompletedURL: server.URL + "/completed",
 			Workspace:    workspace,
+			AgentRuntime: agentruntime.Snapshot{
+				Default: agentruntime.ResolvedProfile{
+					ProfileID: "test-profile",
+					Provider:  agentruntime.ProviderCodex,
+					Model:     "gpt-test",
+					Pricing: agentcost.Rate{
+						CatalogRef:               "test-catalog",
+						InputPerMillionUSD:       2,
+						CachedInputPerMillionUSD: 0.2,
+						OutputPerMillionUSD:      10,
+					},
+				},
+			},
 			Job: jobSpec{
 				WorkingDirectory: workspace,
 				Shell:            "sh",
 				Steps: []stepSpec{{
 					Slug: "write-output",
 					Type: "run",
-					Run:  "printf '{\"type\":\"result\",\"total_cost_usd\":1.25}\\n'\nprintf 'preview_url=https://example.test\\n' >> \"$GLIMMUNG_OUTPUT_FILE\"\nprintf '{\"summary_markdown\":\"done\",\"verification\":{\"status\":\"pass\"}}' > \"$GLIMMUNG_COMPLETION_FILE\"",
+					Run:  "printf '{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":1000000,\"cached_input_tokens\":250000,\"output_tokens\":100000}}\\n'\nprintf 'preview_url=https://example.test\\n' >> \"$GLIMMUNG_OUTPUT_FILE\"\nprintf '{\"summary_markdown\":\"done\",\"verification\":{\"status\":\"pass\"}}' > \"$GLIMMUNG_COMPLETION_FILE\"",
 				}},
 			},
 		},
@@ -104,8 +118,11 @@ func TestNativeRunnerExecutesStepsAndPublishesOutputs(t *testing.T) {
 	if completion.Verification["status"] != "pass" {
 		t.Fatalf("verification=%#v", completion.Verification)
 	}
-	if completion.CostUSD != 1.25 {
+	if completion.CostUSD != 2.55 {
 		t.Fatalf("cost=%v", completion.CostUSD)
+	}
+	if len(completion.AgentUsage) != 1 || completion.AgentUsage[0].StepSlug != "write-output" {
+		t.Fatalf("agent_usage=%#v", completion.AgentUsage)
 	}
 	if !sawEvent(events, "phase_output_set") || !sawEvent(events, "step_completed") {
 		t.Fatalf("events=%#v", events)
@@ -986,7 +1003,11 @@ func TestInstallAgentPostCommitReminder(t *testing.T) {
 		t.Skip("git is not installed")
 	}
 	repo := t.TempDir()
-	if err := runCapture(context.Background(), repo, "git", "init"); err != nil {
+	emptyTemplate := filepath.Join(t.TempDir(), "empty-template")
+	if err := os.MkdirAll(emptyTemplate, 0o755); err != nil {
+		t.Fatalf("create empty git template: %v", err)
+	}
+	if err := runCapture(context.Background(), repo, "git", "init", "--template", emptyTemplate); err != nil {
 		t.Fatalf("git init: %v", err)
 	}
 	if err := installAgentPostCommitReminder(context.Background(), repo); err != nil {

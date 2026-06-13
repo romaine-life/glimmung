@@ -1,10 +1,32 @@
 package nativecostrepair
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/romaine-life/glimmung/internal/domain/agentcost"
+	"github.com/romaine-life/glimmung/internal/domain/agentruntime"
+)
+
+func testRuntimeSnapshot() agentruntime.Snapshot {
+	return agentruntime.Snapshot{
+		Default: agentruntime.ResolvedProfile{
+			ProfileID: "test-profile",
+			Provider:  agentruntime.ProviderCodex,
+			Model:     "gpt-test",
+			Pricing: agentcost.Rate{
+				CatalogRef:               "test-catalog",
+				InputPerMillionUSD:       1,
+				CachedInputPerMillionUSD: 0.1,
+				OutputPerMillionUSD:      1,
+			},
+		},
+	}
+}
 
 func TestRepairRunPayloadCopiesObservedNativeLogCostsToLedger(t *testing.T) {
 	payload := map[string]any{
 		"cumulative_cost_usd": float64(0),
+		"agent_runtime":       testRuntimeSnapshot(),
 		"attempts": []any{
 			map[string]any{
 				"attempt_index": float64(1),
@@ -42,9 +64,9 @@ func TestRepairRunPayloadCopiesObservedNativeLogCostsToLedger(t *testing.T) {
 	}
 
 	result, err := RepairRunPayload(payload, []Event{
-		{AttemptIndex: 1, JobID: "llm-test-plan", Event: "log", Message: `{"type":"result","total_cost_usd":1.25}`},
-		{AttemptIndex: 1, JobID: "llm-implement", Event: "log", Message: `{"type":"result","total_cost_usd":2.5}`},
-		{AttemptIndex: 2, JobID: "llm-verify", Event: "log", Message: `{"type":"result","total_cost_usd":3.75}`},
+		{AttemptIndex: 1, JobID: "llm-test-plan", Event: "log", Message: `{"type":"turn.completed","usage":{"output_tokens":1250000}}`},
+		{AttemptIndex: 1, JobID: "llm-implement", Event: "log", Message: `{"type":"turn.completed","usage":{"output_tokens":2500000}}`},
+		{AttemptIndex: 2, JobID: "llm-verify", Event: "log", Message: `{"type":"turn.completed","usage":{"output_tokens":3750000}}`},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -87,6 +109,7 @@ func TestRepairRunPayloadCopiesObservedNativeLogCostsToLedger(t *testing.T) {
 func TestRepairRunPayloadDoesNotOverwritePositiveCost(t *testing.T) {
 	payload := map[string]any{
 		"cumulative_cost_usd": float64(9),
+		"agent_runtime":       testRuntimeSnapshot(),
 		"attempts": []any{
 			map[string]any{
 				"attempt_index": float64(0),
@@ -102,7 +125,7 @@ func TestRepairRunPayloadDoesNotOverwritePositiveCost(t *testing.T) {
 	}
 
 	result, err := RepairRunPayload(payload, []Event{
-		{AttemptIndex: 0, JobID: "llm", Event: "log", Message: `{"type":"result","total_cost_usd":4}`},
+		{AttemptIndex: 0, JobID: "llm", Event: "log", Message: `{"type":"turn.completed","usage":{"output_tokens":4000000}}`},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -118,6 +141,7 @@ func TestRepairRunPayloadDoesNotOverwritePositiveCost(t *testing.T) {
 func TestRepairRunPayloadIgnoresNonResultCostShapes(t *testing.T) {
 	payload := map[string]any{
 		"cumulative_cost_usd": float64(0),
+		"agent_runtime":       testRuntimeSnapshot(),
 		"attempts": []any{
 			map[string]any{
 				"attempt_index":   float64(0),
@@ -128,8 +152,8 @@ func TestRepairRunPayloadIgnoresNonResultCostShapes(t *testing.T) {
 
 	result, err := RepairRunPayload(payload, []Event{
 		{AttemptIndex: 0, JobID: "llm", Event: "log", Message: `{"message":{"total_cost_usd":4}}`},
-		{AttemptIndex: 0, JobID: "llm", Event: "log", Message: `{"total_cost_usd":0}`},
-		{AttemptIndex: 0, JobID: "llm", Event: "step_completed", Message: `{"total_cost_usd":4}`},
+		{AttemptIndex: 0, JobID: "llm", Event: "log", Message: `{"type":"result","total_cost_usd":4}`},
+		{AttemptIndex: 0, JobID: "llm", Event: "step_completed", Message: `{"usage":{"output_tokens":4000000}}`},
 	})
 	if err != nil {
 		t.Fatal(err)

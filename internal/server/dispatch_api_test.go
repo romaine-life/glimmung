@@ -12,9 +12,17 @@ import (
 	"time"
 
 	"github.com/romaine-life/glimmung/internal/auth"
+	"github.com/romaine-life/glimmung/internal/domain/agentcost"
 	"github.com/romaine-life/glimmung/internal/domain/agentruntime"
 	"github.com/romaine-life/glimmung/internal/domain/budget"
 )
+
+var testAgentPricing = agentcost.Rate{
+	CatalogRef:               "test-catalog",
+	InputPerMillionUSD:       1,
+	CachedInputPerMillionUSD: 0.1,
+	OutputPerMillionUSD:      2,
+}
 
 type fakeDispatchStore struct {
 	skippedJobsPhase string
@@ -575,8 +583,8 @@ func TestDispatchRunSnapshotsAgentRuntimePolicy(t *testing.T) {
 		Metadata: map[string]any{
 			"agent_runtime": agentruntime.Config{
 				Profiles: map[string]agentruntime.Profile{
-					"project-fast": {ID: "project-fast", Provider: agentruntime.ProviderCodex, Model: "gpt-5.4-mini", ReasoningEffort: "medium"},
-					"issue-deep":   {ID: "issue-deep", Provider: agentruntime.ProviderCodex, Model: "gpt-5.5", ReasoningEffort: "xhigh"},
+					"project-fast": {ID: "project-fast", Provider: agentruntime.ProviderCodex, Model: "gpt-5.4-mini", ReasoningEffort: "medium", Pricing: testAgentPricing},
+					"issue-deep":   {ID: "issue-deep", Provider: agentruntime.ProviderCodex, Model: "gpt-5.5", ReasoningEffort: "xhigh", Pricing: testAgentPricing},
 				},
 				Policy: agentruntime.Policy{
 					Default: agentruntime.PolicyDecision{Mode: agentruntime.ModeOverride, Profile: "project-fast"},

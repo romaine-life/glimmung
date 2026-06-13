@@ -7,6 +7,8 @@ import (
 	"sort"
 	"strings"
 	"unicode"
+
+	"github.com/romaine-life/glimmung/internal/domain/agentcost"
 )
 
 const (
@@ -24,6 +26,7 @@ type Profile struct {
 	Provider        string         `json:"provider"`
 	Model           string         `json:"model"`
 	ReasoningEffort string         `json:"reasoning_effort,omitempty"`
+	Pricing         agentcost.Rate `json:"pricing"`
 	Metadata        map[string]any `json:"metadata,omitempty"`
 }
 
@@ -43,11 +46,12 @@ type Config struct {
 }
 
 type ResolvedProfile struct {
-	ProfileID       string `json:"profile_id"`
-	Provider        string `json:"provider"`
-	Model           string `json:"model"`
-	ReasoningEffort string `json:"reasoning_effort,omitempty"`
-	Source          string `json:"source"`
+	ProfileID       string         `json:"profile_id"`
+	Provider        string         `json:"provider"`
+	Model           string         `json:"model"`
+	ReasoningEffort string         `json:"reasoning_effort,omitempty"`
+	Pricing         agentcost.Rate `json:"pricing"`
+	Source          string         `json:"source"`
 }
 
 type Snapshot struct {
@@ -63,24 +67,54 @@ func DefaultConfig() Config {
 				Provider:        ProviderCodex,
 				Model:           "gpt-5.5",
 				ReasoningEffort: "xhigh",
+				Pricing: agentcost.Rate{
+					CatalogRef:               "agent-pricing-2026-06-13/gpt-5.5",
+					InputPerMillionUSD:       5.00,
+					CachedInputPerMillionUSD: 0.50,
+					OutputPerMillionUSD:      22.50,
+				},
 			},
 			"codex-balanced": {
 				Provider:        ProviderCodex,
 				Model:           "gpt-5.4",
 				ReasoningEffort: "high",
+				Pricing: agentcost.Rate{
+					CatalogRef:               "agent-pricing-2026-06-13/gpt-5.4",
+					InputPerMillionUSD:       2.50,
+					CachedInputPerMillionUSD: 0.25,
+					OutputPerMillionUSD:      11.25,
+				},
 			},
 			"codex-fast": {
 				Provider:        ProviderCodex,
 				Model:           "gpt-5.4-mini",
 				ReasoningEffort: "medium",
+				Pricing: agentcost.Rate{
+					CatalogRef:               "agent-pricing-2026-06-13/gpt-5.4-mini",
+					InputPerMillionUSD:       0.375,
+					CachedInputPerMillionUSD: 0.0375,
+					OutputPerMillionUSD:      2.25,
+				},
 			},
 			"claude-opus": {
 				Provider: ProviderClaude,
 				Model:    "claude-opus-4-8",
+				Pricing: agentcost.Rate{
+					CatalogRef:               "agent-pricing-2026-06-13/claude-opus-4-8",
+					InputPerMillionUSD:       5.00,
+					CachedInputPerMillionUSD: 0.50,
+					OutputPerMillionUSD:      25.00,
+				},
 			},
 			"claude-sonnet": {
 				Provider: ProviderClaude,
 				Model:    "claude-sonnet-4-6",
+				Pricing: agentcost.Rate{
+					CatalogRef:               "agent-pricing-2026-06-13/claude-sonnet-4-6",
+					InputPerMillionUSD:       3.00,
+					CachedInputPerMillionUSD: 0.30,
+					OutputPerMillionUSD:      15.00,
+				},
 			},
 		},
 		Policy: Policy{
@@ -318,6 +352,7 @@ func resolveOverride(profiles map[string]Profile, decision PolicyDecision, sourc
 		Provider:        profile.Provider,
 		Model:           profile.Model,
 		ReasoningEffort: profile.ReasoningEffort,
+		Pricing:         profile.Pricing,
 		Source:          source,
 	}, nil
 }
@@ -352,6 +387,9 @@ func validateProfiles(profiles map[string]Profile) error {
 		}
 		if strings.TrimSpace(profile.Model) == "" {
 			return fmt.Errorf("agent_runtime profile %q model is required", id)
+		}
+		if err := agentcost.ValidateRate(profile.Pricing); err != nil {
+			return fmt.Errorf("agent_runtime profile %q pricing: %w", id, err)
 		}
 	}
 	return nil

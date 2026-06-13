@@ -1996,6 +1996,7 @@ type attemptDoc struct {
 	Verification          *verificationDoc                  `json:"verification"`
 	SummaryMarkdown       *string                           `json:"summary_markdown"`
 	CostUSD               *float64                          `json:"cost_usd"`
+	AgentUsage            []server.AgentUsage               `json:"agent_usage,omitempty"`
 	Decision              *string                           `json:"decision"`
 	LogArchiveURL         *string                           `json:"log_archive_url"`
 	PhaseOutputs          map[string]string                 `json:"phase_outputs,omitempty"`
@@ -2007,14 +2008,15 @@ type attemptDoc struct {
 }
 
 type nativeJobCompletionDoc struct {
-	JobID               string            `json:"job_id"`
-	CompletedAt         string            `json:"completed_at"`
-	Conclusion          string            `json:"conclusion"`
-	Verification        *verificationDoc  `json:"verification,omitempty"`
-	SummaryMarkdown     *string           `json:"summary_markdown,omitempty"`
-	ScreenshotsMarkdown *string           `json:"screenshots_markdown,omitempty"`
-	CostUSD             float64           `json:"cost_usd,omitempty"`
-	PhaseOutputs        map[string]string `json:"phase_outputs,omitempty"`
+	JobID               string              `json:"job_id"`
+	CompletedAt         string              `json:"completed_at"`
+	Conclusion          string              `json:"conclusion"`
+	Verification        *verificationDoc    `json:"verification,omitempty"`
+	SummaryMarkdown     *string             `json:"summary_markdown,omitempty"`
+	ScreenshotsMarkdown *string             `json:"screenshots_markdown,omitempty"`
+	CostUSD             float64             `json:"cost_usd,omitempty"`
+	AgentUsage          []server.AgentUsage `json:"agent_usage,omitempty"`
+	PhaseOutputs        map[string]string   `json:"phase_outputs,omitempty"`
 	// TerminalReason is the closed-enum reason the caller has already
 	// derived (e.g. reconciler maps k8s Failed condition reason
 	// "DeadlineExceeded" to "deadline_exceeded"). Empty means the
@@ -2672,6 +2674,7 @@ func runReportAttemptFromDoc(doc attemptDoc, lineageByID map[string]string) serv
 		SummaryMarkdown:     emptyStringNil(doc.SummaryMarkdown),
 		Decision:            emptyStringNil(doc.Decision),
 		CostUSD:             cost,
+		AgentUsage:          sliceOrEmpty(doc.AgentUsage),
 		LogArchiveURL:       emptyStringNil(doc.LogArchiveURL),
 		PhaseOutputs:        mapStringOrEmpty(doc.PhaseOutputs),
 		JobCompletions:      jobCompletions,
@@ -2700,6 +2703,7 @@ func runAttemptJobCompletionFromDoc(doc nativeJobCompletionDoc) server.RunAttemp
 		EvidenceRefs:        evidenceRefs,
 		Evidence:            sliceOrEmpty(doc.VerificationEvidence()),
 		CostUSD:             doc.CostUSD,
+		AgentUsage:          sliceOrEmpty(doc.AgentUsage),
 		PhaseOutputs:        mapStringOrEmpty(doc.PhaseOutputs),
 	}
 }
@@ -6985,6 +6989,7 @@ func nativeJobCompletionDocFromPayload(jobID string, p server.CompletionPayload,
 		SummaryMarkdown:     p.SummaryMarkdown,
 		ScreenshotsMarkdown: p.ScreenshotsMarkdown,
 		CostUSD:             p.CostUSD,
+		AgentUsage:          sliceOrEmpty(p.AgentUsage),
 		PhaseOutputs:        stringMapOrEmpty(p.PhaseOutputs),
 		TerminalReason:      server.NormalizeJobTerminalReason(p.TerminalReason),
 	}
@@ -8076,6 +8081,7 @@ func aggregateNativePhaseCompletion(expected []string, completions map[string]na
 	reasons := make([]string, 0)
 	evidenceRefs := make([]string, 0)
 	evidenceArtifacts := make([]server.EvidenceArtifact, 0)
+	agentUsage := make([]server.AgentUsage, 0)
 	conclusion := "success"
 	verificationStatus := ""
 	var verificationFailure *server.VerificationFailure
@@ -8100,6 +8106,7 @@ func aggregateNativePhaseCompletion(expected []string, completions map[string]na
 		if completion.ScreenshotsMarkdown != nil && strings.TrimSpace(*completion.ScreenshotsMarkdown) != "" {
 			screenshots = append(screenshots, nativeJobMarkdownSection(id, *completion.ScreenshotsMarkdown))
 		}
+		agentUsage = append(agentUsage, completion.AgentUsage...)
 		if completion.Verification != nil {
 			verificationStatus = combineVerificationStatus(verificationStatus, completion.Verification.Status)
 			if verificationFailure == nil && completion.Verification.Status != "pass" && completion.Verification.Status != "" {
@@ -8136,6 +8143,7 @@ func aggregateNativePhaseCompletion(expected []string, completions map[string]na
 		EvidenceRefs:        evidenceRefs,
 		Evidence:            evidenceArtifacts,
 		CostUSD:             sumNativeJobCosts(completions),
+		AgentUsage:          agentUsage,
 		PhaseOutputs:        phaseOutputs,
 	}
 	if len(summaries) > 0 {
@@ -8249,6 +8257,9 @@ func (s *Store) StampRunCompletion(ctx context.Context, project, runID string, p
 			attempt["verification"] = verification
 		}
 		attempt["cost_usd"] = p.CostUSD
+		if len(p.AgentUsage) > 0 {
+			attempt["agent_usage"] = p.AgentUsage
+		}
 		attempts[idx] = attempt
 		raw["attempts"] = attempts
 		prior, _ := raw["cumulative_cost_usd"].(float64)
