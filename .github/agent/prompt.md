@@ -70,39 +70,26 @@ each non-optional requirement and mention any missing required artifact in
 
 ### Frontend dashboard change
 
-The validation env runs the full backend, so the dashboard is live. Hit the
-validation host directly:
+The validation env runs the full backend, so the dashboard is live. Record
+evidence with the **`capture_video`** tool (and **`capture_screenshot`** for
+stills). These drive the leased slot browser, record only after the page is
+visible — so the first frame is never blank — and upload the result, returning
+a durable `ref`. You do not launch a browser, write to an evidence directory,
+or upload anything yourself; there is no capture script to run.
 
-```sh
-node /workspace/repo/scripts/agent/capture-video.mjs \
-  --url "${VALIDATION_URL}/" \
-  --output /workspace/evidence/videos/dashboard.webm \
-  --manifest /workspace/evidence/videos/dashboard.json \
-  --wait-ms 6000
-```
+- Record the dashboard: call `capture_video` with `url` = `"${VALIDATION_URL}/"`,
+  `label` = `"dashboard"`, `wait_ms` = `6000`.
+- Capture an interaction: call `capture_video` with `url` =
+  `"${VALIDATION_URL}/projects/glimmung/issues/${ISSUE_NUMBER}/summary"`,
+  `click` = `"text=Request changes"`, `label` = `"interaction"`, `wait_ms` = `6000`.
+- Pair a still when the final state matters: call `capture_screenshot` with
+  `url` = `"${VALIDATION_URL}/"`, `label` = `"dashboard"`, `full_page` = `true`.
 
-Use a click selector when the changed behavior needs interaction:
-
-```sh
-node /workspace/repo/scripts/agent/capture-video.mjs \
-  --url "${VALIDATION_URL}/projects/glimmung/issues/${ISSUE_NUMBER}/summary" \
-  --click "text=Request changes" \
-  --output /workspace/evidence/videos/interaction.webm \
-  --manifest /workspace/evidence/videos/interaction.json \
-  --wait-ms 6000
-```
-
-Pair a screenshot when the final static state is important:
-
-```sh
-node /workspace/repo/scripts/agent/capture-screenshot.mjs \
-  --url "${VALIDATION_URL}/" \
-  --output /workspace/evidence/screenshots/dashboard.png \
-  --full-page --wait-ms 4000
-```
-
-After capture, check the WebM and any PNG metadata or playback to verify the
-change rendered as intended. If it looks wrong, debug and re-capture.
+Each call returns a `ref` (and `url`). Cite those refs in your verification
+output's `evidence` array — that is how they become the run's evidence. The
+blank-frame gate still applies; a correct capture passes it because recording
+starts after the page renders. If a capture looks wrong, adjust the URL,
+`wait_ms`, or `click` and call the tool again.
 
 For routes that require admin sign-in, an unauthenticated screenshot only shows
 the public surface. Note that in `notes.md` if it matters, and consider pairing
