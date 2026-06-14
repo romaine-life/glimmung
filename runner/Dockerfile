@@ -105,7 +105,7 @@ RUN mkdir -p -m 755 /etc/apt/keyrings \
 
 RUN npm install -g @openai/codex @anthropic-ai/claude-code \
     && mkdir -p /opt/glimmung-runner \
-    && npm install --prefix /opt/glimmung-runner playwright \
+    && npm install --prefix /opt/glimmung-runner playwright@1.60.0 \
     && npx --prefix /opt/glimmung-runner playwright install --with-deps chromium \
     && chmod -R a+rX /ms-playwright /opt/glimmung-runner \
     && npm cache clean --force \

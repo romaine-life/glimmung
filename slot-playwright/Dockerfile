@@ -1,10 +1,13 @@
 # syntax=docker/dockerfile:1.7
 
 # Dedicated browser server for leased Glimmung test slots. The Playwright npm
-# package version must match mcp-glimmung's protocol client version.
-FROM mcr.microsoft.com/playwright:v1.56.1-noble
+# package version must match every protocol client that connects over the
+# WebSocket: mcp-glimmung's browser_inspector.mjs and the run sidecar's capture
+# tools (the runner image's pinned `playwright`). Playwright rejects clients on
+# a different major/minor, so all of them move together or not at all.
+FROM mcr.microsoft.com/playwright:v1.60.0-noble
 
-ARG PLAYWRIGHT_VERSION=1.56.1
+ARG PLAYWRIGHT_VERSION=1.60.0
 
 ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 RUN npm install -g "playwright@${PLAYWRIGHT_VERSION}"
