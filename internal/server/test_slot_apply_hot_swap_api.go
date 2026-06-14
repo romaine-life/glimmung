@@ -253,6 +253,7 @@ func applyTestSlotHotSwap(store ReadStore, preparer TestSlotPreparer, minter Run
 			RepoURL:          repoURL,
 			RepoToken:        repoToken,
 			TargetNamespace:  targetNamespace,
+			SlotName:         slotName,
 			ValidationTarget: validationTarget,
 			Contract:         contract,
 			Timeout:          timeout,

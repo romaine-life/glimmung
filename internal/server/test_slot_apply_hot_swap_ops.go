@@ -28,6 +28,7 @@ type ApplyHotSwapOptions struct {
 	RepoURL            string
 	RepoToken          string
 	TargetNamespace    string
+	SlotName           string
 	ValidationTarget   string
 	JobNamespace       string
 	SwapContainerImage string
@@ -119,6 +120,16 @@ func ApplyHotSwap(ctx context.Context, k8s k8sJobClient, opts ApplyHotSwapOption
 	if strings.TrimSpace(art.Container) == "" {
 		result.Error = fmt.Sprintf("contract.%s.container is required", opts.ArtifactKind)
 		return result, fmt.Errorf("%s", result.Error)
+	}
+	// Slot-name substitution: some projects label their app pods / name their
+	// app container by the slot name (e.g. chess-tactics uses app=<slot_name>),
+	// not a static label. The contract expresses that with a {slot_name} token,
+	// filled here from the resolved lease. Static-label contracts (e.g.
+	// tank-operator's app.kubernetes.io/name=tank-operator) carry no token and
+	// pass through unchanged.
+	if opts.SlotName != "" {
+		art.PodSelector = strings.ReplaceAll(art.PodSelector, "{slot_name}", opts.SlotName)
+		art.Container = strings.ReplaceAll(art.Container, "{slot_name}", opts.SlotName)
 	}
 	if strings.TrimSpace(opts.TargetNamespace) == "" {
 		result.Error = "target_namespace is required"
