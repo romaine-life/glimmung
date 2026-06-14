@@ -451,3 +451,54 @@ func TestApplyHotSwapJobTimeoutSurfaces(t *testing.T) {
 		t.Fatalf("outcome = %q, want timeout", result.Outcome)
 	}
 }
+
+// TestApplyHotSwapSubstitutesSlotNameInSelectorAndContainer pins the {slot_name}
+// substitution for projects (e.g. chess-tactics) whose app pods are labeled and
+// whose container is named by the slot name rather than a static label.
+func TestApplyHotSwapSubstitutesSlotNameInSelectorAndContainer(t *testing.T) {
+	k8s := &fakeK8sJobClient{waitResult: "complete", buildLogs: "ok", swapLogs: "ok"}
+	_, err := ApplyHotSwap(context.Background(), k8s, ApplyHotSwapOptions{
+		Project:         "chess-tactics",
+		ArtifactKind:    "static",
+		GitRef:          "feat/x",
+		RepoURL:         "https://x-access-token@github.com/romaine-life/chess-tactics.git",
+		RepoToken:       "ghs_x",
+		TargetNamespace: "chess-tactics-1",
+		SlotName:        "chess-tactics-1",
+		JobNamespace:    "glimmung",
+		Timeout:         30 * time.Second,
+		Contract: hotswap.Contract{
+			Enabled: true,
+			Static: hotswap.StaticContract{
+				Enabled:      true,
+				Source:       "frontend/dist",
+				Target:       "/var/run/chess-tactics-static-override",
+				BuildCommand: "cd frontend && npm ci && npm run build",
+				PodSelector:  "app={slot_name}",
+				Container:    "{slot_name}",
+				BuilderImage: "node:20-alpine",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	js := string(mustJSON(t, k8s.appliedJobs[0]))
+	if strings.Contains(js, "{slot_name}") {
+		t.Errorf("{slot_name} token not substituted; spec=%s", js)
+	}
+	for _, c := range []string{"app=chess-tactics-1", "-c 'chess-tactics-1'"} {
+		if !strings.Contains(js, c) {
+			t.Errorf("Job spec missing %q\nspec=%s", c, js)
+		}
+	}
+}
+
+func mustJSON(t *testing.T, v any) []byte {
+	t.Helper()
+	b, err := json.Marshal(v)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	return b
+}
