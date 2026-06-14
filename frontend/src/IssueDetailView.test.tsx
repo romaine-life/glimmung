@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter, Outlet, Route, Routes, useLocation } from "react-router-dom";
 
-import { IssueDetailView, pickDecisionTouchpoint } from "./IssueDetailView";
+import { IssueDetailView, pickDecisionTouchpoint, agentTranscriptEntries, type RunnerEvent } from "./IssueDetailView";
 import { ISSUE_DETAIL_CHILD_ROUTES } from "./routes";
 
 describe("pickDecisionTouchpoint", () => {
@@ -1883,3 +1883,46 @@ function json(body: unknown): Response {
     headers: { "Content-Type": "application/json" },
   });
 }
+
+describe("agentTranscriptEntries codex projection", () => {
+  const mkEvent = (seq: number, message: string): RunnerEvent => ({
+    project: "ambience",
+    run_ref: "ambience#164/runs/7.1",
+    attempt_index: 0,
+    phase: "llm-work",
+    job_id: "llm-implement",
+    seq,
+    event: "log",
+    step_slug: "run-implementation",
+    message,
+    exit_code: null,
+    metadata: {},
+    created_at: "2026-06-14T08:40:00Z",
+  });
+
+  it("projects codex item.completed events (agent_message, command, file_change) into transcript entries", () => {
+    const entries = agentTranscriptEntries([
+      mkEvent(1, JSON.stringify({ type: "thread.started" })),
+      mkEvent(2, JSON.stringify({ type: "item.completed", item: { id: "item_0", type: "agent_message", text: "I will inspect the repo." } })),
+      // item.started is a streaming duplicate of item.completed and must not double-count.
+      mkEvent(3, JSON.stringify({ type: "item.started", item: { id: "item_1", type: "command_execution", command: "pwd", status: "in_progress" } })),
+      mkEvent(4, JSON.stringify({ type: "item.completed", item: { id: "item_1", type: "command_execution", command: "ls", aggregated_output: "rain.go\n", exit_code: 0, status: "completed" } })),
+      mkEvent(5, JSON.stringify({ type: "item.completed", item: { id: "item_64", type: "file_change", changes: [{ path: "/workspace/repo/sim/rain_on_window.go", kind: "add" }], status: "completed" } })),
+    ]);
+
+    // The regression this fixes: codex agent_message text now surfaces as an
+    // assistant entry. Previously every codex event was dropped as raw, leaving
+    // codex transcripts empty (only stray stderr lines survived).
+    const assistant = entries.filter((entry) => entry.kind === "assistant");
+    expect(assistant).toHaveLength(1);
+    expect(assistant[0].text).toBe("I will inspect the repo.");
+
+    // command_execution -> tool_call + tool_result; file_change -> tool_call.
+    const toolCalls = entries.filter((entry) => entry.kind === "tool_call");
+    expect(toolCalls.map((entry) => entry.toolName)).toEqual(["command", "file_change"]);
+    expect(entries.find((entry) => entry.kind === "tool_result")?.text).toBe("rain.go\n");
+
+    // item.started must not double-count, and thread.started yields no entry.
+    expect(entries).toHaveLength(4);
+  });
+});

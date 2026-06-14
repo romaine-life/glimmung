@@ -289,7 +289,7 @@ type RunProjectionSignal = {
   failure_reason?: string | null;
 };
 
-type RunnerEvent = {
+export type RunnerEvent = {
   project: string;
   run_ref: string;
   attempt_index: number;
@@ -4748,7 +4748,7 @@ function runnerEventLine(event: RunnerEvent): string {
   return `${prefix}: ${event.message}${suffix}`;
 }
 
-function agentTranscriptEntries(events: RunnerEvent[]): AgentTranscriptEntry[] {
+export function agentTranscriptEntries(events: RunnerEvent[]): AgentTranscriptEntry[] {
   const entries: AgentTranscriptEntry[] = [];
   const toolNamesById = new Map<string, string>();
   events.forEach((event) => {
@@ -4946,6 +4946,119 @@ function appendAgentPayloadEntries(
       title: stringValue(obj.subtype) ? `system ${stringValue(obj.subtype)}` : "system event",
       raw: obj,
     });
+    return;
+  }
+
+  // Codex emits a different event schema than Claude/claude-code: structured
+  // items wrapped in item.started / item.completed envelopes, plus turn/thread
+  // lifecycle events. Without this branch every codex event falls through to the
+  // raw fallback below and is filtered out of the transcript (entries.filter
+  // kind !== "raw"), leaving codex runs with an effectively empty transcript —
+  // only stray non-JSON stderr lines, mislabeled "assistant" by the string
+  // branch above, survive. Project the completed item form; item.started is a
+  // streaming duplicate of item.completed.
+  if (type === "item.started" || type === "item.completed") {
+    if (type === "item.started") return;
+    const item = recordValue(obj.item);
+    if (!item) {
+      entries.push({
+        id: `json-${event.seq}-${payloadIndex}`,
+        kind: "raw",
+        seq: event.seq,
+        createdAt: event.created_at,
+        title: "item event",
+        raw: obj,
+      });
+      return;
+    }
+    const itemType = stringValue(item.type);
+    if (itemType === "agent_message") {
+      entries.push({
+        id: `assistant-${event.seq}-${payloadIndex}`,
+        kind: "assistant",
+        seq: event.seq,
+        createdAt: event.created_at,
+        title: "assistant",
+        text: stringValue(item.text)?.trim() ?? "",
+      });
+      return;
+    }
+    if (itemType === "reasoning") {
+      const reasoningText = stringValue(item.text)?.trim() ?? "";
+      entries.push({
+        id: `reasoning-${event.seq}-${payloadIndex}`,
+        kind: "reasoning",
+        seq: event.seq,
+        createdAt: event.created_at,
+        title: "reasoning",
+        text: reasoningText || "No readable reasoning text was emitted.",
+        raw: item,
+      });
+      return;
+    }
+    if (itemType === "command_execution") {
+      entries.push({
+        id: `tool-call-${event.seq}-${payloadIndex}`,
+        kind: "tool_call",
+        seq: event.seq,
+        createdAt: event.created_at,
+        title: "command",
+        toolName: "command",
+        input: stringValue(item.command) ?? "",
+      });
+      const output = stringValue(item.aggregated_output) ?? "";
+      const exitCode = numberValue(item.exit_code);
+      if (output.trim() || exitCode != null) {
+        entries.push({
+          id: `tool-result-${event.seq}-${payloadIndex}`,
+          kind: "tool_result",
+          seq: event.seq,
+          createdAt: event.created_at,
+          title: exitCode != null ? `command exit ${exitCode}` : "command output",
+          toolName: "command",
+          text: output,
+        });
+      }
+      return;
+    }
+    if (itemType === "file_change") {
+      const changes = arrayValue(item.changes)
+        .map((change) => {
+          const changeObj = recordValue(change);
+          if (!changeObj) return null;
+          const changeKind = stringValue(changeObj.kind) ?? "change";
+          const path = stringValue(changeObj.path) ?? "";
+          return `${changeKind} ${path}`.trim();
+        })
+        .filter((line): line is string => Boolean(line));
+      entries.push({
+        id: `tool-call-${event.seq}-${payloadIndex}`,
+        kind: "tool_call",
+        seq: event.seq,
+        createdAt: event.created_at,
+        title: "file change",
+        toolName: "file_change",
+        input: changes.length > 0 ? changes.join("\n") : item.changes,
+      });
+      return;
+    }
+    // mcp_tool_call, web_search, and any other codex item types: surface the
+    // action as a tool call rather than dropping it.
+    entries.push({
+      id: `tool-call-${event.seq}-${payloadIndex}`,
+      kind: "tool_call",
+      seq: event.seq,
+      createdAt: event.created_at,
+      title: itemType ?? "item",
+      toolName: itemType ?? "item",
+      input: item,
+    });
+    return;
+  }
+
+  if (type === "turn.started" || type === "turn.completed" || type === "thread.started") {
+    // Codex lifecycle envelopes carry no reviewer-facing content; cost/usage is
+    // surfaced through the run report, not the transcript.
     return;
   }
 
