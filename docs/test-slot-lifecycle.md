@@ -162,10 +162,14 @@ is omitted on clusters where Playwright support is disabled; tools that need
 it must treat absence as "this cluster does not run lease-scoped browsers"
 rather than fall back to a shared host.
 
-The slot-local Playwright server image is version-coupled to remote clients
-such as `mcp-glimmung`: Playwright rejects WebSocket clients with a different
-major/minor protocol version. Keep `slot-playwright/Dockerfile` aligned with
-the `playwright` package version in `mcp-glimmung` before changing either side.
+The slot-local Playwright server image is version-coupled to every remote
+client that connects over the WebSocket: `mcp-glimmung`'s
+`browser_inspector.mjs` and the run sidecar's capture tools (the `playwright`
+pinned in `runner/Dockerfile`). Playwright rejects WebSocket clients with a
+different major/minor protocol version, so all of them move in lockstep. When
+changing the version, bump `slot-playwright/Dockerfile`, `runner/Dockerfile`,
+and the `playwright` package in `mcp-glimmung` together, and co-release the
+slot and mcp-glimmung images.
 
 ### MCP Checkout Surface
 

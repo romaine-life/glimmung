@@ -207,7 +207,7 @@ func SettingsFromEnv() Settings {
 		),
 		RunnerPlaywrightImage: envOrDefault(
 			"RUNNER_PLAYWRIGHT_IMAGE",
-			"romainecr.azurecr.io/glimmung-slot-playwright:playwright-1.56.1",
+			"romainecr.azurecr.io/glimmung-slot-playwright:playwright-1.60.0",
 		),
 		RunnerPlaywrightPort: envOrDefault(
 			"RUNNER_PLAYWRIGHT_PORT",
