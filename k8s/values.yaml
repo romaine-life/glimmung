@@ -16,7 +16,7 @@ replicas: 1
 runner:
   namespace: glimmung-runs
   serviceAccount: glimmung-runner
-  image: romainecr.azurecr.io/glimmung-runner:runner-a1bd14defaaa3c487e011f1e6b0e37919998c43fec88adc4734322ec5dccdf5c
+  image: romainecr.azurecr.io/glimmung-runner:runner-cc03d72cbb988290224249404fd0473ab3d1645f35be8404aa3ecdf5e2cb024e
   entrypoint: /app/glimmung-runner
   callbackBaseUrl: http://glimmung.glimmung.svc.cluster.local
   jobTtlSeconds: 259200
