@@ -42,8 +42,10 @@ runner:
         cpu: 1000m
         memory: 1Gi
   # Dedicated runner identity from tofu/identity.tf's
-  # `glimmung_runner_identity_client_id` output.
-  serviceAccountClientId: "a865aa27-e76e-4363-ab53-375712bd6db8"
+  # `glimmung_runner_identity_client_id` output. Kept in sync from tofu state by
+  # the sync-identity-pins job in .github/workflows/tofu.yaml — do not hand-edit;
+  # a stale value here breaks every runner Job's workload-identity az login.
+  serviceAccountClientId: "970c0c5e-a66b-4a50-affb-8c369b87319c"
 
 providerApiProxy:
   enabled: true
