@@ -13,6 +13,7 @@ import (
 	"github.com/romaine-life/glimmung/internal/domain/budget"
 	"github.com/romaine-life/glimmung/internal/domain/phaserefs"
 	"github.com/romaine-life/glimmung/internal/domain/whenexpr"
+	"github.com/romaine-life/glimmung/internal/runnermcp"
 )
 
 const (
@@ -1156,6 +1157,30 @@ func validateRunnerJobSpec(workflowName, phaseName string, jobIndex int, job Run
 	if job.Managed {
 		if len(job.Command) > 0 || len(job.Args) > 0 {
 			return ValidationError{Message: fmt.Sprintf("workflow %s phase %q job %q is managed and cannot declare command or args", workflowName, phaseName, job.ID)}
+		}
+	}
+	// Runner tools (the per-job MCP allow-list) are only meaningful for managed
+	// agent jobs: the launcher injects the agent's MCP config pointing at the
+	// scoped sidecar, and only managed jobs run a Glimmung-launched agent. Every
+	// declared name must be a known runner tool, rejected here at registration
+	// rather than late at pod start when Scoped() would reject it.
+	if len(job.Tools) > 0 {
+		if !job.Managed {
+			return ValidationError{Message: fmt.Sprintf("workflow %s phase %q job %q declares tools but is not managed; runner tools are only available to managed agent jobs", workflowName, phaseName, job.ID)}
+		}
+		seenTools := map[string]bool{}
+		for _, raw := range job.Tools {
+			tool := strings.TrimSpace(raw)
+			if tool == "" {
+				return ValidationError{Message: fmt.Sprintf("workflow %s phase %q job %q declares an empty tool name", workflowName, phaseName, job.ID)}
+			}
+			if seenTools[tool] {
+				return ValidationError{Message: fmt.Sprintf("workflow %s phase %q job %q declares tool %q more than once", workflowName, phaseName, job.ID, tool)}
+			}
+			seenTools[tool] = true
+			if !runnermcp.IsCatalogTool(tool) {
+				return ValidationError{Message: fmt.Sprintf("workflow %s phase %q job %q declares unknown runner tool %q (known: %s)", workflowName, phaseName, job.ID, tool, strings.Join(runnermcp.CatalogToolNames(), ", "))}
+			}
 		}
 	}
 	// Timeout guardrail. activeDeadlineSeconds = job.TimeoutSeconds when

@@ -10,6 +10,11 @@ import (
 	"strings"
 )
 
+// ToolUploadEvidence is the stable name of the upload_evidence tool. It is the
+// single source of truth shared by the tool registration, the registration-time
+// catalog, and any caller that needs to reference the tool by name.
+const ToolUploadEvidence = "upload_evidence"
+
 const uploadEvidenceSchema = `{
   "type": "object",
   "properties": {
@@ -33,7 +38,7 @@ const uploadEvidenceSchema = `{
 // those are Glimmung's, fixed here.
 func NewUploadEvidenceTool(rc RunContext, workspace fs.FS, up ArtifactUploader) Tool {
 	return Tool{
-		Name:        "upload_evidence",
+		Name:        ToolUploadEvidence,
 		Description: "Upload an evidence file from the run workspace to Glimmung artifact storage and return its durable reference.",
 		InputSchema: json.RawMessage(uploadEvidenceSchema),
 		Handler: func(ctx context.Context, raw json.RawMessage) (any, error) {

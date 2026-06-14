@@ -1731,6 +1731,11 @@ func runnerJobManifest(settings Settings, req RunLaunchRequest, job RunnerJobSpe
 		workspaceMount := map[string]any{"name": "runner-workspace", "mountPath": "/workspace"}
 		volumes = append(volumes, map[string]any{"name": "runner-workspace", "emptyDir": map[string]any{}})
 		container["volumeMounts"] = append(append([]any{}, volumeMounts...), workspaceMount)
+		// Tell the agent container where the scoped sidecar lives. The runner
+		// reads GLIMMUNG_RUNNER_MCP_URL and injects exactly this server into the
+		// agent's provider MCP config; absence of the var means no runner tools
+		// and no MCP config — the default, unchanged path.
+		container["env"] = append(append([]map[string]any{}, env...), map[string]any{"name": "GLIMMUNG_RUNNER_MCP_URL", "value": runnerMCPURL})
 		containers = append(containers, map[string]any{
 			"name":         "runner-mcp",
 			"image":        runnerJobImage(settings, job),
@@ -1801,6 +1806,16 @@ func runnerJobImage(settings Settings, job RunnerJobSpec) string {
 	return job.Image
 }
 
+// runnerMCPListenAddr is the loopback address the runner MCP sidecar serves on,
+// and runnerMCPURL is the streamable-HTTP endpoint the agent container connects
+// to. They are a matched pair: the sidecar binds the addr, the launcher hands
+// the agent the URL. Loopback keeps the surface pod-local — nothing off the pod
+// can reach the sidecar's privileged tools.
+const (
+	runnerMCPListenAddr = "127.0.0.1:8765"
+	runnerMCPURL        = "http://" + runnerMCPListenAddr + "/mcp"
+)
+
 // runnerMCPSidecarEnv is the minimal environment the runner MCP sidecar needs:
 // the run identity (to scope artifacts), the artifact store coordinates, the
 // per-job tool allow-list, and the loopback address it serves on. It is
@@ -1814,7 +1829,7 @@ func runnerMCPSidecarEnv(settings Settings, req RunLaunchRequest, job RunnerJobS
 		{"name": "ARTIFACTS_STORAGE_ACCOUNT", "value": settings.ArtifactsStorageAccount},
 		{"name": "ARTIFACTS_CONTAINER", "value": settings.ArtifactsContainer},
 		{"name": "GLIMMUNG_RUNNER_TOOLS", "value": strings.Join(job.Tools, ",")},
-		{"name": "GLIMMUNG_RUNNER_MCP_ADDR", "value": "127.0.0.1:8765"},
+		{"name": "GLIMMUNG_RUNNER_MCP_ADDR", "value": runnerMCPListenAddr},
 	}
 }
 

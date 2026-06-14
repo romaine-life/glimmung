@@ -65,6 +65,17 @@ func rmcpSidecarEnv(t *testing.T, m map[string]any) map[string]string {
 	return out
 }
 
+func rmcpAgentEnv(t *testing.T, m map[string]any) map[string]string {
+	t.Helper()
+	agent := rmcpPodSpec(t, m)["containers"].([]any)[0].(map[string]any)
+	out := map[string]string{}
+	ev, _ := agent["env"].([]map[string]any)
+	for _, e := range ev {
+		out[e["name"].(string)] = fmt.Sprint(e["value"])
+	}
+	return out
+}
+
 func TestRunnerJobManifest_NoToolsHasNoSidecar(t *testing.T) {
 	req, settings := sidecarReqSettings()
 
@@ -74,6 +85,9 @@ func TestRunnerJobManifest_NoToolsHasNoSidecar(t *testing.T) {
 	}
 	if rmcpHasVolume(t, m, "runner-workspace") {
 		t.Fatal("job without tools must not get the runner-workspace volume (pod spec must be unchanged)")
+	}
+	if _, ok := rmcpAgentEnv(t, m)["GLIMMUNG_RUNNER_MCP_URL"]; ok {
+		t.Fatal("job without tools must not set GLIMMUNG_RUNNER_MCP_URL on the agent container")
 	}
 }
 
@@ -99,6 +113,16 @@ func TestRunnerJobManifest_ToolsAddScopedSidecar(t *testing.T) {
 	}
 	if env["GLIMMUNG_RUN_ID"] != "168.3" {
 		t.Fatalf("sidecar GLIMMUNG_RUN_ID = %q", env["GLIMMUNG_RUN_ID"])
+	}
+
+	// The agent container must learn where the sidecar lives so the runner can
+	// inject the agent's MCP config; the URL must match the addr the sidecar binds.
+	agentEnv := rmcpAgentEnv(t, m)
+	if agentEnv["GLIMMUNG_RUNNER_MCP_URL"] != "http://127.0.0.1:8765/mcp" {
+		t.Fatalf("agent GLIMMUNG_RUNNER_MCP_URL = %q, want http://127.0.0.1:8765/mcp", agentEnv["GLIMMUNG_RUNNER_MCP_URL"])
+	}
+	if got := env["GLIMMUNG_RUNNER_MCP_ADDR"]; got != "127.0.0.1:8765" {
+		t.Fatalf("sidecar GLIMMUNG_RUNNER_MCP_ADDR = %q, want 127.0.0.1:8765 (must match the agent URL host)", got)
 	}
 
 	// Both containers must mount the shared workspace so the agent's output is
