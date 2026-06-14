@@ -2086,7 +2086,13 @@ func defaultTestSlotClusterRoleBindings(project Project) []map[string]any {
 			},
 		},
 		{
-			"metadata": map[string]any{"name": "{slot_name}-session-cluster-admin"},
+			// Slot session SA is read-only: the agent can inspect the slot
+			// (kubectl get/logs) but cannot write or exec — so it can't
+			// kubectl-cp/exec into the slot to bypass the CI-gated hot-swap.
+			// Slot mutation goes through apply_test_slot_hot_swap. Was
+			// cluster-admin; `view` is built-in so this adds no cross-repo
+			// ClusterRole dependency.
+			"metadata": map[string]any{"name": "{slot_name}-session-readonly"},
 			"subjects": []any{map[string]any{
 				"kind":      "ServiceAccount",
 				"name":      "{slot_name}-session",
@@ -2095,7 +2101,7 @@ func defaultTestSlotClusterRoleBindings(project Project) []map[string]any {
 			"roleRef": map[string]any{
 				"apiGroup": "rbac.authorization.k8s.io",
 				"kind":     "ClusterRole",
-				"name":     "cluster-admin",
+				"name":     "view",
 			},
 		},
 	}

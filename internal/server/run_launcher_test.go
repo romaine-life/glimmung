@@ -1646,3 +1646,33 @@ func TestRunnerJobEnvCarriesPriorVerification(t *testing.T) {
 		}
 	}
 }
+
+// TestDefaultTestSlotClusterRoleBindingsSessionIsReadOnly is the enforcement
+// guard: the slot session SA must never bind cluster-admin — that grant is the
+// kubectl-cp/exec bypass of the CI-gated hot-swap. It binds read-only `view`.
+func TestDefaultTestSlotClusterRoleBindingsSessionIsReadOnly(t *testing.T) {
+	bindings := defaultTestSlotClusterRoleBindings(Project{Name: "tank-operator"})
+	roleRefName := ""
+	found := false
+	for _, b := range bindings {
+		subs, _ := b["subjects"].([]any)
+		for _, s := range subs {
+			sm, _ := s.(map[string]any)
+			if sm["name"] == "{slot_name}-session" {
+				found = true
+				if rr, ok := b["roleRef"].(map[string]any); ok {
+					roleRefName, _ = rr["name"].(string)
+				}
+			}
+		}
+	}
+	if !found {
+		t.Fatal("no ClusterRoleBinding found for the {slot_name}-session SA")
+	}
+	if roleRefName == "cluster-admin" {
+		t.Fatal("slot session SA must not bind cluster-admin (read-only enforcement)")
+	}
+	if roleRefName != "view" {
+		t.Fatalf("slot session SA roleRef = %q, want view", roleRefName)
+	}
+}
