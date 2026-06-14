@@ -1038,6 +1038,44 @@ func TestInstallAgentPostCommitReminder(t *testing.T) {
 	}
 }
 
+func TestAgentRunScriptInjectsRunnerMCP(t *testing.T) {
+	const url = "http://127.0.0.1:8765/mcp"
+
+	codex, err := agentRunScript(agentruntime.ResolvedProfile{Provider: agentruntime.ProviderCodex, Model: "m"}, "/w", "/p", "/c", url)
+	if err != nil {
+		t.Fatalf("codex agentRunScript: %v", err)
+	}
+	for _, want := range []string{`>> "$HOME/.codex/config.toml"`, "[mcp_servers.glimmung]", `url = "` + url + `"`} {
+		if !strings.Contains(codex, want) {
+			t.Fatalf("codex script missing %q:\n%s", want, codex)
+		}
+	}
+
+	claude, err := agentRunScript(agentruntime.ResolvedProfile{Provider: agentruntime.ProviderClaude, Model: "m"}, "/w", "/p", "/c", url)
+	if err != nil {
+		t.Fatalf("claude agentRunScript: %v", err)
+	}
+	for _, want := range []string{"--mcp-config", "--strict-mcp-config", "glimmung-runner-mcp.json", `"type":"http"`, `"url":"` + url + `"`} {
+		if !strings.Contains(claude, want) {
+			t.Fatalf("claude script missing %q:\n%s", want, claude)
+		}
+	}
+}
+
+func TestAgentRunScriptNoMCPWhenURLEmpty(t *testing.T) {
+	for _, provider := range []string{agentruntime.ProviderCodex, agentruntime.ProviderClaude} {
+		script, err := agentRunScript(agentruntime.ResolvedProfile{Provider: provider, Model: "m"}, "/w", "/p", "/c", "")
+		if err != nil {
+			t.Fatalf("provider %s: agentRunScript: %v", provider, err)
+		}
+		for _, forbidden := range []string{"mcp_servers", "--mcp-config", "--strict-mcp-config", "runner-mcp.json"} {
+			if strings.Contains(script, forbidden) {
+				t.Fatalf("provider %s: empty mcpURL must inject no MCP config, but found %q:\n%s", provider, forbidden, script)
+			}
+		}
+	}
+}
+
 func TestAgentShellPreambleUsesProxyPlaceholderCredentials(t *testing.T) {
 	script := agentShellPreamble()
 	for _, want := range []string{

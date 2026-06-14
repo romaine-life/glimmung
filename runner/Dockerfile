@@ -7,6 +7,7 @@ RUN go mod download
 COPY cmd ./cmd
 COPY internal ./internal
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/glimmung-runner ./cmd/glimmung-runner
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/glimmung-runner-mcp ./cmd/glimmung-runner-mcp
 
 FROM ghcr.io/actions/actions-runner:latest AS runtime
 
@@ -111,6 +112,7 @@ RUN npm install -g @openai/codex @anthropic-ai/claude-code \
     && rm -rf /root/.npm /opt/glimmung-runner/.cache
 
 COPY --from=backend /out/glimmung-runner /app/glimmung-runner
+COPY --from=backend /out/glimmung-runner-mcp /app/glimmung-runner-mcp
 RUN mkdir -p /workspace \
     && chown runner:runner /workspace \
     && chmod +x /app/glimmung-runner

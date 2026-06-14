@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/romaine-life/glimmung/internal/runnermcp"
 )
 
 type fakeWorkflowWriteStore struct {
@@ -258,6 +260,43 @@ func TestValidateWorkflowRegisterAcceptsManagedRunSteps(t *testing.T) {
 	}
 	if got := req.Phases[0].Jobs[0].Steps[0].Type; got != "run" {
 		t.Fatalf("managed run step type=%q, want run", got)
+	}
+}
+
+func TestValidateRunnerJobSpecTools(t *testing.T) {
+	job := func(tools []string, managed bool) RunnerJobSpec {
+		return RunnerJobSpec{ID: "implement", Image: "runner:latest", Managed: managed, Tools: tools}
+	}
+
+	if err := validateRunnerJobSpec("agent-run", "work", 0, job([]string{runnermcp.ToolUploadEvidence}, true)); err != nil {
+		t.Fatalf("known tool on managed job must be accepted: %v", err)
+	}
+	if err := validateRunnerJobSpec("agent-run", "work", 0, job(nil, true)); err != nil {
+		t.Fatalf("a job with no tools must be accepted: %v", err)
+	}
+
+	err := validateRunnerJobSpec("agent-run", "work", 0, job([]string{"capture_unicorns"}, true))
+	if err == nil || !strings.Contains(err.Error(), "unknown runner tool") || !strings.Contains(err.Error(), "capture_unicorns") {
+		t.Fatalf("unknown tool must be rejected and named, got %v", err)
+	}
+	// The rejection must advertise the known tools so an author can self-correct.
+	if err == nil || !strings.Contains(err.Error(), runnermcp.ToolUploadEvidence) {
+		t.Fatalf("unknown-tool rejection must list known tools, got %v", err)
+	}
+
+	err = validateRunnerJobSpec("agent-run", "work", 0, job([]string{runnermcp.ToolUploadEvidence}, false))
+	if err == nil || !strings.Contains(err.Error(), "not managed") {
+		t.Fatalf("tools on an unmanaged job must be rejected, got %v", err)
+	}
+
+	err = validateRunnerJobSpec("agent-run", "work", 0, job([]string{""}, true))
+	if err == nil || !strings.Contains(err.Error(), "empty tool name") {
+		t.Fatalf("empty tool name must be rejected, got %v", err)
+	}
+
+	err = validateRunnerJobSpec("agent-run", "work", 0, job([]string{runnermcp.ToolUploadEvidence, runnermcp.ToolUploadEvidence}, true))
+	if err == nil || !strings.Contains(err.Error(), "more than once") {
+		t.Fatalf("a duplicated tool must be rejected, got %v", err)
 	}
 }
 

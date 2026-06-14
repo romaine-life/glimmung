@@ -873,7 +873,7 @@ func (r *runner) executeAgentStep(ctx context.Context, step stepSpec, outputFile
 	}
 	runStep := step
 	runStep.Type = "run"
-	runStep.Run, err = agentRunScript(profile, workdir, promptFile, completionFile)
+	runStep.Run, err = agentRunScript(profile, workdir, promptFile, completionFile, strings.TrimSpace(os.Getenv("GLIMMUNG_RUNNER_MCP_URL")))
 	if err != nil {
 		return 1, err
 	}
@@ -1053,7 +1053,8 @@ func (r *runner) agentPrompt(workdir string, step stepSpec, spec agentStepSpec, 
 	return b.String(), nil
 }
 
-func agentRunScript(profile agentruntime.ResolvedProfile, workdir, promptFile, completionFile string) (string, error) {
+func agentRunScript(profile agentruntime.ResolvedProfile, workdir, promptFile, completionFile, mcpURL string) (string, error) {
+	mcpURL = strings.TrimSpace(mcpURL)
 	switch strings.TrimSpace(profile.Provider) {
 	case agentruntime.ProviderCodex:
 		args := []string{
@@ -1069,6 +1070,7 @@ func agentRunScript(profile agentruntime.ResolvedProfile, workdir, promptFile, c
 			args = append([]string{"exec", "-c", "model_reasoning_effort=" + shellQuoteForTOML(profile.ReasoningEffort)}, args[1:]...)
 		}
 		return agentShellPreamble() + "\n" +
+			codexRunnerMCPConfig(mcpURL) +
 			"last_message=" + shellQuoteArg(filepath.Join(os.TempDir(), "glimmung-codex-last-message.md")) + "\n" +
 			"cat " + shellQuoteArg(promptFile) + " | codex " + shellJoin(args) + "\n" +
 			"if [ -s \"$last_message\" ] && command -v jq >/dev/null 2>&1; then jq -Rs '{summary_markdown:.}' \"$last_message\" > " + shellQuoteArg(completionFile) + "; fi\n", nil
@@ -1080,11 +1082,49 @@ func agentRunScript(profile agentruntime.ResolvedProfile, workdir, promptFile, c
 			"--verbose",
 			"--dangerously-skip-permissions",
 		}
+		mcpSetup := ""
+		if mcpURL != "" {
+			configPath := filepath.Join(os.TempDir(), "glimmung-runner-mcp.json")
+			mcpSetup = claudeRunnerMCPConfig(configPath, mcpURL)
+			// --strict-mcp-config makes this the agent's entire MCP surface: only
+			// the scoped runner server, nothing from any other config source.
+			args = append(args, "--mcp-config", configPath, "--strict-mcp-config")
+		}
 		return claudeShellPreamble(workdir) + "\n" +
+			mcpSetup +
 			"cat " + shellQuoteArg(promptFile) + " | claude " + shellJoin(args) + "\n", nil
 	default:
 		return "", fmt.Errorf("unsupported agent provider %q", profile.Provider)
 	}
+}
+
+// runnerMCPServerName is the MCP server name the agent sees for Glimmung's
+// scoped runner tools. It is cosmetic to the protocol (tools are discovered via
+// tools/list) but anchors the codex config key and the claude config entry.
+const runnerMCPServerName = "glimmung"
+
+// codexRunnerMCPConfig appends the scoped runner server to the codex config the
+// preamble already wrote. codex reads ~/.codex/config.toml and Glimmung owns
+// that file, so this one streamable-HTTP entry is the agent's entire MCP
+// surface. Empty mcpURL means no runner tools — nothing is appended.
+func codexRunnerMCPConfig(mcpURL string) string {
+	if mcpURL == "" {
+		return ""
+	}
+	return "cat >> \"$HOME/.codex/config.toml\" <<'EOF'\n\n" +
+		"[mcp_servers." + runnerMCPServerName + "]\n" +
+		"url = \"" + mcpURL + "\"\n" +
+		"EOF\n"
+}
+
+// claudeRunnerMCPConfig writes the claude MCP config file the run passes via
+// --mcp-config. configPath is a Go-known absolute path (it flows into a
+// single-quoted shell arg, so $HOME would not expand); the agent connects to
+// the scoped runner server over streamable HTTP.
+func claudeRunnerMCPConfig(configPath, mcpURL string) string {
+	return "cat > " + shellQuoteArg(configPath) + " <<'EOF'\n" +
+		`{"mcpServers":{"` + runnerMCPServerName + `":{"type":"http","url":"` + mcpURL + `"}}}` + "\n" +
+		"EOF\n"
 }
 
 func agentShellPreamble() string {

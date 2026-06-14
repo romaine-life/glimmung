@@ -1721,8 +1721,32 @@ func runnerJobManifest(settings Settings, req RunLaunchRequest, job RunnerJobSpe
 	if !job.Managed && len(job.Args) > 0 {
 		container["args"] = job.Args
 	}
+	containers := []any{container}
+
+	// Opt-in runner MCP sidecar: when a job declares tools, run the scoped
+	// runner MCP server alongside the agent and share /workspace so tools such
+	// as upload_evidence can read what the agent produced. Jobs that declare no
+	// tools get no sidecar and no extra volume — their pod spec is unchanged.
+	if len(job.Tools) > 0 {
+		workspaceMount := map[string]any{"name": "runner-workspace", "mountPath": "/workspace"}
+		volumes = append(volumes, map[string]any{"name": "runner-workspace", "emptyDir": map[string]any{}})
+		container["volumeMounts"] = append(append([]any{}, volumeMounts...), workspaceMount)
+		// Tell the agent container where the scoped sidecar lives. The runner
+		// reads GLIMMUNG_RUNNER_MCP_URL and injects exactly this server into the
+		// agent's provider MCP config; absence of the var means no runner tools
+		// and no MCP config — the default, unchanged path.
+		container["env"] = append(append([]map[string]any{}, env...), map[string]any{"name": "GLIMMUNG_RUNNER_MCP_URL", "value": runnerMCPURL})
+		containers = append(containers, map[string]any{
+			"name":         "runner-mcp",
+			"image":        runnerJobImage(settings, job),
+			"command":      []any{"/app/glimmung-runner-mcp"},
+			"env":          runnerMCPSidecarEnv(settings, req, job),
+			"volumeMounts": []any{workspaceMount},
+		})
+	}
+
 	podSpec["volumes"] = volumes
-	podSpec["containers"] = []any{container}
+	podSpec["containers"] = containers
 	if job.TimeoutSeconds != nil && *job.TimeoutSeconds > 0 {
 		podSpec["activeDeadlineSeconds"] = *job.TimeoutSeconds
 	}
@@ -1780,6 +1804,33 @@ func runnerJobImage(settings Settings, job RunnerJobSpec) string {
 		return firstNonEmpty(job.Image, settings.RunnerImage)
 	}
 	return job.Image
+}
+
+// runnerMCPListenAddr is the loopback address the runner MCP sidecar serves on,
+// and runnerMCPURL is the streamable-HTTP endpoint the agent container connects
+// to. They are a matched pair: the sidecar binds the addr, the launcher hands
+// the agent the URL. Loopback keeps the surface pod-local — nothing off the pod
+// can reach the sidecar's privileged tools.
+const (
+	runnerMCPListenAddr = "127.0.0.1:8765"
+	runnerMCPURL        = "http://" + runnerMCPListenAddr + "/mcp"
+)
+
+// runnerMCPSidecarEnv is the minimal environment the runner MCP sidecar needs:
+// the run identity (to scope artifacts), the artifact store coordinates, the
+// per-job tool allow-list, and the loopback address it serves on. It is
+// deliberately narrow — the sidecar holds only what its tools require, not the
+// agent container's full environment.
+func runnerMCPSidecarEnv(settings Settings, req RunLaunchRequest, job RunnerJobSpec) []map[string]any {
+	return []map[string]any{
+		{"name": "GLIMMUNG_PROJECT", "value": req.Lease.Project},
+		{"name": "GLIMMUNG_RUN_ID", "value": req.Run.ID},
+		{"name": "GLIMMUNG_RUN_REF", "value": runRefFromData(req.Run)},
+		{"name": "ARTIFACTS_STORAGE_ACCOUNT", "value": settings.ArtifactsStorageAccount},
+		{"name": "ARTIFACTS_CONTAINER", "value": settings.ArtifactsContainer},
+		{"name": "GLIMMUNG_RUNNER_TOOLS", "value": strings.Join(job.Tools, ",")},
+		{"name": "GLIMMUNG_RUNNER_MCP_ADDR", "value": runnerMCPListenAddr},
+	}
 }
 
 func runnerJobEnv(settings Settings, req RunLaunchRequest, job RunnerJobSpec, secretName string) []map[string]any {

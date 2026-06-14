@@ -195,6 +195,12 @@ type RunnerJobSpec struct {
 	// phase completes on the launched siblings alone. The declared-but-
 	// skipped job keeps the workflow shape total and renders the toggle.
 	When string `json:"when,omitempty"`
+	// Tools is the per-job runner MCP allow-list: the exact set of structured
+	// tools the job's agent may call. When non-empty, the launcher runs the
+	// scoped runner MCP server as a sidecar exposing only these tools and shares
+	// the run workspace with it. Empty means no sidecar and no runner tools —
+	// the default, leaving the pod spec unchanged.
+	Tools []string `json:"tools,omitempty"`
 }
 
 type RunnerStepSpec struct {
