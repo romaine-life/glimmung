@@ -506,6 +506,35 @@ func TestApplyTestSlotHotSwapRejectsMissingFields(t *testing.T) {
 	}
 }
 
+// TestApplyTestSlotHotSwapMintsCloneToken pins that the handler mints a clone
+// token and builds an x-access-token URL so the build Job can clone a private
+// repo (previously it passed an unauthenticated https URL and the clone failed).
+func TestApplyTestSlotHotSwapMintsCloneToken(t *testing.T) {
+	store := newApplyHotSwapStore(t)
+	var seen ApplyHotSwapOptions
+	performer := func(_ context.Context, opts ApplyHotSwapOptions) (ApplyHotSwapResult, error) {
+		seen = opts
+		return ApplyHotSwapResult{Outcome: "persisted", Timings: map[string]string{}}, nil
+	}
+	minter := fakeRunnerGitHubTokenMinter{token: "ghs_minted"}
+
+	handler := http.HandlerFunc(applyTestSlotHotSwap(store, nil, minter, performer))
+	body := `{"project":"tank-operator","slot_name":"tank-operator-slot-1","artifact_kind":"agent_runner","git_ref":"feat/x","validation_target":"existing_session"}`
+	req := authedApplyRequest(t, body)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	if seen.RepoToken != "ghs_minted" {
+		t.Fatalf("performer RepoToken = %q, want ghs_minted", seen.RepoToken)
+	}
+	if seen.RepoURL != "https://x-access-token@github.com/romaine-life/tank-operator.git" {
+		t.Fatalf("performer RepoURL = %q, want x-access-token URL", seen.RepoURL)
+	}
+}
+
 func authedApplyRequest(t *testing.T, body string) *http.Request {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodPost, "/v1/test-slots/apply-hot-swap", strings.NewReader(body))
