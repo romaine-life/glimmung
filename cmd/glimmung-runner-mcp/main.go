@@ -35,15 +35,25 @@ func main() {
 	// allow-listed but could not be registered (e.g. its backing store is
 	// unavailable) fails loudly at Scoped() below, rather than silently
 	// vanishing from the job's surface.
-	if store, err := artifacts.NewFromSettings(server.Settings{
+	store, storeErr := artifacts.NewFromSettings(server.Settings{
 		ArtifactsStorageAccount: strings.TrimSpace(os.Getenv("ARTIFACTS_STORAGE_ACCOUNT")),
 		ArtifactsContainer:      strings.TrimSpace(os.Getenv("ARTIFACTS_CONTAINER")),
-	}); err == nil {
-		reg.Register(runnermcp.NewUploadEvidenceTool(rc, os.DirFS(workspace), store))
+	})
+	if storeErr != nil {
+		slog.Warn("runner-mcp: artifact store unavailable; evidence tools not registered", "error", storeErr)
 	} else {
-		slog.Warn("runner-mcp: artifact store unavailable; upload_evidence not registered", "error", err)
+		reg.Register(runnermcp.NewUploadEvidenceTool(rc, os.DirFS(workspace), store))
+
+		// Capture tools need both the store (to upload) and a leased slot
+		// browser (to record). Without an endpoint they are not registered;
+		// Scoped() then fails loudly if a job allow-listed one anyway.
+		if rec, err := runnermcp.NewNodeRecorder(os.Getenv("PLAYWRIGHT_WS_ENDPOINT")); err == nil {
+			reg.Register(runnermcp.NewCaptureVideoTool(rc, store, rec))
+			reg.Register(runnermcp.NewCaptureScreenshotTool(rc, store, rec))
+		} else {
+			slog.Warn("runner-mcp: no slot browser; capture tools not registered", "error", err)
+		}
 	}
-	// Future runner tools (capture_video, capture_screenshot, …) register here.
 
 	tools, err := reg.Scoped(allow)
 	if err != nil {

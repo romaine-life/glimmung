@@ -2,6 +2,7 @@ package server
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 )
 
@@ -88,6 +89,28 @@ func TestRunnerJobManifest_NoToolsHasNoSidecar(t *testing.T) {
 	}
 	if _, ok := rmcpAgentEnv(t, m)["GLIMMUNG_RUNNER_MCP_URL"]; ok {
 		t.Fatal("job without tools must not set GLIMMUNG_RUNNER_MCP_URL on the agent container")
+	}
+}
+
+func TestRunnerMCPSidecarEnv_PlaywrightEndpoint(t *testing.T) {
+	// With a leased slot browser, the capture tools' sidecar must learn the
+	// Playwright endpoint to record against.
+	req, settings := sidecarReqSettings()
+	settings.RunnerPlaywrightEnabled = true
+	settings.RunnerPlaywrightPort = "3000"
+	req.Lease.Metadata = map[string]any{"runner_slot_name": "ambience-slot-1"}
+
+	m := runnerJobManifest(settings, req, RunnerJobSpec{ID: "verify", Managed: true, Tools: []string{"capture_video"}}, "job", "secret", "attempt")
+	ep := rmcpSidecarEnv(t, m)["PLAYWRIGHT_WS_ENDPOINT"]
+	if !strings.HasPrefix(ep, "ws://") || !strings.Contains(ep, "ambience-slot-1") || !strings.HasSuffix(ep, ":3000") {
+		t.Fatalf("sidecar PLAYWRIGHT_WS_ENDPOINT = %q, want ws://...ambience-slot-1...:3000", ep)
+	}
+
+	// Without a slot, the sidecar must not carry the endpoint.
+	req2, settings2 := sidecarReqSettings()
+	m2 := runnerJobManifest(settings2, req2, RunnerJobSpec{ID: "verify", Managed: true, Tools: []string{"upload_evidence"}}, "job", "secret", "attempt")
+	if _, ok := rmcpSidecarEnv(t, m2)["PLAYWRIGHT_WS_ENDPOINT"]; ok {
+		t.Fatal("no slot must mean no PLAYWRIGHT_WS_ENDPOINT on the sidecar")
 	}
 }
 
