@@ -26,3 +26,71 @@ jobs:
       backend_storage_account: ${{ vars.TFSTATE_STORAGE_ACCOUNT }}
       backend_key: glimmung.tfstate
     secrets: inherit
+
+  # Keep the hand-pinned managed-identity client ids in k8s/values.yaml in sync
+  # with the identities tofu actually produced. Without this, a tofu change that
+  # recreates an identity (e.g. a resource rename without a `moved {}` block)
+  # mints a new client id, the chart keeps pointing at the destroyed one, and
+  # every runner Job's workload-identity `az login` fails AADSTS700016 until a
+  # human re-pins it. The producer of the value now writes it where the chart
+  # reads it, the same way image-tag bumps are committed.
+  sync-identity-pins:
+    name: Sync identity client-id pins
+    needs: tofu
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Azure Login via OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.ARM_CLIENT_ID }}
+          tenant-id: ${{ vars.ARM_TENANT_ID }}
+          subscription-id: ${{ vars.ARM_SUBSCRIPTION_ID }}
+
+      - name: Install yq
+        run: |
+          sudo curl -fsSL -o /usr/local/bin/yq \
+            https://github.com/mikefarah/yq/releases/download/v4.44.3/yq_linux_amd64
+          sudo chmod +x /usr/local/bin/yq
+
+      - name: Sync identity client-id pins from tofu state
+        env:
+          ACCOUNT: ${{ vars.TFSTATE_STORAGE_ACCOUNT }}
+        run: |
+          set -euo pipefail
+          az storage blob download \
+            --account-name "$ACCOUNT" \
+            --container-name tfstate \
+            --name glimmung.tfstate \
+            --auth-mode login \
+            --file glimmung.tfstate \
+            --only-show-errors >/dev/null
+
+          runner_id="$(jq -r '.outputs.glimmung_runner_identity_client_id.value // empty' glimmung.tfstate)"
+          dedicated_id="$(jq -r '.outputs.glimmung_dedicated_identity_client_id.value // empty' glimmung.tfstate)"
+          rm -f glimmung.tfstate
+
+          if [ -z "$runner_id" ] || [ -z "$dedicated_id" ]; then
+            echo "::error::could not read identity client_ids from tofu state" >&2
+            exit 1
+          fi
+
+          yq -i ".serviceAccountClientId = \"$dedicated_id\"" k8s/values.yaml
+          yq -i ".runner.serviceAccountClientId = \"$runner_id\"" k8s/values.yaml
+
+          if git diff --quiet -- k8s/values.yaml; then
+            echo "Identity client-id pins already in sync with tofu state."
+            exit 0
+          fi
+
+          echo "Identity client-id pins drifted from tofu state; committing fresh pins."
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add k8s/values.yaml
+          git commit -m "chart: sync identity client-id pins from tofu state [skip ci]"
+          git push
