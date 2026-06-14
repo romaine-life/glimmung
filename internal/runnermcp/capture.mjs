@@ -67,7 +67,19 @@ try {
     if (waitMs > 0) await page.waitForTimeout(waitMs);
     await page.screenshot({ path: out, fullPage });
   } else {
-    // Start recording only after the page is visible.
+    // Record only once the page has actually PAINTED non-blank pixels. `body`
+    // becoming visible fires before a canvas/WASM effect draws its first frame,
+    // so starting the screencast then captures the empty pre-paint page — the
+    // blank "flashbang" frame the server-side first-frame gate rejects (it flags
+    // near-uniformity, white OR dark). A blank page compresses to a tiny PNG, so
+    // poll a screenshot until it carries real content, bounded by a deadline; the
+    // gate stays the backstop if the page never paints.
+    const paintDeadline = Date.now() + 10000;
+    for (;;) {
+      const probe = await page.screenshot();
+      if (probe.length > 6000 || Date.now() > paintDeadline) break;
+      await page.waitForTimeout(400);
+    }
     await page.screencast.start({ path: out, size: { width, height } });
     await interact();
     await page.waitForTimeout(waitMs);
