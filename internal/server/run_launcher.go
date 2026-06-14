@@ -1930,11 +1930,15 @@ func runnerJobEnv(settings Settings, req RunLaunchRequest, job RunnerJobSpec, se
 			env = appendLiteralEnv(env, seen, "GLIMMUNG_AGENT_RUNTIME_JSON", string(payload))
 		}
 	}
-	if endpoint := runnerPlaywrightWSEndpoint(settings, req); endpoint != "" {
-		env = appendLiteralEnv(env, seen, "GLIMMUNG_PLAYWRIGHT_WS_ENDPOINT", endpoint)
-		env = appendLiteralEnv(env, seen, "PLAYWRIGHT_WS_ENDPOINT", endpoint)
-		env = appendLiteralEnv(env, seen, "PW_TEST_CONNECT_WS_ENDPOINT", endpoint)
-	}
+	// The agent's main container is deliberately NOT given a Playwright WS
+	// endpoint. Browser evidence is captured only through the credential-isolated
+	// runner-MCP sidecar (capture_video / capture_screenshot), which connects to
+	// the leased slot browser and records AFTER the page paints. Handing the
+	// agent the raw endpoint is what let per-repo capture scripts connect to the
+	// slot browser and self-capture (recordVideo from about:blank → white first
+	// frame) — the exact path this program deletes. The sidecar receives the
+	// endpoint via runnerMCPSidecarEnv; TestRunnerJobEnvOmitsBrowserEndpoint
+	// fails if it is reintroduced into the agent env.
 	if job.Managed {
 		env = appendLiteralEnv(env, seen, "GLIMMUNG_RUNNER_JOB_SPEC", runnerJobSpecJSON(job))
 	}

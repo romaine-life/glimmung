@@ -114,8 +114,17 @@ func TestRunnerJobManifestIncludesRunnerCallbackEnv(t *testing.T) {
 	if env["GLIMMUNG_PROJECT"] != "tank-operator" {
 		t.Fatalf("system env was overridden: %q", env["GLIMMUNG_PROJECT"])
 	}
-	if env["PLAYWRIGHT_WS_ENDPOINT"] != "ws://slot-playwright.tank-operator-slot-1.svc.cluster.local:3000" {
-		t.Fatalf("Playwright endpoint=%q", env["PLAYWRIGHT_WS_ENDPOINT"])
+	// Enforcement guard: the agent's main container must NOT receive a Playwright
+	// WS endpoint, even though this lease has a slot browser. Browser evidence is
+	// captured only through the credential-isolated runner-MCP sidecar capture
+	// tools, which keep the endpoint (see the sidecar env test). Handing it to the
+	// agent is what let per-repo capture scripts connect to the slot browser and
+	// self-capture a white first frame; this fails if any of the three endpoint
+	// vars are reintroduced into the agent env.
+	for _, k := range []string{"PLAYWRIGHT_WS_ENDPOINT", "GLIMMUNG_PLAYWRIGHT_WS_ENDPOINT", "PW_TEST_CONNECT_WS_ENDPOINT"} {
+		if v, ok := env[k]; ok {
+			t.Fatalf("agent env must not carry a Playwright endpoint, got %s=%q", k, v)
+		}
 	}
 }
 
