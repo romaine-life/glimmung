@@ -2167,6 +2167,7 @@ type runnerJobDoc struct {
 	Steps            []runnerStepDoc     `json:"steps"`
 	TimeoutSeconds   *int                `json:"timeoutSeconds"`
 	Managed          bool                `json:"managed,omitempty"`
+	Tools            []string            `json:"tools,omitempty"`
 	Checkout         *runnerCheckoutDoc  `json:"checkout,omitempty"`
 	ExtraCheckouts   []runnerCheckoutDoc `json:"extraCheckouts,omitempty"`
 	WorkingDirectory string              `json:"workingDirectory,omitempty"`
@@ -3108,6 +3109,7 @@ func runnerJobDocFromSpec(job server.RunnerJobSpec) runnerJobDoc {
 		Steps:            steps,
 		TimeoutSeconds:   job.TimeoutSeconds,
 		Managed:          job.Managed,
+		Tools:            job.Tools,
 		Checkout:         runnerCheckoutDocPtrFromSpec(job.Checkout),
 		ExtraCheckouts:   extraCheckouts,
 		WorkingDirectory: job.WorkingDirectory,
@@ -3348,6 +3350,7 @@ func jobFromDoc(doc runnerJobDoc) server.RunnerJobSpec {
 		Steps:            steps,
 		TimeoutSeconds:   doc.TimeoutSeconds,
 		Managed:          doc.Managed,
+		Tools:            doc.Tools,
 		Checkout:         runnerCheckoutPtrFromDoc(doc.Checkout),
 		ExtraCheckouts:   extraCheckouts,
 		WorkingDirectory: doc.WorkingDirectory,
