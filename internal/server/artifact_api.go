@@ -53,6 +53,19 @@ func readArtifact(store ArtifactStore) http.HandlerFunc {
 		if strings.TrimSpace(contentType) == "" {
 			contentType = "application/octet-stream"
 		}
+		// No-flashbang enforcement on the human-facing surface. Every dashboard
+		// view of evidence dereferences GET /v1/artifacts/..., so refusing a
+		// blank ("white about:blank") first-frame video here makes it unservable
+		// no matter how it entered the store — including the direct-to-blob
+		// writes that bypass the touchpoint-promotion gate. Reuses that gate's
+		// exact verdict function, including its fail-open extraction policy: only
+		// a confirmed blank is refused, an ffmpeg hiccup never blocks.
+		if isVideoArtifact(contentType, blobName) {
+			if err := videoEvidenceFirstFrameError(r.Context(), blobName, artifact.Body); err != nil {
+				writeProblem(w, http.StatusUnprocessableEntity, "evidence rejected: "+err.Error())
+				return
+			}
+		}
 		w.Header().Set("cache-control", "public, max-age=300")
 		w.Header().Set("content-type", contentType)
 		w.WriteHeader(http.StatusOK)
@@ -92,4 +105,18 @@ func servingArtifactBlobName(blobPath string) (string, bool) {
 		return "", false
 	}
 	return blobName, true
+}
+
+// isVideoArtifact reports whether a served artifact is a video — by declared
+// content type, or defensively by extension when the content type is missing or
+// generic. The blank-first-frame gate applies to video only; it must never run
+// ffmpeg on an image or report.
+func isVideoArtifact(contentType, blobName string) bool {
+	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(contentType)), "video/") {
+		return true
+	}
+	lower := strings.ToLower(blobName)
+	return strings.HasSuffix(lower, ".webm") ||
+		strings.HasSuffix(lower, ".mp4") ||
+		strings.HasSuffix(lower, ".mov")
 }
