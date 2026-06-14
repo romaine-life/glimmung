@@ -215,6 +215,83 @@ func TestApplyTestSlotHotSwapAntigravityRunnerResolves(t *testing.T) {
 	}
 }
 
+// TestApplyTestSlotHotSwapStaticResolvesAppNamespace pins the static
+// path's two distinguishing handler behaviors: artifact_kind=static is
+// accepted, and the target namespace is the slot's APP namespace
+// (<slot_name>), not the runner <slot_name>-sessions namespace.
+func TestApplyTestSlotHotSwapStaticResolvesAppNamespace(t *testing.T) {
+	store := newApplyHotSwapStore(t)
+	store.projects[0].Metadata["test_slot_hot_swap"].(map[string]any)["static"] = map[string]any{
+		"enabled":       true,
+		"source":        "frontend/dist",
+		"target":        "/var/run/tank-operator-static-override",
+		"build_command": "cd frontend && npm ci && npm run build",
+		"pod_selector":  "app.kubernetes.io/name=tank-operator",
+		"container":     "tank-operator",
+		"builder_image": "node:20-alpine",
+	}
+	var seen ApplyHotSwapOptions
+	performer := func(_ context.Context, opts ApplyHotSwapOptions) (ApplyHotSwapResult, error) {
+		seen = opts
+		return ApplyHotSwapResult{ArtifactKind: opts.ArtifactKind, GitRef: opts.GitRef, Outcome: "persisted", Timings: map[string]string{}}, nil
+	}
+
+	handler := http.HandlerFunc(applyTestSlotHotSwap(store, nil, nil, performer))
+	body := `{"project":"tank-operator","slot_name":"tank-operator-slot-1","artifact_kind":"static","git_ref":"feat/ui","validation_target":"existing_session"}`
+	req := authedApplyRequest(t, body)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	if seen.ArtifactKind != "static" {
+		t.Fatalf("performer ArtifactKind = %q, want static", seen.ArtifactKind)
+	}
+	// Static targets the slot's APP namespace, not the -sessions namespace.
+	if seen.TargetNamespace != "tank-operator-slot-1" {
+		t.Fatalf("performer TargetNamespace = %q, want tank-operator-slot-1 (app namespace)", seen.TargetNamespace)
+	}
+	if seen.Contract.Static.Container != "tank-operator" {
+		t.Fatalf("static contract not flowed correctly: %#v", seen.Contract.Static)
+	}
+	if got := store.leases[0].Metadata["last_hot_swap_status"]; got != "persisted" {
+		t.Fatalf("history not recorded with persisted; got %v", got)
+	}
+}
+
+// TestApplyTestSlotHotSwapRejectsStaticWithoutPodSelector pins the
+// request-time guard: static's pod_selector/container/builder_image are
+// optional at Contract.Validate time but required by the apply endpoint.
+func TestApplyTestSlotHotSwapRejectsStaticWithoutPodSelector(t *testing.T) {
+	store := newApplyHotSwapStore(t)
+	store.projects[0].Metadata["test_slot_hot_swap"].(map[string]any)["static"] = map[string]any{
+		"enabled":       true,
+		"source":        "frontend/dist",
+		"target":        "/var/run/tank-operator-static-override",
+		"builder_image": "node:20-alpine",
+		"container":     "tank-operator",
+		// pod_selector intentionally absent
+	}
+	performer := func(_ context.Context, _ ApplyHotSwapOptions) (ApplyHotSwapResult, error) {
+		t.Fatal("performer should not be invoked when static validation fails")
+		return ApplyHotSwapResult{}, nil
+	}
+
+	handler := http.HandlerFunc(applyTestSlotHotSwap(store, nil, nil, performer))
+	body := `{"project":"tank-operator","slot_name":"tank-operator-slot-1","artifact_kind":"static","git_ref":"feat/ui","validation_target":"existing_session"}`
+	req := authedApplyRequest(t, body)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "pod_selector") {
+		t.Fatalf("response should name pod_selector; got %s", rec.Body.String())
+	}
+}
+
 // TestApplyTestSlotHotSwapRecordsFailureHistory pins that on apply
 // failure, the endpoint still appends a history entry with the failure
 // status. Durable state in the system, regardless of the response.

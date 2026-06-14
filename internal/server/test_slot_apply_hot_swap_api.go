@@ -56,8 +56,8 @@ type TestSlotApplyHotSwapResult struct {
 //  1. POST { project, slot_index|slot_name, artifact_kind, git_ref, validation_target, timeout_seconds }
 //  2. Endpoint resolves the active test-slot lease for project+slot.
 //  3. Endpoint reads the project's hot-swap contract from metadata.
-//  4. Endpoint validates artifact_kind is supported (v1 runner artifacts:
-//     agent_runner, codex_runner, or antigravity_runner)
+//  4. Endpoint validates artifact_kind is supported (static or the
+//     runner artifacts agent_runner, codex_runner, antigravity_runner)
 //     and the relevant builder_image is present.
 //  5. Endpoint dispatches a build-and-swap Job via ops.ApplyHotSwap,
 //     blocks on completion.
@@ -188,13 +188,35 @@ func applyTestSlotHotSwap(store ReadStore, preparer TestSlotPreparer, minter Run
 				return
 			}
 		}
+		// Static's builder_image/pod_selector/container are optional at
+		// Validate time (contracts registered before static gained these
+		// fields must still re-register), so the apply endpoint enforces
+		// them at request time, mirroring backend.builder_image above.
+		if req.ArtifactKind == "static" {
+			missing := ""
+			switch {
+			case strings.TrimSpace(contract.Static.BuilderImage) == "":
+				missing = "builder_image"
+			case strings.TrimSpace(contract.Static.PodSelector) == "":
+				missing = "pod_selector"
+			case strings.TrimSpace(contract.Static.Container) == "":
+				missing = "container"
+			}
+			if missing != "" {
+				writeProblem(w, http.StatusUnprocessableEntity, "contract.static."+missing+" required for apply endpoint")
+				return
+			}
+		}
 
-		// Target namespace convention: `<slot_name>-sessions`. Tank-operator
-		// session pods live in tank-operator-slot-1-sessions; any project
-		// that opts into session-pod hot-swap follows the same convention.
-		// If a future project needs a different namespace, extend the
-		// contract; for v1 the convention is sufficient.
+		// Target namespace convention. Runner artifacts live in session
+		// pods (`<slot_name>-sessions`); static assets live in the slot's
+		// app pods (`<slot_name>`). Both namespaces carry the glimmung
+		// test-slot labels. If a future project needs a different namespace,
+		// extend the contract; for v1 the convention is sufficient.
 		targetNamespace := slotName + "-sessions"
+		if req.ArtifactKind == "static" {
+			targetNamespace = slotName
+		}
 
 		// RepoURL: derive from project.github_repo. Form: https://github.com/<repo>.git
 		repoURL := ""

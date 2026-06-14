@@ -37,6 +37,22 @@ type StaticContract struct {
 	Enabled bool   `json:"enabled"`
 	Source  string `json:"source"`
 	Target  string `json:"target"`
+	// BuildCommand runs in the init container's working directory (the
+	// cloned repo root) before the copy step, producing Source. Empty
+	// means "no build; Source is a committed asset tree consumed as-is."
+	// A frontend whose Source is a build-output dir (e.g. frontend/dist,
+	// which is gitignored) must set this. Optional at Validate time so
+	// contracts registered before this field don't fail re-registration;
+	// the apply endpoint enforces what it needs at request time.
+	BuildCommand string `json:"build_command,omitempty"`
+	// PodSelector resolves the slot's app replicas (e.g.
+	// "app.kubernetes.io/name=tank-operator"). Static assets are copied
+	// into every matched ready replica's override dir. Required by the
+	// apply endpoint (request-time check), not by the legacy CLI path.
+	PodSelector string `json:"pod_selector,omitempty"`
+	// Container names the pod container that mounts Target read-write
+	// (e.g. "tank-operator"). Required by the apply endpoint.
+	Container string `json:"container,omitempty"`
 	// BuilderImage names the OCI image used as the init container in the
 	// apply_test_slot_hot_swap Job. The project owns this choice — see
 	// docs/test-slot-hot-swap.md. Required when the project consumes the

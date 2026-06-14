@@ -75,8 +75,12 @@ type k8sJobClient interface {
 //     pod tar-streams /work/source into contract.<kind>.target and
 //     sends the configured restart signal.
 //
-// v1 supports session-pod runner artifacts: agent_runner, codex_runner,
-// and antigravity_runner.
+// Supports static web assets (static) and session-pod runner artifacts
+// (agent_runner, codex_runner, antigravity_runner). Static differs in
+// two ways: it targets the slot's app pods (the handler picks the
+// namespace) and is served live from an override dir, so the swap clears
+// that dir first and sends no restart signal. Backend still routes
+// through the legacy glimmung-agent CLI.
 func ApplyHotSwap(ctx context.Context, k8s k8sJobClient, opts ApplyHotSwapOptions) (result ApplyHotSwapResult, err error) {
 	start := time.Now()
 	result = ApplyHotSwapResult{
@@ -94,17 +98,25 @@ func ApplyHotSwap(ctx context.Context, k8s k8sJobClient, opts ApplyHotSwapOption
 		metrics.RecordHotSwap(result.Outcome, time.Since(start))
 	}()
 
-	runner, ok := runnerContractForArtifact(opts.Contract, opts.ArtifactKind)
+	art, ok := resolveArtifact(opts.Contract, opts.ArtifactKind)
 	if !ok {
-		result.Error = fmt.Sprintf("artifact_kind %q is not supported by the apply endpoint in v1 (use the glimmung-agent CLI for static/backend)", opts.ArtifactKind)
+		result.Error = fmt.Sprintf("artifact_kind %q is not supported by the apply endpoint (supported: static, agent_runner, codex_runner, antigravity_runner; use the glimmung-agent CLI for backend)", opts.ArtifactKind)
 		return result, fmt.Errorf("%s", result.Error)
 	}
-	if !runner.Enabled {
+	if !art.Enabled {
 		result.Error = fmt.Sprintf("contract.%s is not enabled", opts.ArtifactKind)
 		return result, fmt.Errorf("%s", result.Error)
 	}
-	if strings.TrimSpace(runner.BuilderImage) == "" {
+	if strings.TrimSpace(art.BuilderImage) == "" {
 		result.Error = fmt.Sprintf("contract.%s.builder_image is required", opts.ArtifactKind)
+		return result, fmt.Errorf("%s", result.Error)
+	}
+	if strings.TrimSpace(art.PodSelector) == "" {
+		result.Error = fmt.Sprintf("contract.%s.pod_selector is required", opts.ArtifactKind)
+		return result, fmt.Errorf("%s", result.Error)
+	}
+	if strings.TrimSpace(art.Container) == "" {
+		result.Error = fmt.Sprintf("contract.%s.container is required", opts.ArtifactKind)
 		return result, fmt.Errorf("%s", result.Error)
 	}
 	if strings.TrimSpace(opts.TargetNamespace) == "" {
@@ -172,17 +184,18 @@ func ApplyHotSwap(ctx context.Context, k8s k8sJobClient, opts ApplyHotSwapOption
 		ArtifactKind:       opts.ArtifactKind,
 		GitRef:             opts.GitRef,
 		RepoURL:            opts.RepoURL,
-		BuilderImage:       runner.BuilderImage,
-		BuildCommand:       runner.BuildCommand,
+		BuilderImage:       art.BuilderImage,
+		BuildCommand:       art.BuildCommand,
 		FidelityCommand:    opts.Contract.FidelityClassifier.Command,
 		SwapContainerImage: opts.SwapContainerImage,
-		Source:             runner.Source,
-		Target:             runner.Target,
+		Source:             art.Source,
+		Target:             art.Target,
 		TargetNamespace:    opts.TargetNamespace,
-		TargetPodSelector:  runner.PodSelector,
-		TargetContainer:    runner.Container,
+		TargetPodSelector:  art.PodSelector,
+		TargetContainer:    art.Container,
 		ValidationTarget:   opts.ValidationTarget,
-		RestartSignal:      runner.Restart,
+		RestartSignal:      art.Restart,
+		CleanTarget:        art.CleanTarget,
 	})
 
 	applyStart := time.Now()
@@ -235,16 +248,58 @@ func ApplyHotSwap(ctx context.Context, k8s k8sJobClient, opts ApplyHotSwapOption
 	return result, nil
 }
 
-func runnerContractForArtifact(contract hotswap.Contract, artifactKind string) (hotswap.AgentRunnerContract, bool) {
+// resolvedArtifact is the normalized per-kind hot-swap shape the Job
+// builder consumes. Runner kinds map their AgentRunnerContract onto it;
+// static maps StaticContract. Static introduces two differences: it is
+// served live, so CleanTarget clears stale content-hashed assets before
+// extract and Restart is empty (no PID-1 signal).
+type resolvedArtifact struct {
+	Enabled      bool
+	Source       string
+	Target       string
+	BuildCommand string
+	PodSelector  string
+	Container    string
+	Restart      string // empty = served live, no restart signal
+	BuilderImage string
+	CleanTarget  bool
+}
+
+func resolveArtifact(contract hotswap.Contract, artifactKind string) (resolvedArtifact, bool) {
+	fromRunner := func(c hotswap.AgentRunnerContract) resolvedArtifact {
+		return resolvedArtifact{
+			Enabled:      c.Enabled,
+			Source:       c.Source,
+			Target:       c.Target,
+			BuildCommand: c.BuildCommand,
+			PodSelector:  c.PodSelector,
+			Container:    c.Container,
+			Restart:      c.Restart,
+			BuilderImage: c.BuilderImage,
+		}
+	}
 	switch artifactKind {
 	case "agent_runner":
-		return contract.AgentRunner, true
+		return fromRunner(contract.AgentRunner), true
 	case "codex_runner":
-		return contract.CodexRunner, true
+		return fromRunner(contract.CodexRunner), true
 	case "antigravity_runner":
-		return contract.AntigravityRunner, true
+		return fromRunner(contract.AntigravityRunner), true
+	case "static":
+		s := contract.Static
+		return resolvedArtifact{
+			Enabled:      s.Enabled,
+			Source:       s.Source,
+			Target:       s.Target,
+			BuildCommand: s.BuildCommand,
+			PodSelector:  s.PodSelector,
+			Container:    s.Container,
+			Restart:      "", // static is served live; no restart
+			BuilderImage: s.BuilderImage,
+			CleanTarget:  true,
+		}, true
 	default:
-		return hotswap.AgentRunnerContract{}, false
+		return resolvedArtifact{}, false
 	}
 }
 
@@ -267,6 +322,7 @@ type applyHotSwapJobInputs struct {
 	TargetContainer    string
 	ValidationTarget   string
 	RestartSignal      string
+	CleanTarget        bool
 }
 
 func renderApplyHotSwapJobSpec(in applyHotSwapJobInputs) map[string]any {
@@ -400,8 +456,7 @@ func swapScriptFor(in applyHotSwapJobInputs) string {
 	// runner binary stays executable. Portable across busybox (alpine
 	// claude/codex pods) and GNU (Debian antigravity pod) tar — verified on
 	// both.
-	restartCmd := restartCommandFor(in.RestartSignal)
-	return strings.Join([]string{
+	lines := []string{
 		"set -e",
 		"set -x",
 		`pods=$(kubectl -n ` + shellQuote(in.TargetNamespace) + ` get pods -l ` + shellQuote(in.TargetPodSelector) +
@@ -411,13 +466,32 @@ func swapScriptFor(in applyHotSwapJobInputs) string {
 		`  echo "==> swapping into $pod"`,
 		`  kubectl -n ` + shellQuote(in.TargetNamespace) + ` exec "$pod" -c ` + shellQuote(in.TargetContainer) +
 			` -- sh -c ` + shellQuote("mkdir -p "+in.Target) + ` < /dev/null`,
-		`  tar c -C /work source | kubectl -n ` + shellQuote(in.TargetNamespace) + ` exec -i "$pod" -c ` + shellQuote(in.TargetContainer) +
-			` -- sh -c ` + shellQuote("cd "+in.Target+" && tar x --strip-components=1 -f -"),
-		`  kubectl -n ` + shellQuote(in.TargetNamespace) + ` exec "$pod" -c ` + shellQuote(in.TargetContainer) +
-			` -- ` + restartCmd,
-		`done`,
-		`echo done`,
-	}, "\n")
+	}
+	if in.CleanTarget {
+		// Static assets are content-hash-named, so a stale prior build would
+		// otherwise be served alongside the new one. Clear the override dir's
+		// contents before extracting — not the dir itself, which is a mount.
+		// `|| true` tolerates an already-empty dir (rm over an empty glob).
+		lines = append(lines,
+			`  kubectl -n `+shellQuote(in.TargetNamespace)+` exec "$pod" -c `+shellQuote(in.TargetContainer)+
+				` -- sh -c `+shellQuote(`rm -rf "`+in.Target+`"/* 2>/dev/null || true`)+` < /dev/null`,
+		)
+	}
+	lines = append(lines,
+		`  tar c -C /work source | kubectl -n `+shellQuote(in.TargetNamespace)+` exec -i "$pod" -c `+shellQuote(in.TargetContainer)+
+			` -- sh -c `+shellQuote("cd "+in.Target+" && tar x --strip-components=1 -f -"),
+	)
+	// Static is served live from the override dir, so RestartSignal is empty
+	// and no PID-1 signal is sent. Runner kinds set SIGHUP to re-exec the
+	// supervisor after the copy lands.
+	if strings.TrimSpace(in.RestartSignal) != "" {
+		lines = append(lines,
+			`  kubectl -n `+shellQuote(in.TargetNamespace)+` exec "$pod" -c `+shellQuote(in.TargetContainer)+
+				` -- `+restartCommandFor(in.RestartSignal),
+		)
+	}
+	lines = append(lines, `done`, `echo done`)
+	return strings.Join(lines, "\n")
 }
 
 func restartCommandFor(signal string) string {
