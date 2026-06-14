@@ -26,6 +26,7 @@ type ApplyHotSwapOptions struct {
 	ArtifactKind       string
 	GitRef             string
 	RepoURL            string
+	RepoToken          string
 	TargetNamespace    string
 	ValidationTarget   string
 	JobNamespace       string
@@ -184,6 +185,7 @@ func ApplyHotSwap(ctx context.Context, k8s k8sJobClient, opts ApplyHotSwapOption
 		ArtifactKind:       opts.ArtifactKind,
 		GitRef:             opts.GitRef,
 		RepoURL:            opts.RepoURL,
+		RepoToken:          opts.RepoToken,
 		BuilderImage:       art.BuilderImage,
 		BuildCommand:       art.BuildCommand,
 		FidelityCommand:    opts.Contract.FidelityClassifier.Command,
@@ -311,6 +313,7 @@ type applyHotSwapJobInputs struct {
 	ArtifactKind       string
 	GitRef             string
 	RepoURL            string
+	RepoToken          string
 	BuilderImage       string
 	BuildCommand       string
 	FidelityCommand    string
@@ -352,6 +355,7 @@ func renderApplyHotSwapJobSpec(in applyHotSwapJobInputs) map[string]any {
 				"env": []any{
 					map[string]any{"name": "GIT_REF", "value": in.GitRef},
 					map[string]any{"name": "REPO_URL", "value": in.RepoURL},
+					map[string]any{"name": "GIT_TOKEN", "value": in.RepoToken},
 					map[string]any{"name": "GLIMMUNG_HOT_SWAP_ARTIFACT_KIND", "value": in.ArtifactKind},
 					map[string]any{"name": "GLIMMUNG_HOT_SWAP_VALIDATION_TARGET", "value": in.ValidationTarget},
 				},
@@ -409,7 +413,7 @@ func buildScriptFor(in applyHotSwapJobInputs) string {
 		"set -x",
 		// Best-effort git install if missing. Handles alpine (apk),
 		// debian/ubuntu (apt-get), and the rare yum/dnf builder. If
-		// none match, the subsequent `git clone` fails with a clear
+		// none match, the subsequent git fetch fails with a clear
 		// "git: not found" that surfaces to the caller's build_logs_tail.
 		`if ! command -v git >/dev/null 2>&1; then`,
 		`  if command -v apk >/dev/null 2>&1; then apk add --no-cache git;`,
@@ -418,8 +422,25 @@ func buildScriptFor(in applyHotSwapJobInputs) string {
 		`  elif command -v yum >/dev/null 2>&1; then yum install -y -q git;`,
 		`  fi`,
 		`fi`,
-		`git clone --depth=1 --branch "$GIT_REF" "$REPO_URL" /work/repo`,
+		// Authenticate the clone without leaking the token into `set -x`
+		// traces or build logs: GIT_ASKPASS feeds $GIT_TOKEN to git from a
+		// subprocess, and REPO_URL carries only the x-access-token username
+		// (the token is the password, supplied via askpass). A private repo
+		// otherwise fails to clone — the URL has no inline credential.
+		`if [ -n "${GIT_TOKEN:-}" ]; then`,
+		`  printf '%s\n' '#!/bin/sh' 'exec echo "$GIT_TOKEN"' > /tmp/gitaskpass && chmod +x /tmp/gitaskpass`,
+		`  export GIT_ASKPASS=/tmp/gitaskpass GIT_TERMINAL_PROMPT=0`,
+		`fi`,
+		// Fetch the exact ref by branch/tag name OR commit sha. The
+		// restricted-mode hot-swap gate pins git_ref to the verified HEAD sha
+		// (anti-TOCTOU); `git clone --branch <sha>` is invalid, but fetch
+		// accepts a reachable sha (GitHub allowReachableSHA1InWant) or a ref.
+		`mkdir -p /work/repo`,
 		`cd /work/repo`,
+		`git init -q`,
+		`git remote add origin "$REPO_URL"`,
+		`git fetch --depth=1 origin "$GIT_REF"`,
+		`git checkout -q FETCH_HEAD`,
 	}
 	if strings.TrimSpace(in.FidelityCommand) != "" {
 		lines = append(lines,

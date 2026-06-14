@@ -302,6 +302,57 @@ func TestApplyHotSwapStaticDispatchesJob(t *testing.T) {
 	}
 }
 
+// TestApplyHotSwapFetchesRefWithAuth pins the clone fix: the build Job
+// authenticates via GIT_ASKPASS (token never on a command line / in set -x)
+// and fetches the ref by name OR sha. `git clone --branch <sha>` is invalid,
+// and the restricted-mode gate pins git_ref to the verified HEAD sha, so the
+// Job must fetch-by-ref, not clone --branch.
+func TestApplyHotSwapFetchesRefWithAuth(t *testing.T) {
+	k8s := &fakeK8sJobClient{waitResult: "complete", buildLogs: "ok", swapLogs: "ok"}
+	sha := "f3771d1cca46d3c9e6f931e8ca5b52a486947d3a"
+	result, err := ApplyHotSwap(context.Background(), k8s, ApplyHotSwapOptions{
+		Project:         "tank-operator",
+		ArtifactKind:    "agent_runner",
+		GitRef:          sha, // gate pins to a sha; --branch <sha> would fail
+		RepoURL:         "https://x-access-token@github.com/romaine-life/tank-operator.git",
+		RepoToken:       "ghs_testtoken",
+		TargetNamespace: "tank-operator-slot-1-sessions",
+		JobNamespace:    "glimmung",
+		Timeout:         30 * time.Second,
+		Contract: hotswap.Contract{
+			Enabled: true,
+			AgentRunner: hotswap.AgentRunnerContract{
+				Enabled: true, Source: "claude-runner/hot", Target: "/var/run/claude-runner-hot",
+				BuildCommand: "true", PodSelector: "k=v", Container: "claude-runner",
+				Restart: "SIGHUP", BuilderImage: "node:20-alpine",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if result.Outcome != "persisted" {
+		t.Fatalf("outcome = %q, want persisted", result.Outcome)
+	}
+	jobJSON, _ := json.Marshal(k8s.appliedJobs[0])
+	s := string(jobJSON)
+	for _, c := range []string{
+		"git fetch --depth=1 origin", // fetch-by-ref (works for sha or branch)
+		"git checkout -q FETCH_HEAD",
+		"GIT_ASKPASS", // token fed via askpass, not the command line
+		"gitaskpass",
+		`"name":"GIT_TOKEN"`, // token passed as a Job env
+		"ghs_testtoken",
+	} {
+		if !strings.Contains(s, c) {
+			t.Errorf("Job spec missing %q\nspec=%s", c, s)
+		}
+	}
+	if strings.Contains(s, "--branch") {
+		t.Errorf("build script must not use `git clone --branch` (breaks on a sha); spec=%s", s)
+	}
+}
+
 func TestApplyHotSwapRejectsUnsupportedKind(t *testing.T) {
 	k8s := &fakeK8sJobClient{}
 	for _, kind := range []string{"backend", "", "frontend"} {

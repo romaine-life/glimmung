@@ -218,10 +218,24 @@ func applyTestSlotHotSwap(store ReadStore, preparer TestSlotPreparer, minter Run
 			targetNamespace = slotName
 		}
 
-		// RepoURL: derive from project.github_repo. Form: https://github.com/<repo>.git
+		// RepoURL + clone auth. The build Job clones a (typically private) repo,
+		// so it needs a token. Mirror the runner-launch path: mint a short-lived
+		// installation token and pass it to the Job, with the URL carrying only
+		// the x-access-token username — the token reaches git via GIT_ASKPASS in
+		// the build script, never on a command line or in the build logs.
 		repoURL := ""
-		if strings.TrimSpace(project.GitHubRepo) != "" {
-			repoURL = "https://github.com/" + strings.TrimSpace(project.GitHubRepo) + ".git"
+		repoToken := ""
+		if slug := strings.TrimSpace(project.GitHubRepo); slug != "" {
+			repoURL = "https://github.com/" + slug + ".git"
+			if minter != nil {
+				tok, err := minter.RepositoryInstallationToken(r.Context(), slug, map[string]string{"contents": "read"})
+				if err != nil {
+					writeInternalError(w, r, err, "mint clone token for hot-swap: "+err.Error())
+					return
+				}
+				repoToken = tok
+				repoURL = "https://x-access-token@github.com/" + slug + ".git"
+			}
 		}
 
 		// Pod selector: the contract's <runner>.pod_selector flows into
@@ -237,6 +251,7 @@ func applyTestSlotHotSwap(store ReadStore, preparer TestSlotPreparer, minter Run
 			ArtifactKind:     req.ArtifactKind,
 			GitRef:           req.GitRef,
 			RepoURL:          repoURL,
+			RepoToken:        repoToken,
 			TargetNamespace:  targetNamespace,
 			ValidationTarget: validationTarget,
 			Contract:         contract,
