@@ -26,7 +26,11 @@ whichever ones it needs.
     "static": {
       "enabled": true,
       "source": "frontend/dist",
-      "target": "/var/run/orchestrator-static-override"
+      "target": "/var/run/orchestrator-static-override",
+      "build_command": "cd frontend && npm ci && npm run build",
+      "pod_selector": "app.kubernetes.io/name=orchestrator",
+      "container": "orchestrator",
+      "builder_image": "node:20-alpine"
     },
 
     "backend": {
@@ -89,10 +93,12 @@ the project's build environment is explicit and reproducible.
 
 For `agent_runner`, `codex_runner`, and `antigravity_runner`, `builder_image`
 is **required at contract validation time**: there is no legacy CLI path for
-these kinds, so a missing image is unambiguous misconfiguration. For `backend`,
-`builder_image` is **optional at validation time** (existing registered
-contracts predate the field) but **required at request time** when the
-apply endpoint is invoked with `artifact_kind=backend`.
+these kinds, so a missing image is unambiguous misconfiguration. For `backend`
+and `static`, `builder_image` is **optional at validation time** (existing
+registered contracts predate the field) but **required at request time** when
+the apply endpoint is invoked with that kind. `static` additionally requires
+`pod_selector` and `container` at request time, for the same reason: contracts
+registered before static joined the apply endpoint predate those fields.
 
 ### `fidelity_classifier`
 
@@ -141,16 +147,22 @@ the cap; the underlying Job runs to its own deadline.
 
 1. Resolves the active test-slot lease for `project + slot`.
 2. Reads the project's `test_slot_hot_swap` contract from metadata.
-3. Validates `artifact_kind` is supported and (for `backend`) the
-   request-time `builder_image` is present.
+3. Validates `artifact_kind` is supported and the request-time fields are
+   present (`builder_image` for `backend`; `builder_image`, `pod_selector`,
+   and `container` for `static`).
 4. Dispatches a one-off Kubernetes Job:
    - **Init container** uses `contract.<kind>.builder_image`. Clones
      the repo at `git_ref`, runs the optional `fidelity_classifier`
      command, runs `contract.<kind>.build_command`, leaves the resulting
      source dir at `/work/source`.
    - **Main container** uses a kubectl-only image. Reads `/work/source`,
-     tar-streams its contents into `contract.<kind>.target` inside the
-     target pod, sends `contract.<kind>.restart` to PID 1.
+     tar-streams its contents into `contract.<kind>.target` on every pod
+     matching `contract.<kind>.pod_selector`, then sends
+     `contract.<kind>.restart` to PID 1. **Static differs:** its target is
+     the slot's app pods (the `<slot_name>` namespace, not
+     `<slot_name>-sessions`), the override dir is cleared before the copy so
+     stale content-hashed assets don't linger, and no restart is sent
+     because static assets are served live.
 5. Watches the Job to completion via `kubectl wait`.
 6. Collects build + swap logs (last 4000 chars each).
 7. Appends a hot-swap history entry to the lease — **always**, success
@@ -167,11 +179,11 @@ the cap; the underlying Job runs to its own deadline.
 - **Streaming progress.** The Job's logs are available via
   `kubectl logs job/<name>` while the swap is in flight, for live
   inspection. The final result includes the last 4000 chars.
-- **`artifact_kind=static` and `artifact_kind=backend`.** Today these
-  route to `ops.TestSlotHotSwap` via the `glimmung-agent` CLI in the
-  verify-loop infrastructure. The developer-driven apply endpoint
-  covers session runner artifacts today; static and backend land in v2
-  when their consumers explicitly opt in.
+- **`artifact_kind=backend`.** Backend still routes to
+  `ops.TestSlotHotSwap` via the `glimmung-agent` CLI in the verify-loop
+  infrastructure. The developer-driven apply endpoint covers static web
+  assets and session runner artifacts; backend lands when its consumer
+  explicitly opts in.
 
 ## The outcome
 

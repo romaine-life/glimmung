@@ -234,9 +234,77 @@ func TestApplyHotSwapAntigravityRunnerDispatchesJob(t *testing.T) {
 	}
 }
 
+// TestApplyHotSwapStaticDispatchesJob asserts the static path: build from
+// the ref, clear the override dir, tar-stream dist into every matched app
+// replica in the slot's APP namespace, and send NO restart (static is
+// served live from the override dir).
+func TestApplyHotSwapStaticDispatchesJob(t *testing.T) {
+	k8s := &fakeK8sJobClient{
+		waitResult: "complete",
+		buildLogs:  "build ok",
+		swapLogs:   "swap ok",
+	}
+	result, err := ApplyHotSwap(context.Background(), k8s, ApplyHotSwapOptions{
+		Project:         "tank-operator",
+		ArtifactKind:    "static",
+		GitRef:          "feat/ui",
+		RepoURL:         "https://github.com/romaine-life/tank-operator.git",
+		TargetNamespace: "tank-operator-slot-1", // app namespace, NOT -sessions
+		JobNamespace:    "glimmung",
+		Timeout:         30 * time.Second,
+		Contract: hotswap.Contract{
+			Enabled: true,
+			Static: hotswap.StaticContract{
+				Enabled:      true,
+				Source:       "frontend/dist",
+				Target:       "/var/run/tank-operator-static-override",
+				BuildCommand: "cd frontend && npm ci && npm run build",
+				PodSelector:  "app.kubernetes.io/name=tank-operator",
+				Container:    "tank-operator",
+				BuilderImage: "node:20-alpine",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("err: %v (result %+v)", err, result)
+	}
+	if result.Outcome != "persisted" {
+		t.Fatalf("outcome = %q, want persisted", result.Outcome)
+	}
+	if len(k8s.appliedJobs) != 1 {
+		t.Fatalf("applied jobs = %d, want 1", len(k8s.appliedJobs))
+	}
+
+	jobJSON, _ := json.Marshal(k8s.appliedJobs[0])
+	s := string(jobJSON)
+	checks := []string{
+		`"glimmung.io/apply-hot-swap-kind":"static"`,
+		`"image":"node:20-alpine"`,               // builder image
+		"npm ci",                                 // build command (install; && is JSON-escaped)
+		"npm run build",                          // build command (build)
+		"frontend/dist",                          // source copied out of the build
+		"kubectl -n 'tank-operator-slot-1'",      // app namespace, not -sessions
+		"app.kubernetes.io/name=tank-operator",   // pod selector
+		"-c 'tank-operator'",                     // target container
+		"/var/run/tank-operator-static-override", // override target
+		"rm -rf",                                 // clean step before extract
+		"tar c -C /work source",                  // tar-stream
+		"tar x --strip-components=1 -f -",        // strip source/ member
+	}
+	for _, c := range checks {
+		if !strings.Contains(s, c) {
+			t.Errorf("Job spec missing %q\nspec=%s", c, s)
+		}
+	}
+	// Static is served live — no restart signal must be sent.
+	if strings.Contains(s, "kill -HUP 1") {
+		t.Errorf("static swap must not send a restart signal; spec=%s", s)
+	}
+}
+
 func TestApplyHotSwapRejectsUnsupportedKind(t *testing.T) {
 	k8s := &fakeK8sJobClient{}
-	for _, kind := range []string{"static", "backend", "", "frontend"} {
+	for _, kind := range []string{"backend", "", "frontend"} {
 		_, err := ApplyHotSwap(context.Background(), k8s, ApplyHotSwapOptions{
 			ArtifactKind: kind,
 			Contract:     hotswap.Contract{Enabled: true, AgentRunner: hotswap.AgentRunnerContract{Enabled: true, BuilderImage: "x"}},
