@@ -1816,13 +1816,29 @@ const (
 	runnerMCPURL        = "http://" + runnerMCPListenAddr + "/mcp"
 )
 
+// runnerPlaywrightWSEndpoint returns the cluster-internal WebSocket URL of the
+// run's leased slot browser, or "" when Playwright is disabled or the lease has
+// no slot. Both the agent container and the runner MCP sidecar's capture tools
+// connect to it.
+func runnerPlaywrightWSEndpoint(settings Settings, req RunLaunchRequest) string {
+	if !settings.RunnerPlaywrightEnabled {
+		return ""
+	}
+	slotName, ok := req.Lease.Metadata["runner_slot_name"].(string)
+	if !ok || strings.TrimSpace(slotName) == "" {
+		return ""
+	}
+	return fmt.Sprintf("ws://%s.%s.svc.cluster.local:%s", playwrightResourceName(req.Lease.Project, slotName), slotName, settings.RunnerPlaywrightPort)
+}
+
 // runnerMCPSidecarEnv is the minimal environment the runner MCP sidecar needs:
 // the run identity (to scope artifacts), the artifact store coordinates, the
-// per-job tool allow-list, and the loopback address it serves on. It is
-// deliberately narrow — the sidecar holds only what its tools require, not the
+// per-job tool allow-list, the loopback address it serves on, and — when the
+// run holds a slot browser — the Playwright endpoint the capture tools drive. It
+// is deliberately narrow: the sidecar holds only what its tools require, not the
 // agent container's full environment.
 func runnerMCPSidecarEnv(settings Settings, req RunLaunchRequest, job RunnerJobSpec) []map[string]any {
-	return []map[string]any{
+	env := []map[string]any{
 		{"name": "GLIMMUNG_PROJECT", "value": req.Lease.Project},
 		{"name": "GLIMMUNG_RUN_ID", "value": req.Run.ID},
 		{"name": "GLIMMUNG_RUN_REF", "value": runRefFromData(req.Run)},
@@ -1831,6 +1847,10 @@ func runnerMCPSidecarEnv(settings Settings, req RunLaunchRequest, job RunnerJobS
 		{"name": "GLIMMUNG_RUNNER_TOOLS", "value": strings.Join(job.Tools, ",")},
 		{"name": "GLIMMUNG_RUNNER_MCP_ADDR", "value": runnerMCPListenAddr},
 	}
+	if endpoint := runnerPlaywrightWSEndpoint(settings, req); endpoint != "" {
+		env = append(env, map[string]any{"name": "PLAYWRIGHT_WS_ENDPOINT", "value": endpoint})
+	}
+	return env
 }
 
 func runnerJobEnv(settings Settings, req RunLaunchRequest, job RunnerJobSpec, secretName string) []map[string]any {
@@ -1910,13 +1930,10 @@ func runnerJobEnv(settings Settings, req RunLaunchRequest, job RunnerJobSpec, se
 			env = appendLiteralEnv(env, seen, "GLIMMUNG_AGENT_RUNTIME_JSON", string(payload))
 		}
 	}
-	if settings.RunnerPlaywrightEnabled {
-		if slotName, ok := metadata["runner_slot_name"].(string); ok && slotName != "" {
-			endpoint := fmt.Sprintf("ws://%s.%s.svc.cluster.local:%s", playwrightResourceName(req.Lease.Project, slotName), slotName, settings.RunnerPlaywrightPort)
-			env = appendLiteralEnv(env, seen, "GLIMMUNG_PLAYWRIGHT_WS_ENDPOINT", endpoint)
-			env = appendLiteralEnv(env, seen, "PLAYWRIGHT_WS_ENDPOINT", endpoint)
-			env = appendLiteralEnv(env, seen, "PW_TEST_CONNECT_WS_ENDPOINT", endpoint)
-		}
+	if endpoint := runnerPlaywrightWSEndpoint(settings, req); endpoint != "" {
+		env = appendLiteralEnv(env, seen, "GLIMMUNG_PLAYWRIGHT_WS_ENDPOINT", endpoint)
+		env = appendLiteralEnv(env, seen, "PLAYWRIGHT_WS_ENDPOINT", endpoint)
+		env = appendLiteralEnv(env, seen, "PW_TEST_CONNECT_WS_ENDPOINT", endpoint)
 	}
 	if job.Managed {
 		env = appendLiteralEnv(env, seen, "GLIMMUNG_RUNNER_JOB_SPEC", runnerJobSpecJSON(job))

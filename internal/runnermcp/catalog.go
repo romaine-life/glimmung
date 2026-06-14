@@ -14,6 +14,8 @@ import "sort"
 // here, so registration and runtime agree by construction.
 var catalogNames = []string{
 	ToolUploadEvidence,
+	ToolCaptureVideo,
+	ToolCaptureScreenshot,
 }
 
 // CatalogToolNames returns the known runner tool names in sorted order. Callers
