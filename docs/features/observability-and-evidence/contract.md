@@ -88,7 +88,8 @@ half-updated dashboard.
 - New metrics or debug paths avoid unbounded labels and document their failure
   mode.
 - Screenshot-page changes update `frontend/screenshot-pages.json`.
-- Video evidence capture changes exercise `scripts/agent/capture-video.mjs`,
-  typed evidence validation, and Touchpoint/run display.
+- Video evidence capture changes exercise the `capture_video` /
+  `capture_screenshot` runner MCP tools (the sanctioned capture path), typed
+  evidence validation, and Touchpoint/run display.
 - Evidence capture changes are exercised against a validation URL or by focused
   unit/integration tests when a live environment is not appropriate.
