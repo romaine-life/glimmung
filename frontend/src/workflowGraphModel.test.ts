@@ -27,12 +27,12 @@ describe("workflowToPhaseGraphModel", () => {
           },
         },
         {
-          name: "touchpoint",
+          name: "review",
           kind: "k8s_job",
           run_on: "success",
-          purpose: "review_touchpoint",
+          purpose: "review",
           depends_on: ["implementation"],
-          jobs: [{ id: "pr-touchpoint", name: "PR touchpoint", primitive: "pr_touchpoint" }],
+          jobs: [{ id: "pr-review", name: "PR review", primitive: "pr_review" }],
         },
       ],
       pr: { recycle_policy: null },
@@ -54,14 +54,14 @@ describe("workflowToPhaseGraphModel", () => {
           ],
         },
         {
-          name: "touchpoint",
+          name: "review",
           kind: "k8s_job",
           verify: undefined,
           run_on: "success",
-          purpose: "review_touchpoint",
+          purpose: "review",
           evidence_verification_gate: undefined,
           depends_on: ["implementation"],
-          jobs: [{ id: "pr-touchpoint", name: "PR touchpoint", image: undefined, primitive: "pr_touchpoint" }],
+          jobs: [{ id: "pr-review", name: "PR review", image: undefined, primitive: "pr_review" }],
         },
       ],
       entryArrows: [{
@@ -82,7 +82,7 @@ describe("workflowToPhaseGraphModel", () => {
     });
   });
 
-  it("sources pr recycle arrows from the registered pr_touchpoint phase", () => {
+  it("sources pr recycle arrows from the registered pr_review phase", () => {
     const workflow: WorkflowGraphSource = {
       name: "ambience",
       phases: [
@@ -102,9 +102,9 @@ describe("workflowToPhaseGraphModel", () => {
           name: "review-surface",
           kind: "k8s_job",
           run_on: "success",
-          purpose: "review_touchpoint",
+          purpose: "review",
           depends_on: ["evidence-gate"],
-          jobs: [{ id: "pr-touchpoint", primitive: "pr_touchpoint" }],
+          jobs: [{ id: "pr-review", primitive: "pr_review" }],
         },
       ],
       pr: {
@@ -137,7 +137,7 @@ describe("workflowToPhaseGraphModel", () => {
         trigger: "changes_requested",
         max_attempts: 3,
         active: false,
-        kind: "touchpoint_recycle",
+        kind: "review_recycle",
       },
     ]);
   });
@@ -183,23 +183,23 @@ describe("runTopologyToPhaseGraphModel", () => {
           jobs: [{ id: "prepare", name: "Prepare env" }],
         },
         {
-          name: "touchpoint",
+          name: "review",
           kind: "k8s_job",
           verify: false,
           run_on: "success",
-          purpose: "review_touchpoint",
+          purpose: "review",
           depends_on: ["prepare"],
-          jobs: [{ id: "pr-touchpoint", name: "PR touchpoint" }],
+          jobs: [{ id: "pr-review", name: "PR review" }],
         },
       ],
       default_entry: { target: "prepare", active: true, kind: "default" },
       recycle_arrows: [{
-        source: "touchpoint",
+        source: "review",
         target: "prepare",
         trigger: "changes_requested",
         max_attempts: 3,
         active: false,
-        kind: "touchpoint_recycle",
+        kind: "review_recycle",
       }],
     })).toEqual({
       phases: [
@@ -213,13 +213,13 @@ describe("runTopologyToPhaseGraphModel", () => {
           jobs: [{ id: "prepare", name: "Prepare env", image: undefined }],
         },
         {
-          name: "touchpoint",
+          name: "review",
           kind: "k8s_job",
           verify: false,
           run_on: "success",
-          purpose: "review_touchpoint",
+          purpose: "review",
           depends_on: ["prepare"],
-          jobs: [{ id: "pr-touchpoint", name: "PR touchpoint", image: undefined }],
+          jobs: [{ id: "pr-review", name: "PR review", image: undefined }],
         },
       ],
       entryArrows: [{
@@ -228,12 +228,12 @@ describe("runTopologyToPhaseGraphModel", () => {
         kind: "default",
       }],
       recycleArrows: [{
-        source: "touchpoint",
+        source: "review",
         target: "prepare",
         trigger: "changes_requested",
         max_attempts: 3,
         active: false,
-        kind: "touchpoint_recycle",
+        kind: "review_recycle",
       }],
     });
   });

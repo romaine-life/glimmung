@@ -49,7 +49,7 @@ type IssueDispatchData struct {
 // preserve_test_env flag at dispatch time. The cleanup_early phase reads
 // this snapshot to decide whether to execute (false, the default) or
 // return `skipped` so the validation environment stays alive through the
-// touchpoint gate. A later edit to the issue's flag does not change an
+// review gate. A later edit to the issue's flag does not change an
 // in-flight run, just like budget and evidence requirements.
 type CreateRunRequest struct {
 	Project                 string

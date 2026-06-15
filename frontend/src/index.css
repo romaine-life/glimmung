@@ -1752,7 +1752,7 @@ h2 .inline-action,
   color: #d4d4d4;
   overflow-wrap: anywhere;
 }
-.touchpoint-evidence-list {
+.review-evidence-list {
   margin: 10px 0 12px;
 }
 .feedback-box {
@@ -3987,7 +3987,7 @@ h2 .inline-action,
 .app .budget-inline .bm-head .dim { text-transform: uppercase; letter-spacing: 0.06em; font-weight: 600; }
 @media (max-width: 1100px) { .app .budget-inline { width: 100%; margin-left: 0; } }
 
-/* touchpoint validation preview */
+/* review validation preview */
 .app .preview-shot { border: 1px solid var(--border); border-radius: var(--r-sm); overflow: hidden; background: var(--bg-sunken); aspect-ratio: 16 / 10; position: relative; }
 .app .preview-shot .ph { position: absolute; inset: 0; display: grid; place-items: center; color: var(--fg-faint); font-size: var(--t-sm); }
 .app .preview-shot .bar { position: absolute; top: 0; left: 0; right: 0; height: 26px; background: var(--surface); border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 5px; padding: 0 10px; }

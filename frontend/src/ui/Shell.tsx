@@ -17,7 +17,7 @@ const NAV: NavGroup[] = [
     { key: "runs", label: "Runs", icon: "runs", to: "/runs" },
   ]},
   { group: "Review", items: [
-    { key: "touchpoints", label: "Touchpoints", icon: "pr", to: "/touchpoints" },
+    { key: "reviews", label: "Reviews", icon: "pr", to: "/reviews" },
   ]},
   { group: "Orchestrate", items: [
     { key: "workflows", label: "Workflows", icon: "workflow", to: "/workflows" },

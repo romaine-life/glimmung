@@ -54,7 +54,7 @@ half-updated dashboard.
 
 - Missing evidence should be visible as missing evidence, not silently treated
   as success.
-- Promoted Touchpoint evidence is retained as the current review surface.
+- Promoted Review evidence is retained as the current review surface.
   Historical Run evidence remains scoped to the RunReport; if artifact cleanup
   expires it later, the UI must render an explicit unavailable/expired state
   rather than silently dropping the evidence row.
@@ -89,6 +89,6 @@ half-updated dashboard.
   mode.
 - Screenshot-page changes update `frontend/screenshot-pages.json`.
 - Video evidence capture changes exercise `scripts/agent/capture-video.mjs`,
-  typed evidence validation, and Touchpoint/run display.
+  typed evidence validation, and Review/run display.
 - Evidence capture changes are exercised against a validation URL or by focused
   unit/integration tests when a live environment is not appropriate.

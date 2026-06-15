@@ -373,8 +373,8 @@ function attentionReason(row: IssueRow): { label: string; detail: string | null;
   }
   if (row.last_run_state === "passed") {
     return {
-      label: "touchpoint ready",
-      detail: "agent run passed and is ready for touchpoint review",
+      label: "review ready",
+      detail: "agent run passed and is ready for review",
       kind: "free",
     };
   }

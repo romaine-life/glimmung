@@ -274,7 +274,7 @@ export const mockSnapshot = {
 	          recycle_policy: { max_attempts: 2, on: ["reject"], lands_at: "implement" },
 	        },
 	        {
-	          name: "touchpoint",
+	          name: "review",
 	          kind: "k8s_job",
 	          workflow_filename: "default.yaml",
 	          workflow_ref: "main",
@@ -283,18 +283,18 @@ export const mockSnapshot = {
 	          requirements: { os: "linux", apps: ["node"] },
 	          verify: false,
 	          run_on: "success",
-	          purpose: "review_touchpoint",
+	          purpose: "review",
 	          depends_on: ["verify"],
 	          recycle_policy: null,
 	          jobs: [{
-	            id: "pr-touchpoint",
-	            name: "PR touchpoint",
-	            primitive: "pr_touchpoint",
-	            steps: [{ slug: "ensure-pr-touchpoint", title: "Ensure PR touchpoint" }],
+	            id: "pr-review",
+	            name: "PR review",
+	            primitive: "pr_review",
+	            steps: [{ slug: "ensure-pr-review", title: "Ensure PR review" }],
 	          }],
 	        },
 		        {
-		          name: "touchpoint_gate",
+		          name: "review_gate",
 		          kind: "k8s_job",
 		          workflow_filename: "default.yaml",
 		          workflow_ref: "main",
@@ -304,7 +304,7 @@ export const mockSnapshot = {
 		          verify: false,
 		          run_on: "success",
 		          purpose: "review_gate",
-		          depends_on: ["touchpoint"],
+		          depends_on: ["review"],
 	          recycle_policy: null,
 	          jobs: [{ id: "pr-merge", name: "PR merge", primitive: "pr_merge" }],
 	        },
@@ -319,7 +319,7 @@ export const mockSnapshot = {
 	          verify: false,
 	          run_on: "always",
 	          purpose: "teardown",
-	          depends_on: ["touchpoint_gate"],
+	          depends_on: ["review_gate"],
 	          recycle_policy: null,
 	          jobs: [{ id: "cleanup", name: "Cleanup" }],
 	        },
@@ -350,7 +350,7 @@ export const mockSnapshot = {
 	          recycle_policy: { max_attempts: 2, on: ["reject"], lands_at: "generate" },
 	        },
 	        {
-	          name: "touchpoint",
+	          name: "review",
 	          kind: "k8s_job",
 	          workflow_filename: "design-portfolio.yaml",
 	          workflow_ref: "main",
@@ -359,13 +359,13 @@ export const mockSnapshot = {
 	          requirements: { os: "linux", apps: ["node", "playwright"] },
 	          verify: false,
 	          run_on: "success",
-	          purpose: "review_touchpoint",
+	          purpose: "review",
 	          depends_on: ["generate"],
 	          recycle_policy: null,
-	          jobs: [{ id: "pr-touchpoint", name: "PR touchpoint", primitive: "pr_touchpoint" }],
+	          jobs: [{ id: "pr-review", name: "PR review", primitive: "pr_review" }],
 	        },
 		        {
-		          name: "touchpoint_gate",
+		          name: "review_gate",
 		          kind: "k8s_job",
 		          workflow_filename: "design-portfolio.yaml",
 	          workflow_ref: "main",
@@ -375,7 +375,7 @@ export const mockSnapshot = {
 		          verify: false,
 		          run_on: "success",
 		          purpose: "review_gate",
-		          depends_on: ["touchpoint"],
+		          depends_on: ["review"],
 	          recycle_policy: null,
 	          jobs: [{ id: "pr-merge", name: "PR merge", primitive: "pr_merge" }],
 	        },
@@ -390,7 +390,7 @@ export const mockSnapshot = {
 	          verify: false,
 	          run_on: "always",
 	          purpose: "teardown",
-	          depends_on: ["touchpoint_gate"],
+	          depends_on: ["review_gate"],
 	          recycle_policy: null,
 	          jobs: [{ id: "cleanup", name: "Cleanup" }],
 	        },
@@ -419,7 +419,7 @@ export const mockSnapshot = {
 	          recycle_policy: null,
 	        },
 	        {
-	          name: "touchpoint",
+	          name: "review",
 	          kind: "k8s_job",
 	          workflow_filename: "preview.yaml",
 	          workflow_ref: "main",
@@ -428,13 +428,13 @@ export const mockSnapshot = {
 	          requirements: { os: "linux", apps: ["node"] },
 	          verify: false,
 	          run_on: "success",
-	          purpose: "review_touchpoint",
+	          purpose: "review",
 	          depends_on: ["preview"],
 	          recycle_policy: null,
-	          jobs: [{ id: "pr-touchpoint", name: "PR touchpoint", primitive: "pr_touchpoint" }],
+	          jobs: [{ id: "pr-review", name: "PR review", primitive: "pr_review" }],
 	        },
 		        {
-		          name: "touchpoint_gate",
+		          name: "review_gate",
 		          kind: "k8s_job",
 		          workflow_filename: "preview.yaml",
 	          workflow_ref: "main",
@@ -444,7 +444,7 @@ export const mockSnapshot = {
 		          verify: false,
 		          run_on: "success",
 		          purpose: "review_gate",
-		          depends_on: ["touchpoint"],
+		          depends_on: ["review"],
 	          recycle_policy: null,
 	          jobs: [{ id: "pr-merge", name: "PR merge", primitive: "pr_merge" }],
 	        },
@@ -459,7 +459,7 @@ export const mockSnapshot = {
 	          verify: false,
 	          run_on: "always",
 	          purpose: "teardown",
-	          depends_on: ["touchpoint_gate"],
+	          depends_on: ["review_gate"],
 	          recycle_policy: null,
 	          jobs: [{ id: "cleanup", name: "Cleanup" }],
 	        },
@@ -607,7 +607,7 @@ const mockPlaybooks = [
     ref: "sdlc-control-plane-20260512110000",
     project: "glimmung",
     title: "sdlc control plane sweep",
-    description: "Mock executable plan for the integrated issue/run/touchpoint sweep.",
+    description: "Mock executable plan for the integrated issue/run/review sweep.",
     entries: [
       {
         id: "projection",
@@ -692,7 +692,7 @@ export const mockRuns = [
     title: "Wire runner log archive links",
     state: "passed",
     cycles: 1,
-    current_phase: "touchpoint",
+    current_phase: "review",
     cost_usd: 2.18,
     started_at: ago(860),
     completed_at: ago(790),
@@ -761,7 +761,7 @@ const issueDetails = mockIssues.map((issue) => ({
   ],
 }));
 
-const mockTouchpoints = [
+const mockReviews = [
   {
     ref: "romaine-life/glimmung#216",
     project: "glimmung",
@@ -825,10 +825,10 @@ const issueGraph = {
         cycles_count: 2,
         cumulative_cost_usd: 8.91,
         entrypoint_phase: "design",
-        touchpoint_ref: "touchpoint-glimmung-206",
-        touchpoint_state: "open",
-        touchpoint_title: "Render runner run graph detail view",
-        touchpoint_url: "https://github.com/romaine-life/glimmung/pull/218",
+        review_ref: "review-glimmung-206",
+        review_state: "open",
+        review_title: "Render runner run graph detail view",
+        review_url: "https://github.com/romaine-life/glimmung/pull/218",
         pr_number: 218,
         pr_branch: "codex/run-run-graph",
       },
@@ -848,7 +848,7 @@ const issueGraph = {
       step("summarize", "Summarize review notes", "pending", null, null),
     ]),
     {
-      id: "pr:touchpoint-glimmung-206",
+      id: "pr:review-glimmung-206",
       kind: "pr",
       label: "PR #218",
       state: "open",
@@ -861,7 +861,7 @@ const issueGraph = {
     { source: "run:run-glimmung-206-live", target: "attempt:run-glimmung-206-live:0", kind: "attempted" },
     { source: "run:run-glimmung-206-live", target: "attempt:run-glimmung-206-live:1", kind: "attempted" },
     { source: "run:run-glimmung-206-live", target: "attempt:run-glimmung-206-live:2", kind: "attempted" },
-    { source: "run:run-glimmung-206-live", target: "pr:touchpoint-glimmung-206", kind: "opened" },
+    { source: "run:run-glimmung-206-live", target: "pr:review-glimmung-206", kind: "opened" },
   ],
   projection: {
     issue_ref: "glimmung#206",
@@ -909,12 +909,12 @@ const issueGraph = {
 	              ],
 	            }],
 	          },
-	          { name: "touchpoint", kind: "k8s_job", verify: false, run_on: "success", purpose: "review_touchpoint", depends_on: ["verify"], jobs: [{ id: "pr-touchpoint", name: "PR touchpoint" }] },
+	          { name: "review", kind: "k8s_job", verify: false, run_on: "success", purpose: "review", depends_on: ["verify"], jobs: [{ id: "pr-review", name: "PR review" }] },
 	        ],
 	        default_entry: { target: "design", active: true, kind: "default" },
 	        recycle_arrows: [
 	          { source: "verify", target: "implement", trigger: "reject", max_attempts: 2, active: true, kind: "phase_recycle" },
-	          { source: "touchpoint", target: "implement", trigger: "changes_requested", max_attempts: 2, active: false, kind: "touchpoint_recycle" },
+	          { source: "review", target: "implement", trigger: "changes_requested", max_attempts: 2, active: false, kind: "review_recycle" },
 	        ],
 	      },
       phases: [
@@ -941,14 +941,14 @@ const issueGraph = {
 	          }],
 	          attempts: [],
 	        },
-	        { name: "touchpoint", kind: "k8s_job", state: "not_started", verify: false, run_on: "success", purpose: "review_touchpoint", depends_on: ["verify"], jobs: [{ id: "pr-touchpoint", name: "PR touchpoint", state: "not_started", steps: [{ slug: "ensure-pr-touchpoint", title: "ensure PR touchpoint", state: "not_started" }] }], attempts: [] },
+	        { name: "review", kind: "k8s_job", state: "not_started", verify: false, run_on: "success", purpose: "review", depends_on: ["verify"], jobs: [{ id: "pr-review", name: "PR review", state: "not_started", steps: [{ slug: "ensure-pr-review", title: "ensure PR review", state: "not_started" }] }], attempts: [] },
 	      ],
       evidence: [
         { kind: "validation", ref: "https://design-portfolio-pr-216.glimmung.dev.romaine.life/?mock=1", label: "validation", url: "https://design-portfolio-pr-216.glimmung.dev.romaine.life/?mock=1" },
         { kind: "pull_request", ref: "https://github.com/romaine-life/glimmung/pull/218", label: "PR #218", url: "https://github.com/romaine-life/glimmung/pull/218" },
       ],
     }],
-    touchpoints: [{
+    reviews: [{
       ref: "romaine-life/glimmung#218",
       repo: "romaine-life/glimmung",
       pr_number: 218,
@@ -983,7 +983,7 @@ const systemGraph = {
       metadata: { workflow: "portfolio-agent", cycles_count: 1, cumulative_cost_usd: 3.42, pr_number: 216 },
     },
     {
-      id: "pr:touchpoint-glimmung-216",
+      id: "pr:review-glimmung-216",
       kind: "pr",
       label: "PR #216",
       state: "ready",
@@ -1002,8 +1002,8 @@ const systemGraph = {
   edges: [
     ...issueGraph.edges,
     { source: "issue:issue-glimmung-217", target: "run:run-glimmung-217-review", kind: "spawned" },
-    { source: "run:run-glimmung-217-review", target: "pr:touchpoint-glimmung-216", kind: "opened" },
-    { source: "pr:touchpoint-glimmung-216", target: "signal:review-glimmung-217", kind: "feedback" },
+    { source: "run:run-glimmung-217-review", target: "pr:review-glimmung-216", kind: "opened" },
+    { source: "pr:review-glimmung-216", target: "signal:review-glimmung-217", kind: "feedback" },
   ],
 };
 
@@ -1054,8 +1054,8 @@ function handleMockRequest(url: URL, init?: RequestInit): Response {
       && (state === "all" || issue.state === state)
     )));
   }
-  if (path === "/v1/touchpoints" && method === "GET") {
-    return json(mockTouchpoints);
+  if (path === "/v1/reviews" && method === "GET") {
+    return json(mockReviews);
   }
   if (path === "/v1/portfolio/elements" && method === "GET") {
     const project = url.searchParams.get("project");

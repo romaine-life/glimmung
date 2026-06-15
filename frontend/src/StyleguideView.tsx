@@ -93,14 +93,14 @@ const DESIGN_SYSTEM_ITEMS: PortfolioItem[] = [
   {
     id: "review-evidence",
     title: "Review Evidence",
-    caption: "Touchpoint summary, validation links, and persisted artifact links",
+    caption: "Review summary, validation links, and persisted artifact links",
     render: () => (
       <Specimen title="review evidence">
         <div className="project-info">
           <div className="row">
             <span className="key">summary</span>
             <span className="val">
-              <pre className="evidence-notes">Implemented the requested touchpoint behavior and captured the validation path, WebM evidence, final-state screenshot, and runner event log for review.</pre>
+              <pre className="evidence-notes">Implemented the requested review behavior and captured the validation path, WebM evidence, final-state screenshot, and runner event log for review.</pre>
             </span>
           </div>
           <div className="row">
@@ -214,7 +214,7 @@ const DESIGN_SYSTEM_ITEMS: PortfolioItem[] = [
   {
     id: "phase-graph-prepare-recycle",
     title: "Phase Graph Prepare Recycle",
-    caption: "Entry recycle lanes from verification and the registered touchpoint phase",
+    caption: "Entry recycle lanes from verification and the registered review phase",
     initialOpen: true,
     render: () => (
       <Specimen title="phase graph prepare recycle">
@@ -227,7 +227,7 @@ const DESIGN_SYSTEM_ITEMS: PortfolioItem[] = [
               { name: "llm-verify", kind: "k8s_job", verify: true, depends_on: ["llm-work"], jobs: [{ id: "llm-verify", name: "LLM verify" }] },
               { name: "evidence-gate", kind: "k8s_job", evidence_verification_gate: true, depends_on: ["llm-verify"], jobs: [{ id: "evidence-gate", name: "Evidence gate" }] },
               { name: "env-destroy", kind: "k8s_job", run_on: "always", purpose: "teardown", depends_on: ["evidence-gate"], jobs: [{ id: "env-destroy", name: "Environment destroy" }] },
-              { name: "touchpoint", kind: "k8s_job", run_on: "success", purpose: "review_touchpoint", depends_on: ["env-destroy"], jobs: [{ id: "pr-touchpoint", name: "PR touchpoint", primitive: "pr_touchpoint" }] },
+              { name: "review", kind: "k8s_job", run_on: "success", purpose: "review", depends_on: ["env-destroy"], jobs: [{ id: "pr-review", name: "PR review", primitive: "pr_review" }] },
             ]}
             entryArrows={[{
               target: "prepare",
@@ -244,12 +244,12 @@ const DESIGN_SYSTEM_ITEMS: PortfolioItem[] = [
                 kind: "phase_recycle",
               },
               {
-                source: "touchpoint",
+                source: "review",
                 target: "prepare",
                 trigger: "changes_requested",
                 max_attempts: 3,
                 active: false,
-                kind: "touchpoint_recycle",
+                kind: "review_recycle",
               },
             ]}
           />
@@ -436,7 +436,7 @@ const DESIGN_SYSTEM_ITEMS: PortfolioItem[] = [
           <button type="button" role="tab" className="tab selected">issue</button>
           <button type="button" role="tab" className="tab">run<span className="tab-dot" aria-label="active" /></button>
           <button type="button" role="tab" className="tab">runs</button>
-          <button type="button" role="tab" className="tab">touchpoint</button>
+          <button type="button" role="tab" className="tab">review</button>
         </div>
       </Specimen>
     ),
@@ -549,7 +549,7 @@ const DESIGN_FILE_ITEMS: PortfolioItem[] = [
         <h2>Issues</h2>
         <table>
           <thead>
-            <tr><th>#</th><th>Title</th><th>Run</th><th>Touchpoint</th></tr>
+            <tr><th>#</th><th>Title</th><th>Run</th><th>Review</th></tr>
           </thead>
           <tbody>
             <tr><td className="mono">206</td><td>Display runner run graph and step-level execution</td><td><span className="pill busy">in_progress</span></td><td className="mono dim">PR #218</td></tr>
@@ -645,7 +645,7 @@ const DESIGN_FILE_ITEMS: PortfolioItem[] = [
               <div className="run-graph-edge horizontal" style={{ gridColumn: "4", gridRow: "2" }} />
               <div className="stage-column" style={{ gridColumn: "5" }}>
                 <div className="stage-heading">
-                  <strong>touchpoint</strong>
+                  <strong>review</strong>
                   <span>waiting</span>
                 </div>
                 <button type="button" className="run-graph-node pending">

@@ -155,23 +155,23 @@ func RecordDecision(decision string) {
 	}
 }
 
-// --- Touchpoint reviewer decisions ------------------------------------------
+// --- Review reviewer decisions ------------------------------------------
 
-var touchpointDecisionsTotal = prometheus.NewCounterVec(
+var reviewDecisionsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
-		Name: "glimmung_touchpoint_decisions_total",
-		Help: "Human reviewer touchpoint-gate decisions drained from signals and attributed to the reviewing run, labelled by decision (approve, reject, cancel).",
+		Name: "glimmung_review_decisions_total",
+		Help: "Human reviewer review-gate decisions drained from signals and attributed to the reviewing run, labelled by decision (approve, reject, cancel).",
 	},
 	[]string{"decision"},
 )
 
-// RecordReviewDecision counts one human reviewer decision on a touchpoint gate
+// RecordReviewDecision counts one human reviewer decision on a review gate
 // (approve / reject / cancel) as it is durably attributed to the reviewed run.
 func RecordReviewDecision(decision string) {
 	if decision == "" {
 		return
 	}
-	touchpointDecisionsTotal.WithLabelValues(decision).Inc()
+	reviewDecisionsTotal.WithLabelValues(decision).Inc()
 }
 
 // --- Runs --------------------------------------------------------------------
@@ -662,7 +662,7 @@ func init() {
 		httpRequestDurationSeconds,
 		decisionsTotal,
 		budgetBreachesTotal,
-		touchpointDecisionsTotal,
+		reviewDecisionsTotal,
 		runsCreatedTotal,
 		leasesAcquiredTotal,
 		leasesReleasedTotal,

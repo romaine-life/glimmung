@@ -21,7 +21,7 @@ type StateStore interface {
 	// AnyLockHeld reports whether any lock with the given scope is
 	// currently held. Feeds StateSnapshot.InflightLocks so the SPA can
 	// derive its in-flight pulse from the SSE stream instead of
-	// polling /v1/issues + /v1/touchpoints. scope is the lock kind
+	// polling /v1/issues + /v1/reviews. scope is the lock kind
 	// ("issue" or "pr").
 	AnyLockHeld(ctx context.Context, scope string) (bool, error)
 }
@@ -38,7 +38,7 @@ type StateSnapshot struct {
 	// InflightLocks summarizes whether any issue-scoped or pr-scoped
 	// lock is currently held. The SPA's "needs attention" nav uses
 	// this as a derived state on top of the SSE snapshot; before this
-	// field existed it polled /v1/issues + /v1/touchpoints every 20s
+	// field existed it polled /v1/issues + /v1/reviews every 20s
 	// only to compute the same boolean.
 	InflightLocks InflightLocksSummary `json:"inflight_locks"`
 }

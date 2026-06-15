@@ -105,7 +105,7 @@ func TestCreateSignalRequiresStore(t *testing.T) {
 type recordedTPDecision struct {
 	project string
 	runID   string
-	dec     TouchpointDecision
+	dec     ReviewDecision
 }
 
 type fakeSignalDrainStore struct {
@@ -118,7 +118,7 @@ type fakeSignalDrainStore struct {
 	recorded          []recordedTPDecision
 }
 
-func (s *fakeSignalDrainStore) RecordTouchpointDecision(_ context.Context, project, runID string, dec TouchpointDecision) error {
+func (s *fakeSignalDrainStore) RecordReviewDecision(_ context.Context, project, runID string, dec ReviewDecision) error {
 	s.recorded = append(s.recorded, recordedTPDecision{project: project, runID: runID, dec: dec})
 	return nil
 }
@@ -182,9 +182,9 @@ func (s *fakeSignalDrainStore) GetWorkflowByName(context.Context, string, string
 			{Name: "prepare", Kind: "k8s_job", Outputs: []string{"issue_contract"}, Jobs: []RunnerJobSpec{{ID: "issue-contract"}}},
 			{Name: "impl", Kind: "k8s_job", Verify: true, RecyclePolicy: &RecyclePolicy{MaxAttempts: 1, On: []string{"verify_fail"}, LandsAt: "prepare"}, DependsOn: []string{"prepare"}, Jobs: verificationCaseJobsForTest()},
 			{Name: "cleanup_early", Kind: "k8s_job", RunOn: PhaseRunOnAlways, Purpose: PhasePurposeTeardown, When: "${{ run.preserve_test_env }} == 'false'", DependsOn: []string{"impl"}, Jobs: []RunnerJobSpec{{ID: "cleanup-early"}}},
-			{Name: "touchpoint", Kind: "k8s_job", RunOn: PhaseRunOnSuccess, Purpose: PhasePurposeReviewTouchpoint, DependsOn: []string{"cleanup_early"}, Jobs: []RunnerJobSpec{{ID: "pr-touchpoint", Primitive: JobPrimitivePRTouchpoint, Managed: true}}},
-			{Name: "touchpoint_gate", Kind: "k8s_job", Purpose: PhasePurposeReviewGate, DependsOn: []string{"touchpoint"}, Jobs: []RunnerJobSpec{{ID: "pr-merge", Primitive: JobPrimitivePRMerge, Managed: true}}},
-			{Name: "cleanup_final", Kind: "k8s_job", RunOn: PhaseRunOnAlways, Purpose: PhasePurposeTeardown, DependsOn: []string{"touchpoint_gate"}, Jobs: []RunnerJobSpec{{ID: "cleanup-final"}}},
+			{Name: "review", Kind: "k8s_job", RunOn: PhaseRunOnSuccess, Purpose: PhasePurposeReview, DependsOn: []string{"cleanup_early"}, Jobs: []RunnerJobSpec{{ID: "pr-review", Primitive: JobPrimitivePRReview, Managed: true}}},
+			{Name: "review_gate", Kind: "k8s_job", Purpose: PhasePurposeReviewGate, DependsOn: []string{"review"}, Jobs: []RunnerJobSpec{{ID: "pr-merge", Primitive: JobPrimitivePRMerge, Managed: true}}},
+			{Name: "cleanup_final", Kind: "k8s_job", RunOn: PhaseRunOnAlways, Purpose: PhasePurposeTeardown, DependsOn: []string{"review_gate"}, Jobs: []RunnerJobSpec{{ID: "cleanup-final"}}},
 		},
 		PR: PrPrimitive{RecyclePolicy: &RecyclePolicy{MaxAttempts: 3, LandsAt: "impl"}},
 	}, nil
@@ -286,7 +286,7 @@ func TestDrainSignalsDispatchesRequestChangesTriage(t *testing.T) {
 	// reviewer onto the reviewed run before recycling. If this regresses to an
 	// anonymous recycle, the recorded decision disappears and this fails.
 	if len(store.recorded) != 1 {
-		t.Fatalf("expected exactly one recorded touchpoint decision, got %d", len(store.recorded))
+		t.Fatalf("expected exactly one recorded review decision, got %d", len(store.recorded))
 	}
 	rec := store.recorded[0]
 	if rec.runID != "run-1" || rec.dec.Decision != "reject" || rec.dec.Actor != "nelson@romaine.life" {
@@ -393,8 +393,8 @@ func TestDecideTriageSignalCancelTargetsReviewGate(t *testing.T) {
 	if res.Decision != triageCancelGate {
 		t.Fatalf("decision=%q, want %q", res.Decision, triageCancelGate)
 	}
-	if res.Target == nil || res.Target.Name != "touchpoint_gate" {
-		t.Fatalf("target=%v, want touchpoint_gate", res.Target)
+	if res.Target == nil || res.Target.Name != "review_gate" {
+		t.Fatalf("target=%v, want review_gate", res.Target)
 	}
 	if res.Feedback != "drop it" {
 		t.Fatalf("feedback=%q, want %q", res.Feedback, "drop it")

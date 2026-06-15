@@ -144,7 +144,7 @@ func TestStateSnapshotUsesPublicLeaseRefs(t *testing.T) {
 
 // TestStateSnapshotIncludesInflightLocks pins the Stage 3 wire shape.
 // The SPA derives its "needs attention" pulse from this field; before
-// the migration it polled /v1/issues + /v1/touchpoints every 20s only
+// the migration it polled /v1/issues + /v1/reviews every 20s only
 // to compute the same booleans. A regression that drops the field
 // would silently revert the SPA to no pulse — visible to operators
 // but not to CI without this test.

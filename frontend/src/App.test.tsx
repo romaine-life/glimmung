@@ -149,8 +149,8 @@ describe("project workflow definitions", () => {
       "/projects/glimmung/issues/206/settings",
     );
 
-    const jobLabel = await screen.findByText("PR touchpoint", { selector: ".dag-job-title" });
-    expect(screen.queryByText("Ensure PR touchpoint")).not.toBeInTheDocument();
+    const jobLabel = await screen.findByText("PR review", { selector: ".dag-job-title" });
+    expect(screen.queryByText("Ensure PR review")).not.toBeInTheDocument();
     expect(screen.getAllByText("1 planned step").length).toBeGreaterThan(0);
 
     const jobButton = jobLabel.closest("button");
@@ -159,8 +159,8 @@ describe("project workflow definitions", () => {
 
     expect(await screen.findByText("runner job inspector")).toBeInTheDocument();
     expect(screen.getByText("planned")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Ensure PR touchpoint/ })).toBeInTheDocument();
-    expect(screen.getByText(/\$ step ensure-pr-touchpoint/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Ensure PR review/ })).toBeInTheDocument();
+    expect(screen.getByText(/\$ step ensure-pr-review/)).toBeInTheDocument();
   });
 });
 

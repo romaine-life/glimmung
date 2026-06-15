@@ -27,8 +27,11 @@ const (
 	PhasePurposeVerification     = "verification"
 	PhasePurposeEvidenceGate     = "evidence_gate"
 	PhasePurposeTeardown         = "teardown"
-	PhasePurposeReviewTouchpoint = "review_touchpoint"
+	PhasePurposeReview           = "review"
 	PhasePurposeReviewGate       = "review_gate"
+
+	PhaseNameReview      = "review"
+	PhaseNameReviewGate  = "review_gate"
 
 	PhaseNamePrepare = "prepare"
 
@@ -641,7 +644,7 @@ func ValidateWorkflowRegister(req WorkflowRegister) error {
 	phaseNames := map[string]int{}
 	testingCount := 0
 	hasCleanup := false
-	prTouchpointJobs := 0
+	prReviewJobs := 0
 	reviewGateCount := 0
 	for i, phase := range req.Phases {
 		name := strings.TrimSpace(phase.Name)
@@ -658,7 +661,7 @@ func ValidateWorkflowRegister(req WorkflowRegister) error {
 			return ValidationError{Message: fmt.Sprintf("workflow %s phase %q run_on=%q is not one of [success, failure, always]", req.Name, name, explicitRunOn)}
 		}
 		if explicitPurpose != "" && !validPhasePurpose(explicitPurpose) {
-			return ValidationError{Message: fmt.Sprintf("workflow %s phase %q purpose=%q is not one of [work, verification, evidence_gate, teardown, review_touchpoint, review_gate]", req.Name, name, explicitPurpose)}
+			return ValidationError{Message: fmt.Sprintf("workflow %s phase %q purpose=%q is not one of [work, verification, evidence_gate, teardown, review, review_gate]", req.Name, name, explicitPurpose)}
 		}
 		if phase.Always {
 			return ValidationError{Message: fmt.Sprintf("workflow %s phase %q uses retired field always; use run_on and purpose instead", req.Name, name)}
@@ -697,6 +700,12 @@ func ValidateWorkflowRegister(req WorkflowRegister) error {
 			}
 		} else if runOn != PhaseRunOnSuccess {
 			return ValidationError{Message: fmt.Sprintf("workflow %s phase %q purpose=%q cannot set run_on=%q; only teardown phases may run on failure paths", req.Name, name, purpose, runOn)}
+		}
+		if purpose == PhasePurposeReview && name != PhaseNameReview {
+			return ValidationError{Message: fmt.Sprintf("workflow %s phase %q has purpose=%q but must be named %q", req.Name, name, PhasePurposeReview, PhaseNameReview)}
+		}
+		if purpose == PhasePurposeReviewGate && name != PhaseNameReviewGate {
+			return ValidationError{Message: fmt.Sprintf("workflow %s phase %q has purpose=%q but must be named %q", req.Name, name, PhasePurposeReviewGate, PhaseNameReviewGate)}
 		}
 		if phase.SkipWhenPreserveTestEnv {
 			return ValidationError{Message: fmt.Sprintf("workflow %s phase %q uses retired field skip_when_preserve_test_env; declare when: \"${{ run.preserve_test_env }} == 'false'\" on the phase instead", req.Name, name)}
@@ -774,13 +783,13 @@ func ValidateWorkflowRegister(req WorkflowRegister) error {
 				seenJobs[jobID] = j
 				switch strings.TrimSpace(job.Primitive) {
 				case "":
-				case JobPrimitivePRTouchpoint:
-					prTouchpointJobs++
-					if purpose != PhasePurposeReviewTouchpoint {
-						return ValidationError{Message: fmt.Sprintf("workflow %s phase %q job %q primitive %q must be in a purpose=%q phase", req.Name, name, job.ID, JobPrimitivePRTouchpoint, PhasePurposeReviewTouchpoint)}
+				case JobPrimitivePRReview:
+					prReviewJobs++
+					if purpose != PhasePurposeReview {
+						return ValidationError{Message: fmt.Sprintf("workflow %s phase %q job %q primitive %q must be in a purpose=%q phase", req.Name, name, job.ID, JobPrimitivePRReview, PhasePurposeReview)}
 					}
 					if runOn != PhaseRunOnSuccess {
-						return ValidationError{Message: fmt.Sprintf("workflow %s phase %q job %q primitive %q must run only on successful verification paths", req.Name, name, job.ID, JobPrimitivePRTouchpoint)}
+						return ValidationError{Message: fmt.Sprintf("workflow %s phase %q job %q primitive %q must run only on successful verification paths", req.Name, name, job.ID, JobPrimitivePRReview)}
 					}
 				case JobPrimitivePRMerge:
 					if purpose != PhasePurposeReviewGate {
@@ -794,8 +803,8 @@ func ValidateWorkflowRegister(req WorkflowRegister) error {
 				}
 			}
 		}
-		if purpose == PhasePurposeReviewTouchpoint && !phaseHasPrimitive(phase, JobPrimitivePRTouchpoint) {
-			return ValidationError{Message: fmt.Sprintf("workflow %s phase %q purpose=%q must declare exactly one job with primitive %q", req.Name, name, PhasePurposeReviewTouchpoint, JobPrimitivePRTouchpoint)}
+		if purpose == PhasePurposeReview && !phaseHasPrimitive(phase, JobPrimitivePRReview) {
+			return ValidationError{Message: fmt.Sprintf("workflow %s phase %q purpose=%q must declare exactly one job with primitive %q", req.Name, name, PhasePurposeReview, JobPrimitivePRReview)}
 		}
 		if i == 0 {
 			if name != PhaseNamePrepare {
@@ -827,10 +836,10 @@ func ValidateWorkflowRegister(req WorkflowRegister) error {
 		missing = append(missing, "teardown cleanup")
 	}
 	if reviewGateCount == 0 {
-		missing = append(missing, "review_gate touchpoint_gate")
+		missing = append(missing, "review_gate phase")
 	}
-	if prTouchpointJobs == 0 {
-		missing = append(missing, "pr_touchpoint primitive")
+	if prReviewJobs == 0 {
+		missing = append(missing, "pr_review primitive")
 	}
 	if len(missing) > 0 {
 		return ValidationError{Message: "workflow " + req.Name + " is missing required phases: " + strings.Join(missing, ", ")}
@@ -841,8 +850,8 @@ func ValidateWorkflowRegister(req WorkflowRegister) error {
 	if reviewGateCount > 1 {
 		return ValidationError{Message: fmt.Sprintf("workflow %s declares %d purpose=%q phases; exactly one is required", req.Name, reviewGateCount, PhasePurposeReviewGate)}
 	}
-	if prTouchpointJobs > 1 {
-		return ValidationError{Message: fmt.Sprintf("workflow %s declares %d %q primitives; exactly one is required", req.Name, prTouchpointJobs, JobPrimitivePRTouchpoint)}
+	if prReviewJobs > 1 {
+		return ValidationError{Message: fmt.Sprintf("workflow %s declares %d %q primitives; exactly one is required", req.Name, prReviewJobs, JobPrimitivePRReview)}
 	}
 	if err := phaserefs.Validate(phaseRefs); err != nil {
 		return ValidationError{Message: err.Error()}
@@ -1281,7 +1290,7 @@ func validPhasePurpose(value string) bool {
 		PhasePurposeVerification,
 		PhasePurposeEvidenceGate,
 		PhasePurposeTeardown,
-		PhasePurposeReviewTouchpoint,
+		PhasePurposeReview,
 		PhasePurposeReviewGate:
 		return true
 	default:

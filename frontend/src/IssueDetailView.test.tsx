@@ -3,10 +3,10 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter, Outlet, Route, Routes, useLocation } from "react-router-dom";
 
-import { IssueDetailView, pickDecisionTouchpoint, agentTranscriptEntries, type RunnerEvent } from "./IssueDetailView";
+import { IssueDetailView, pickDecisionReview, agentTranscriptEntries, type RunnerEvent } from "./IssueDetailView";
 import { ISSUE_DETAIL_CHILD_ROUTES } from "./routes";
 
-describe("pickDecisionTouchpoint", () => {
+describe("pickDecisionReview", () => {
   const tp = (runRef: string, pr: number, state = "open") => ({
     ref: `tp-${pr}`,
     repo: "romaine-life/ambience",
@@ -17,19 +17,19 @@ describe("pickDecisionTouchpoint", () => {
     evidence: [],
   });
 
-  it("prefers the issue's current run touchpoint over the first parked one", () => {
+  it("prefers the issue's current run review over the first parked one", () => {
     const stale = tp("ambience#168/runs/25.1", 290);
     const current = tp("ambience#168/runs/28.3", 297);
     expect(
-      pickDecisionTouchpoint([stale, current], "ambience#168/runs/28.3")?.pr_number,
+      pickDecisionReview([stale, current], "ambience#168/runs/28.3")?.pr_number,
     ).toBe(297);
   });
 
-  it("falls back to the first touchpoint needing a decision when the current run has none", () => {
+  it("falls back to the first review needing a decision when the current run has none", () => {
     const mergedCurrent = tp("ambience#168/runs/28.3", 297, "merged");
     const parked = tp("ambience#168/runs/27.1", 296);
     expect(
-      pickDecisionTouchpoint([mergedCurrent, parked], "ambience#168/runs/28.3")?.pr_number,
+      pickDecisionReview([mergedCurrent, parked], "ambience#168/runs/28.3")?.pr_number,
     ).toBe(296);
   });
 });
@@ -57,7 +57,7 @@ const runProjection = {
   current_run_ref: "ambience#172/runs/7.1",
   default_focus: { kind: "run", ref: "ambience#172/runs/7.1" },
   next_action: { kind: "watch_run", label: "watch run", target_ref: "ambience#172/runs/7.1" },
-  touchpoints: [],
+  reviews: [],
   signals: [],
   edges: [],
   runs: [{
@@ -94,22 +94,22 @@ const runProjection = {
 	        depends_on: ["env-prep"],
 	        jobs: [{ id: "agent", name: "Run agent" }],
 	      }, {
-	        name: "touchpoint",
+	        name: "review",
 	        kind: "k8s_job",
 	        verify: false,
 	        run_on: "success",
-	        purpose: "review_touchpoint",
+	        purpose: "review",
 	        depends_on: ["agent-execute"],
-	        jobs: [{ id: "pr-touchpoint", name: "PR touchpoint" }],
+	        jobs: [{ id: "pr-review", name: "PR review" }],
 	      }],
 	      default_entry: { target: "env-prep", active: true, kind: "default" },
 	      recycle_arrows: [{
-	        source: "touchpoint",
+	        source: "review",
         target: "env-prep",
         trigger: "changes_requested",
         max_attempts: 3,
         active: false,
-        kind: "touchpoint_recycle",
+        kind: "review_recycle",
       }],
     },
     phases: [{
@@ -165,19 +165,19 @@ const runProjection = {
 	      }],
 	      attempts: [],
 	    }, {
-	      name: "touchpoint",
+	      name: "review",
 	      kind: "k8s_job",
 	      state: "not_started",
 	      verify: false,
 	      run_on: "success",
-	      purpose: "review_touchpoint",
+	      purpose: "review",
 	      depends_on: ["agent-execute"],
 	      jobs: [{
-	        id: "pr-touchpoint",
-	        name: "PR touchpoint",
+	        id: "pr-review",
+	        name: "PR review",
 	        state: "not_started",
 	        steps: [
-	          { slug: "ensure-pr-touchpoint", title: "Ensure PR touchpoint", state: "not_started" },
+	          { slug: "ensure-pr-review", title: "Ensure PR review", state: "not_started" },
 	        ],
 	      }],
 	      attempts: [],
@@ -423,7 +423,7 @@ describe("IssueDetailView run execution graph", () => {
       throw new Error(`unhandled fetch ${url.pathname}`);
     }));
 
-    renderIssueDetail("/projects/ambience/issues/172/touchpoint");
+    renderIssueDetail("/projects/ambience/issues/172/review");
 
     const heading = await screen.findByRole("heading", { name: issueDetail.title });
     const titleRow = heading.closest(".issue-title-row");
@@ -1765,7 +1765,7 @@ function renderIssueDetail(
             <Route path={ISSUE_DETAIL_CHILD_ROUTES.runJob} element={null} />
             <Route path={ISSUE_DETAIL_CHILD_ROUTES.runStep} element={null} />
             <Route path={ISSUE_DETAIL_CHILD_ROUTES.settings} element={null} />
-            <Route path={ISSUE_DETAIL_CHILD_ROUTES.touchpoint} element={null} />
+            <Route path={ISSUE_DETAIL_CHILD_ROUTES.review} element={null} />
           </Route>
         </Route>
       </Routes>

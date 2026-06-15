@@ -30,7 +30,7 @@ export type IssueRow = {
   issue_lock_held: boolean;
 };
 
-export type TouchpointRow = {
+export type ReviewRow = {
   ref: string;
   project: string;
   repo: string;
@@ -101,8 +101,8 @@ export function issueSummaryPath(project: string, number: number | string): stri
   return `/projects/${encodeURIComponent(project)}/issues/${number}/summary`;
 }
 
-export function issueTouchpointPath(project: string, number: number | string): string {
-  return `/projects/${encodeURIComponent(project)}/issues/${number}/touchpoint`;
+export function issueReviewPath(project: string, number: number | string): string {
+  return `/projects/${encodeURIComponent(project)}/issues/${number}/review`;
 }
 
 export function ttlRemaining(lease: Lease): string {
@@ -192,7 +192,7 @@ export function attention(row: IssueRow): Attention {
     return { label: queued ? "run queued" : "run still active", detail: row.last_run_number !== null ? `cycle ${row.last_run_number} is ${row.last_run_state}` : null, tone: queued ? "neutral" : "warn" };
   }
   if (row.last_run_state === "passed") {
-    return { label: "touchpoint ready", detail: "agent run passed and is ready for review", tone: "ok" };
+    return { label: "review ready", detail: "agent run passed and is ready for review", tone: "ok" };
   }
   if (row.last_run_state === "needs_review" || row.last_run_state === "review_required") {
     return { label: "review needed", detail: null, tone: "vio" };

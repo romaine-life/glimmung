@@ -5,12 +5,12 @@ import "strings"
 const (
 	EvidenceGateJobID    = "evidence-verification-gate"
 	EvidenceGateStepSlug = "evaluate-verdict"
-	PRTouchpointJobID    = "pr-touchpoint"
-	PRTouchpointStepSlug = "ensure-pr-touchpoint"
+	PRReviewJobID    = "pr-review"
+	PRReviewStepSlug = "ensure-pr-review"
 	PRMergeJobID         = "pr-merge"
 	PRMergeStepSlug      = "merge-pull-request"
 
-	JobPrimitivePRTouchpoint = "pr_touchpoint"
+	JobPrimitivePRReview = "pr_review"
 	JobPrimitivePRMerge      = "pr_merge"
 )
 
@@ -71,41 +71,41 @@ merge_commit="$(jq -r '.merge_commit_sha // empty' "${response}")"
 } >>"${GLIMMUNG_OUTPUT_FILE}"
 `
 
-const prTouchpointRunScript = `set -Eeuo pipefail
-if [ -z "${GLIMMUNG_PR_TOUCHPOINT_URL:-}" ]; then
-  echo "GLIMMUNG_PR_TOUCHPOINT_URL is not configured" >&2
+const prReviewRunScript = `set -Eeuo pipefail
+if [ -z "${GLIMMUNG_PR_REVIEW_URL:-}" ]; then
+  echo "GLIMMUNG_PR_REVIEW_URL is not configured" >&2
   exit 2
 fi
-echo "Ensuring PR touchpoint for ${GLIMMUNG_RUN_REF:-unknown run}"
+echo "Ensuring PR review for ${GLIMMUNG_RUN_REF:-unknown run}"
 response="$(mktemp)"
-status="$(curl -sS -o "${response}" -w '%{http_code}' -X POST "${GLIMMUNG_PR_TOUCHPOINT_URL}")" || {
+status="$(curl -sS -o "${response}" -w '%{http_code}' -X POST "${GLIMMUNG_PR_REVIEW_URL}")" || {
   code="$?"
-  echo "PR touchpoint request failed with curl exit ${code}" >&2
+  echo "PR review request failed with curl exit ${code}" >&2
   exit "${code}"
 }
 cat "${response}" | jq .
 if [ "${status}" -lt 200 ] || [ "${status}" -ge 300 ]; then
-  echo "PR touchpoint request returned HTTP ${status}" >&2
+  echo "PR review request returned HTTP ${status}" >&2
   exit 1
 fi
 result_status="$(jq -r '.status // empty' "${response}")"
 if [ "${result_status}" = "skipped" ]; then
-  echo "PR touchpoint skipped: $(jq -r '.reason // "no reason"' "${response}")"
+  echo "PR review skipped: $(jq -r '.reason // "no reason"' "${response}")"
   exit 0
 fi
 if [ "${result_status}" != "ensured" ]; then
-  echo "PR touchpoint returned unexpected status '${result_status}'" >&2
+  echo "PR review returned unexpected status '${result_status}'" >&2
   exit 2
 fi
 pr_number="$(jq -r '.pr_number // empty' "${response}")"
-touchpoint_ref="$(jq -r '.touchpoint_ref // empty' "${response}")"
+review_ref="$(jq -r '.review_ref // empty' "${response}")"
 html_url="$(jq -r '.html_url // empty' "${response}")"
 {
   if [ -n "${pr_number}" ]; then printf 'pr_number=%s\n' "${pr_number}"; fi
-  if [ -n "${touchpoint_ref}" ]; then printf 'touchpoint_ref=%s\n' "${touchpoint_ref}"; fi
+  if [ -n "${review_ref}" ]; then printf 'review_ref=%s\n' "${review_ref}"; fi
   if [ -n "${html_url}" ]; then printf 'pr_url=%s\n' "${html_url}"; fi
 } >>"${GLIMMUNG_OUTPUT_FILE}"
-echo "PR touchpoint ensured: ${touchpoint_ref:-unknown}"
+echo "PR review ensured: ${review_ref:-unknown}"
 if [ -n "${html_url}" ]; then
   echo "PR URL: ${html_url}"
 fi
@@ -139,8 +139,8 @@ func CanonicalRunnerPhaseJobs(phase PhaseSpec) []RunnerJobSpec {
 
 func CanonicalRunnerJob(job RunnerJobSpec) RunnerJobSpec {
 	switch strings.TrimSpace(job.Primitive) {
-	case JobPrimitivePRTouchpoint:
-		return canonicalPRTouchpointJob(&job)
+	case JobPrimitivePRReview:
+		return canonicalPRReviewJob(&job)
 	case JobPrimitivePRMerge:
 		return canonicalPRMergeJob(&job)
 	default:
@@ -195,7 +195,7 @@ func canonicalPRMergeJob(existing *RunnerJobSpec) RunnerJobSpec {
 			timeout = *existing.TimeoutSeconds
 		}
 	}
-	title := "Idempotently merge the touchpoint PR"
+	title := "Idempotently merge the review PR"
 	return RunnerJobSpec{
 		ID:             jobID,
 		Name:           &name,
@@ -212,9 +212,9 @@ func canonicalPRMergeJob(existing *RunnerJobSpec) RunnerJobSpec {
 	}
 }
 
-func canonicalPRTouchpointJob(existing *RunnerJobSpec) RunnerJobSpec {
-	jobID := PRTouchpointJobID
-	name := "PR touchpoint"
+func canonicalPRReviewJob(existing *RunnerJobSpec) RunnerJobSpec {
+	jobID := PRReviewJobID
+	name := "PR review"
 	timeout := 120
 	if existing != nil {
 		if id := strings.TrimSpace(existing.ID); id != "" {
@@ -227,18 +227,18 @@ func canonicalPRTouchpointJob(existing *RunnerJobSpec) RunnerJobSpec {
 			timeout = *existing.TimeoutSeconds
 		}
 	}
-	title := "Ensure PR touchpoint"
+	title := "Ensure PR review"
 	return RunnerJobSpec{
 		ID:             jobID,
 		Name:           &name,
-		Primitive:      JobPrimitivePRTouchpoint,
+		Primitive:      JobPrimitivePRReview,
 		Managed:        true,
 		TimeoutSeconds: &timeout,
 		Steps: []RunnerStepSpec{{
-			Slug:  PRTouchpointStepSlug,
+			Slug:  PRReviewStepSlug,
 			Title: &title,
 			Type:  "run",
-			Run:   prTouchpointRunScript,
+			Run:   prReviewRunScript,
 			Shell: "bash",
 		}},
 	}

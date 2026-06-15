@@ -49,8 +49,8 @@ func TestParseDashboardPathGolden(t *testing.T) {
 			want: IssueRunAddress{Kind: EntityIssue, Project: "ambience", IssueNumber: 168},
 		},
 		{
-			name: "issue touchpoint tab resolves to issue",
-			in:   "/projects/ambience/issues/168/touchpoint",
+			name: "issue review tab resolves to issue",
+			in:   "/projects/ambience/issues/168/review",
 			want: IssueRunAddress{Kind: EntityIssue, Project: "ambience", IssueNumber: 168},
 		},
 		{

@@ -111,7 +111,7 @@ func TestReadArtifactRefusesBlankVideo(t *testing.T) {
 
 	// A confirmed blank first frame must never reach a human, even though this
 	// video is served straight from the blob and never crossed the
-	// touchpoint-promotion gate — exactly the flashbang path from run 7.1.
+	// review-promotion gate — exactly the flashbang path from run 7.1.
 	firstFrameExtractor = func(context.Context, []byte) (image.Image, error) {
 		return solidFrame(48, 48, color.RGBA{255, 255, 255, 255}), nil
 	}

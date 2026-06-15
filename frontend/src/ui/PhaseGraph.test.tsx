@@ -9,14 +9,14 @@ describe("workflow PhaseGraph", () => {
       <PhaseGraph
         phases={[
           { name: "evidence-gate", kind: "k8s_job" },
-          { name: "touchpoint_gate", kind: "k8s_job" },
+          { name: "review_gate", kind: "k8s_job" },
         ]}
         recycles={[]}
       />,
     );
 
     expect(screen.getByText("Evidence gate")).toHaveAttribute("title", "evidence-gate");
-    expect(screen.getByText("Touchpoint gate")).toHaveAttribute("title", "touchpoint_gate");
+    expect(screen.getByText("Review gate")).toHaveAttribute("title", "review_gate");
     expect(screen.getAllByText("k8s_job")).toHaveLength(2);
   });
 });

@@ -52,7 +52,7 @@ type IssueRunAddress struct {
 var issueChildViews = map[string]bool{
 	"summary":    true,
 	"settings":   true,
-	"touchpoint": true,
+	"review": true,
 }
 
 // ParseDashboardPath parses a glimmung dashboard URL or absolute path into a

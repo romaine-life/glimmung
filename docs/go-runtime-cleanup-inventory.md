@@ -26,7 +26,7 @@ are Go plus the Vite dashboard.
 | Runner pod-log proxy | Deleted; use runner events and archived evidence. |
 | Runner HTTP GitHub token routes | Go-owned surface for runner callbacks. |
 | Test-slot checkout/return routes | Go-owned surface for MCP/test skill callers; project test-environment scaling remains active for capacity management. |
-| Storage-ID, GitHub issue-coordinate, Report alias, and PR-coordinate Touchpoint routes | Deleted from the live route table; route inventory tests reject reintroduction. |
+| Storage-ID, GitHub issue-coordinate, Report alias, and PR-coordinate Review routes | Deleted from the live route table; route inventory tests reject reintroduction. |
 | `POST /v1/portfolio/elements/dispatch` | Go-owned; creates a portfolio review Issue and dispatches through the canonical run path. |
 | `POST /v1/playbooks/{project}/{playbook_ref}/run` | Go-owned; advances ready Playbook entries by creating Issues and dispatching Runs. |
 | Signal drain and request-changes triage | Go-owned; queued PR feedback signals drain in the Go service and create a new Run through the canonical project queue. |
@@ -47,7 +47,7 @@ The Go store owns these active Postgres tables:
 | `issues` | Preserve project issue numbers, state values, metadata workflow link, comments, and archive/discard timestamps. |
 | `locks` | Preserve `scope`, `key`, `state`, holder, and expiry timestamps. |
 | `reports` | Preserve run report payloads. |
-| `touchpoints` | Preserve current review-surface payloads. |
+| `reviews` | Preserve current review-surface payloads. |
 | `playbooks` | Preserve Playbook entry state, gates, issue specs, created issue/run refs, and integration strategy fields. |
 | `signals` | Preserve queued and processed signal documents, decisions, and failure reasons. |
 

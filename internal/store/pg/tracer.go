@@ -157,7 +157,7 @@ var knownTables = []string{
 	"portfolios",
 	"slots",
 	"slot_history",
-	"touchpoints",
+	"reviews",
 	"test_lease_defaults",
 }
 

@@ -143,8 +143,8 @@ func main() {
 		pgPortfolios := pgstore.NewPortfoliosStore(pgPool)
 		store.SetPGPortfolios(pgPortfolios)
 
-		pgTouchpoints := pgstore.NewTouchpointsStore(pgPool)
-		store.SetPGTouchpoints(pgTouchpoints)
+		pgReviews := pgstore.NewReviewsStore(pgPool)
+		store.SetPGReviews(pgReviews)
 
 		pgRuns := pgstore.NewRunsStore(pgPool)
 		store.SetPGRuns(pgRuns)

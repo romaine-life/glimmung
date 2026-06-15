@@ -256,9 +256,9 @@ func playbookTestWorkflowPhases() []PhaseSpec {
 		{Name: "prepare", Kind: "k8s_job", Outputs: []string{"issue_contract"}, Jobs: []RunnerJobSpec{{ID: "issue-contract"}}},
 		{Name: "verify", Kind: "k8s_job", Verify: true, RecyclePolicy: &RecyclePolicy{MaxAttempts: 1, On: []string{"verify_fail"}, LandsAt: "prepare"}, DependsOn: []string{"prepare"}, Jobs: verificationCaseJobsForTest()},
 		{Name: "cleanup_early", Kind: "k8s_job", RunOn: PhaseRunOnAlways, Purpose: PhasePurposeTeardown, When: "${{ run.preserve_test_env }} == 'false'", DependsOn: []string{"verify"}, Jobs: []RunnerJobSpec{{ID: "cleanup-early"}}},
-		{Name: "touchpoint", Kind: "k8s_job", RunOn: PhaseRunOnSuccess, Purpose: PhasePurposeReviewTouchpoint, DependsOn: []string{"cleanup_early"}, Jobs: []RunnerJobSpec{{ID: "pr-touchpoint", Primitive: JobPrimitivePRTouchpoint, Managed: true}}},
-		{Name: "touchpoint_gate", Kind: "k8s_job", Purpose: PhasePurposeReviewGate, DependsOn: []string{"touchpoint"}, Jobs: []RunnerJobSpec{{ID: "pr-merge", Primitive: JobPrimitivePRMerge, Managed: true}}},
-		{Name: "cleanup_final", Kind: "k8s_job", RunOn: PhaseRunOnAlways, Purpose: PhasePurposeTeardown, DependsOn: []string{"touchpoint_gate"}, Jobs: []RunnerJobSpec{{ID: "cleanup-final"}}},
+		{Name: "review", Kind: "k8s_job", RunOn: PhaseRunOnSuccess, Purpose: PhasePurposeReview, DependsOn: []string{"cleanup_early"}, Jobs: []RunnerJobSpec{{ID: "pr-review", Primitive: JobPrimitivePRReview, Managed: true}}},
+		{Name: "review_gate", Kind: "k8s_job", Purpose: PhasePurposeReviewGate, DependsOn: []string{"review"}, Jobs: []RunnerJobSpec{{ID: "pr-merge", Primitive: JobPrimitivePRMerge, Managed: true}}},
+		{Name: "cleanup_final", Kind: "k8s_job", RunOn: PhaseRunOnAlways, Purpose: PhasePurposeTeardown, DependsOn: []string{"review_gate"}, Jobs: []RunnerJobSpec{{ID: "cleanup-final"}}},
 	}
 }
 

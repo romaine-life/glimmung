@@ -199,7 +199,7 @@ type IssueCreate struct {
 // PreserveTestEnv is a pointer so a PATCH that omits the field leaves the
 // existing value alone. When set, it toggles whether the run's early cleanup
 // phase executes (false: tear down at end of run, the default) or returns
-// `skipped` so the validation environment stays alive through the touchpoint
+// `skipped` so the validation environment stays alive through the review
 // gate (true: preserve through review).
 type IssuePatch struct {
 	Project         string

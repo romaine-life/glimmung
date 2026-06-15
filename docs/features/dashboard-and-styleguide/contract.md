@@ -7,7 +7,7 @@ surface.
 ## Product Model
 
 The dashboard is the operator's live view of Glimmung state. It should make
-leases, issues, workflows, runs, touchpoints, playbooks, and locks legible
+leases, issues, workflows, runs, reviews, playbooks, and locks legible
 without inventing browser-only truth. The styleguide is the visual review
 surface for dashboard components and for projects running through Glimmung's
 agent pipeline.
@@ -19,7 +19,7 @@ agent pipeline.
 - `/v1/events` delivers state snapshots over SSE; it is a delivery mechanism,
   not a separate source of truth.
 - Feature-specific detail routes own their own detail state, such as issue
-  graphs, run reports, playbooks, and touchpoints.
+  graphs, run reports, playbooks, and reviews.
 - `docs/styleguide-contract.md` owns the platform `/_styleguide` requirement.
 - `frontend/src/StyleguideView.tsx` owns Glimmung's dashboard catalog.
 - `frontend/screenshot-pages.json` owns screenshot coverage for review routes.

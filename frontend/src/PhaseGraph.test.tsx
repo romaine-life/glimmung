@@ -81,7 +81,7 @@ describe("PhaseGraph", () => {
           { name: "llm-verify", kind: "k8s_job", depends_on: ["llm-work"], jobs: [{ id: "llm-verify" }] },
           { name: "evidence-gate", kind: "k8s_job", depends_on: ["llm-verify"], jobs: [{ id: "evidence-gate" }] },
           { name: "env-destroy", kind: "k8s_job", run_on: "always", purpose: "teardown", depends_on: ["evidence-gate"], jobs: [{ id: "env-destroy" }] },
-          { name: "touchpoint", kind: "k8s_job", run_on: "success", purpose: "review_touchpoint", depends_on: ["env-destroy"], jobs: [{ id: "pr-touchpoint", primitive: "pr_touchpoint" }] },
+          { name: "review", kind: "k8s_job", run_on: "success", purpose: "review", depends_on: ["env-destroy"], jobs: [{ id: "pr-review", primitive: "pr_review" }] },
         ]}
         entryArrows={[{
           target: "prepare",
@@ -98,12 +98,12 @@ describe("PhaseGraph", () => {
             kind: "phase_recycle",
           },
           {
-            source: "touchpoint",
+            source: "review",
             target: "prepare",
             trigger: "changes_requested",
             max_attempts: 3,
             active: false,
-            kind: "touchpoint_recycle",
+            kind: "review_recycle",
           },
         ]}
       />,
@@ -111,18 +111,18 @@ describe("PhaseGraph", () => {
 
     expect(screen.getByLabelText("workflow graph")).toBeInTheDocument();
     expect(container.querySelector('[data-id="entry-source:0"]')).toBeInTheDocument();
-    expect(container.querySelector('[data-id="touchpoint"]')).not.toBeInTheDocument();
+    expect(container.querySelector('[data-id="review"]')).not.toBeInTheDocument();
     expect(container.querySelector('[data-id="phase:5"]')).toBeInTheDocument();
     const entryPath = await edgePathD(container, "rf__edge-entry:prepare:0");
     const evidenceRecyclePath = await edgePathD(container, "rf__edge-recycle:evidence-gate:prepare:0");
-    const touchpointRecyclePath = await edgePathD(container, "rf__edge-recycle:touchpoint:prepare:1");
+    const reviewRecyclePath = await edgePathD(container, "rf__edge-recycle:review:prepare:1");
     expect(entryPath).not.toContain(" C ");
     expect(entryPath).toContain(" Q ");
     expect(pathStart(entryPath).y).toBeGreaterThan(pathEnd(entryPath).y);
-    expect(entryBendX(entryPath)).toBeCloseTo(outerVerticalX(touchpointRecyclePath) - 16);
-    expect(pathsIntersect(evidenceRecyclePath, touchpointRecyclePath)).toBe(false);
-    expect(lastSegment(touchpointRecyclePath)).toMatchObject({ from: { y: pathEnd(touchpointRecyclePath).y } });
-    expect(pathEnd(touchpointRecyclePath).y).toBeLessThan(pathEnd(evidenceRecyclePath).y);
+    expect(entryBendX(entryPath)).toBeCloseTo(outerVerticalX(reviewRecyclePath) - 16);
+    expect(pathsIntersect(evidenceRecyclePath, reviewRecyclePath)).toBe(false);
+    expect(lastSegment(reviewRecyclePath)).toMatchObject({ from: { y: pathEnd(reviewRecyclePath).y } });
+    expect(pathEnd(reviewRecyclePath).y).toBeLessThan(pathEnd(evidenceRecyclePath).y);
     expect(container.querySelector(".dag-rf-surface")).toHaveStyle({
       width: "1508px",
       height: "302px",

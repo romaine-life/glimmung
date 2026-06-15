@@ -202,18 +202,18 @@ func newDispatchTestHandler(store ReadStore, runLauncher RunLauncher) http.Handl
 }
 
 // gatedTestPhases builds the minimum phase chain that passes the post-
-// migration validation (prepare → verify → cleanup_early → touchpoint →
-// touchpoint_gate → cleanup_final, with the pr_touchpoint primitive in
-// the touchpoint phase and pr_merge in the gate). Tests that exercise
+// migration validation (prepare → verify → cleanup_early → review →
+// review_gate → cleanup_final, with the pr_review primitive in
+// the review phase and pr_merge in the gate). Tests that exercise
 // dispatch flow against an in-memory workflow use this.
 func gatedTestPhases() []PhaseSpec {
 	return []PhaseSpec{
 		{Name: "prepare", Kind: "k8s_job", WorkflowFilename: "k8s_job:prepare", Outputs: []string{"issue_contract"}, Jobs: []RunnerJobSpec{{ID: "issue-contract", Image: "runner:latest"}}},
 		{Name: "verify", Kind: "k8s_job", WorkflowFilename: "k8s_job:verify", DependsOn: []string{"prepare"}, Verify: true, RecyclePolicy: &RecyclePolicy{MaxAttempts: 1, On: []string{"verify_fail"}, LandsAt: "prepare"}, Jobs: verificationCaseJobsForTest()},
 		{Name: "cleanup_early", Kind: "k8s_job", WorkflowFilename: "k8s_job:cleanup_early", DependsOn: []string{"verify"}, RunOn: PhaseRunOnAlways, Purpose: PhasePurposeTeardown, When: "${{ run.preserve_test_env }} == 'false'", Jobs: []RunnerJobSpec{{ID: "cleanup", Image: "runner:latest"}}},
-		{Name: "touchpoint", Kind: "k8s_job", WorkflowFilename: "k8s_job:touchpoint", DependsOn: []string{"cleanup_early"}, RunOn: PhaseRunOnSuccess, Purpose: PhasePurposeReviewTouchpoint, Jobs: []RunnerJobSpec{{ID: PRTouchpointJobID, Primitive: JobPrimitivePRTouchpoint, Managed: true}}},
-		{Name: "touchpoint_gate", Kind: "k8s_job", WorkflowFilename: "k8s_job:touchpoint_gate", Purpose: PhasePurposeReviewGate, DependsOn: []string{"touchpoint"}, Jobs: []RunnerJobSpec{{ID: PRMergeJobID, Primitive: JobPrimitivePRMerge, Managed: true}}},
-		{Name: "cleanup_final", Kind: "k8s_job", WorkflowFilename: "k8s_job:cleanup_final", DependsOn: []string{"touchpoint_gate"}, RunOn: PhaseRunOnAlways, Purpose: PhasePurposeTeardown, Jobs: []RunnerJobSpec{{ID: "cleanup-final", Image: "runner:latest"}}},
+		{Name: "review", Kind: "k8s_job", WorkflowFilename: "k8s_job:review", DependsOn: []string{"cleanup_early"}, RunOn: PhaseRunOnSuccess, Purpose: PhasePurposeReview, Jobs: []RunnerJobSpec{{ID: PRReviewJobID, Primitive: JobPrimitivePRReview, Managed: true}}},
+		{Name: "review_gate", Kind: "k8s_job", WorkflowFilename: "k8s_job:review_gate", Purpose: PhasePurposeReviewGate, DependsOn: []string{"review"}, Jobs: []RunnerJobSpec{{ID: PRMergeJobID, Primitive: JobPrimitivePRMerge, Managed: true}}},
+		{Name: "cleanup_final", Kind: "k8s_job", WorkflowFilename: "k8s_job:cleanup_final", DependsOn: []string{"review_gate"}, RunOn: PhaseRunOnAlways, Purpose: PhasePurposeTeardown, Jobs: []RunnerJobSpec{{ID: "cleanup-final", Image: "runner:latest"}}},
 	}
 }
 

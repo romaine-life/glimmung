@@ -8,17 +8,17 @@ import (
 	"strings"
 )
 
-type touchpointEvidenceCandidate struct {
+type reviewEvidenceCandidate struct {
 	Artifact     EvidenceArtifact
 	SourcePhase  string
 	AttemptIndex int
 }
 
-func touchpointEvidenceForRun(ctx context.Context, artifactStore ArtifactStore, run RunReplayData) ([]TouchpointEvidence, error) {
+func reviewEvidenceForRun(ctx context.Context, artifactStore ArtifactStore, run RunReplayData) ([]ReviewEvidence, error) {
 	required := requiredEvidenceForRun(run)
 	requiredCounts := requiredEvidenceCounts(required)
 	candidates := evidenceCandidatesForRun(run)
-	evidence := make([]TouchpointEvidence, 0, len(candidates))
+	evidence := make([]ReviewEvidence, 0, len(candidates))
 	seen := map[string]bool{}
 	for _, candidate := range candidates {
 		artifact := candidate.Artifact
@@ -48,7 +48,7 @@ func touchpointEvidenceForRun(ctx context.Context, artifactStore ArtifactStore, 
 		if artifact.SourceAttemptIndex == nil {
 			artifact.SourceAttemptIndex = &attemptIndex
 		}
-		evidence = append(evidence, TouchpointEvidence{
+		evidence = append(evidence, ReviewEvidence{
 			Kind:               artifact.Kind,
 			Ref:                artifact.Ref,
 			Label:              artifact.Label,
@@ -118,19 +118,19 @@ func requiredEvidenceCounts(requirements []EvidenceRequirement) map[string]int {
 	return counts
 }
 
-func evidenceCandidatesForRun(run RunReplayData) []touchpointEvidenceCandidate {
-	candidates := make([]touchpointEvidenceCandidate, 0)
+func evidenceCandidatesForRun(run RunReplayData) []reviewEvidenceCandidate {
+	candidates := make([]reviewEvidenceCandidate, 0)
 	for _, attempt := range run.Attempts {
 		if attempt.Verification != nil {
 			for _, artifact := range attempt.Verification.Evidence {
-				candidates = append(candidates, touchpointEvidenceCandidate{
+				candidates = append(candidates, reviewEvidenceCandidate{
 					Artifact:     artifact,
 					SourcePhase:  attempt.Phase,
 					AttemptIndex: attempt.AttemptIndex,
 				})
 			}
 			for _, ref := range attempt.Verification.EvidenceRefs {
-				candidates = append(candidates, touchpointEvidenceCandidate{
+				candidates = append(candidates, reviewEvidenceCandidate{
 					Artifact:     EvidenceArtifact{Ref: ref},
 					SourcePhase:  attempt.Phase,
 					AttemptIndex: attempt.AttemptIndex,
@@ -142,7 +142,7 @@ func evidenceCandidatesForRun(run RunReplayData) []touchpointEvidenceCandidate {
 			continue
 		}
 		for _, artifact := range EvidenceArtifactsFromVerificationOutput(raw) {
-			candidates = append(candidates, touchpointEvidenceCandidate{
+			candidates = append(candidates, reviewEvidenceCandidate{
 				Artifact:     artifact,
 				SourcePhase:  attempt.Phase,
 				AttemptIndex: attempt.AttemptIndex,

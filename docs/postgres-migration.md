@@ -48,7 +48,7 @@ Core tables:
 - `portfolios`
 - `slots`
 - `slot_history`
-- `touchpoints`
+- `reviews`
 - `test_lease_defaults`
 
 The JSON payload columns preserve Glimmung's domain shapes where decomposing
@@ -86,7 +86,7 @@ cutover history without reopening a live path.
 - Locks use a real relational primitive: `(scope, key)` is the primary key, and
   acquire is a single `INSERT ... ON CONFLICT DO UPDATE` statement gated on
   released or expired rows.
-- Run, issue, workflow, touchpoint, signal, playbook, and slot APIs are all
+- Run, issue, workflow, review, signal, playbook, and slot APIs are all
   backed by Postgres stores. If one of those paths is wrong, fix forward in the
   Postgres path.
 

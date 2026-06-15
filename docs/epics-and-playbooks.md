@@ -116,9 +116,9 @@ Entry state follows execution:
 Issue, Run, Report, Signal, lock, and lease state remain the source of truth
 for execution details. Playbook state is a rollup, not a replacement.
 
-Touchpoint, RunReport, issue dependency, and integration-strategy boundaries
+Review, RunReport, issue dependency, and integration-strategy boundaries
 are defined in
-[Touchpoints, RunReports, And Playbook Integration](touchpoints-runreports-playbooks.md).
+[Reviews, RunReports, And Playbook Integration](reviews-runreports-playbooks.md).
 Use that vocabulary when deciding whether a Playbook entry should create its
 own review surface, share a feature branch, or roll through `main`.
 

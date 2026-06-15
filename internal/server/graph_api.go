@@ -18,7 +18,7 @@ type GraphRuntimeStore interface {
 	ReadStore
 	IssueStore
 	RunStore
-	TouchpointStore
+	ReviewStore
 }
 
 type GraphSignalStore interface {
@@ -72,7 +72,7 @@ type RunGraphProjection struct {
 	CurrentRunRef *string                   `json:"current_run_ref,omitempty"`
 	DefaultFocus  *RunProjectionFocus       `json:"default_focus,omitempty"`
 	NextAction    RunProjectionAction       `json:"next_action"`
-	Touchpoints   []RunProjectionTouchpoint `json:"touchpoints"`
+	Reviews   []RunProjectionReview `json:"reviews"`
 	Signals       []RunProjectionSignal     `json:"signals"`
 }
 
@@ -230,7 +230,7 @@ type RunProjectionEvidence struct {
 	VerificationStatus string  `json:"verification_status,omitempty"`
 }
 
-type RunProjectionTouchpoint struct {
+type RunProjectionReview struct {
 	Ref           string               `json:"ref"`
 	Repo          string               `json:"repo"`
 	PRNumber      int                  `json:"pr_number"`
@@ -239,7 +239,7 @@ type RunProjectionTouchpoint struct {
 	HTMLURL       *string              `json:"html_url,omitempty"`
 	LinkedRunRef  *string              `json:"linked_run_ref,omitempty"`
 	ValidationURL *string              `json:"validation_url,omitempty"`
-	Evidence      []TouchpointEvidence `json:"evidence"`
+	Evidence      []ReviewEvidence `json:"evidence"`
 }
 
 type RunProjectionSignal struct {
@@ -327,12 +327,12 @@ func runCycleGraphProjectionByNumber(store ReadStore) http.HandlerFunc {
 			workflowsByKey[wf.Project+"/"+wf.Name] = wf
 		}
 		addWorkflowSchemasForRuns(r.Context(), graphStore, []RunReport{selected}, workflowsByKey)
-		touchpoints, err := graphStore.ListTouchpoints(r.Context(), TouchpointListFilter{Project: issue.Project})
+		reviews, err := graphStore.ListReviews(r.Context(), ReviewListFilter{Project: issue.Project})
 		if err != nil {
-			writeInternalError(w, r, err, "list touchpoints failed")
+			writeInternalError(w, r, err, "list reviews failed")
 			return
 		}
-		touchpoints = issueGraphTouchpoints(touchpoints, publicids.IssueRef(issue.Project, issue.Number), *issue.Number, map[string]bool{selected.RunRef: true})
+		reviews = issueGraphReviews(reviews, publicids.IssueRef(issue.Project, issue.Number), *issue.Number, map[string]bool{selected.RunRef: true})
 		var signals []GraphSignal
 		if signalStore := optionalGraphSignalStore(store); signalStore != nil {
 			signals, err = signalStore.ListGraphSignals(r.Context(), GraphSignalFilter{})
@@ -341,7 +341,7 @@ func runCycleGraphProjectionByNumber(store ReadStore) http.HandlerFunc {
 				return
 			}
 		}
-		projection := buildRunGraphProjection(publicids.IssueRef(issue.Project, issue.Number), []RunReport{selected}, workflowsByKey, touchpoints, signals)
+		projection := buildRunGraphProjection(publicids.IssueRef(issue.Project, issue.Number), []RunReport{selected}, workflowsByKey, reviews, signals)
 		if runnerStore, ok := store.(RunnerStore); ok && runnerStore != nil && len(projection.Runs) == 1 && selected.ID != "" {
 			logs, err := runnerStore.ListRunnerEventsByID(r.Context(), selected.Project, selected.ID, nil, nil, nil, nil, nil)
 			if err != nil && !errors.Is(err, ErrNotFound) {
@@ -432,16 +432,16 @@ func buildIssueGraphByNumber(ctx context.Context, store GraphRuntimeStore, signa
 	}
 	addWorkflowSchemasForRuns(ctx, store, runs, workflowsByKey)
 
-	touchpoints, err := store.ListTouchpoints(ctx, TouchpointListFilter{Project: issue.Project})
+	reviews, err := store.ListReviews(ctx, ReviewListFilter{Project: issue.Project})
 	if err != nil {
 		return IssueGraph{}, err
 	}
-	touchpoints = issueGraphTouchpoints(touchpoints, publicIssueRef, number, runRefs)
+	reviews = issueGraphReviews(reviews, publicIssueRef, number, runRefs)
 	prByRunRef := map[string]string{}
 	prByIssue := []string{}
-	for _, tp := range touchpoints {
+	for _, tp := range reviews {
 		nodeID := "pr:" + tp.Ref
-		graph.Nodes = append(graph.Nodes, graphNodeFromTouchpoint(tp))
+		graph.Nodes = append(graph.Nodes, graphNodeFromReview(tp))
 		if tp.LinkedRunRef != nil && *tp.LinkedRunRef != "" {
 			prByRunRef[*tp.LinkedRunRef] = nodeID
 		} else {
@@ -482,9 +482,9 @@ func buildIssueGraphByNumber(ctx context.Context, store GraphRuntimeStore, signa
 		if err != nil {
 			return IssueGraph{}, err
 		}
-		appendIssueGraphSignals(&graph, signals, issue, issueNodeID, runRefs, runNodeByID, touchpoints)
+		appendIssueGraphSignals(&graph, signals, issue, issueNodeID, runRefs, runNodeByID, reviews)
 	}
-	graph.Projection = buildRunGraphProjection(publicIssueRef, runs, workflowsByKey, touchpoints, signals)
+	graph.Projection = buildRunGraphProjection(publicIssueRef, runs, workflowsByKey, reviews, signals)
 	return graph, nil
 }
 
@@ -573,11 +573,11 @@ func buildSystemGraph(ctx context.Context, store GraphRuntimeStore, signalStore 
 	}
 
 	for _, p := range projects {
-		touchpoints, err := store.ListTouchpoints(ctx, TouchpointListFilter{Project: p})
+		reviews, err := store.ListReviews(ctx, ReviewListFilter{Project: p})
 		if err != nil {
 			return IssueGraph{}, err
 		}
-		for _, tp := range touchpoints {
+		for _, tp := range reviews {
 			if tp.State != "ready" && tp.State != "needs_review" {
 				continue
 			}
@@ -592,7 +592,7 @@ func buildSystemGraph(ctx context.Context, store GraphRuntimeStore, signalStore 
 			if source == "" {
 				continue
 			}
-			graph.Nodes = append(graph.Nodes, graphNodeFromTouchpoint(tp))
+			graph.Nodes = append(graph.Nodes, graphNodeFromReview(tp))
 			graph.Edges = append(graph.Edges, GraphEdge{Source: source, Target: nodeID, Kind: "opened"})
 		}
 	}
@@ -632,8 +632,8 @@ func issueGraphRuns(runs []RunReport, project string, number int, issueRef strin
 	return out
 }
 
-func issueGraphTouchpoints(rows []TouchpointRow, issueRef string, issueNumber int, runRefs map[string]bool) []TouchpointRow {
-	out := make([]TouchpointRow, 0, len(rows))
+func issueGraphReviews(rows []ReviewRow, issueRef string, issueNumber int, runRefs map[string]bool) []ReviewRow {
+	out := make([]ReviewRow, 0, len(rows))
 	for _, row := range rows {
 		if row.LinkedIssueRef != nil && *row.LinkedIssueRef == issueRef {
 			out = append(out, row)
@@ -700,7 +700,7 @@ func graphNodeFromRunAttempt(run RunReport, attempt RunReportAttempt, workflow W
 	}
 }
 
-func graphNodeFromTouchpoint(tp TouchpointRow) GraphNode {
+func graphNodeFromReview(tp ReviewRow) GraphNode {
 	label := fmt.Sprintf("PR #%d", tp.PRNumber)
 	if tp.PRNumber <= 0 {
 		label = tp.Ref
@@ -712,7 +712,7 @@ func graphNodeFromTouchpoint(tp TouchpointRow) GraphNode {
 		State:     stringPointerOrNil(tp.State),
 		Timestamp: nil,
 		Metadata: map[string]any{
-			"touchpoint_ref":   tp.Ref,
+			"review_ref":   tp.Ref,
 			"project":          tp.Project,
 			"repo":             tp.Repo,
 			"number":           tp.PRNumber,
@@ -949,21 +949,21 @@ func runGraphMetadata(run RunReport) map[string]any {
 	return metadata
 }
 
-func buildRunGraphProjection(issueRef string, runs []RunReport, workflowsByKey map[string]Workflow, touchpoints []TouchpointRow, signals []GraphSignal) RunGraphProjection {
+func buildRunGraphProjection(issueRef string, runs []RunReport, workflowsByKey map[string]Workflow, reviews []ReviewRow, signals []GraphSignal) RunGraphProjection {
 	projection := RunGraphProjection{
 		IssueRef:    issueRef,
 		Runs:        make([]RunProjectionRun, 0, len(runs)),
-		Touchpoints: projectionTouchpoints(touchpoints),
-		Signals:     projectionSignals(issueRef, runs, touchpoints, signals),
+		Reviews: projectionReviews(reviews),
+		Signals:     projectionSignals(issueRef, runs, reviews, signals),
 	}
 	for _, run := range runs {
 		workflow := workflowForRunReport(run, workflowsByKey)
-		projection.Runs = append(projection.Runs, runProjectionFromReport(run, workflow, touchpoints))
+		projection.Runs = append(projection.Runs, runProjectionFromReport(run, workflow, reviews))
 	}
-	projection.Edges = projectionEdges(projection.Runs, projection.Touchpoints, projection.Signals)
+	projection.Edges = projectionEdges(projection.Runs, projection.Reviews, projection.Signals)
 	projection.CurrentRunRef = projectionCurrentRunRef(projection.Runs)
-	projection.DefaultFocus = projectionDefaultFocus(projection.Runs, projection.Touchpoints)
-	projection.NextAction = projectionNextAction(projection.Runs, projection.Touchpoints, projection.Signals)
+	projection.DefaultFocus = projectionDefaultFocus(projection.Runs, projection.Reviews)
+	projection.NextAction = projectionNextAction(projection.Runs, projection.Reviews, projection.Signals)
 	return projection
 }
 
@@ -1029,7 +1029,7 @@ func selectRunCycleForProjection(runs []RunReport, runSegment, cycleSegment stri
 	return RunReport{}, false
 }
 
-func runProjectionFromReport(run RunReport, workflow Workflow, touchpoints []TouchpointRow) RunProjectionRun {
+func runProjectionFromReport(run RunReport, workflow Workflow, reviews []ReviewRow) RunProjectionRun {
 	attemptsCount := run.AttemptsCount
 	if attemptsCount == 0 {
 		attemptsCount = len(run.Attempts)
@@ -1057,7 +1057,7 @@ func runProjectionFromReport(run RunReport, workflow Workflow, touchpoints []Tou
 		AgentRuntime:        run.AgentRuntime,
 		Topology:            workflowTopologyForRun(workflow, run),
 		Phases:              runProjectionPhases(run, workflow),
-		Evidence:            runProjectionEvidence(run, touchpoints),
+		Evidence:            runProjectionEvidence(run, reviews),
 	}
 }
 
@@ -1108,24 +1108,24 @@ func workflowTopologyFromWorkflow(workflow Workflow) RunProjectionTopology {
 		topology.DefaultEntry = &RunProjectionDefaultEntry{Target: topology.Phases[0].Name, Active: true, Kind: "default"}
 	}
 	if workflow.PR.RecyclePolicy != nil {
-		if source := workflowPRTouchpointPhaseName(workflow); source != "" {
+		if source := workflowPRReviewPhaseName(workflow); source != "" {
 			topology.RecycleArrows = append(topology.RecycleArrows, RunProjectionRecycle{
 				Source:      source,
 				Target:      workflow.PR.RecyclePolicy.LandsAt,
 				Trigger:     strings.Join(workflow.PR.RecyclePolicy.On, " / "),
 				MaxAttempts: workflow.PR.RecyclePolicy.MaxAttempts,
 				Active:      false,
-				Kind:        "touchpoint_recycle",
+				Kind:        "review_recycle",
 			})
 		}
 	}
 	return topology
 }
 
-func workflowPRTouchpointPhaseName(workflow Workflow) string {
+func workflowPRReviewPhaseName(workflow Workflow) string {
 	for _, phase := range workflow.Phases {
 		for _, job := range phase.Jobs {
-			if strings.TrimSpace(job.Primitive) == JobPrimitivePRTouchpoint {
+			if strings.TrimSpace(job.Primitive) == JobPrimitivePRReview {
 				return phase.Name
 			}
 		}
@@ -1173,7 +1173,7 @@ func activeRecycleSelector(run RunReport) (recycleSelector, bool) {
 		}
 		return recycleSelector{Kind: "phase_recycle", Source: source}, true
 	case "pr_feedback":
-		return recycleSelector{Kind: "touchpoint_recycle"}, true
+		return recycleSelector{Kind: "review_recycle"}, true
 	default:
 		return recycleSelector{}, false
 	}
@@ -1962,7 +1962,7 @@ func projectionAttemptState(attempt RunReportAttempt) string {
 	return "succeeded"
 }
 
-func runProjectionEvidence(run RunReport, touchpoints []TouchpointRow) []RunProjectionEvidence {
+func runProjectionEvidence(run RunReport, reviews []ReviewRow) []RunProjectionEvidence {
 	evidence := make([]RunProjectionEvidence, 0)
 	seen := map[string]bool{}
 	add := func(item RunProjectionEvidence) {
@@ -2031,7 +2031,7 @@ func runProjectionEvidence(run RunReport, touchpoints []TouchpointRow) []RunProj
 			addRef("log", *attempt.LogArchiveURL, "runner events", evidenceURL(*attempt.LogArchiveURL))
 		}
 	}
-	for _, tp := range touchpoints {
+	for _, tp := range reviews {
 		if tp.LinkedRunRef != nil && *tp.LinkedRunRef != run.RunRef {
 			continue
 		}
@@ -2061,7 +2061,7 @@ func runProjectionEvidence(run RunReport, touchpoints []TouchpointRow) []RunProj
 			addRef("pull_request", *tp.HTMLURL, fmt.Sprintf("PR #%d", tp.PRNumber), tp.HTMLURL)
 		}
 		if tp.ValidationURL != nil && *tp.ValidationURL != "" {
-			addRef("validation", *tp.ValidationURL, "touchpoint validation", tp.ValidationURL)
+			addRef("validation", *tp.ValidationURL, "review validation", tp.ValidationURL)
 		}
 	}
 	return evidence
@@ -2320,10 +2320,10 @@ func evidenceURL(ref string) *string {
 	return nil
 }
 
-func projectionTouchpoints(touchpoints []TouchpointRow) []RunProjectionTouchpoint {
-	out := make([]RunProjectionTouchpoint, 0, len(touchpoints))
-	for _, tp := range touchpoints {
-		out = append(out, RunProjectionTouchpoint{
+func projectionReviews(reviews []ReviewRow) []RunProjectionReview {
+	out := make([]RunProjectionReview, 0, len(reviews))
+	for _, tp := range reviews {
+		out = append(out, RunProjectionReview{
 			Ref:           tp.Ref,
 			Repo:          tp.Repo,
 			PRNumber:      tp.PRNumber,
@@ -2339,10 +2339,10 @@ func projectionTouchpoints(touchpoints []TouchpointRow) []RunProjectionTouchpoin
 	return out
 }
 
-func projectionSignals(issueRef string, runs []RunReport, touchpoints []TouchpointRow, signals []GraphSignal) []RunProjectionSignal {
+func projectionSignals(issueRef string, runs []RunReport, reviews []ReviewRow, signals []GraphSignal) []RunProjectionSignal {
 	out := make([]RunProjectionSignal, 0)
 	for _, signal := range signals {
-		if !signalMatchesProjection(issueRef, runs, touchpoints, signal) {
+		if !signalMatchesProjection(issueRef, runs, reviews, signal) {
 			continue
 		}
 		out = append(out, RunProjectionSignal{
@@ -2362,7 +2362,7 @@ func projectionSignals(issueRef string, runs []RunReport, touchpoints []Touchpoi
 	return out
 }
 
-func projectionEdges(runs []RunProjectionRun, touchpoints []RunProjectionTouchpoint, signals []RunProjectionSignal) []RunProjectionEdge {
+func projectionEdges(runs []RunProjectionRun, reviews []RunProjectionReview, signals []RunProjectionSignal) []RunProjectionEdge {
 	edges := make([]RunProjectionEdge, 0)
 	add := func(source, target, kind string) {
 		if source == "" || target == "" {
@@ -2389,9 +2389,9 @@ func projectionEdges(runs []RunProjectionRun, touchpoints []RunProjectionTouchpo
 			}
 		}
 	}
-	for _, tp := range touchpoints {
+	for _, tp := range reviews {
 		if tp.LinkedRunRef != nil && runRefs[*tp.LinkedRunRef] {
-			add("run:"+*tp.LinkedRunRef, "touchpoint:"+tp.Ref, "opened")
+			add("run:"+*tp.LinkedRunRef, "review:"+tp.Ref, "opened")
 		}
 	}
 	for _, signal := range signals {
@@ -2405,9 +2405,9 @@ func projectionEdges(runs []RunProjectionRun, touchpoints []RunProjectionTouchpo
 				}
 			}
 		case "pr":
-			for _, tp := range touchpoints {
+			for _, tp := range reviews {
 				if signal.TargetID == tp.Ref || signal.TargetID == strconv.Itoa(tp.PRNumber) || signal.TargetRepo+"#"+signal.TargetID == tp.Ref {
-					add("touchpoint:"+tp.Ref, signalRef, "feedback")
+					add("review:"+tp.Ref, signalRef, "feedback")
 					break
 				}
 			}
@@ -2416,7 +2416,7 @@ func projectionEdges(runs []RunProjectionRun, touchpoints []RunProjectionTouchpo
 	return edges
 }
 
-func signalMatchesProjection(issueRef string, runs []RunReport, touchpoints []TouchpointRow, signal GraphSignal) bool {
+func signalMatchesProjection(issueRef string, runs []RunReport, reviews []ReviewRow, signal GraphSignal) bool {
 	switch signal.TargetType {
 	case "issue":
 		if signal.TargetID == issueRef {
@@ -2432,7 +2432,7 @@ func signalMatchesProjection(issueRef string, runs []RunReport, touchpoints []To
 			}
 		}
 	case "pr":
-		for _, tp := range touchpoints {
+		for _, tp := range reviews {
 			prNumber := strconv.Itoa(tp.PRNumber)
 			if signal.TargetID == tp.Ref || signal.TargetID == prNumber {
 				return true
@@ -2457,7 +2457,7 @@ func projectionCurrentRunRef(runs []RunProjectionRun) *string {
 	return &runs[len(runs)-1].RunRef
 }
 
-func projectionDefaultFocus(runs []RunProjectionRun, touchpoints []RunProjectionTouchpoint) *RunProjectionFocus {
+func projectionDefaultFocus(runs []RunProjectionRun, reviews []RunProjectionReview) *RunProjectionFocus {
 	for i := len(runs) - 1; i >= 0; i-- {
 		run := runs[i]
 		if !runStateIsActive(run.State) {
@@ -2470,9 +2470,9 @@ func projectionDefaultFocus(runs []RunProjectionRun, touchpoints []RunProjection
 		}
 		return &RunProjectionFocus{Kind: "run", Ref: run.RunRef}
 	}
-	for i := len(touchpoints) - 1; i >= 0; i-- {
-		if touchpointNeedsDecision(touchpoints[i]) {
-			return &RunProjectionFocus{Kind: "touchpoint", Ref: touchpoints[i].Ref}
+	for i := len(reviews) - 1; i >= 0; i-- {
+		if reviewNeedsDecision(reviews[i]) {
+			return &RunProjectionFocus{Kind: "review", Ref: reviews[i].Ref}
 		}
 	}
 	if len(runs) > 0 {
@@ -2481,7 +2481,7 @@ func projectionDefaultFocus(runs []RunProjectionRun, touchpoints []RunProjection
 	return nil
 }
 
-func projectionNextAction(runs []RunProjectionRun, touchpoints []RunProjectionTouchpoint, signals []RunProjectionSignal) RunProjectionAction {
+func projectionNextAction(runs []RunProjectionRun, reviews []RunProjectionReview, signals []RunProjectionSignal) RunProjectionAction {
 	for _, signal := range signals {
 		if signal.State == "pending" || signal.State == "processing" {
 			detail := signal.Feedback
@@ -2493,9 +2493,9 @@ func projectionNextAction(runs []RunProjectionRun, touchpoints []RunProjectionTo
 			return RunProjectionAction{Kind: "watch_run", Label: "watch run", TargetRef: &runs[i].RunRef}
 		}
 	}
-	for i := len(touchpoints) - 1; i >= 0; i-- {
-		if touchpointNeedsDecision(touchpoints[i]) {
-			return RunProjectionAction{Kind: "review_touchpoint", Label: "review touchpoint", TargetRef: &touchpoints[i].Ref}
+	for i := len(reviews) - 1; i >= 0; i-- {
+		if reviewNeedsDecision(reviews[i]) {
+			return RunProjectionAction{Kind: "review", Label: "review", TargetRef: &reviews[i].Ref}
 		}
 	}
 	if len(runs) > 0 {
@@ -2509,13 +2509,13 @@ func projectionNextAction(runs []RunProjectionRun, touchpoints []RunProjectionTo
 
 func runStateIsActive(state string) bool {
 	// review_required is an in-progress sub-state: the run is parked at a
-	// touchpoint_gate waiting for a human signal. The lease may still be
+	// review_gate waiting for a human signal. The lease may still be
 	// alive (preserve_test_env=true) and the run continues to advance once
 	// approve fires the gate, so projections must not treat it as terminal.
 	return state == "in_progress" || state == "pending" || state == "queued" || state == "review_required"
 }
 
-func touchpointNeedsDecision(tp RunProjectionTouchpoint) bool {
+func reviewNeedsDecision(tp RunProjectionReview) bool {
 	switch tp.State {
 	case "ready", "needs_review", "open", "review_required":
 		return true
@@ -2551,10 +2551,10 @@ func workflowRunStepState(attempt RunReportAttempt) string {
 	return "active"
 }
 
-func appendIssueGraphSignals(graph *IssueGraph, signals []GraphSignal, issue IssueDetail, issueNodeID string, runRefs map[string]bool, runNodeByID map[string]string, touchpoints []TouchpointRow) {
+func appendIssueGraphSignals(graph *IssueGraph, signals []GraphSignal, issue IssueDetail, issueNodeID string, runRefs map[string]bool, runNodeByID map[string]string, reviews []ReviewRow) {
 	prNodeByRef := map[string]string{}
 	prNumberByNode := map[string]string{}
-	for _, tp := range touchpoints {
+	for _, tp := range reviews {
 		prNodeByRef[tp.Ref] = "pr:" + tp.Ref
 		prNumberByNode[strconv.Itoa(tp.PRNumber)] = "pr:" + tp.Ref
 	}

@@ -32,9 +32,9 @@ func whenTestRegister() WorkflowRegister {
 			}},
 			{Name: "verify", Verify: true, RecyclePolicy: &RecyclePolicy{MaxAttempts: 1, On: []string{"verify_fail"}, LandsAt: "prepare"}, DependsOn: []string{"work"}, Jobs: verificationCaseJobsForTest()},
 			{Name: "cleanup_early", RunOn: PhaseRunOnAlways, Purpose: PhasePurposeTeardown, When: "${{ run.preserve_test_env }} == 'false'", DependsOn: []string{"verify"}},
-			{Name: "touchpoint", RunOn: PhaseRunOnSuccess, Purpose: PhasePurposeReviewTouchpoint, DependsOn: []string{"cleanup_early"}, Jobs: []RunnerJobSpec{{ID: PRTouchpointJobID, Primitive: JobPrimitivePRTouchpoint}}},
-			{Name: "touchpoint_gate", Kind: "k8s_job", Purpose: PhasePurposeReviewGate, DependsOn: []string{"touchpoint"}, Jobs: []RunnerJobSpec{{ID: PRMergeJobID, Primitive: JobPrimitivePRMerge}}},
-			{Name: "cleanup_final", RunOn: PhaseRunOnAlways, Purpose: PhasePurposeTeardown, DependsOn: []string{"touchpoint_gate"}},
+			{Name: "review", RunOn: PhaseRunOnSuccess, Purpose: PhasePurposeReview, DependsOn: []string{"cleanup_early"}, Jobs: []RunnerJobSpec{{ID: PRReviewJobID, Primitive: JobPrimitivePRReview}}},
+			{Name: "review_gate", Kind: "k8s_job", Purpose: PhasePurposeReviewGate, DependsOn: []string{"review"}, Jobs: []RunnerJobSpec{{ID: PRMergeJobID, Primitive: JobPrimitivePRMerge}}},
+			{Name: "cleanup_final", RunOn: PhaseRunOnAlways, Purpose: PhasePurposeTeardown, DependsOn: []string{"review_gate"}},
 		},
 	}
 }

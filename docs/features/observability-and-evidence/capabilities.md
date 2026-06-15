@@ -12,15 +12,15 @@ Intent:
 Make every `inspect_browser_url` invocation a durable artifact record so the
 screenshot and inspection report survive the calling MCP tool response,
 stay referenceable by `/v1/artifacts/...`, and compose with the existing
-`pr_touchpoint` finalize machinery rather than burning agent context as
+`pr_review` finalize machinery rather than burning agent context as
 inline base64.
 
 Affected contracts:
 - Observability And Evidence (primary)
 - Auth And API Surface (new MCP-used route + tool schema reshape)
 - Test Slots (lease-cleanup goroutine gains an artifact sweep step)
-- Review Surfaces (Run-bound inspections flow into Touchpoint evidence
-  through the existing `pr_touchpoint` primitive — no new caller-facing
+- Review Surfaces (Run-bound inspections flow into Review evidence
+  through the existing `pr_review` primitive — no new caller-facing
   promotion API)
 
 Contract impact:
@@ -49,10 +49,10 @@ Contract impact:
   and screenshots): no per-row sweep, governed by whatever global
   retention policy the artifact store implements.
 - Artifact-path whitelist grows by one prefix (`inspections/`).
-  `touchpoint_evidence` resolver canonicalizes `inspections/` refs into
+  `review_evidence` resolver canonicalizes `inspections/` refs into
   the standard `blob://artifacts/...` shape so a testing job that emits
   an inspection ref in `verification.evidence` is normalized into
-  Touchpoint evidence at finalize, exactly like screenshots / videos
+  Review evidence at finalize, exactly like screenshots / videos
   /evidence / refs.
 - New metric family `glimmung_inspections_*` with closed-enum labels
   (`scope`, `phase`, `piece`, `outcome`). No project/lease/session

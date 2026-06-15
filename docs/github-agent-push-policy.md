@@ -45,7 +45,7 @@ by the shell preamble. Implementation steps set the flag; read-only stages
 (issue-contract, test-plan, verification judging) must not. For the
 script-launched inner-Job path, the project wrapper mints and mounts the
 same file shape. The agent subprocess does **not** receive Glimmung callback
-URLs/tokens, the broad installation-token URL, PR merge/touchpoint URLs, or
+URLs/tokens, the broad installation-token URL, PR merge/review URLs, or
 SSH/Tailscale mint URLs (`agentStepBaseEnv` strips them).
 
 ## Branch-scoped push enforcement

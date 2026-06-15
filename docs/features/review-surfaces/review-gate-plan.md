@@ -1,10 +1,10 @@
-# Touchpoint Gate + PR Merge Plan
+# Review Gate + PR Merge Plan
 
 Status: in-flight (stage 1).
 Owners: review-surfaces, workflow-execution, test-slots, issues-and-runs.
 
 This plan extends the live review surface so a reviewer can approve a
-Touchpoint from the UI and have the system idempotently merge the PR, close
+Review from the UI and have the system idempotently merge the PR, close
 the Issue, and tear down the validation environment. It also makes the
 reviewer's choice to keep the validation environment alive during review a
 first-class workflow concept rather than a per-call flag.
@@ -17,18 +17,18 @@ Every Glimmung workflow ends in a human-reviewed PR. The required shape
 becomes:
 
 ```
-prepare → work → testing → cleanup_early → touchpoint → touchpoint_gate → cleanup_final
+prepare → work → testing → cleanup_early → review → review_gate → cleanup_final
 ```
 
 - `cleanup_early` is always scheduled. It executes by default; it returns
   `skipped` when the originating Issue has `preserve_test_env=true`. When it
   executes, it tears down lease-scoped runtime so the validation environment
   is gone before the reviewer sees `review_required`.
-- `touchpoint` hosts the `pr_touchpoint` primitive (PR creation + Touchpoint
+- `review` hosts the `pr_review` primitive (PR creation + Review
   linking). Today this primitive lives inside the single `cleanup` phase
   alongside env teardown; this plan extracts it into its own success-path phase
   so PR creation does not race the early teardown or run after aborts.
-- `touchpoint_gate` is a `k8s_job` phase with `purpose: review_gate`, not a
+- `review_gate` is a `k8s_job` phase with `purpose: review_gate`, not a
   separate executor kind. It creates a durable parked attempt without launching
   jobs, keeping the slot lease intact when `cleanup_early` was skipped. An
   `approve` signal releases that same attempt by dispatching the managed
@@ -49,7 +49,7 @@ workflow either matches the required shape or is rejected at registration time.
 - `workflows`: review gates are `k8s_job` phases with `purpose: review_gate`.
   Validation requires the seven named phases above in the listed order, with
   explicit `run_on`/`purpose` values, the listed `verify` flags, a single
-  `pr_touchpoint` job inside `touchpoint`, and a single `pr_merge` job inside
+  `pr_review` job inside `review`, and a single `pr_merge` job inside
   the review gate.
 - `issues`: new column `preserve_test_env` (bool, default false). Mutable on
   any open Issue. Read at dispatch time and snapshotted onto the run record.
@@ -64,13 +64,13 @@ workflow either matches the required shape or is rejected at registration time.
 ## Run-state semantics
 
 - `review_required` becomes the steady state of a run sitting at the
-  `touchpoint_gate`. It is not terminal: the gate is open, the slot may or may
+  `review_gate`. It is not terminal: the gate is open, the slot may or may
   not be alive depending on `preserve_test_env`, and a reviewer signal is the
   only thing that advances it.
 - `approve` signal → dispatch `pr_merge` primitive in the gate phase →
   advance to `cleanup_final` → mark run terminal `closed`. Issue closes
   derived from terminal-closed run, honoring the previously aspirational
-  "Merged Touchpoints close their Issue" line in
+  "Merged Reviews close their Issue" line in
   `docs/features/review-surfaces/contract.md`.
 - `reject` signal → recycle to the configured `lands_at`, unchanged from
   today.
@@ -87,7 +87,7 @@ verify runs at every stage.
 In flight in this branch.
 
 1. Register `purpose: review_gate` on ordinary `k8s_job` phases; reject
-   `kind: touchpoint_gate`.
+   `kind: review_gate`.
 2. Add `skipped` as a first-class attempt conclusion plumbed through
    completion routing, projection, and UI projection types.
 3. Add `issues.preserve_test_env` (mutable bool) and `runs.preserve_test_env`
@@ -95,7 +95,7 @@ In flight in this branch.
 4. Tighten registered workflow validation to the required shape and reject
    anything else.
 5. Delete the PR opt-out field, its conditional validations, and its tests.
-6. No runtime gate behavior yet. The `touchpoint_gate` phase, when reached,
+6. No runtime gate behavior yet. The `review_gate` phase, when reached,
    currently behaves as a success-path no-op; gate semantics arrive in stage 3.
 
 Projects must re-register their workflows against the new shape before their
@@ -107,9 +107,9 @@ next dispatch. There is no auto-migration.
    target PR (check `pull.merged` before attempting; treat already-merged as
    success).
 2. GitHub App installation-token minting wired into the managed runner.
-3. Durable record on `runs.pr_merged_at` and the touchpoint history.
-4. Admin endpoint `POST /v1/projects/{p}/issues/{n}/runs/{r}/touchpoint/merge`
-   mirrors the existing `/touchpoint/finalize` shape.
+3. Durable record on `runs.pr_merged_at` and the review history.
+4. Admin endpoint `POST /v1/projects/{p}/issues/{n}/runs/{r}/review/merge`
+   mirrors the existing `/review/finalize` shape.
 5. Observability: merge attempt logs name project, issue, run, repo, pr,
    sha, outcome.
 
@@ -117,7 +117,7 @@ next dispatch. There is no auto-migration.
 
 1. `decideTriageSignal` learns `payload.kind: "approve"` for
    `source: glimmung_ui`.
-2. Approve dispatches the `pr_merge` primitive inside the `touchpoint_gate`
+2. Approve dispatches the `pr_merge` primitive inside the `review_gate`
    phase. Reject path untouched.
 3. Drain logs identify kind (reject vs approve vs ignored).
 4. Tests cover approve, reject, timeout, double-approve idempotency, and
@@ -125,7 +125,7 @@ next dispatch. There is no auto-migration.
 
 ### Stage 4 — UI affordance
 
-1. `Approve` button on `TouchpointTab`, parallel to today's Request Changes
+1. `Approve` button on `ReviewTab`, parallel to today's Request Changes
    button, posts `{kind: "approve"}` to `/v1/signals`.
 2. Honors the existing one-pending-signal rule (`pendingSignal`).
 3. Renders the gate state: which phase the run sits at, whether the slot is

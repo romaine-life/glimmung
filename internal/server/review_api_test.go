@@ -10,32 +10,32 @@ import (
 	"github.com/romaine-life/glimmung/internal/auth"
 )
 
-type fakeTouchpointStore struct {
+type fakeReviewStore struct {
 	fakeReadStore
-	rows   []TouchpointRow
-	detail TouchpointDetail
+	rows   []ReviewRow
+	detail ReviewDetail
 	err    error
 }
 
-func (s *fakeTouchpointStore) ListTouchpoints(_ context.Context, _ TouchpointListFilter) ([]TouchpointRow, error) {
+func (s *fakeReviewStore) ListReviews(_ context.Context, _ ReviewListFilter) ([]ReviewRow, error) {
 	if s.err != nil {
 		return nil, s.err
 	}
 	return s.rows, nil
 }
 
-func (s *fakeTouchpointStore) GetTouchpointForIssue(_ context.Context, _ string, _ int) (TouchpointDetail, error) {
+func (s *fakeReviewStore) GetReviewForIssue(_ context.Context, _ string, _ int) (ReviewDetail, error) {
 	if s.err != nil {
-		return TouchpointDetail{}, s.err
+		return ReviewDetail{}, s.err
 	}
 	return s.detail, nil
 }
 
-func (s *fakeTouchpointStore) EnsureTouchpoint(_ context.Context, req TouchpointCreate) (TouchpointDetail, error) {
+func (s *fakeReviewStore) EnsureReview(_ context.Context, req ReviewCreate) (ReviewDetail, error) {
 	if s.err != nil {
-		return TouchpointDetail{}, s.err
+		return ReviewDetail{}, s.err
 	}
-	return TouchpointDetail{
+	return ReviewDetail{
 		Ref:      req.Repo + "#" + itoa(req.Number),
 		Project:  req.Project,
 		Repo:     req.Repo,
@@ -49,8 +49,8 @@ func itoa(n int) string {
 	return strings.TrimSpace(strings.Replace(" "+string(rune('0'+n)), " ", "", -1))
 }
 
-func TestListTouchpoints(t *testing.T) {
-	store := &fakeTouchpointStore{rows: []TouchpointRow{{
+func TestListReviews(t *testing.T) {
+	store := &fakeReviewStore{rows: []ReviewRow{{
 		Ref:      "romaine-life/glimmung#42",
 		Project:  "glimmung",
 		Repo:     "romaine-life/glimmung",
@@ -61,7 +61,7 @@ func TestListTouchpoints(t *testing.T) {
 	handler := NewWithStore(Settings{}, store)
 
 	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/touchpoints?project=glimmung", nil))
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/reviews?project=glimmung", nil))
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
@@ -71,27 +71,27 @@ func TestListTouchpoints(t *testing.T) {
 	}
 }
 
-func TestIssueTouchpointDetail(t *testing.T) {
-	store := &fakeTouchpointStore{detail: TouchpointDetail{
+func TestIssueReviewDetail(t *testing.T) {
+	store := &fakeReviewStore{detail: ReviewDetail{
 		Ref: "romaine-life/glimmung#42", Project: "glimmung", Repo: "romaine-life/glimmung", PRNumber: 42, Title: "Fix dashboard", State: "ready",
 	}}
 	handler := NewWithStore(Settings{}, store)
 
 	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/projects/glimmung/issues/17/touchpoint", nil))
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/projects/glimmung/issues/17/review", nil))
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
 }
 
-func TestCreateTouchpoint(t *testing.T) {
-	store := &fakeTouchpointStore{}
+func TestCreateReview(t *testing.T) {
+	store := &fakeReviewStore{}
 	handler := NewWithDependencies(Settings{}, store, fakeAdminAuthenticator{user: auth.User{Sub: "admin", Email: "admin@example.com"}})
 
 	rec := httptest.NewRecorder()
 	body := `{"project":"glimmung","repo":"romaine-life/glimmung","number":42,"title":"Fix","branch":"fix-branch"}`
-	req := httptest.NewRequest(http.MethodPost, "/v1/touchpoints", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/v1/reviews", strings.NewReader(body))
 	req.Header.Set("Authorization", "Bearer admin")
 	handler.ServeHTTP(rec, req)
 
@@ -103,8 +103,8 @@ func TestCreateTouchpoint(t *testing.T) {
 	}
 }
 
-func TestCreateTouchpointValidates(t *testing.T) {
-	handler := NewWithDependencies(Settings{}, &fakeTouchpointStore{}, fakeAdminAuthenticator{user: auth.User{Sub: "admin"}})
+func TestCreateReviewValidates(t *testing.T) {
+	handler := NewWithDependencies(Settings{}, &fakeReviewStore{}, fakeAdminAuthenticator{user: auth.User{Sub: "admin"}})
 
 	cases := []struct {
 		body string
@@ -118,7 +118,7 @@ func TestCreateTouchpointValidates(t *testing.T) {
 	}
 	for _, tc := range cases {
 		rec := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodPost, "/v1/touchpoints", strings.NewReader(tc.body))
+		req := httptest.NewRequest(http.MethodPost, "/v1/reviews", strings.NewReader(tc.body))
 		req.Header.Set("Authorization", "Bearer admin")
 		handler.ServeHTTP(rec, req)
 		if rec.Code != http.StatusBadRequest {
@@ -127,9 +127,9 @@ func TestCreateTouchpointValidates(t *testing.T) {
 	}
 }
 
-func TestTouchpointRequiresStore(t *testing.T) {
+func TestReviewRequiresStore(t *testing.T) {
 	handler := NewWithStore(Settings{}, fakeReadStore{})
-	for _, path := range []string{"/v1/touchpoints", "/v1/projects/glimmung/issues/1/touchpoint"} {
+	for _, path := range []string{"/v1/reviews", "/v1/projects/glimmung/issues/1/review"} {
 		rec := httptest.NewRecorder()
 		handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
 		if rec.Code != http.StatusServiceUnavailable {

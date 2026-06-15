@@ -6,7 +6,7 @@ import { attention, issueSummaryPath, useJson, type Attention, type IssueRow } f
 // decision is waiting", matching the redesign's grouped layout.
 const GROUPS: { key: string; title: string; match: (a: Attention) => boolean }[] = [
   { key: "review", title: "Review required", match: (a) => a.tone === "vio" },
-  { key: "touchpoint", title: "Touchpoint ready", match: (a) => a.tone === "ok" },
+  { key: "review", title: "Review ready", match: (a) => a.tone === "ok" },
   { key: "failed", title: "Failed runs", match: (a) => a.tone === "bad" },
   { key: "inflight", title: "In flight", match: (a) => a.tone === "warn" },
   { key: "other", title: "Other", match: () => true },

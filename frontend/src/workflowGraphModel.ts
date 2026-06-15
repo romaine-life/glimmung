@@ -45,7 +45,7 @@ function phaseRecycleArrow(phase: WorkflowGraphPhase, active: boolean): RecycleA
   };
 }
 
-function touchpointRecycleArrow(
+function reviewRecycleArrow(
   policy: RecyclePolicy | null | undefined,
   source: string | null,
   active: boolean,
@@ -57,7 +57,7 @@ function touchpointRecycleArrow(
     trigger: policy.on.join(" / "),
     max_attempts: policy.max_attempts,
     active,
-    kind: "touchpoint_recycle",
+    kind: "review_recycle",
   };
 }
 
@@ -71,9 +71,9 @@ function defaultEntryArrow(phases: PhaseGraphPhase[]): EntryArrow[] {
   }];
 }
 
-function prTouchpointPhaseName(phases: WorkflowGraphPhase[]): string | null {
+function prReviewPhaseName(phases: WorkflowGraphPhase[]): string | null {
   return phases.find((phase) =>
-    phase.jobs?.some((job) => job.primitive === "pr_touchpoint"),
+    phase.jobs?.some((job) => job.primitive === "pr_review"),
   )?.name ?? null;
 }
 
@@ -112,7 +112,7 @@ export function workflowToPhaseGraphModel(
       steps: job.steps,
     })),
   }));
-  const touchpointPhase = prTouchpointPhaseName(workflow.phases);
+  const reviewPhase = prReviewPhaseName(workflow.phases);
   return {
     phases,
     entryArrows: defaultEntryArrow(phases),
@@ -122,7 +122,7 @@ export function workflowToPhaseGraphModel(
         return arrow ? [arrow] : [];
       }),
       ...(() => {
-        const arrow = touchpointRecycleArrow(workflow.pr.recycle_policy, touchpointPhase, active);
+        const arrow = reviewRecycleArrow(workflow.pr.recycle_policy, reviewPhase, active);
         return arrow ? [arrow] : [];
       })(),
     ],

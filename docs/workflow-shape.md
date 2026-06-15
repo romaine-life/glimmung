@@ -363,28 +363,28 @@ verification success rather than on a separate evidence-verification gate. The
 old `evidence_verification_gate` primitive remains readable for historical
 runs, but new workflow registrations reject it.
 
-## PR touchpoint primitive
+## PR review primitive
 
 Every Glimmung workflow ends in a human-reviewed PR — there is no opt-out.
-Workflows must declare exactly one runner job with `primitive: pr_touchpoint`,
-and that job must live in a `purpose: review_touchpoint`, `run_on: success`
-phase. Review touchpoints are not teardown; when verification aborts the run,
+Workflows must declare exactly one runner job with `primitive: pr_review`,
+and that job must live in a `purpose: review`, `run_on: success`
+phase. Review reviews are not teardown; when verification aborts the run,
 Glimmung runs only teardown phases and then terminates the run as aborted.
 
 ```yaml
 phases:
-  - name: touchpoint
+  - name: review
     kind: k8s_job
     run_on: success
-    purpose: review_touchpoint
+    purpose: review
     depends_on: [testing]
     jobs:
-      - id: pr-touchpoint
-        primitive: pr_touchpoint
+      - id: pr-review
+        primitive: pr_review
 ```
 
 The job is Glimmung-supplied. Registration canonicalizes the declared job into
-the managed runner step that calls Glimmung's PR/touchpoint finalizer.
+the managed runner step that calls Glimmung's PR/review finalizer.
 The workflow owns the placement and job id; Glimmung owns the implementation.
 The historical PR opt-out toggle was deleted: there was no documented product
 scenario for PR-less workflows and per migration-policy unused toggles are
@@ -392,26 +392,26 @@ deletion targets, not design options. The `pr.recycle_policy` setting remains
 and configures the reject-signal recycle target.
 
 The same finalizer is also exposed as an admin repair/control endpoint:
-`POST /v1/projects/{project}/issues/{issue_number}/runs/{run_number}/touchpoint/finalize`.
+`POST /v1/projects/{project}/issues/{issue_number}/runs/{run_number}/review/finalize`.
 For recycled runs, use the cycle-addressable form that matches the UI URL:
-`POST /v1/projects/{project}/issues/{issue_number}/runs/{run_number}/cycles/{cycle_number}/touchpoint/finalize`.
+`POST /v1/projects/{project}/issues/{issue_number}/runs/{run_number}/cycles/{cycle_number}/review/finalize`.
 It is idempotent and uses the durable Run state as source of truth: it creates
-or reuses the GitHub PR, records `run.pr_number`, and ensures the Touchpoint
+or reuses the GitHub PR, records `run.pr_number`, and ensures the Review
 linked to the Issue and Run. During that same call, Glimmung promotes review
 facts such as `validation_url` into canonical Run fields, normalizes run
-artifact evidence into Touchpoint evidence, and validates required typed
-evidence artifacts before the Touchpoint is ready. For browser-visible changes,
+artifact evidence into Review evidence, and validates required typed
+evidence artifacts before the Review is ready. For browser-visible changes,
 WebM video is the baseline evidence kind; screenshots are supplemental
 final-state or thumbnail evidence. GitHub PR bodies stay a syndicated
 pointer into Glimmung; video, screenshots, and other review evidence belong on
-the Glimmung Touchpoint. Operators should use this endpoint when a Run already
+the Glimmung Review. Operators should use this endpoint when a Run already
 passed verification but an older or interrupted workflow did not materialize
 the review surface.
 
-## Human review gate (touchpoint_gate)
+## Human review gate (review_gate)
 
-Workflows that want a reviewer to confirm a touchpoint before merging declare a
-`touchpoint_gate` phase between testing and cleanup. The gate has exactly one
+Workflows that want a reviewer to confirm a review before merging declare a
+`review_gate` phase between testing and cleanup. The gate has exactly one
 managed job with `primitive: pr_merge`; Glimmung canonicalizes that job into
 the runner step that performs the idempotent merge.
 
@@ -443,20 +443,20 @@ phases:
     jobs:
       - id: env-destroy
 
-  - name: touchpoint
+  - name: review
     kind: k8s_job
     run_on: success
-    purpose: review_touchpoint
+    purpose: review
     depends_on: [cleanup_early]
     jobs:
-      - id: pr-touchpoint
-        primitive: pr_touchpoint
+      - id: pr-review
+        primitive: pr_review
 
-  - name: touchpoint_gate
+  - name: review_gate
     kind: k8s_job
     run_on: success
     purpose: review_gate
-    depends_on: [touchpoint]
+    depends_on: [review]
     jobs:
       - id: pr-merge
         primitive: pr_merge
@@ -465,7 +465,7 @@ phases:
     kind: k8s_job
     run_on: always
     purpose: teardown
-    depends_on: [touchpoint_gate]
+    depends_on: [review_gate]
     jobs:
       - id: env-destroy-final
 ```
@@ -473,7 +473,7 @@ phases:
 Runtime behavior:
 
 - When the workflow advances into the gate, Glimmung appends the durable
-  `touchpoint_gate` attempt, sets the Run state to `review_required`, and does
+  `review_gate` attempt, sets the Run state to `review_required`, and does
   NOT launch the gate's job. `review_required` is an in-progress sub-state —
   locks stay held and the slot may still be alive if the issue had
   `preserve_test_env=true`. Projections treat it as active.
@@ -489,8 +489,8 @@ Runtime behavior:
 - The `pr_merge` primitive is idempotent. A second approve when the PR is
   already merged returns `status: already_merged` and is a benign no-op.
 - If any primary phase aborts before the review surface, Glimmung dispatches
-  only remaining teardown phases. It does not run `touchpoint` or
-  `touchpoint_gate`, so an aborted run cannot park in `review_required`.
+  only remaining teardown phases. It does not run `review` or
+  `review_gate`, so an aborted run cannot park in `review_required`.
 
 The cleanup-execution split:
 
@@ -501,7 +501,7 @@ The cleanup-execution split:
   the phase still advances and the run history shows the deliberate skip
   attributed to the resolved condition. With `preserve_test_env=false` (the
   default) the env is torn down here, before the reviewer sees the
-  touchpoint. The retired `skip_when_preserve_test_env` field is rejected at
+  review. The retired `skip_when_preserve_test_env` field is rejected at
   registration with a pointer at this `when` form.
 - `cleanup_final` is the catch-all teardown phase after merge or abort. It
   always actually runs on those paths. When `cleanup_early` already destroyed
@@ -521,7 +521,7 @@ reap (ambience#224) covers any resources a still-failed teardown did not
 remove.
 
 The `pr_merge` primitive is also exposed as an admin repair/control endpoint:
-`POST /v1/projects/{project}/issues/{issue_number}/runs/{run_number}/touchpoint/merge`
+`POST /v1/projects/{project}/issues/{issue_number}/runs/{run_number}/review/merge`
 (and the cycle-addressable form). Idempotent; uses the durable Run state as
 source of truth. Useful for triggering an approve from the API or repairing
 a stuck gate.
@@ -704,7 +704,7 @@ has a run-local cycle ordinal. The compact display form is
 `<run>.<run_cycle>` such as `1.1`, `1.2`, `2.1`.
 
 Recycle policy creates a new cycle under the same run. Reviewer feedback,
-touchpoint changes, and a user pressing Run after terminal state create a
+review changes, and a user pressing Run after terminal state create a
 new run with its first cycle. Manual mid-run restart is not part of the
 product HTTP surface; emergency surgery belongs outside the normal run
 workflow model.

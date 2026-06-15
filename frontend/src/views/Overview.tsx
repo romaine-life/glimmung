@@ -4,7 +4,7 @@ import { Pill } from "../ui/bits";
 import {
   attention,
   issueSummaryPath,
-  issueTouchpointPath,
+  issueReviewPath,
   leaseKind,
   leaseStateTone,
   slotStateTone,
@@ -13,13 +13,13 @@ import {
   useLayout,
   usd,
   type IssueRow,
-  type TouchpointRow,
+  type ReviewRow,
 } from "./lib";
 
 export function Overview() {
   const { snap } = useLayout();
   const issues = useJson<IssueRow[]>("/v1/issues?needs_attention=true");
-  const touchpoints = useJson<TouchpointRow[]>("/v1/touchpoints");
+  const reviews = useJson<ReviewRow[]>("/v1/reviews");
 
   const leases = snap?.active_leases ?? [];
   const slots = snap?.test_environments ?? [];
@@ -30,7 +30,7 @@ export function Overview() {
   const busySlots = slots.filter((s) => s.lease != null || ["claimed", "active", "running"].includes(s.state)).length;
   const waiting = (snap?.waiting_test_slot_requests ?? []).length + slots.reduce((n, s) => n + (s.waiting_requests?.length ?? 0), 0);
   const attentionRows = issues.data ?? [];
-  const openTouchpoints = (touchpoints.data ?? []).filter((t) => !t.merged && t.state !== "closed");
+  const openReviews = (reviews.data ?? []).filter((t) => !t.merged && t.state !== "closed");
 
   return (
     <>
@@ -62,7 +62,7 @@ export function Overview() {
           <div className="kpi-label">Needs review</div>
           <div className="kpi-val">{issues.loading ? "—" : attentionRows.length}</div>
           <div className="kpi-foot">
-            {openTouchpoints.length > 0 ? <Pill tone="vio">{openTouchpoints.length} touchpoints</Pill> : <span className="dim">no open touchpoints</span>}
+            {openReviews.length > 0 ? <Pill tone="vio">{openReviews.length} reviews</Pill> : <span className="dim">no open reviews</span>}
           </div>
         </div>
         <div className="card kpi clickable">
@@ -166,15 +166,15 @@ export function Overview() {
           </div>
 
           <div className="card">
-            <div className="panel-head"><h3>Touchpoints</h3><div className="panel-actions"><Link className="link fs-sm" to="/touchpoints">All</Link></div></div>
+            <div className="panel-head"><h3>Reviews</h3><div className="panel-actions"><Link className="link fs-sm" to="/reviews">All</Link></div></div>
             <div style={{ padding: 6 }}>
-              {openTouchpoints.length === 0 ? (
-                <div className="card-pad"><div className="empty">No open touchpoints.</div></div>
-              ) : openTouchpoints.slice(0, 4).map((t) => (
+              {openReviews.length === 0 ? (
+                <div className="card-pad"><div className="empty">No open reviews.</div></div>
+              ) : openReviews.slice(0, 4).map((t) => (
                 <Link
                   key={t.ref}
                   className="ev"
-                  to={t.issue_number != null ? issueTouchpointPath(t.project, t.issue_number) : "/touchpoints"}
+                  to={t.issue_number != null ? issueReviewPath(t.project, t.issue_number) : "/reviews"}
                   style={{ margin: 6, border: "none", background: "transparent" }}
                 >
                   <Icon name="pr" />
@@ -190,7 +190,7 @@ export function Overview() {
           <div className="card card-pad">
             <div className="eyebrow mb-10">Spend</div>
             <div className="grid-kv">
-              <div className="k">open touchpoints</div><div className="v mono fs-sm">{usd(openTouchpoints.reduce((n, t) => n + (t.run_cumulative_cost_usd || 0), 0))}</div>
+              <div className="k">open reviews</div><div className="v mono fs-sm">{usd(openReviews.reduce((n, t) => n + (t.run_cumulative_cost_usd || 0), 0))}</div>
               <div className="k">projects</div><div className="v mono fs-sm">{projects.map((p) => p.name).join(", ") || "—"}</div>
             </div>
           </div>

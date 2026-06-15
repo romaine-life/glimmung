@@ -461,7 +461,7 @@ td {
    SEMANTIC STATE COLORS  (stable across themes)
    green=pass/free/approve/advance · amber=in-progress/busy
    red=abort/fail/drain/needs-work · blue=review/info/manual
-   violet=touchpoint/signal
+   violet=review/signal
    ============================================================ */
 .app {
   --ok-fg:   #4cd99a;  --ok-bg:   rgba(76,217,154,0.12);  --ok-line: rgba(76,217,154,0.28);

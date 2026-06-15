@@ -169,8 +169,8 @@ var schemaMigrations = []string{
 	`CREATE INDEX IF NOT EXISTS portfolios_by_project_updated
 		ON portfolios (project, updated_at DESC)`,
 
-	// Clean up mis-typed rows that landed in `reports` before touchpoints had
-	// their own table. Filter by `repo` field presence: touchpoint payloads
+	// Clean up mis-typed rows that landed in `reports` before reviews had
+	// their own table. Filter by `repo` field presence: review payloads
 	// carry a repo field; report payloads do not.
 	`DELETE FROM reports WHERE payload ? 'repo'`,
 
@@ -312,10 +312,10 @@ var schemaMigrations = []string{
 		ON slot_history (project, slot_index, created_at DESC)`,
 
 	// ------------------------------------------------------------------
-	// touchpoints — operator-visible per-issue activity. Per-project lookups
+	// reviews — operator-visible per-issue activity. Per-project lookups
 	// and per-issue single reads are the dominant access pattern.
 	// ------------------------------------------------------------------
-	`CREATE TABLE IF NOT EXISTS touchpoints (
+	`CREATE TABLE IF NOT EXISTS reviews (
 		project           text NOT NULL,
 		issue_number      int NOT NULL,
 		payload           jsonb NOT NULL DEFAULT '{}'::jsonb,
@@ -323,8 +323,8 @@ var schemaMigrations = []string{
 		updated_at        timestamptz NOT NULL DEFAULT now(),
 		PRIMARY KEY (project, issue_number)
 	)`,
-	`CREATE INDEX IF NOT EXISTS touchpoints_by_project_updated
-		ON touchpoints (project, updated_at DESC)`,
+	`CREATE INDEX IF NOT EXISTS reviews_by_project_updated
+		ON reviews (project, updated_at DESC)`,
 
 	// ------------------------------------------------------------------
 	// slot_inspections — durable ledger for free (lease-scoped) inspections
@@ -447,7 +447,7 @@ var schemaMigrations = []string{
 					FROM jsonb_array_elements(payload->'phases') WITH ORDINALITY AS elems(phase, ord)
 					CROSS JOIN LATERAL (
 						SELECT CASE
-							WHEN lower(phase->>'kind') = 'touchpoint_gate' THEN 'review_gate'
+							WHEN lower(phase->>'kind') = 'review_gate' THEN 'review_gate'
 							WHEN phase->>'evidenceVerificationGate' = 'true'
 								OR phase->>'evidence_verification_gate' = 'true' THEN 'evidence_gate'
 							WHEN EXISTS (
@@ -458,8 +458,8 @@ var schemaMigrations = []string{
 										ELSE '[]'::jsonb
 									END
 								) AS job
-								WHERE job->>'primitive' = 'pr_touchpoint'
-							) THEN 'review_touchpoint'
+								WHERE job->>'primitive' = 'pr_review'
+							) THEN 'review'
 							WHEN phase->>'verify' = 'true' THEN 'verification'
 							WHEN phase->>'skipWhenPreserveTestEnv' = 'true'
 								OR phase->>'skip_when_preserve_test_env' = 'true'
@@ -505,7 +505,7 @@ var schemaMigrations = []string{
 					FROM jsonb_array_elements(payload->'phases') WITH ORDINALITY AS elems(phase, ord)
 					CROSS JOIN LATERAL (
 						SELECT CASE
-							WHEN lower(phase->>'kind') = 'touchpoint_gate' THEN 'review_gate'
+							WHEN lower(phase->>'kind') = 'review_gate' THEN 'review_gate'
 							WHEN phase->>'evidenceVerificationGate' = 'true'
 								OR phase->>'evidence_verification_gate' = 'true' THEN 'evidence_gate'
 							WHEN EXISTS (
@@ -516,8 +516,8 @@ var schemaMigrations = []string{
 										ELSE '[]'::jsonb
 									END
 								) AS job
-								WHERE job->>'primitive' = 'pr_touchpoint'
-							) THEN 'review_touchpoint'
+								WHERE job->>'primitive' = 'pr_review'
+							) THEN 'review'
 							WHEN phase->>'verify' = 'true' THEN 'verification'
 							WHEN phase->>'skipWhenPreserveTestEnv' = 'true'
 								OR phase->>'skip_when_preserve_test_env' = 'true'
@@ -540,7 +540,7 @@ var schemaMigrations = []string{
 	  AND s.payload IS DISTINCT FROM migrated.payload`,
 
 	// Review gates are phase behavior, not executor identity. Rewrite the
-	// retired touchpoint_gate executor kind out of stored workflow JSON so the
+	// retired review_gate executor kind out of stored workflow JSON so the
 	// runtime does not need a compatibility branch after this migration.
 	`WITH migrated AS (
 		SELECT
@@ -552,11 +552,11 @@ var schemaMigrations = []string{
 				(
 					SELECT COALESCE(jsonb_agg(
 						CASE
-							WHEN lower(phase->>'kind') = 'touchpoint_gate' THEN
+							WHEN lower(phase->>'kind') = 'review_gate' THEN
 								phase || jsonb_build_object(
 									'kind', 'k8s_job',
 									'purpose', 'review_gate',
-									'workflowFilename', 'k8s_job:' || COALESCE(NULLIF(phase->>'name', ''), 'touchpoint_gate')
+									'workflowFilename', 'k8s_job:' || COALESCE(NULLIF(phase->>'name', ''), 'review_gate')
 								)
 							ELSE phase
 						END
@@ -587,11 +587,11 @@ var schemaMigrations = []string{
 				(
 					SELECT COALESCE(jsonb_agg(
 						CASE
-							WHEN lower(phase->>'kind') = 'touchpoint_gate' THEN
+							WHEN lower(phase->>'kind') = 'review_gate' THEN
 								phase || jsonb_build_object(
 									'kind', 'k8s_job',
 									'purpose', 'review_gate',
-									'workflowFilename', 'k8s_job:' || COALESCE(NULLIF(phase->>'name', ''), 'touchpoint_gate')
+									'workflowFilename', 'k8s_job:' || COALESCE(NULLIF(phase->>'name', ''), 'review_gate')
 								)
 							ELSE phase
 						END
@@ -622,10 +622,10 @@ var schemaMigrations = []string{
 				(
 					SELECT COALESCE(jsonb_agg(
 						CASE
-							WHEN lower(attempt->>'phase_kind') = 'touchpoint_gate' THEN
+							WHEN lower(attempt->>'phase_kind') = 'review_gate' THEN
 								attempt || jsonb_build_object(
 									'phase_kind', 'k8s_job',
-									'workflow_filename', 'k8s_job:' || COALESCE(NULLIF(attempt->>'phase', ''), 'touchpoint_gate')
+									'workflow_filename', 'k8s_job:' || COALESCE(NULLIF(attempt->>'phase', ''), 'review_gate')
 								)
 							ELSE attempt
 						END
@@ -656,7 +656,7 @@ var schemaMigrations = []string{
 				(
 					SELECT COALESCE(jsonb_agg(
 						CASE
-							WHEN lower(phase->>'kind') = 'touchpoint_gate' THEN
+							WHEN lower(phase->>'kind') = 'review_gate' THEN
 								phase || jsonb_build_object('kind', 'k8s_job')
 							ELSE phase
 						END
@@ -697,7 +697,7 @@ var schemaMigrations = []string{
 		  AND NOT EXISTS (
 			SELECT 1
 			FROM jsonb_array_elements(COALESCE(payload->'attempts', '[]'::jsonb)) AS attempt
-			WHERE attempt->>'phase' = 'touchpoint_gate'
+			WHERE attempt->>'phase' = 'review_gate'
 		  )
 	), migrated AS (
 		SELECT
@@ -709,9 +709,9 @@ var schemaMigrations = []string{
 					'{attempts}',
 					COALESCE(payload->'attempts', '[]'::jsonb) || jsonb_build_array(jsonb_build_object(
 						'attempt_index', next_idx,
-						'phase', 'touchpoint_gate',
+						'phase', 'review_gate',
 						'phase_kind', 'k8s_job',
-						'workflow_filename', 'k8s_job:touchpoint_gate',
+						'workflow_filename', 'k8s_job:review_gate',
 						'dispatched_at', ts
 					)),
 					true
@@ -720,7 +720,7 @@ var schemaMigrations = []string{
 				(
 					SELECT COALESCE(jsonb_agg(
 						CASE
-							WHEN phase->>'name' = 'touchpoint_gate' THEN
+							WHEN phase->>'name' = 'review_gate' THEN
 								phase || jsonb_build_object(
 									'kind', 'k8s_job',
 									'state', 'active',

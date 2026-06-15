@@ -45,7 +45,7 @@ The detailed cleanup inventory lives in
   stable for operations, dashboard bootstrap, and automation clients.
 - Retired route families must stay unregistered. `route_inventory_test.go`
   rejects storage-ID, GitHub Issue-coordinate, Report alias, PR-coordinate
-  Touchpoint, and retired runner callback/proxy routes.
+  Review, and retired runner callback/proxy routes.
 - Canonical graph routes are Go-owned: `/v1/issues/by-number/{project}/{issue_number}/graph`
   and `/v1/graph`.
 
@@ -53,7 +53,7 @@ The detailed cleanup inventory lives in
 
 - The active Postgres tables include `projects`, `workflows`, `leases`, `runs`,
   `run_events`, `issues`, `locks`, `reports`, `playbooks`, `signals`, `slots`,
-  `slot_history`, and `touchpoints`.
+  `slot_history`, and `reviews`.
 - Workflow phases must use `k8s_job`. Blank workflow phase `kind` values
   normalize to `k8s_job`; any other executor kind is rejected before it can
   become the project runtime contract.

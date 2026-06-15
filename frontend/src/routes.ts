@@ -14,7 +14,7 @@ export const ISSUE_DETAIL_CHILD_ROUTES = {
   runJob: "runs/:runId/cycles/:cycleId/phases/:phaseId/jobs/:jobId",
   runStep: "runs/:runId/cycles/:cycleId/phases/:phaseId/jobs/:jobId/steps/:stepId",
   settings: "settings",
-  touchpoint: "touchpoint",
+  review: "review",
 } as const;
 
 const APP_ROUTES = {
@@ -40,10 +40,10 @@ const APP_ROUTES = {
   issueRunJob: `/projects/:project/issues/:issueNumber/${ISSUE_DETAIL_CHILD_ROUTES.runJob}`,
   issueRunStep: `/projects/:project/issues/:issueNumber/${ISSUE_DETAIL_CHILD_ROUTES.runStep}`,
   issueSettings: `/projects/:project/issues/:issueNumber/${ISSUE_DETAIL_CHILD_ROUTES.settings}`,
-  issueTouchpoint: `/projects/:project/issues/:issueNumber/${ISSUE_DETAIL_CHILD_ROUTES.touchpoint}`,
+  issueReview: `/projects/:project/issues/:issueNumber/${ISSUE_DETAIL_CHILD_ROUTES.review}`,
   projectNeedsAttention: "/projects/:project/needs-attention",
   projectRuns: "/projects/:project/runs",
-  touchpoints: "/touchpoints",
+  reviews: "/reviews",
 } as const;
 
 type IssueRunSelectionParams = {
@@ -197,8 +197,8 @@ const breadcrumbRoutes: BreadcrumbRouteObject[] = [
                         handle: { crumb: (match) => ({ label: "Settings", to: routePath(APP_ROUTES.issueSettings, match.params) }) },
                       },
                       {
-                        path: ISSUE_DETAIL_CHILD_ROUTES.touchpoint,
-                        handle: { crumb: () => ({ label: "Touchpoint" }) },
+                        path: ISSUE_DETAIL_CHILD_ROUTES.review,
+                        handle: { crumb: () => ({ label: "Review" }) },
                       },
                     ],
                   },
@@ -213,7 +213,7 @@ const breadcrumbRoutes: BreadcrumbRouteObject[] = [
           },
         ],
       },
-      { path: "touchpoints", handle: { crumb: () => ({ label: "Touchpoints", to: APP_ROUTES.touchpoints }) } },
+      { path: "reviews", handle: { crumb: () => ({ label: "Reviews", to: APP_ROUTES.reviews }) } },
       { path: "issues", handle: { crumb: () => ({ label: "Issues", to: "/issues" }) } },
       { path: "runs", handle: { crumb: () => ({ label: "Runs", to: "/runs" }) } },
       { path: "workflows", handle: { crumb: () => ({ label: "Workflows", to: "/workflows" }) } },
