@@ -234,6 +234,80 @@ func TestApplyHotSwapAntigravityRunnerDispatchesJob(t *testing.T) {
 	}
 }
 
+// TestApplyHotSwapBackendDispatchesJob asserts the backend path: build a
+// single binary from the ref, stream it onto the supervisor's hot-artifact
+// file in the slot's APP namespace, SIGHUP PID 1, then health-gate the
+// re-exec inside the pod. It must NOT use the runner/static dir-extract
+// path: backend streams one file (cat > target.next; chmod; atomic mv) and
+// polls the in-pod health endpoint instead of tar-extracting a directory.
+func TestApplyHotSwapBackendDispatchesJob(t *testing.T) {
+	k8s := &fakeK8sJobClient{
+		waitResult: "complete",
+		buildLogs:  "build ok",
+		swapLogs:   "health ok after restart",
+	}
+	result, err := ApplyHotSwap(context.Background(), k8s, ApplyHotSwapOptions{
+		Project:         "tank-operator",
+		ArtifactKind:    "backend",
+		GitRef:          "feat/x",
+		RepoURL:         "https://github.com/romaine-life/tank-operator.git",
+		TargetNamespace: "tank-operator-slot-1", // app ns, not -sessions
+		JobNamespace:    "glimmung",
+		Timeout:         30 * time.Second,
+		Contract: hotswap.Contract{
+			Enabled: true,
+			Backend: hotswap.BackendContract{
+				Enabled:      true,
+				Strategy:     "supervisor",
+				BuildCommand: "cd backend-go && go build -o /tmp/tank-operator-go ./cmd/tank-operator",
+				Artifact:     "/tmp/tank-operator-go",
+				Target:       "/var/run/tank-operator-hot/tank-operator-go",
+				HealthPath:   "/healthz",
+				HealthPort:   8000,
+				PodSelector:  "app.kubernetes.io/name=tank-operator",
+				Container:    "tank-operator",
+				BuilderImage: "golang:1.26-alpine",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("err: %v (result %+v)", err, result)
+	}
+	if result.Outcome != "persisted" {
+		t.Fatalf("outcome = %q, want persisted", result.Outcome)
+	}
+	if len(k8s.appliedJobs) != 1 {
+		t.Fatalf("applied jobs = %d, want 1", len(k8s.appliedJobs))
+	}
+	jobJSON, _ := json.Marshal(k8s.appliedJobs[0])
+	s := string(jobJSON)
+	// Substrings free of <, >, & so Go's json.Marshal HTML-escaping (which
+	// turns `>` into >, `&&` into &&) doesn't make the
+	// assertions brittle. Together these prove: app-pod selector, single-file
+	// build surface, stdin stream (exec -i) onto a staged .next file, atomic
+	// replace, SIGHUP re-exec, and the in-pod health gate.
+	mustContain := []string{
+		`"glimmung.io/apply-hot-swap-kind":"backend"`,
+		"golang:1.26-alpine",                               // builder image
+		"app.kubernetes.io/name=tank-operator",             // app-pod selector
+		"/work/artifact",                                   // single-file build surface + stdin source
+		"exec -i",                                          // stdin stream of the one binary
+		"/var/run/tank-operator-hot/tank-operator-go.next", // atomic staging file
+		"chmod +x /var/run/tank-operator-hot/tank-operator-go.next",
+		"mv -f /var/run/tank-operator-hot/tank-operator-go.next /var/run/tank-operator-hot/tank-operator-go",
+		"kill -HUP 1",
+		"http://127.0.0.1:8000/healthz", // in-pod health gate
+	}
+	for _, c := range mustContain {
+		if !strings.Contains(s, c) {
+			t.Errorf("backend Job spec missing %q\nspec=%s", c, s)
+		}
+	}
+	if strings.Contains(s, "tar x --strip-components=1") {
+		t.Errorf("backend Job spec must not use the dir-extract path\nspec=%s", s)
+	}
+}
+
 // TestApplyHotSwapStaticDispatchesJob asserts the static path: build from
 // the ref, clear the override dir, tar-stream dist into every matched app
 // replica in the slot's APP namespace, and send NO restart (static is
@@ -355,7 +429,9 @@ func TestApplyHotSwapFetchesRefWithAuth(t *testing.T) {
 
 func TestApplyHotSwapRejectsUnsupportedKind(t *testing.T) {
 	k8s := &fakeK8sJobClient{}
-	for _, kind := range []string{"backend", "", "frontend"} {
+	// backend is now a supported kind (see TestApplyHotSwapBackendDispatchesJob);
+	// only genuinely-unknown kinds reach the default rejection.
+	for _, kind := range []string{"", "frontend", "image"} {
 		_, err := ApplyHotSwap(context.Background(), k8s, ApplyHotSwapOptions{
 			ArtifactKind: kind,
 			Contract:     hotswap.Contract{Enabled: true, AgentRunner: hotswap.AgentRunnerContract{Enabled: true, BuilderImage: "x"}},

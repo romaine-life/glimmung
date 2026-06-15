@@ -60,16 +60,47 @@ type StaticContract struct {
 	BuilderImage string `json:"builder_image,omitempty"`
 }
 
+// BackendContract is the test-slot hot-swap shape for the orchestrator's own
+// compiled binary (the app pod), as opposed to a static asset tree or a
+// session-pod runner. The apply endpoint builds a single executable in a
+// Kubernetes Job, streams it onto a writable volume the app pod's supervisor
+// re-execs from, sends SIGHUP to PID 1, then confirms the new binary serves
+// HealthPath before reporting success. Distinguished from a runner artifact
+// by: (a) the artifact is one executable file, not a directory; (b) the
+// target is the slot's app pod, selected by PodSelector, not a session pod;
+// (c) the swap is health-gated, because "signal sent" is not "binary healthy".
 type BackendContract struct {
-	Enabled          bool     `json:"enabled"`
-	Strategy         string   `json:"strategy"`
-	BuildCommand     string   `json:"build_command"`
-	Artifact         string   `json:"artifact"`
-	Target           string   `json:"target"`
-	HealthPath       string   `json:"health_path"`
-	CopyContainer    string   `json:"copy_container"`
-	RestartContainer string   `json:"restart_container"`
-	RestartCommand   []string `json:"restart_command"`
+	Enabled bool `json:"enabled"`
+	// Strategy selects the in-pod restart mechanism. Only "supervisor" (a
+	// PID-1 supervisor that re-execs the child from Target on SIGHUP) is
+	// supported; empty is treated as "supervisor".
+	Strategy string `json:"strategy"`
+	// BuildCommand runs in the init container's working directory (the cloned
+	// repo root) and must produce a single executable at Artifact.
+	BuildCommand string `json:"build_command"`
+	// Artifact is the absolute path, inside the builder image, of the single
+	// executable BuildCommand produces (e.g. /tmp/tank-operator-go). The apply
+	// endpoint streams exactly this one file into Target.
+	Artifact string `json:"artifact"`
+	// Target is the absolute container path (a file) the supervisor re-execs
+	// from on SIGHUP (e.g. /var/run/tank-operator-hot/tank-operator-go).
+	Target string `json:"target"`
+	// HealthPath is polled inside the target pod after the re-exec to confirm
+	// the new binary actually serves (observed outcome, not just "signal
+	// sent"). No 2xx within the window fails the swap.
+	HealthPath string `json:"health_path"`
+	// HealthPort is the in-pod TCP port HealthPath is served on (the app's
+	// container port, e.g. 8000). The health poll runs against
+	// http://127.0.0.1:<HealthPort><HealthPath>. Required by the apply
+	// endpoint at request time.
+	HealthPort int `json:"health_port,omitempty"`
+	// PodSelector resolves the slot's app pods (e.g.
+	// "app.kubernetes.io/name=tank-operator"). Required by the apply endpoint.
+	PodSelector string `json:"pod_selector,omitempty"`
+	// Container names the pod container that runs the supervisor as PID 1 and
+	// mounts Target read-write (e.g. "tank-operator"). Required by the apply
+	// endpoint.
+	Container string `json:"container,omitempty"`
 	// BuilderImage: see StaticContract.BuilderImage.
 	BuilderImage string `json:"builder_image,omitempty"`
 }

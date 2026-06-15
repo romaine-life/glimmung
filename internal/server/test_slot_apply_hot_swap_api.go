@@ -56,9 +56,9 @@ type TestSlotApplyHotSwapResult struct {
 //  1. POST { project, slot_index|slot_name, artifact_kind, git_ref, validation_target, timeout_seconds }
 //  2. Endpoint resolves the active test-slot lease for project+slot.
 //  3. Endpoint reads the project's hot-swap contract from metadata.
-//  4. Endpoint validates artifact_kind is supported (static or the
-//     runner artifacts agent_runner, codex_runner, antigravity_runner)
-//     and the relevant builder_image is present.
+//  4. Endpoint validates artifact_kind is supported (static, backend, or
+//     the runner artifacts agent_runner, codex_runner, antigravity_runner)
+//     and the kind's request-time fields are present.
 //  5. Endpoint dispatches a build-and-swap Job via ops.ApplyHotSwap,
 //     blocks on completion.
 //  6. Endpoint appends a hot-swap history entry (success or failure).
@@ -176,15 +176,27 @@ func applyTestSlotHotSwap(store ReadStore, preparer TestSlotPreparer, minter Run
 			return
 		}
 
-		// Backend builder_image is optional at Validate time (existing
-		// registered contracts predate the field), so the apply endpoint
-		// validates it here at request time when artifact_kind=backend
-		// is invoked. AgentRunner builder_image is required at Validate
-		// time (the only consumer of runner artifacts is the apply endpoint;
-		// no legacy CLI fallback).
+		// Backend's apply-endpoint fields (builder_image, pod_selector,
+		// container, health_port) are optional at Validate time so contracts
+		// registered before backend joined the apply endpoint still parse;
+		// the endpoint enforces them here at request time, mirroring static
+		// below. health_port is required because the swap is health-gated:
+		// the swap container polls http://127.0.0.1:<health_port><health_path>
+		// inside the pod to confirm the re-exec actually serves.
 		if req.ArtifactKind == "backend" {
-			if strings.TrimSpace(contract.Backend.BuilderImage) == "" {
-				writeProblem(w, http.StatusUnprocessableEntity, "contract.backend.builder_image required for apply endpoint (request-time check; the legacy CLI path doesn't need it)")
+			missing := ""
+			switch {
+			case strings.TrimSpace(contract.Backend.BuilderImage) == "":
+				missing = "builder_image"
+			case strings.TrimSpace(contract.Backend.PodSelector) == "":
+				missing = "pod_selector"
+			case strings.TrimSpace(contract.Backend.Container) == "":
+				missing = "container"
+			case contract.Backend.HealthPort <= 0:
+				missing = "health_port"
+			}
+			if missing != "" {
+				writeProblem(w, http.StatusUnprocessableEntity, "contract.backend."+missing+" required for apply endpoint")
 				return
 			}
 		}
@@ -209,12 +221,13 @@ func applyTestSlotHotSwap(store ReadStore, preparer TestSlotPreparer, minter Run
 		}
 
 		// Target namespace convention. Runner artifacts live in session
-		// pods (`<slot_name>-sessions`); static assets live in the slot's
-		// app pods (`<slot_name>`). Both namespaces carry the glimmung
-		// test-slot labels. If a future project needs a different namespace,
-		// extend the contract; for v1 the convention is sufficient.
+		// pods (`<slot_name>-sessions`); static assets and the backend
+		// binary live in the slot's app pods (`<slot_name>`). Both
+		// namespaces carry the glimmung test-slot labels. If a future
+		// project needs a different namespace, extend the contract; for v1
+		// the convention is sufficient.
 		targetNamespace := slotName + "-sessions"
-		if req.ArtifactKind == "static" {
+		if req.ArtifactKind == "static" || req.ArtifactKind == "backend" {
 			targetNamespace = slotName
 		}
 

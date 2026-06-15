@@ -440,6 +440,91 @@ func TestApplyTestSlotHotSwapRejectsBackendWithoutBuilderImage(t *testing.T) {
 	}
 }
 
+// TestApplyTestSlotHotSwapBackendResolvesToAppNamespace pins the backend
+// happy path: a fully configured backend contract dispatches to the slot's
+// APP namespace (not <slot>-sessions), and the contract flows through to the
+// performer. This is the namespace-routing invariant — backend swaps the
+// orchestrator app pod, like static, not a session-pod runner.
+func TestApplyTestSlotHotSwapBackendResolvesToAppNamespace(t *testing.T) {
+	store := newApplyHotSwapStore(t)
+	store.projects[0].Metadata["test_slot_hot_swap"].(map[string]any)["backend"] = map[string]any{
+		"enabled":       true,
+		"strategy":      "supervisor",
+		"build_command": "cd backend-go && go build -o /tmp/tank-operator-go ./cmd/tank-operator",
+		"artifact":      "/tmp/tank-operator-go",
+		"target":        "/var/run/tank-operator-hot/tank-operator-go",
+		"health_path":   "/healthz",
+		"health_port":   8000,
+		"pod_selector":  "app.kubernetes.io/name=tank-operator",
+		"container":     "tank-operator",
+		"builder_image": "golang:1.26-alpine",
+	}
+
+	var seen ApplyHotSwapOptions
+	performer := func(_ context.Context, opts ApplyHotSwapOptions) (ApplyHotSwapResult, error) {
+		seen = opts
+		return ApplyHotSwapResult{ArtifactKind: opts.ArtifactKind, Outcome: "persisted", Timings: map[string]string{}}, nil
+	}
+
+	handler := http.HandlerFunc(applyTestSlotHotSwap(store, nil, nil, performer))
+	body := `{"project":"tank-operator","slot_name":"tank-operator-slot-1","artifact_kind":"backend","git_ref":"feat/x","validation_target":"existing_session"}`
+	req := authedApplyRequest(t, body)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	if seen.ArtifactKind != "backend" {
+		t.Fatalf("performer ArtifactKind = %q", seen.ArtifactKind)
+	}
+	// Backend targets the slot's app pods, NOT the -sessions namespace.
+	if seen.TargetNamespace != "tank-operator-slot-1" {
+		t.Fatalf("performer TargetNamespace = %q, want tank-operator-slot-1 (app ns)", seen.TargetNamespace)
+	}
+	if seen.Contract.Backend.HealthPort != 8000 || seen.Contract.Backend.Container != "tank-operator" {
+		t.Fatalf("backend contract not flowed: %#v", seen.Contract.Backend)
+	}
+}
+
+// TestApplyTestSlotHotSwapRejectsBackendWithoutHealthPort pins the
+// request-time guard for the health-gate port: backend needs health_port so
+// the swap container can poll the in-pod health endpoint after the re-exec.
+// Without it the swap could report persisted on a crashing binary.
+func TestApplyTestSlotHotSwapRejectsBackendWithoutHealthPort(t *testing.T) {
+	store := newApplyHotSwapStore(t)
+	store.projects[0].Metadata["test_slot_hot_swap"].(map[string]any)["backend"] = map[string]any{
+		"enabled":       true,
+		"strategy":      "supervisor",
+		"build_command": "go build",
+		"artifact":      "/tmp/app",
+		"target":        "/var/run/app-hot/app",
+		"health_path":   "/healthz",
+		"pod_selector":  "app.kubernetes.io/name=tank-operator",
+		"container":     "tank-operator",
+		"builder_image": "golang:1.26-alpine",
+		// health_port intentionally absent
+	}
+
+	performer := func(_ context.Context, _ ApplyHotSwapOptions) (ApplyHotSwapResult, error) {
+		t.Fatal("performer should not be invoked when validation fails")
+		return ApplyHotSwapResult{}, nil
+	}
+
+	handler := http.HandlerFunc(applyTestSlotHotSwap(store, nil, nil, performer))
+	body := `{"project":"tank-operator","slot_name":"tank-operator-slot-1","artifact_kind":"backend","git_ref":"feat/x","validation_target":"existing_session"}`
+	req := authedApplyRequest(t, body)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "health_port") {
+		t.Fatalf("response should name health_port; got %s", rec.Body.String())
+	}
+}
+
 func TestApplyTestSlotHotSwapRequiresValidationTargetForClassifier(t *testing.T) {
 	store := newApplyHotSwapStore(t)
 	performer := func(_ context.Context, _ ApplyHotSwapOptions) (ApplyHotSwapResult, error) {
