@@ -1205,6 +1205,26 @@ func TestRunReportsFromDocsBuildsPublicRefsAndAttempts(t *testing.T) {
 			CreatedAt:   "2026-05-11T02:00:00Z",
 			UpdatedAt:   "2026-05-11T02:00:00Z",
 		},
+		{
+			ID:          "reviewing",
+			Project:     "glimmung",
+			Workflow:    "default",
+			RunNumber:   intPtr(3),
+			IssueRepo:   "romaine-life/glimmung",
+			IssueNumber: 141,
+			State:       "review_required",
+			CreatedAt:   "2026-05-11T04:00:00Z",
+			UpdatedAt:   "2026-05-11T04:06:00Z",
+			Attempts: []attemptDoc{{
+				AttemptIndex:     0,
+				Phase:            "verify",
+				PhaseKind:        "k8s_job",
+				WorkflowFilename: "k8s_job:verify",
+				DispatchedAt:     "2026-05-11T04:01:00Z",
+				CompletedAt:      completed,
+				Conclusion:       stringPtr("success"),
+			}},
+		},
 	}
 
 	reports := runReportsFromDocs(docs)
@@ -1223,6 +1243,12 @@ func TestRunReportsFromDocsBuildsPublicRefsAndAttempts(t *testing.T) {
 	}
 	if reports[0].CompletedAt == nil {
 		t.Fatalf("completed_at missing: %#v", reports[0])
+	}
+	if reports[1].CompletedAt != nil {
+		t.Fatalf("in_progress completed_at=%v, want nil", reports[1].CompletedAt)
+	}
+	if reports[2].CompletedAt != nil {
+		t.Fatalf("review_required completed_at=%v, want nil", reports[2].CompletedAt)
 	}
 	if len(reports[0].Attempts[0].JobCompletions) != 1 || reports[0].Attempts[0].JobCompletions[0].JobID != "agent" {
 		t.Fatalf("job completions=%#v", reports[0].Attempts[0].JobCompletions)

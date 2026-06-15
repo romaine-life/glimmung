@@ -2503,7 +2503,7 @@ func runReportFromDoc(doc runDoc, lineageByID map[string]string) server.RunRepor
 		}
 		attempts = append(attempts, reportAttempt)
 	}
-	if doc.State == "in_progress" {
+	if doc.State == "in_progress" || doc.State == "review_required" {
 		completed = nil
 	}
 	var currentPhase *string
