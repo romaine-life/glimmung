@@ -1059,6 +1059,68 @@ func TestEnsureTestSlotInstallerAccessReplacesStaleRoleBinding(t *testing.T) {
 	}
 }
 
+func TestEnsureTestSlotRoleBindingsCreatesNamespacedSessionReadOnly(t *testing.T) {
+	tokenPath := tempTokenFile(t)
+	var paths []string
+	var posted []map[string]any
+	launcher := &KubernetesRunLauncher{
+		Settings: Settings{
+			K8sAPIHost:     "https://kube.test",
+			K8sSATokenPath: tokenPath,
+		},
+		HTTPClient: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			paths = append(paths, req.Method+" "+req.URL.Path)
+			if req.Method == http.MethodPost {
+				var body map[string]any
+				if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+					t.Fatalf("decode request body: %v", err)
+				}
+				posted = append(posted, body)
+			}
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader(`{}`)),
+			}, nil
+		})},
+	}
+	lease := Lease{
+		Project: "tank-operator",
+		Metadata: map[string]any{
+			"runner_slot_name":  "tank-operator-slot-2",
+			"runner_slot_index": "2",
+		},
+	}
+	substitutions := testSlotSubstitutions(lease, Project{Name: "tank-operator"}, "tank-operator-slot-2", "tank-operator-slot-2-sessions")
+
+	if err := launcher.ensureTestSlotRoleBindings(context.Background(), lease, defaultTestSlotRoleBindings(Project{Name: "tank-operator"}), substitutions, "tank-operator-slot-2"); err != nil {
+		t.Fatalf("ensureTestSlotRoleBindings: %v", err)
+	}
+	for _, path := range paths {
+		if strings.Contains(path, "/clusterrolebindings") {
+			t.Fatalf("session read-only binding must not use ClusterRoleBinding path, paths=%#v", paths)
+		}
+	}
+	if len(posted) != 2 {
+		t.Fatalf("posted rolebindings=%d, want 2", len(posted))
+	}
+	seenNamespaces := map[string]bool{}
+	for _, body := range posted {
+		if body["kind"] != "RoleBinding" {
+			t.Fatalf("kind=%q, want RoleBinding", body["kind"])
+		}
+		metadata := body["metadata"].(map[string]any)
+		seenNamespaces[metadata["namespace"].(string)] = true
+		roleRef := body["roleRef"].(map[string]any)
+		if roleRef["kind"] != "ClusterRole" || roleRef["name"] != "view" {
+			t.Fatalf("roleRef=%#v, want ClusterRole/view", roleRef)
+		}
+	}
+	if !seenNamespaces["tank-operator-slot-2"] || !seenNamespaces["tank-operator-slot-2-sessions"] {
+		t.Fatalf("namespaces=%#v, want slot and sessions namespaces", seenNamespaces)
+	}
+}
+
 func TestEnsureTestSlotPreliminariesRunsWarmHelmOnly(t *testing.T) {
 	tokenPath := tempTokenFile(t)
 	var paths []string
@@ -1107,6 +1169,14 @@ func TestEnsureTestSlotPreliminariesRunsWarmHelmOnly(t *testing.T) {
 	}
 	if !containsPath(paths, "GET /apis/batch/v1/namespaces/glimmung-runs/jobs/glim-slot-apply-warm-tank-operator-slot-2-0") {
 		t.Fatalf("preliminary ensure should wait for warm Helm job completion, paths=%#v", paths)
+	}
+	for _, want := range []string{
+		"DELETE /apis/rbac.authorization.k8s.io/v1/clusterrolebindings/tank-operator-slot-2-session-cluster-admin",
+		"DELETE /apis/rbac.authorization.k8s.io/v1/clusterrolebindings/tank-operator-slot-2-session-readonly",
+	} {
+		if !containsPath(paths, want) {
+			t.Fatalf("preliminary ensure should delete retired cluster-wide session binding %q, paths=%#v", want, paths)
+		}
 	}
 	for _, path := range paths {
 		if strings.Contains(path, "glim-slot-apply-hot-") {
@@ -1418,8 +1488,11 @@ func TestTestSlotHelmConfigDefaultsTankChart(t *testing.T) {
 	if _, ok := config.Values["testEnv.enabled"]; ok {
 		t.Fatalf("testEnv.enabled should not be injected into helm values")
 	}
-	if len(config.ClusterRoleBindings) != 2 {
+	if len(config.ClusterRoleBindings) != 1 {
 		t.Fatalf("cluster role binding templates=%d", len(config.ClusterRoleBindings))
+	}
+	if len(config.RoleBindings) != 2 {
+		t.Fatalf("role binding templates=%d", len(config.RoleBindings))
 	}
 }
 
@@ -1647,32 +1720,45 @@ func TestRunnerJobEnvCarriesPriorVerification(t *testing.T) {
 	}
 }
 
-// TestDefaultTestSlotClusterRoleBindingsSessionIsReadOnly is the enforcement
-// guard: the slot session SA must never bind cluster-admin — that grant is the
-// kubectl-cp/exec bypass of the CI-gated hot-swap. It binds read-only `view`.
-func TestDefaultTestSlotClusterRoleBindingsSessionIsReadOnly(t *testing.T) {
-	bindings := defaultTestSlotClusterRoleBindings(Project{Name: "tank-operator"})
-	roleRefName := ""
-	found := false
-	for _, b := range bindings {
+// TestDefaultTestSlotRBACSessionIsNamespacedReadOnly is the enforcement guard:
+// the slot session SA must never get a cluster-wide binding. It gets read-only
+// `view` through RoleBindings scoped to the app and sessions namespaces.
+func TestDefaultTestSlotRBACSessionIsNamespacedReadOnly(t *testing.T) {
+	for _, b := range defaultTestSlotClusterRoleBindings(Project{Name: "tank-operator"}) {
 		subs, _ := b["subjects"].([]any)
 		for _, s := range subs {
 			sm, _ := s.(map[string]any)
 			if sm["name"] == "{slot_name}-session" {
-				found = true
-				if rr, ok := b["roleRef"].(map[string]any); ok {
-					roleRefName, _ = rr["name"].(string)
-				}
+				t.Fatalf("slot session SA must not have a ClusterRoleBinding: %#v", b)
 			}
 		}
 	}
-	if !found {
-		t.Fatal("no ClusterRoleBinding found for the {slot_name}-session SA")
+
+	bindings := defaultTestSlotRoleBindings(Project{Name: "tank-operator"})
+	if len(bindings) != 2 {
+		t.Fatalf("role bindings=%d, want 2", len(bindings))
 	}
-	if roleRefName == "cluster-admin" {
-		t.Fatal("slot session SA must not bind cluster-admin (read-only enforcement)")
+	namespaces := map[string]bool{}
+	for _, b := range bindings {
+		metadata := b["metadata"].(map[string]any)
+		namespaces[metadata["namespace"].(string)] = true
+		subs, _ := b["subjects"].([]any)
+		foundSessionSA := false
+		for _, s := range subs {
+			sm, _ := s.(map[string]any)
+			if sm["name"] == "{slot_name}-session" && sm["namespace"] == "{sessions_namespace}" {
+				foundSessionSA = true
+			}
+		}
+		if !foundSessionSA {
+			t.Fatalf("RoleBinding missing slot session SA subject: %#v", b)
+		}
+		roleRef := b["roleRef"].(map[string]any)
+		if roleRef["kind"] != "ClusterRole" || roleRef["name"] != "view" {
+			t.Fatalf("RoleBinding roleRef=%#v, want ClusterRole/view", roleRef)
+		}
 	}
-	if roleRefName != "view" {
-		t.Fatalf("slot session SA roleRef = %q, want view", roleRefName)
+	if !namespaces["{slot_name}"] || !namespaces["{sessions_namespace}"] {
+		t.Fatalf("RoleBindings namespaces=%#v, want slot and sessions namespaces", namespaces)
 	}
 }

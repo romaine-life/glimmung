@@ -456,6 +456,14 @@ func (l *KubernetesRunLauncher) ensureTestSlotPreliminaryAccess(ctx context.Cont
 		if err := l.ensureTestSlotClusterRoleBindings(ctx, lease, config.ClusterRoleBindings, substitutions, slotName); err != nil {
 			return err
 		}
+		if isTankOperatorProject(project) {
+			if err := l.deleteRetiredTestSlotSessionClusterRoleBindings(ctx, slotName); err != nil {
+				return err
+			}
+		}
+		if err := l.ensureTestSlotRoleBindings(ctx, lease, config.RoleBindings, substitutions, slotName); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -658,6 +666,7 @@ func (l *KubernetesRunLauncher) retireTankSessionScope(ctx context.Context, leas
 
 func isTankOperatorProject(project Project) bool {
 	return strings.EqualFold(strings.TrimSpace(project.Name), "tank-operator") ||
+		strings.EqualFold(strings.TrimSpace(project.ID), "tank-operator") ||
 		strings.EqualFold(strings.TrimSpace(project.GitHubRepo), "romaine-life/tank-operator")
 }
 
@@ -1157,6 +1166,56 @@ func (l *KubernetesRunLauncher) ensureTestSlotClusterRoleBindings(ctx context.Co
 	return nil
 }
 
+func (l *KubernetesRunLauncher) ensureTestSlotRoleBindings(ctx context.Context, lease Lease, templates []map[string]any, substitutions map[string]string, slotName string) error {
+	for _, template := range templates {
+		filled := deepFormat(template, substitutions)
+		metadata := anyMap(filled["metadata"])
+		name := strings.TrimSpace(mapStringValueOrEmpty(metadata, "name"))
+		if name == "" {
+			name = strings.TrimSpace(mapStringValueOrEmpty(filled, "name"))
+		}
+		namespace := strings.TrimSpace(mapStringValueOrEmpty(metadata, "namespace"))
+		if namespace == "" {
+			namespace = strings.TrimSpace(mapStringValueOrEmpty(filled, "namespace"))
+		}
+		if name == "" || namespace == "" {
+			continue
+		}
+		labels := testSlotLabels(lease, slotName)
+		labels["glimmung.romaine.life/test-slot"] = "true"
+		body := map[string]any{
+			"apiVersion": "rbac.authorization.k8s.io/v1",
+			"kind":       "RoleBinding",
+			"metadata": map[string]any{
+				"name":      name,
+				"namespace": namespace,
+				"labels":    labels,
+			},
+			"subjects": filled["subjects"],
+			"roleRef":  filled["roleRef"],
+		}
+		path := "/apis/rbac.authorization.k8s.io/v1/namespaces/" + namespace + "/rolebindings"
+		status, _, err := l.request(ctx, http.MethodPost, path, body)
+		if err == nil {
+			continue
+		}
+		if status != http.StatusConflict {
+			return err
+		}
+		existingStatus, existing, getErr := l.request(ctx, http.MethodGet, path+"/"+name, nil)
+		if getErr != nil || existingStatus >= 400 {
+			return fmt.Errorf("read existing test slot rolebinding: status=%d err=%w", existingStatus, getErr)
+		}
+		if rv := mapStringValueOrEmpty(anyMap(existing["metadata"]), "resourceVersion"); rv != "" {
+			body["metadata"].(map[string]any)["resourceVersion"] = rv
+		}
+		if _, _, err := l.request(ctx, http.MethodPut, path+"/"+name, body); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (l *KubernetesRunLauncher) deleteTestSlotClusterRoleBindings(ctx context.Context, slotName string) error {
 	selector := "glimmung.romaine.life/run-slot-name=" + labelValue(slotName)
 	path := "/apis/rbac.authorization.k8s.io/v1/clusterrolebindings?labelSelector=" + url.QueryEscape(selector)
@@ -1172,6 +1231,20 @@ func (l *KubernetesRunLauncher) deleteTestSlotClusterRoleBindings(ctx context.Co
 		if name == "" {
 			continue
 		}
+		status, _, err := l.request(ctx, http.MethodDelete, "/apis/rbac.authorization.k8s.io/v1/clusterrolebindings/"+name, deleteOptions("Background"))
+		if err != nil && status != http.StatusNotFound {
+			return err
+		}
+	}
+	return nil
+}
+
+func (l *KubernetesRunLauncher) deleteRetiredTestSlotSessionClusterRoleBindings(ctx context.Context, slotName string) error {
+	slotName = strings.TrimSpace(slotName)
+	if slotName == "" {
+		return nil
+	}
+	for _, name := range []string{slotName + "-session-cluster-admin", slotName + "-session-readonly"} {
 		status, _, err := l.request(ctx, http.MethodDelete, "/apis/rbac.authorization.k8s.io/v1/clusterrolebindings/"+name, deleteOptions("Background"))
 		if err != nil && status != http.StatusNotFound {
 			return err
@@ -2036,6 +2109,7 @@ type testSlotHelmSettings struct {
 	Values              map[string]string
 	SetStringValues     map[string]string
 	ClusterRoleBindings []map[string]any
+	RoleBindings        []map[string]any
 }
 
 const (
@@ -2057,6 +2131,10 @@ func testSlotHelmConfig(project Project) (testSlotHelmSettings, bool) {
 	if len(clusterRoleBindings) == 0 {
 		clusterRoleBindings = defaultTestSlotClusterRoleBindings(project)
 	}
+	roleBindings := mapSliceFromAnySlice(anySlice(firstAny(raw["role_bindings"], raw["roleBindings"])))
+	if len(roleBindings) == 0 {
+		roleBindings = defaultTestSlotRoleBindings(project)
+	}
 	return testSlotHelmSettings{
 		InstallerImage:      firstNonEmpty(configString(raw, "installer_image", "installerImage"), defaultTestSlotInstallerImage),
 		ChartPath:           firstNonEmpty(strings.Trim(configString(raw, "chart_path", "chartPath"), "/"), defaultTestSlotChartPath),
@@ -2064,11 +2142,12 @@ func testSlotHelmConfig(project Project) (testSlotHelmSettings, bool) {
 		Values:              values,
 		SetStringValues:     setStringValues,
 		ClusterRoleBindings: clusterRoleBindings,
+		RoleBindings:        roleBindings,
 	}, true
 }
 
 func defaultTestSlotClusterRoleBindings(project Project) []map[string]any {
-	if project.Name != "tank-operator" && project.ID != "tank-operator" && !strings.EqualFold(project.GitHubRepo, "romaine-life/tank-operator") {
+	if !isTankOperatorProject(project) {
 		return nil
 	}
 	return []map[string]any{
@@ -2085,14 +2164,39 @@ func defaultTestSlotClusterRoleBindings(project Project) []map[string]any {
 				"name":     "system:auth-delegator",
 			},
 		},
+	}
+}
+
+func defaultTestSlotRoleBindings(project Project) []map[string]any {
+	if !isTankOperatorProject(project) {
+		return nil
+	}
+	return []map[string]any{
 		{
-			// Slot session SA is read-only: the agent can inspect the slot
-			// (kubectl get/logs) but cannot write or exec — so it can't
-			// kubectl-cp/exec into the slot to bypass the CI-gated hot-swap.
-			// Slot mutation goes through apply_test_slot_hot_swap. Was
-			// cluster-admin; `view` is built-in so this adds no cross-repo
-			// ClusterRole dependency.
-			"metadata": map[string]any{"name": "{slot_name}-session-readonly"},
+			// Slot session SA is read-only inside the slot app namespace: the
+			// agent can inspect pods/services/logs, but cannot write or exec.
+			"metadata": map[string]any{
+				"name":      "{slot_name}-session-readonly",
+				"namespace": "{slot_name}",
+			},
+			"subjects": []any{map[string]any{
+				"kind":      "ServiceAccount",
+				"name":      "{slot_name}-session",
+				"namespace": "{sessions_namespace}",
+			}},
+			"roleRef": map[string]any{
+				"apiGroup": "rbac.authorization.k8s.io",
+				"kind":     "ClusterRole",
+				"name":     "view",
+			},
+		},
+		{
+			// The same read-only surface is needed in the sessions namespace
+			// for kubectl get/describe/logs against session pods.
+			"metadata": map[string]any{
+				"name":      "{slot_name}-session-readonly",
+				"namespace": "{sessions_namespace}",
+			},
 			"subjects": []any{map[string]any{
 				"kind":      "ServiceAccount",
 				"name":      "{slot_name}-session",

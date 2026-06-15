@@ -249,7 +249,8 @@ the chart with `renderMode=warm` only. Activation reconciles the chart twice:
 first with `renderMode=warm`, then with `renderMode=hot`; both passes also set
 `testEnv.slotName` to the stable slot name. Other projects can set
 `chart_path`, `installer_image`, `git_ref`, `values`, `set_string_values`,
-`sessions_namespace`, and `cluster_role_bindings` under `test_slot_helm`.
+`sessions_namespace`, `role_bindings`, and `cluster_role_bindings` under
+`test_slot_helm`.
 
 Any implementation path that treats a Helm-rendered app/proxy/session/tool
 runtime as part of an unleased warmed slot violates the lifecycle contract and
