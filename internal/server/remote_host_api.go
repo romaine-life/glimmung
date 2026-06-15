@@ -63,7 +63,7 @@ type runCallbackTokenReader interface {
 // SSH cert mint. Phase pods carry the run's per-attempt token at
 // `$GLIMMUNG_ATTEMPT_TOKEN` and consume the URL Glimmung pre-bakes into
 // `$GLIMMUNG_SSH_CERT_URL` (`/v1/run-callbacks/{callback_token}/run/ssh-cert`).
-// This mirrors how `github-token`, `pr-touchpoint`, `pr-merge`, and
+// This mirrors how `github-token`, `pr-review`, `pr-merge`, and
 // `completed` are surfaced to phase scripts — the lease's own callback
 // token never reaches phase pods.
 func mintRunCallbackSSHCert(store ReadStore, exchanger *SSHCertExchanger) http.HandlerFunc {

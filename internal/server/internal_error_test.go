@@ -32,10 +32,10 @@ func TestWriteInternalErrorPreservesUnderlyingErrorInLog(t *testing.T) {
 	t.Cleanup(func() { slog.SetDefault(orig) })
 
 	storeErr := errors.New("store query failed: request rate too large")
-	req := httptest.NewRequest(http.MethodGet, "/v1/touchpoints", nil)
+	req := httptest.NewRequest(http.MethodGet, "/v1/reviews", nil)
 	rec := httptest.NewRecorder()
 
-	writeInternalError(rec, req, storeErr, "list touchpoints failed")
+	writeInternalError(rec, req, storeErr, "list reviews failed")
 
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusInternalServerError)
@@ -44,13 +44,13 @@ func TestWriteInternalErrorPreservesUnderlyingErrorInLog(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("response body is not valid JSON: %v", err)
 	}
-	if body["detail"] != "list touchpoints failed" {
-		t.Errorf("body[detail] = %q, want %q", body["detail"], "list touchpoints failed")
+	if body["detail"] != "list reviews failed" {
+		t.Errorf("body[detail] = %q, want %q", body["detail"], "list reviews failed")
 	}
 
 	logged := buf.String()
 	for _, wantSubstring := range []string{
-		"list touchpoints failed", // the summary
+		"list reviews failed", // the summary
 		"store query failed",      // the underlying err — the whole point
 		`"method":"GET"`,          // request method
 		`"route":"(unmatched)"`,   // r.Pattern is empty outside ServeMux; fallback fires
@@ -75,11 +75,11 @@ func TestWriteInternalErrorUsesRequestPattern(t *testing.T) {
 	t.Cleanup(func() { slog.SetDefault(orig) })
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /v1/projects/{project}/issues/{issue_number}/touchpoint", func(w http.ResponseWriter, r *http.Request) {
-		writeInternalError(w, r, errors.New("upstream store timeout"), "get touchpoint failed")
+	mux.HandleFunc("GET /v1/projects/{project}/issues/{issue_number}/review", func(w http.ResponseWriter, r *http.Request) {
+		writeInternalError(w, r, errors.New("upstream store timeout"), "get review failed")
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "/v1/projects/tank-operator/issues/42/touchpoint", nil)
+	req := httptest.NewRequest(http.MethodGet, "/v1/projects/tank-operator/issues/42/review", nil)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -87,7 +87,7 @@ func TestWriteInternalErrorUsesRequestPattern(t *testing.T) {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusInternalServerError)
 	}
 	logged := buf.String()
-	wantRoute := `"route":"GET /v1/projects/{project}/issues/{issue_number}/touchpoint"`
+	wantRoute := `"route":"GET /v1/projects/{project}/issues/{issue_number}/review"`
 	if !strings.Contains(logged, wantRoute) {
 		t.Errorf("log missing %q (raw path leaked into route?)\nlog output: %s", wantRoute, logged)
 	}

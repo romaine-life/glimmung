@@ -62,7 +62,7 @@ export type RecycleArrow = {
   trigger: string;
   max_attempts: number;
   active: boolean;
-  kind: "phase_recycle" | "touchpoint_recycle";
+  kind: "phase_recycle" | "review_recycle";
 };
 
 export type EntryArrow = {

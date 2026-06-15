@@ -79,7 +79,7 @@ func (s *IssuesStore) List(ctx context.Context, project string) ([]IssueRow, err
 
 // GetByPayloadID looks up a single issue by payload->>'id'. The
 // (project, number) primary key is the preferred lookup, but some persisted
-// touchpoint and playbook payloads carry the issue id.
+// review and playbook payloads carry the issue id.
 func (s *IssuesStore) GetByPayloadID(ctx context.Context, project, id string) (IssueRow, error) {
 	if s == nil || s.pool == nil {
 		return IssueRow{}, fmt.Errorf("issues store not configured")

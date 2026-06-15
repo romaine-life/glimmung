@@ -81,8 +81,8 @@ type fakeCompletionStore struct {
 	reviewFactsErr error
 	linkPRNumber   int
 	linkPRErr      error
-	touchpointReq  *TouchpointCreate
-	touchpointErr  error
+	reviewReq  *ReviewCreate
+	reviewErr  error
 }
 
 type patchingCompletionStore struct {
@@ -354,12 +354,12 @@ func (s *fakeCompletionStore) LinkRunPullRequest(_ context.Context, _, _ string,
 	return s.linkPRErr
 }
 
-func (s *fakeCompletionStore) EnsureTouchpoint(_ context.Context, req TouchpointCreate) (TouchpointDetail, error) {
-	s.touchpointReq = &req
-	if s.touchpointErr != nil {
-		return TouchpointDetail{}, s.touchpointErr
+func (s *fakeCompletionStore) EnsureReview(_ context.Context, req ReviewCreate) (ReviewDetail, error) {
+	s.reviewReq = &req
+	if s.reviewErr != nil {
+		return ReviewDetail{}, s.reviewErr
 	}
-	return TouchpointDetail{
+	return ReviewDetail{
 		Ref:      req.Repo + "#" + strconv.Itoa(req.Number),
 		Project:  req.Project,
 		Repo:     req.Repo,
@@ -488,9 +488,9 @@ func newCompletionHandler(store *fakeCompletionStore, runLauncher RunLauncher) h
 	return mux
 }
 
-func newPRTouchpointHandler(store *fakeCompletionStore, prClient PullRequestClient) http.Handler {
+func newPRReviewHandler(store *fakeCompletionStore, prClient PullRequestClient) http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /v1/run-callbacks/{callback_token}/run/pr-touchpoint", runnerPRTouchpointByCallbackToken(store, prClient, nil))
+	mux.HandleFunc("POST /v1/run-callbacks/{callback_token}/run/pr-review", runnerPRReviewByCallbackToken(store, prClient, nil))
 	return mux
 }
 
@@ -515,9 +515,9 @@ func prWorkflowForCompletion(name string) *Workflow {
 		Name:      "cleanup",
 		Kind:      "k8s_job",
 		RunOn:     PhaseRunOnSuccess,
-		Purpose:   PhasePurposeReviewTouchpoint,
+		Purpose:   PhasePurposeReview,
 		DependsOn: []string{name},
-		Jobs:      []RunnerJobSpec{{ID: PRTouchpointJobID, Primitive: JobPrimitivePRTouchpoint}},
+		Jobs:      []RunnerJobSpec{{ID: PRReviewJobID, Primitive: JobPrimitivePRReview}},
 	})
 	canonical := CanonicalWorkflow(*wf)
 	return &canonical
@@ -527,19 +527,19 @@ func gatedPRWorkflowForCompletion(name string) *Workflow {
 	wf := singlePhaseWorkflowForCompletion(name, false)
 	wf.Phases = append(wf.Phases,
 		PhaseSpec{
-			Name:      "touchpoint",
+			Name:      "review",
 			Kind:      "k8s_job",
 			RunOn:     PhaseRunOnSuccess,
-			Purpose:   PhasePurposeReviewTouchpoint,
+			Purpose:   PhasePurposeReview,
 			DependsOn: []string{name},
-			Jobs:      []RunnerJobSpec{{ID: PRTouchpointJobID, Primitive: JobPrimitivePRTouchpoint}},
+			Jobs:      []RunnerJobSpec{{ID: PRReviewJobID, Primitive: JobPrimitivePRReview}},
 		},
 		PhaseSpec{
-			Name:      "touchpoint_gate",
+			Name:      "review_gate",
 			Kind:      "k8s_job",
 			RunOn:     PhaseRunOnSuccess,
 			Purpose:   PhasePurposeReviewGate,
-			DependsOn: []string{"touchpoint"},
+			DependsOn: []string{"review"},
 			Jobs:      []RunnerJobSpec{{ID: PRMergeJobID, Primitive: JobPrimitivePRMerge}},
 		},
 		PhaseSpec{
@@ -547,7 +547,7 @@ func gatedPRWorkflowForCompletion(name string) *Workflow {
 			Kind:      "k8s_job",
 			RunOn:     PhaseRunOnAlways,
 			Purpose:   PhasePurposeTeardown,
-			DependsOn: []string{"touchpoint_gate"},
+			DependsOn: []string{"review_gate"},
 			Jobs:      []RunnerJobSpec{{ID: "cleanup-final", Image: "runner:latest"}},
 		},
 	)
@@ -779,7 +779,7 @@ func TestIsAdvanceConclusion(t *testing.T) {
 }
 
 func TestRunnerRunCompletedByCallbackTokenAdvancePostMergeToPassed(t *testing.T) {
-	// After the touchpoint_gate has been released and pr_merge + final
+	// After the review_gate has been released and pr_merge + final
 	// cleanup have run, completion routing reaches the terminal-state
 	// setter and marks the run "passed" (not the historical
 	// "review_required"; review_required is now a non-terminal sub-state
@@ -796,7 +796,7 @@ func TestRunnerRunCompletedByCallbackTokenAdvancePostMergeToPassed(t *testing.T)
 	store.wf = prWorkflowForCompletion("impl")
 	store.terminalResult = AbortRunResult{State: "passed", RunRef: "proj#7/runs/1"}
 	rec := httptest.NewRecorder()
-	newCompletionHandler(store, nil).ServeHTTP(rec, runnerCompletionRequest("tok", completedJob(PRTouchpointJobID, "success", nil, map[string]string{"pr_number": "123"})))
+	newCompletionHandler(store, nil).ServeHTTP(rec, runnerCompletionRequest("tok", completedJob(PRReviewJobID, "success", nil, map[string]string{"pr_number": "123"})))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
@@ -808,13 +808,13 @@ func TestRunnerRunCompletedByCallbackTokenAdvancePostMergeToPassed(t *testing.T)
 	}
 }
 
-func TestRunnerRunCompletedByCallbackTokenTouchpointGateMergeDispatchesFinalCleanup(t *testing.T) {
+func TestRunnerRunCompletedByCallbackTokenReviewGateMergeDispatchesFinalCleanup(t *testing.T) {
 	store := &fakeCompletionStore{tokenRunID: "r1", tokenProject: "proj"}
-	store.run = runDataForCompletion("touchpoint_gate")
+	store.run = runDataForCompletion("review_gate")
 	store.run.Attempts = []RunAttemptData{
 		{AttemptIndex: 0, Phase: "impl", Conclusion: "success", Decision: string(decision.Advance), Completed: true, PhaseOutputs: map[string]string{"branch_name": "issue-7-run-1"}},
-		{AttemptIndex: 1, Phase: "touchpoint", Conclusion: "success", Decision: string(decision.Advance), Completed: true, PhaseOutputs: map[string]string{"pr_number": "99"}},
-		{AttemptIndex: 2, Phase: "touchpoint_gate", Conclusion: "failure"},
+		{AttemptIndex: 1, Phase: "review", Conclusion: "success", Decision: string(decision.Advance), Completed: true, PhaseOutputs: map[string]string{"pr_number": "99"}},
+		{AttemptIndex: 2, Phase: "review_gate", Conclusion: "failure"},
 	}
 	store.wf = gatedPRWorkflowForCompletion("impl")
 	store.leaseResult = Lease{State: "claimed"}
@@ -842,19 +842,19 @@ func TestRunnerRunCompletedByCallbackTokenTouchpointGateMergeDispatchesFinalClea
 	}
 }
 
-func TestRunnerRunCompletedByCallbackTokenTouchpointParksReviewGateAttempt(t *testing.T) {
+func TestRunnerRunCompletedByCallbackTokenReviewParksReviewGateAttempt(t *testing.T) {
 	store := &fakeCompletionStore{tokenRunID: "r1", tokenProject: "proj"}
-	store.run = runDataForCompletion("touchpoint")
+	store.run = runDataForCompletion("review")
 	store.run.Attempts = []RunAttemptData{
 		{AttemptIndex: 0, Phase: "impl", Conclusion: "success", Decision: string(decision.Advance), Completed: true, PhaseOutputs: map[string]string{"branch_name": "issue-7-run-1"}},
-		{AttemptIndex: 1, Phase: "touchpoint", Conclusion: "failure"},
+		{AttemptIndex: 1, Phase: "review", Conclusion: "failure"},
 	}
 	store.wf = gatedPRWorkflowForCompletion("impl")
 	launcher := &fakeRunLauncher{}
 
 	rec := httptest.NewRecorder()
 	newCompletionHandler(store, launcher).ServeHTTP(rec, runnerCompletionRequest("tok",
-		completedJob(PRTouchpointJobID, "success", nil, map[string]string{"pr_number": "99"})))
+		completedJob(PRReviewJobID, "success", nil, map[string]string{"pr_number": "99"})))
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
@@ -863,21 +863,21 @@ func TestRunnerRunCompletedByCallbackTokenTouchpointParksReviewGateAttempt(t *te
 	if result.Decision == nil || *result.Decision != "advance_phase" {
 		t.Fatalf("decision=%v, want advance_phase", result.Decision)
 	}
-	if store.parkGateCalls != 1 || store.appendPhase != "touchpoint_gate" || store.appendKind != "k8s_job" {
-		t.Fatalf("park calls=%d phase=(%q,%q), want touchpoint_gate/k8s_job", store.parkGateCalls, store.appendPhase, store.appendKind)
+	if store.parkGateCalls != 1 || store.appendPhase != "review_gate" || store.appendKind != "k8s_job" {
+		t.Fatalf("park calls=%d phase=(%q,%q), want review_gate/k8s_job", store.parkGateCalls, store.appendPhase, store.appendKind)
 	}
 	if launcher.called {
 		t.Fatalf("review gate should park without launching jobs")
 	}
 }
 
-func TestRunnerRunCompletedByCallbackTokenTouchpointGateFailureDispatchesFinalCleanup(t *testing.T) {
+func TestRunnerRunCompletedByCallbackTokenReviewGateFailureDispatchesFinalCleanup(t *testing.T) {
 	store := &fakeCompletionStore{tokenRunID: "r1", tokenProject: "proj"}
-	store.run = runDataForCompletion("touchpoint_gate")
+	store.run = runDataForCompletion("review_gate")
 	store.run.Attempts = []RunAttemptData{
 		{AttemptIndex: 0, Phase: "impl", Conclusion: "success", Decision: string(decision.Advance), Completed: true, PhaseOutputs: map[string]string{"branch_name": "issue-7-run-1"}},
-		{AttemptIndex: 1, Phase: "touchpoint", Conclusion: "success", Decision: string(decision.Advance), Completed: true, PhaseOutputs: map[string]string{"pr_number": "99"}},
-		{AttemptIndex: 2, Phase: "touchpoint_gate", Conclusion: "failure"},
+		{AttemptIndex: 1, Phase: "review", Conclusion: "success", Decision: string(decision.Advance), Completed: true, PhaseOutputs: map[string]string{"pr_number": "99"}},
+		{AttemptIndex: 2, Phase: "review_gate", Conclusion: "failure"},
 	}
 	store.wf = gatedPRWorkflowForCompletion("impl")
 	store.leaseResult = Lease{State: "claimed"}
@@ -902,13 +902,13 @@ func TestRunnerRunCompletedByCallbackTokenTouchpointGateFailureDispatchesFinalCl
 	}
 }
 
-func TestRunnerRunCompletedByCallbackTokenTouchpointGateFailureAfterCleanupAborts(t *testing.T) {
+func TestRunnerRunCompletedByCallbackTokenReviewGateFailureAfterCleanupAborts(t *testing.T) {
 	store := &fakeCompletionStore{tokenRunID: "r1", tokenProject: "proj"}
 	store.run = runDataForCompletion("cleanup_final")
 	store.run.Attempts = []RunAttemptData{
 		{AttemptIndex: 0, Phase: "impl", Conclusion: "success", Decision: string(decision.Advance), Completed: true, PhaseOutputs: map[string]string{"branch_name": "issue-7-run-1"}},
-		{AttemptIndex: 1, Phase: "touchpoint", Conclusion: "success", Decision: string(decision.Advance), Completed: true, PhaseOutputs: map[string]string{"pr_number": "99"}},
-		{AttemptIndex: 2, Phase: "touchpoint_gate", Conclusion: "failure", Decision: string(decision.AbortMalformed), Completed: true},
+		{AttemptIndex: 1, Phase: "review", Conclusion: "success", Decision: string(decision.Advance), Completed: true, PhaseOutputs: map[string]string{"pr_number": "99"}},
+		{AttemptIndex: 2, Phase: "review_gate", Conclusion: "failure", Decision: string(decision.AbortMalformed), Completed: true},
 		{AttemptIndex: 3, Phase: "cleanup_final", Conclusion: "failure"},
 	}
 	store.wf = gatedPRWorkflowForCompletion("impl")
@@ -926,30 +926,30 @@ func TestRunnerRunCompletedByCallbackTokenTouchpointGateFailureAfterCleanupAbort
 	}
 }
 
-func TestLaunchTouchpointGateMergeReleasesParkedAttempt(t *testing.T) {
+func TestLaunchReviewGateMergeReleasesParkedAttempt(t *testing.T) {
 	store := &fakeCompletionStore{tokenRunID: "r1", tokenProject: "proj"}
-	run := runDataForCompletion("touchpoint_gate")
+	run := runDataForCompletion("review_gate")
 	run.State = "review_required"
 	run.Attempts = []RunAttemptData{
 		{AttemptIndex: 0, Phase: "impl", Conclusion: "success", Decision: string(decision.Advance), Completed: true},
-		{AttemptIndex: 1, Phase: "touchpoint", Conclusion: "success", Decision: string(decision.Advance), Completed: true},
-		{AttemptIndex: 2, Phase: "touchpoint_gate"},
+		{AttemptIndex: 1, Phase: "review", Conclusion: "success", Decision: string(decision.Advance), Completed: true},
+		{AttemptIndex: 2, Phase: "review_gate"},
 	}
 	store.leaseResult = Lease{State: "claimed", Metadata: map[string]any{}}
 	wf := gatedPRWorkflowForCompletion("impl")
-	gate := phaseSpecByName(wf.Phases, "touchpoint_gate")
+	gate := phaseSpecByName(wf.Phases, "review_gate")
 	if gate == nil {
 		t.Fatal("missing gate")
 	}
 	launcher := &fakeRunLauncher{}
 
-	if err := launchTouchpointGateMerge(context.Background(), store, launcher, *run, wf, *gate); err != nil {
-		t.Fatalf("launchTouchpointGateMerge: %v", err)
+	if err := launchReviewGateMerge(context.Background(), store, launcher, *run, wf, *gate); err != nil {
+		t.Fatalf("launchReviewGateMerge: %v", err)
 	}
 	if store.releaseGateCalls != 1 || store.releaseGateAttempt != 2 {
 		t.Fatalf("release calls=%d attempt=%d, want attempt 2", store.releaseGateCalls, store.releaseGateAttempt)
 	}
-	if !launcher.called || launcher.req.Phase.Name != "touchpoint_gate" {
+	if !launcher.called || launcher.req.Phase.Name != "review_gate" {
 		t.Fatalf("launcher request=%#v", launcher.req)
 	}
 	if got := fmt.Sprint(launcher.req.Lease.Metadata["attempt_index"]); got != "2" {
@@ -1032,19 +1032,19 @@ func TestRunnerRunCompletedByCallbackTokenMissingPRPrimitiveLinkAborts(t *testin
 	store.terminalResult = AbortRunResult{State: "aborted", RunRef: "proj#7/runs/1"}
 
 	rec := httptest.NewRecorder()
-	newCompletionHandler(store, nil).ServeHTTP(rec, runnerCompletionRequest("tok", completedJob(PRTouchpointJobID, "success", nil, nil)))
+	newCompletionHandler(store, nil).ServeHTTP(rec, runnerCompletionRequest("tok", completedJob(PRReviewJobID, "success", nil, nil)))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
 	if store.terminalState != "aborted" {
 		t.Fatalf("terminal state=%q, want aborted", store.terminalState)
 	}
-	if store.terminalReason == nil || !strings.Contains(*store.terminalReason, "PR primitive: touchpoint job completed without linking a PR") {
+	if store.terminalReason == nil || !strings.Contains(*store.terminalReason, "PR primitive: review job completed without linking a PR") {
 		t.Fatalf("terminal reason=%v", store.terminalReason)
 	}
 }
 
-func TestRunnerPRTouchpointByCallbackTokenEnsuresPRAndTouchpoint(t *testing.T) {
+func TestRunnerPRReviewByCallbackTokenEnsuresPRAndReview(t *testing.T) {
 	store := &fakeCompletionStore{tokenRunID: "r1", tokenProject: "proj"}
 	store.run = runDataForCompletion("impl")
 	store.run.Attempts[0].Completed = true
@@ -1055,8 +1055,8 @@ func TestRunnerPRTouchpointByCallbackTokenEnsuresPRAndTouchpoint(t *testing.T) {
 	prClient := &fakePullRequestClient{}
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/v1/run-callbacks/tok/run/pr-touchpoint", nil)
-	newPRTouchpointHandler(store, prClient).ServeHTTP(rec, req)
+	req := httptest.NewRequest(http.MethodPost, "/v1/run-callbacks/tok/run/pr-review", nil)
+	newPRReviewHandler(store, prClient).ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
@@ -1064,7 +1064,7 @@ func TestRunnerPRTouchpointByCallbackTokenEnsuresPRAndTouchpoint(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &result); err != nil {
 		t.Fatal(err)
 	}
-	if result.Status != "ensured" || result.PRNumber != 123 || result.TouchpointRef != "owner/repo#123" {
+	if result.Status != "ensured" || result.PRNumber != 123 || result.ReviewRef != "owner/repo#123" {
 		t.Fatalf("result=%#v", result)
 	}
 	if prClient.req.Repo != "owner/repo" || prClient.req.Head != "issue-7-run-1" || prClient.req.Base != "main" {
@@ -1076,14 +1076,14 @@ func TestRunnerPRTouchpointByCallbackTokenEnsuresPRAndTouchpoint(t *testing.T) {
 	if store.reviewFacts == nil || store.reviewFacts.ValidationURL == nil || *store.reviewFacts.ValidationURL != "https://preview.example" {
 		t.Fatalf("review facts=%#v", store.reviewFacts)
 	}
-	if store.touchpointReq == nil || store.touchpointReq.Number != 123 || store.touchpointReq.LinkedIssueRef != "proj#7" || store.touchpointReq.LinkedRunRef != "proj#7/runs/1" {
-		t.Fatalf("touchpoint req=%#v", store.touchpointReq)
+	if store.reviewReq == nil || store.reviewReq.Number != 123 || store.reviewReq.LinkedIssueRef != "proj#7" || store.reviewReq.LinkedRunRef != "proj#7/runs/1" {
+		t.Fatalf("review req=%#v", store.reviewReq)
 	}
 }
 
 func TestMergeRunPullRequestUsesSquash(t *testing.T) {
 	prNumber := 263
-	run := runDataForCompletion("touchpoint_gate")
+	run := runDataForCompletion("review_gate")
 	run.IssueRepo = "owner/repo"
 	run.PRNumber = &prNumber
 	prClient := &fakePullRequestClient{}
@@ -1099,12 +1099,12 @@ func TestMergeRunPullRequestUsesSquash(t *testing.T) {
 	if prClient.mergeReq.MergeMethod != "squash" {
 		t.Fatalf("merge method=%q, want squash", prClient.mergeReq.MergeMethod)
 	}
-	if !strings.Contains(prClient.mergeReq.CommitTitle, "Glimmung touchpoint approve:") {
+	if !strings.Contains(prClient.mergeReq.CommitTitle, "Glimmung review approve:") {
 		t.Fatalf("commit title=%q", prClient.mergeReq.CommitTitle)
 	}
 }
 
-func TestRunnerPRTouchpointByCallbackTokenSkipsAbortPath(t *testing.T) {
+func TestRunnerPRReviewByCallbackTokenSkipsAbortPath(t *testing.T) {
 	store := &fakeCompletionStore{tokenRunID: "r1", tokenProject: "proj"}
 	store.run = runDataForCompletion("impl")
 	store.run.Attempts[0].Completed = true
@@ -1113,8 +1113,8 @@ func TestRunnerPRTouchpointByCallbackTokenSkipsAbortPath(t *testing.T) {
 	prClient := &fakePullRequestClient{}
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/v1/run-callbacks/tok/run/pr-touchpoint", nil)
-	newPRTouchpointHandler(store, prClient).ServeHTTP(rec, req)
+	req := httptest.NewRequest(http.MethodPost, "/v1/run-callbacks/tok/run/pr-review", nil)
+	newPRReviewHandler(store, prClient).ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
@@ -1125,12 +1125,12 @@ func TestRunnerPRTouchpointByCallbackTokenSkipsAbortPath(t *testing.T) {
 	if result.Status != "skipped" || !strings.Contains(result.Reason, "abort") {
 		t.Fatalf("result=%#v", result)
 	}
-	if prClient.req.Repo != "" || store.touchpointReq != nil {
-		t.Fatalf("unexpected PR materialization req=%#v touchpoint=%#v", prClient.req, store.touchpointReq)
+	if prClient.req.Repo != "" || store.reviewReq != nil {
+		t.Fatalf("unexpected PR materialization req=%#v review=%#v", prClient.req, store.reviewReq)
 	}
 }
 
-func TestFinalizeRunTouchpointByNumberEnsuresPRAndTouchpoint(t *testing.T) {
+func TestFinalizeRunReviewByNumberEnsuresPRAndReview(t *testing.T) {
 	store := &fakeCompletionStore{tokenRunID: "run-1", tokenProject: "proj", tokenRef: "proj#7/runs/1"}
 	store.run = runDataForCompletion("impl")
 	store.run.Attempts[0].Completed = true
@@ -1142,7 +1142,7 @@ func TestFinalizeRunTouchpointByNumberEnsuresPRAndTouchpoint(t *testing.T) {
 	handler := NewWithRuntimeClients(Settings{}, store, fakeAdminAuthenticator{user: auth.User{Sub: "admin"}}, prClient, nil)
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/v1/projects/proj/issues/7/runs/1/touchpoint/finalize", nil)
+	req := httptest.NewRequest(http.MethodPost, "/v1/projects/proj/issues/7/runs/1/review/finalize", nil)
 	req.Header.Set("Authorization", "Bearer admin")
 	handler.ServeHTTP(rec, req)
 
@@ -1153,18 +1153,18 @@ func TestFinalizeRunTouchpointByNumberEnsuresPRAndTouchpoint(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &result); err != nil {
 		t.Fatal(err)
 	}
-	if result.Status != "ensured" || result.PRNumber != 123 || result.TouchpointRef != "owner/repo#123" {
+	if result.Status != "ensured" || result.PRNumber != 123 || result.ReviewRef != "owner/repo#123" {
 		t.Fatalf("result=%#v", result)
 	}
 	if store.linkPRNumber != 123 {
 		t.Fatalf("linked pr=%d, want 123", store.linkPRNumber)
 	}
-	if store.touchpointReq == nil || store.touchpointReq.LinkedIssueRef != "proj#7" || store.touchpointReq.LinkedRunRef != "proj#7/runs/1" {
-		t.Fatalf("touchpoint req=%#v", store.touchpointReq)
+	if store.reviewReq == nil || store.reviewReq.LinkedIssueRef != "proj#7" || store.reviewReq.LinkedRunRef != "proj#7/runs/1" {
+		t.Fatalf("review req=%#v", store.reviewReq)
 	}
 }
 
-func TestFinalizeRunTouchpointByCycleNumberEnsuresPRAndTouchpoint(t *testing.T) {
+func TestFinalizeRunReviewByCycleNumberEnsuresPRAndReview(t *testing.T) {
 	store := &fakeCompletionStore{tokenRunID: "run-1", tokenProject: "proj", tokenRef: "proj#7/runs/1.2"}
 	store.run = runDataForCompletion("impl")
 	runDisplay := "1.2"
@@ -1180,7 +1180,7 @@ func TestFinalizeRunTouchpointByCycleNumberEnsuresPRAndTouchpoint(t *testing.T) 
 	handler := NewWithRuntimeClients(Settings{}, store, fakeAdminAuthenticator{user: auth.User{Sub: "admin"}}, prClient, nil)
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/v1/projects/proj/issues/7/runs/1/cycles/2/touchpoint/finalize", nil)
+	req := httptest.NewRequest(http.MethodPost, "/v1/projects/proj/issues/7/runs/1/cycles/2/review/finalize", nil)
 	req.Header.Set("Authorization", "Bearer admin")
 	handler.ServeHTTP(rec, req)
 
@@ -1193,12 +1193,12 @@ func TestFinalizeRunTouchpointByCycleNumberEnsuresPRAndTouchpoint(t *testing.T) 
 	if prClient.req.Head != "issue-7-run-1.2" {
 		t.Fatalf("PR head=%q, want issue-7-run-1.2", prClient.req.Head)
 	}
-	if store.touchpointReq == nil || store.touchpointReq.LinkedRunRef != "proj#7/runs/1.2" {
-		t.Fatalf("touchpoint req=%#v", store.touchpointReq)
+	if store.reviewReq == nil || store.reviewReq.LinkedRunRef != "proj#7/runs/1.2" {
+		t.Fatalf("review req=%#v", store.reviewReq)
 	}
 }
 
-func TestFinalizeRunTouchpointByNumberNormalizesValidationURL(t *testing.T) {
+func TestFinalizeRunReviewByNumberNormalizesValidationURL(t *testing.T) {
 	store := &fakeCompletionStore{tokenRunID: "run-1", tokenProject: "proj", tokenRef: "proj#7/runs/1"}
 	store.run = runDataForCompletion("impl")
 	store.run.Attempts = []RunAttemptData{
@@ -1224,7 +1224,7 @@ func TestFinalizeRunTouchpointByNumberNormalizesValidationURL(t *testing.T) {
 	handler := NewWithRuntimeClients(Settings{}, store, fakeAdminAuthenticator{user: auth.User{Sub: "admin"}}, prClient, nil)
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/v1/projects/proj/issues/7/runs/1/touchpoint/finalize", nil)
+	req := httptest.NewRequest(http.MethodPost, "/v1/projects/proj/issues/7/runs/1/review/finalize", nil)
 	req.Header.Set("Authorization", "Bearer admin")
 	handler.ServeHTTP(rec, req)
 
@@ -1237,12 +1237,12 @@ func TestFinalizeRunTouchpointByNumberNormalizesValidationURL(t *testing.T) {
 	if store.run.ValidationURL == nil || *store.run.ValidationURL != "https://preview.example" {
 		t.Fatalf("run validation_url=%#v", store.run.ValidationURL)
 	}
-	if store.touchpointReq == nil {
-		t.Fatal("touchpoint was not ensured")
+	if store.reviewReq == nil {
+		t.Fatal("review was not ensured")
 	}
 }
 
-func TestFinalizeRunTouchpointByNumberPersistsStructuredScreenshotEvidence(t *testing.T) {
+func TestFinalizeRunReviewByNumberPersistsStructuredScreenshotEvidence(t *testing.T) {
 	store := &fakeCompletionStore{tokenRunID: "run-1", tokenProject: "proj", tokenRef: "proj#7/runs/1"}
 	store.run = runDataForCompletion("verify")
 	store.run.ScreenshotsMarkdown = stringPtr("![old](https://example.test/old.png)")
@@ -1274,17 +1274,17 @@ func TestFinalizeRunTouchpointByNumberPersistsStructuredScreenshotEvidence(t *te
 	handler := NewWithRuntimeClients(Settings{}, store, fakeAdminAuthenticator{user: auth.User{Sub: "admin"}}, prClient, nil, artifacts)
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/v1/projects/proj/issues/7/runs/1/touchpoint/finalize", nil)
+	req := httptest.NewRequest(http.MethodPost, "/v1/projects/proj/issues/7/runs/1/review/finalize", nil)
 	req.Header.Set("Authorization", "Bearer admin")
 	handler.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
-	if store.touchpointReq == nil || len(store.touchpointReq.Evidence) != 1 {
-		t.Fatalf("touchpoint evidence=%#v", store.touchpointReq)
+	if store.reviewReq == nil || len(store.reviewReq.Evidence) != 1 {
+		t.Fatalf("review evidence=%#v", store.reviewReq)
 	}
-	ev := store.touchpointReq.Evidence[0]
+	ev := store.reviewReq.Evidence[0]
 	if ev.Kind != "screenshot" || ev.ArtifactPath != "runs/proj/run-1/screenshots/default.png" {
 		t.Fatalf("evidence=%#v", ev)
 	}
@@ -1302,7 +1302,7 @@ func TestFinalizeRunTouchpointByNumberPersistsStructuredScreenshotEvidence(t *te
 	}
 }
 
-func TestFinalizeRunTouchpointByNumberPersistsRequiredVideoEvidence(t *testing.T) {
+func TestFinalizeRunReviewByNumberPersistsRequiredVideoEvidence(t *testing.T) {
 	store := &fakeCompletionStore{tokenRunID: "run-1", tokenProject: "proj", tokenRef: "proj#7/runs/1"}
 	store.run = runDataForCompletion("verify")
 	store.run.EvidenceRequirements = []EvidenceRequirement{{
@@ -1339,17 +1339,17 @@ func TestFinalizeRunTouchpointByNumberPersistsRequiredVideoEvidence(t *testing.T
 	handler := NewWithRuntimeClients(Settings{}, store, fakeAdminAuthenticator{user: auth.User{Sub: "admin"}}, prClient, nil, artifacts)
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/v1/projects/proj/issues/7/runs/1/touchpoint/finalize", nil)
+	req := httptest.NewRequest(http.MethodPost, "/v1/projects/proj/issues/7/runs/1/review/finalize", nil)
 	req.Header.Set("Authorization", "Bearer admin")
 	handler.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
-	if store.touchpointReq == nil || len(store.touchpointReq.Evidence) != 1 {
-		t.Fatalf("touchpoint evidence=%#v", store.touchpointReq)
+	if store.reviewReq == nil || len(store.reviewReq.Evidence) != 1 {
+		t.Fatalf("review evidence=%#v", store.reviewReq)
 	}
-	ev := store.touchpointReq.Evidence[0]
+	ev := store.reviewReq.Evidence[0]
 	if ev.Kind != "video" || ev.ArtifactPath != "runs/proj/run-1/videos/dashboard.webm" || ev.DurationMS != 6000 {
 		t.Fatalf("evidence=%#v", ev)
 	}
@@ -1361,7 +1361,7 @@ func TestFinalizeRunTouchpointByNumberPersistsRequiredVideoEvidence(t *testing.T
 	}
 }
 
-func TestFinalizeRunTouchpointByNumberRejectsMissingRequiredScreenshotArtifact(t *testing.T) {
+func TestFinalizeRunReviewByNumberRejectsMissingRequiredScreenshotArtifact(t *testing.T) {
 	store := &fakeCompletionStore{tokenRunID: "run-1", tokenProject: "proj", tokenRef: "proj#7/runs/1"}
 	store.run = runDataForCompletion("verify")
 	store.run.Attempts = []RunAttemptData{
@@ -1391,7 +1391,7 @@ func TestFinalizeRunTouchpointByNumberRejectsMissingRequiredScreenshotArtifact(t
 	handler := NewWithRuntimeClients(Settings{}, store, fakeAdminAuthenticator{user: auth.User{Sub: "admin"}}, prClient, nil, &fakeArtifactStore{err: ErrArtifactNotFound})
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/v1/projects/proj/issues/7/runs/1/touchpoint/finalize", nil)
+	req := httptest.NewRequest(http.MethodPost, "/v1/projects/proj/issues/7/runs/1/review/finalize", nil)
 	req.Header.Set("Authorization", "Bearer admin")
 	handler.ServeHTTP(rec, req)
 
@@ -1401,12 +1401,12 @@ func TestFinalizeRunTouchpointByNumberRejectsMissingRequiredScreenshotArtifact(t
 	if !strings.Contains(rec.Body.String(), "evidence artifact not found") {
 		t.Fatalf("body=%s", rec.Body.String())
 	}
-	if prClient.req.Repo != "" || store.touchpointReq != nil {
-		t.Fatalf("unexpected side effects pr=%#v touchpoint=%#v", prClient.req, store.touchpointReq)
+	if prClient.req.Repo != "" || store.reviewReq != nil {
+		t.Fatalf("unexpected side effects pr=%#v review=%#v", prClient.req, store.reviewReq)
 	}
 }
 
-func TestFinalizeRunTouchpointByNumberRejectsAbortPath(t *testing.T) {
+func TestFinalizeRunReviewByNumberRejectsAbortPath(t *testing.T) {
 	store := &fakeCompletionStore{tokenRunID: "run-1", tokenProject: "proj"}
 	store.run = runDataForCompletion("impl")
 	store.run.Attempts[0].Completed = true
@@ -1416,19 +1416,19 @@ func TestFinalizeRunTouchpointByNumberRejectsAbortPath(t *testing.T) {
 	handler := NewWithRuntimeClients(Settings{}, store, fakeAdminAuthenticator{user: auth.User{Sub: "admin"}}, prClient, nil)
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/v1/projects/proj/issues/7/runs/1/touchpoint/finalize", nil)
+	req := httptest.NewRequest(http.MethodPost, "/v1/projects/proj/issues/7/runs/1/review/finalize", nil)
 	req.Header.Set("Authorization", "Bearer admin")
 	handler.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
-	if prClient.req.Repo != "" || store.touchpointReq != nil {
-		t.Fatalf("unexpected PR materialization req=%#v touchpoint=%#v", prClient.req, store.touchpointReq)
+	if prClient.req.Repo != "" || store.reviewReq != nil {
+		t.Fatalf("unexpected PR materialization req=%#v review=%#v", prClient.req, store.reviewReq)
 	}
 }
 
-func TestFinalizeRunTouchpointByNumberRequiresBranchOutput(t *testing.T) {
+func TestFinalizeRunReviewByNumberRequiresBranchOutput(t *testing.T) {
 	store := &fakeCompletionStore{tokenRunID: "run-1", tokenProject: "proj"}
 	store.run = runDataForCompletion("impl")
 	store.run.Attempts[0].Completed = true
@@ -1439,7 +1439,7 @@ func TestFinalizeRunTouchpointByNumberRequiresBranchOutput(t *testing.T) {
 	handler := NewWithRuntimeClients(Settings{}, store, fakeAdminAuthenticator{user: auth.User{Sub: "admin"}}, prClient, nil)
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/v1/projects/proj/issues/7/runs/1/touchpoint/finalize", nil)
+	req := httptest.NewRequest(http.MethodPost, "/v1/projects/proj/issues/7/runs/1/review/finalize", nil)
 	req.Header.Set("Authorization", "Bearer admin")
 	handler.ServeHTTP(rec, req)
 
@@ -1449,19 +1449,19 @@ func TestFinalizeRunTouchpointByNumberRequiresBranchOutput(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), "branch_name") {
 		t.Fatalf("body=%s", rec.Body.String())
 	}
-	if prClient.req.Repo != "" || store.touchpointReq != nil {
-		t.Fatalf("unexpected side effects pr=%#v touchpoint=%#v", prClient.req, store.touchpointReq)
+	if prClient.req.Repo != "" || store.reviewReq != nil {
+		t.Fatalf("unexpected side effects pr=%#v review=%#v", prClient.req, store.reviewReq)
 	}
 }
 
-func TestFinalizeRunTouchpointByNumberRequiresAdmin(t *testing.T) {
+func TestFinalizeRunReviewByNumberRequiresAdmin(t *testing.T) {
 	store := &fakeCompletionStore{tokenRunID: "run-1", tokenProject: "proj"}
 	store.run = runDataForCompletion("impl")
 	store.wf = prWorkflowForCompletion("impl")
 	handler := NewWithRuntimeClients(Settings{}, store, nil, &fakePullRequestClient{}, nil)
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/v1/projects/proj/issues/7/runs/1/touchpoint/finalize", nil)
+	req := httptest.NewRequest(http.MethodPost, "/v1/projects/proj/issues/7/runs/1/review/finalize", nil)
 	handler.ServeHTTP(rec, req)
 
 	if rec.Code == http.StatusOK {
@@ -1762,9 +1762,9 @@ func TestAllReadyDispatchTargetsAbortPathSkipsReviewPhases(t *testing.T) {
 		{Name: "verify", Verify: true, RecyclePolicy: &RecyclePolicy{MaxAttempts: 1, On: []string{"verify_fail"}, LandsAt: "prepare"}, Purpose: PhasePurposeVerification, DependsOn: []string{"prepare"}},
 		{Name: "evidence-gate", EvidenceVerificationGate: true, Purpose: PhasePurposeEvidenceGate, DependsOn: []string{"verify"}},
 		{Name: "cleanup_early", RunOn: PhaseRunOnAlways, Purpose: PhasePurposeTeardown, DependsOn: []string{"evidence-gate"}},
-		{Name: "touchpoint", RunOn: PhaseRunOnSuccess, Purpose: PhasePurposeReviewTouchpoint, DependsOn: []string{"cleanup_early"}, Jobs: []RunnerJobSpec{{ID: PRTouchpointJobID, Primitive: JobPrimitivePRTouchpoint}}},
-		{Name: "touchpoint_gate", Kind: "k8s_job", RunOn: PhaseRunOnSuccess, Purpose: PhasePurposeReviewGate, DependsOn: []string{"touchpoint"}},
-		{Name: "cleanup_final", RunOn: PhaseRunOnAlways, Purpose: PhasePurposeTeardown, DependsOn: []string{"touchpoint_gate"}},
+		{Name: "review", RunOn: PhaseRunOnSuccess, Purpose: PhasePurposeReview, DependsOn: []string{"cleanup_early"}, Jobs: []RunnerJobSpec{{ID: PRReviewJobID, Primitive: JobPrimitivePRReview}}},
+		{Name: "review_gate", Kind: "k8s_job", RunOn: PhaseRunOnSuccess, Purpose: PhasePurposeReviewGate, DependsOn: []string{"review"}},
+		{Name: "cleanup_final", RunOn: PhaseRunOnAlways, Purpose: PhasePurposeTeardown, DependsOn: []string{"review_gate"}},
 	}}
 	run := RunReplayData{Attempts: []RunAttemptData{
 		{AttemptIndex: 0, Phase: "prepare", Completed: true, Decision: string(decision.Advance)},

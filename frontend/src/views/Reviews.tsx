@@ -1,18 +1,18 @@
 import { useNavigate } from "react-router-dom";
 import { Icon } from "../ui/Icon";
 import { Pill } from "../ui/bits";
-import { issueTouchpointPath, runStateTone, useJson, usd, type TouchpointRow, type Tone } from "./lib";
+import { issueReviewPath, runStateTone, useJson, usd, type ReviewRow, type Tone } from "./lib";
 
-function prTone(row: TouchpointRow): Tone {
+function prTone(row: ReviewRow): Tone {
   if (row.merged) return "neutral";
   if (row.state === "ready" || row.state === "needs_review") return "vio";
   if (row.state === "closed") return "neutral";
   return "warn";
 }
 
-export function Touchpoints() {
+export function Reviews() {
   const navigate = useNavigate();
-  const { data, loading, error } = useJson<TouchpointRow[]>("/v1/touchpoints");
+  const { data, loading, error } = useJson<ReviewRow[]>("/v1/reviews");
   const rows = data ?? [];
   const ready = rows.filter((r) => !r.merged && (r.state === "ready" || r.state === "needs_review")).length;
   const inFlight = rows.filter((r) => r.pr_lock_held).length;
@@ -21,7 +21,7 @@ export function Touchpoints() {
     <>
       <div className="page-head">
         <div>
-          <h1 className="display">Touchpoints</h1>
+          <h1 className="display">Reviews</h1>
           <div className="sub">Pull requests opened by runs, waiting on your review or merge.</div>
         </div>
       </div>
@@ -42,7 +42,7 @@ export function Touchpoints() {
                 key={row.ref}
                 className={row.pr_lock_held ? "eligible" : undefined}
                 style={{ cursor: row.issue_number != null ? "pointer" : "default" }}
-                onClick={() => row.issue_number != null && navigate(issueTouchpointPath(row.project, row.issue_number))}
+                onClick={() => row.issue_number != null && navigate(issueReviewPath(row.project, row.issue_number))}
               >
                 <td>
                   <div className="row-title">
@@ -58,13 +58,13 @@ export function Touchpoints() {
                 <td>{row.run_state ? <Pill tone={runStateTone(row.run_state)}>{row.run_state}</Pill> : <span className="dim fs-sm">manual</span>}</td>
               </tr>
             ))}
-            {!loading && rows.length === 0 && <tr><td colSpan={7}><div className="empty">No touchpoints yet.</div></td></tr>}
+            {!loading && rows.length === 0 && <tr><td colSpan={7}><div className="empty">No reviews yet.</div></td></tr>}
             {loading && rows.length === 0 && <tr><td colSpan={7}><div className="empty">Loading…</div></td></tr>}
           </tbody>
         </table>
       </div>
 
-      <div className="row gap-8 mt-12 fs-sm dim"><Icon name="pr" />Open a touchpoint to see evidence and reject-with-feedback.</div>
+      <div className="row gap-8 mt-12 fs-sm dim"><Icon name="pr" />Open a review to see evidence and reject-with-feedback.</div>
     </>
   );
 }

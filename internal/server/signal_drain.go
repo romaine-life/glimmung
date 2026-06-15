@@ -23,7 +23,7 @@ type SignalDrainStore interface {
 	ClaimLock(ctx context.Context, scope, key, holderID string, ttlSeconds int, metadata map[string]any) error
 	ReleaseLock(ctx context.Context, scope, key, holderID string) bool
 	FindRunForPR(ctx context.Context, repo string, prNumber int) (RunReplayData, error)
-	RecordTouchpointDecision(ctx context.Context, project, runID string, dec TouchpointDecision) error
+	RecordReviewDecision(ctx context.Context, project, runID string, dec ReviewDecision) error
 }
 
 type QueuedSignal struct {
@@ -36,7 +36,7 @@ type QueuedSignal struct {
 	State      string
 	// Actor is the authenticated principal that submitted the signal, set at
 	// enqueue time. The drain threads it onto the durable per-run review
-	// attribution so a touchpoint approve/reject/cancel records who decided.
+	// attribution so a review approve/reject/cancel records who decided.
 	Actor      string
 	EnqueuedAt time.Time
 }
@@ -72,8 +72,8 @@ var signalDrainWake atomic.Value // stores func()
 
 const (
 	triageDispatch              = "dispatch_triage"
-	triageReleaseGate           = "release_touchpoint_gate"
-	triageCancelGate            = "cancel_touchpoint_gate"
+	triageReleaseGate           = "release_review_gate"
+	triageCancelGate            = "cancel_review_gate"
 	triageIgnore                = "ignore"
 	triageAbortNoRun            = "abort_no_run"
 	triageAbortBudgetAttempts   = "abort_budget_attempts"
@@ -157,7 +157,7 @@ func DrainSignals(ctx context.Context, store ReadStore, runLauncher RunLauncher,
 			}
 		}
 		if decision.Decision == triageReleaseGate {
-			if err := releaseTouchpointGate(ctx, drainStore, runLauncher, decision); err != nil {
+			if err := releaseReviewGate(ctx, drainStore, runLauncher, decision); err != nil {
 				_ = drainStore.MarkSignalFailed(ctx, signal, err.Error())
 				drainStore.ReleaseLock(ctx, scope, key, holderID)
 				result.Failed++
@@ -165,7 +165,7 @@ func DrainSignals(ctx context.Context, store ReadStore, runLauncher RunLauncher,
 			}
 		}
 		if decision.Decision == triageCancelGate {
-			if err := cancelTouchpointGate(ctx, drainStore, runLauncher, decision); err != nil {
+			if err := cancelReviewGate(ctx, drainStore, runLauncher, decision); err != nil {
 				_ = drainStore.MarkSignalFailed(ctx, signal, err.Error())
 				drainStore.ReleaseLock(ctx, scope, key, holderID)
 				result.Failed++
@@ -400,13 +400,13 @@ func triageAbortExplanation(decision string, signal QueuedSignal, run RunReplayD
 	}
 }
 
-// releaseTouchpointGate launches the pr_merge job for a parked review gate
+// releaseReviewGate launches the pr_merge job for a parked review gate
 // phase in response to an approve signal. The run state transitions from
 // review_required → in_progress before the launch so the dispatch path
 // sees a normal in-progress run. If the run is not in fact parked at
 // review_required this is a safe no-op (the approve arrived too late or
 // twice; idempotent).
-func releaseTouchpointGate(ctx context.Context, store SignalDrainStore, runLauncher RunLauncher, decision triageDecisionResult) error {
+func releaseReviewGate(ctx context.Context, store SignalDrainStore, runLauncher RunLauncher, decision triageDecisionResult) error {
 	if decision.Run.State != "review_required" {
 		// Not parked at the gate (already advanced, already merged, or
 		// recycled by a competing reject). Treat approve as a benign no-op.
@@ -430,7 +430,7 @@ func releaseTouchpointGate(ctx context.Context, store SignalDrainStore, runLaunc
 	// recorded as a durable per-run fact + ledger event first, so the merge can
 	// never proceed while its authorship is dropped. The stamp is idempotent,
 	// so a retry after a downstream launch failure re-records cleanly.
-	if err := store.RecordTouchpointDecision(ctx, decision.Run.Project, decision.Run.ID, TouchpointDecision{
+	if err := store.RecordReviewDecision(ctx, decision.Run.Project, decision.Run.ID, ReviewDecision{
 		Decision:     "approve",
 		Actor:        decision.Actor,
 		SignalID:     decision.SignalID,
@@ -441,20 +441,20 @@ func releaseTouchpointGate(ctx context.Context, store SignalDrainStore, runLaunc
 		return fmt.Errorf("record approval attribution: %w", err)
 	}
 	metrics.RecordReviewDecision("approve")
-	if err := launchTouchpointGateMerge(ctx, completionStore, runLauncher, decision.Run, decision.Workflow, *decision.Target); err != nil {
-		return fmt.Errorf("launch touchpoint gate: %w", err)
+	if err := launchReviewGateMerge(ctx, completionStore, runLauncher, decision.Run, decision.Workflow, *decision.Target); err != nil {
+		return fmt.Errorf("launch review gate: %w", err)
 	}
 	return nil
 }
 
-// cancelTouchpointGate cancels a parked review gate. It marks the gate attempt
+// cancelReviewGate cancels a parked review gate. It marks the gate attempt
 // abort_requested (CancelReviewGate) without running pr_merge, then drives the
 // run's abort-path teardown (run_on:always cleanup). When the teardown
 // completes, the standard completion callback settles the run terminal
 // "aborted"; the issue is left open (closeIssueOnGatedTerminal only fires on
 // "passed"). If the run is not parked at review_required this is a safe no-op
 // (cancel arrived late or twice; idempotent).
-func cancelTouchpointGate(ctx context.Context, store SignalDrainStore, runLauncher RunLauncher, triage triageDecisionResult) error {
+func cancelReviewGate(ctx context.Context, store SignalDrainStore, runLauncher RunLauncher, triage triageDecisionResult) error {
 	if triage.Run.State != "review_required" {
 		return nil
 	}
@@ -475,9 +475,9 @@ func cancelTouchpointGate(ctx context.Context, store SignalDrainStore, runLaunch
 	}
 	reason := strings.TrimSpace(triage.Feedback)
 	if reason == "" {
-		reason = "touchpoint cancelled by reviewer"
+		reason = "review cancelled by reviewer"
 	}
-	if err := store.RecordTouchpointDecision(ctx, triage.Run.Project, triage.Run.ID, TouchpointDecision{
+	if err := store.RecordReviewDecision(ctx, triage.Run.Project, triage.Run.ID, ReviewDecision{
 		Decision:     "cancel",
 		Actor:        triage.Actor,
 		Feedback:     reason,
@@ -515,11 +515,11 @@ func cancelTouchpointGate(ctx context.Context, store SignalDrainStore, runLaunch
 	return nil
 }
 
-// launchTouchpointGateMerge releases the existing parked gate attempt and
+// launchReviewGateMerge releases the existing parked gate attempt and
 // launches its pr_merge job. The merge job calls back into the standard
 // completion endpoint, so the workflow advances to cleanup automatically once
 // GitHub returns.
-func launchTouchpointGateMerge(
+func launchReviewGateMerge(
 	ctx context.Context,
 	store RunCompletionStore,
 	runLauncher RunLauncher,
@@ -599,7 +599,7 @@ func dispatchTriage(ctx context.Context, store SignalDrainStore, runLauncher Run
 	// durable per-run attribution before recycling. The attribution is about
 	// the run whose PR was reviewed, not the recycle run dispatched below.
 	rejectedAttemptIdx, rejectedAttemptPhase := latestAttempt(run)
-	if err := store.RecordTouchpointDecision(ctx, run.Project, run.ID, TouchpointDecision{
+	if err := store.RecordReviewDecision(ctx, run.Project, run.ID, ReviewDecision{
 		Decision:     "reject",
 		Actor:        decision.Actor,
 		Feedback:     decision.Feedback,

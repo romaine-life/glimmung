@@ -58,8 +58,8 @@ type Store struct {
 	// pgRuns owns durable run records.
 	pgRuns *pgstore.RunsStore
 
-	// pgTouchpoints owns operator-visible review touchpoints.
-	pgTouchpoints *pgstore.TouchpointsStore
+	// pgReviews owns operator-visible reviews.
+	pgReviews *pgstore.ReviewsStore
 
 	// pgLeases owns runner lease rows and lease counters.
 	pgLeases *pgstore.LeasesStore
@@ -71,8 +71,8 @@ type Store struct {
 
 // SetPGLocks injects the Postgres-backed lock store. Called once at
 // startup by cmd/glimmung-go/main.go after pg.LocksStore is constructed.
-// Methods that read lock state (ListIssues, ListTouchpoints,
-// GetIssueDetailByNumber, the touchpoint detail builder) all route
+// Methods that read lock state (ListIssues, ListReviews,
+// GetIssueDetailByNumber, the review detail builder) all route
 // through s.pgLocks once this is set.
 func (s *Store) SetPGLocks(locks *pgstore.LocksStore) {
 	s.pgLocks = locks
@@ -131,9 +131,9 @@ func (s *Store) SetPGRuns(runs *pgstore.RunsStore) {
 	s.pgRuns = runs
 }
 
-// SetPGTouchpoints injects the Postgres-backed touchpoints store.
-func (s *Store) SetPGTouchpoints(touchpoints *pgstore.TouchpointsStore) {
-	s.pgTouchpoints = touchpoints
+// SetPGReviews injects the Postgres-backed reviews store.
+func (s *Store) SetPGReviews(reviews *pgstore.ReviewsStore) {
+	s.pgReviews = reviews
 }
 
 // SetPGLeases injects the Postgres-backed leases store.
@@ -273,12 +273,12 @@ func leaseDocFromPayload(payload []byte) (leaseDoc, error) {
 	return doc, nil
 }
 
-// touchpointDocFromPayload decodes a touchpoint payload into the internal
+// reviewDocFromPayload decodes a review payload into the internal
 // helper shape.
-func touchpointDocFromPayload(payload []byte) (touchpointDoc, error) {
-	var doc touchpointDoc
+func reviewDocFromPayload(payload []byte) (reviewDoc, error) {
+	var doc reviewDoc
 	if err := json.Unmarshal(payload, &doc); err != nil {
-		return touchpointDoc{}, err
+		return reviewDoc{}, err
 	}
 	return doc, nil
 }
@@ -1867,7 +1867,7 @@ type runDoc struct {
 	TerminalObservation  *server.RunTerminalObservation `json:"terminal_observation,omitempty"`
 	// ReviewedBy / ReviewedAt / ReviewDecision are the durable per-run review
 	// attribution: which authenticated principal approved, rejected, or
-	// cancelled this run's touchpoint gate, and when. Stamped by the signal
+	// cancelled this run's review gate, and when. Stamped by the signal
 	// drain when a reviewer decision lands, projected onto the RunReport.
 	ReviewedBy      string            `json:"reviewed_by,omitempty"`
 	ReviewedAt      string            `json:"reviewed_at,omitempty"`
@@ -3516,9 +3516,9 @@ func sliceOrEmpty[T any](values []T) []T {
 	return values
 }
 
-// Touchpoint store.
+// Review store.
 
-type touchpointDoc struct {
+type reviewDoc struct {
 	ID            string                      `json:"id"`
 	Project       string                      `json:"project"`
 	Repo          string                      `json:"repo"`
@@ -3536,30 +3536,30 @@ type touchpointDoc struct {
 	MergedBy      *string                     `json:"merged_by"`
 	Comments      []map[string]any            `json:"comments"`
 	Reviews       []map[string]any            `json:"reviews"`
-	Evidence      []server.TouchpointEvidence `json:"evidence"`
+	Evidence      []server.ReviewEvidence `json:"evidence"`
 	CreatedAt     string                      `json:"created_at"`
 	UpdatedAt     string                      `json:"updated_at"`
 }
 
-func (s *Store) ListTouchpoints(ctx context.Context, filter server.TouchpointListFilter) ([]server.TouchpointRow, error) {
-	// pg.TouchpointsStore.List handles both the single-project and
+func (s *Store) ListReviews(ctx context.Context, filter server.ReviewListFilter) ([]server.ReviewRow, error) {
+	// pg.ReviewsStore.List handles both the single-project and
 	// cross-project cases via a single SELECT against the unified
-	// touchpoints table.
+	// reviews table.
 	limit := 0
 	if filter.Limit != nil {
 		limit = *filter.Limit
 	}
-	pgRows, err := s.pgTouchpoints.List(ctx, filter.Project, filter.Repo, filter.State, 0)
+	pgRows, err := s.pgReviews.List(ctx, filter.Project, filter.Repo, filter.State, 0)
 	if err != nil {
 		return nil, err
 	}
-	touchpointDocs := make([]touchpointDoc, 0, len(pgRows))
+	reviewDocs := make([]reviewDoc, 0, len(pgRows))
 	for _, row := range pgRows {
-		doc, derr := touchpointDocFromPayload(row.Payload)
+		doc, derr := reviewDocFromPayload(row.Payload)
 		if derr != nil {
 			return nil, derr
 		}
-		touchpointDocs = append(touchpointDocs, doc)
+		reviewDocs = append(reviewDocs, doc)
 	}
 	_ = limit
 
@@ -3576,9 +3576,9 @@ func (s *Store) ListTouchpoints(ctx context.Context, filter server.TouchpointLis
 	runRefByID, runByLinkedIssueID, runByRepoPR := buildRunIndexes(runDocs)
 
 	now := time.Now().UTC()
-	out := make([]server.TouchpointRow, 0, len(touchpointDocs))
-	for _, doc := range touchpointDocs {
-		row := touchpointRowFromDoc(doc, issueRefByID, issueNumberByID, runRefByID, runByLinkedIssueID, runByRepoPR, prLockByKey, now)
+	out := make([]server.ReviewRow, 0, len(reviewDocs))
+	for _, doc := range reviewDocs {
+		row := reviewRowFromDoc(doc, issueRefByID, issueNumberByID, runRefByID, runByLinkedIssueID, runByRepoPR, prLockByKey, now)
 		out = append(out, row)
 	}
 	if filter.Limit != nil && *filter.Limit < len(out) {
@@ -3587,26 +3587,26 @@ func (s *Store) ListTouchpoints(ctx context.Context, filter server.TouchpointLis
 	return out, nil
 }
 
-func (s *Store) GetTouchpointForIssue(ctx context.Context, project string, issueNumber int) (server.TouchpointDetail, error) {
+func (s *Store) GetReviewForIssue(ctx context.Context, project string, issueNumber int) (server.ReviewDetail, error) {
 	issueDoc, err := s.readIssueByNumber(ctx, project, issueNumber)
 	if err != nil {
-		return server.TouchpointDetail{}, server.ErrNotFound
+		return server.ReviewDetail{}, server.ErrNotFound
 	}
-	row, err := s.pgTouchpoints.FindByLinkedIssueID(ctx, project, issueDoc.ID)
-	if errors.Is(err, pgstore.ErrTouchpointNotFound) {
-		return server.TouchpointDetail{}, server.ErrNotFound
+	row, err := s.pgReviews.FindByLinkedIssueID(ctx, project, issueDoc.ID)
+	if errors.Is(err, pgstore.ErrReviewNotFound) {
+		return server.ReviewDetail{}, server.ErrNotFound
 	}
 	if err != nil {
-		return server.TouchpointDetail{}, err
+		return server.ReviewDetail{}, err
 	}
-	doc, err := touchpointDocFromPayload(row.Payload)
+	doc, err := reviewDocFromPayload(row.Payload)
 	if err != nil {
-		return server.TouchpointDetail{}, err
+		return server.ReviewDetail{}, err
 	}
-	return s.buildTouchpointDetail(ctx, doc)
+	return s.buildReviewDetail(ctx, doc)
 }
 
-func (s *Store) EnsureTouchpoint(ctx context.Context, req server.TouchpointCreate) (server.TouchpointDetail, error) {
+func (s *Store) EnsureReview(ctx context.Context, req server.ReviewCreate) (server.ReviewDetail, error) {
 	// Resolve linked refs.
 	var linkedIssueID *string
 	if req.LinkedIssueRef != "" {
@@ -3617,14 +3617,14 @@ func (s *Store) EnsureTouchpoint(ctx context.Context, req server.TouchpointCreat
 		linkedRunID = s.resolveRunIDByRef(ctx, req.Project, req.LinkedRunRef)
 	}
 
-	// 1) If we have a linked issue, check for an existing touchpoint
+	// 1) If we have a linked issue, check for an existing review
 	//    for that issue and patch linkages if provided.
 	if linkedIssueID != nil {
-		row, err := s.pgTouchpoints.FindByLinkedIssueID(ctx, req.Project, *linkedIssueID)
+		row, err := s.pgReviews.FindByLinkedIssueID(ctx, req.Project, *linkedIssueID)
 		if err == nil {
-			doc, derr := touchpointDocFromPayload(row.Payload)
+			doc, derr := reviewDocFromPayload(row.Payload)
 			if derr != nil {
-				return server.TouchpointDetail{}, derr
+				return server.ReviewDetail{}, derr
 			}
 			shouldPatch := false
 			if linkedRunID != nil && (doc.LinkedRunID == nil || *doc.LinkedRunID != *linkedRunID) {
@@ -3634,7 +3634,7 @@ func (s *Store) EnsureTouchpoint(ctx context.Context, req server.TouchpointCreat
 				shouldPatch = true
 			}
 			if shouldPatch {
-				patched, perr := s.pgTouchpoints.PatchPayload(ctx, doc.Project, doc.Number, func(payload map[string]any) error {
+				patched, perr := s.pgReviews.PatchPayload(ctx, doc.Project, doc.Number, func(payload map[string]any) error {
 					if linkedRunID != nil {
 						payload["linked_run_id"] = *linkedRunID
 					}
@@ -3645,23 +3645,23 @@ func (s *Store) EnsureTouchpoint(ctx context.Context, req server.TouchpointCreat
 					return nil
 				})
 				if perr != nil {
-					return server.TouchpointDetail{}, perr
+					return server.ReviewDetail{}, perr
 				}
-				updated, uerr := touchpointDocFromPayload(patched.Payload)
+				updated, uerr := reviewDocFromPayload(patched.Payload)
 				if uerr != nil {
-					return server.TouchpointDetail{}, uerr
+					return server.ReviewDetail{}, uerr
 				}
 				doc = updated
 			}
-			return s.buildTouchpointDetail(ctx, doc)
+			return s.buildReviewDetail(ctx, doc)
 		}
 	}
 
 	// 2) Fall back to (repo, number) idempotency key.
-	if row, err := s.pgTouchpoints.FindByRepoNumber(ctx, req.Repo, req.Number); err == nil {
-		doc, derr := touchpointDocFromPayload(row.Payload)
+	if row, err := s.pgReviews.FindByRepoNumber(ctx, req.Repo, req.Number); err == nil {
+		doc, derr := reviewDocFromPayload(row.Payload)
 		if derr != nil {
-			return server.TouchpointDetail{}, derr
+			return server.ReviewDetail{}, derr
 		}
 		updated := false
 		if linkedIssueID != nil && doc.LinkedIssueID == nil {
@@ -3674,7 +3674,7 @@ func (s *Store) EnsureTouchpoint(ctx context.Context, req server.TouchpointCreat
 			updated = true
 		}
 		if updated {
-			patched, perr := s.pgTouchpoints.PatchPayload(ctx, doc.Project, doc.Number, func(payload map[string]any) error {
+			patched, perr := s.pgReviews.PatchPayload(ctx, doc.Project, doc.Number, func(payload map[string]any) error {
 				if linkedIssueID != nil {
 					if _, ok := payload["linked_issue_id"].(string); !ok || payload["linked_issue_id"] == nil {
 						payload["linked_issue_id"] = *linkedIssueID
@@ -3693,20 +3693,20 @@ func (s *Store) EnsureTouchpoint(ctx context.Context, req server.TouchpointCreat
 				return nil
 			})
 			if perr != nil {
-				return server.TouchpointDetail{}, perr
+				return server.ReviewDetail{}, perr
 			}
-			updatedDoc, uerr := touchpointDocFromPayload(patched.Payload)
+			updatedDoc, uerr := reviewDocFromPayload(patched.Payload)
 			if uerr != nil {
-				return server.TouchpointDetail{}, uerr
+				return server.ReviewDetail{}, uerr
 			}
 			doc = updatedDoc
 		}
-		return s.buildTouchpointDetail(ctx, doc)
+		return s.buildReviewDetail(ctx, doc)
 	}
 
-	// 3) Create a new touchpoint.
+	// 3) Create a new review.
 	now := time.Now().UTC().Format(time.RFC3339Nano)
-	doc := touchpointDoc{
+	doc := reviewDoc{
 		ID:            uuid.New().String(),
 		Project:       req.Project,
 		Repo:          req.Repo,
@@ -3726,20 +3726,20 @@ func (s *Store) EnsureTouchpoint(ctx context.Context, req server.TouchpointCreat
 	}
 	payload, err := json.Marshal(doc)
 	if err != nil {
-		return server.TouchpointDetail{}, err
+		return server.ReviewDetail{}, err
 	}
-	if _, err := s.pgTouchpoints.Create(ctx, pgstore.TouchpointRow{
+	if _, err := s.pgReviews.Create(ctx, pgstore.ReviewRow{
 		Project:     req.Project,
 		IssueNumber: req.Number,
 		Payload:     payload,
 	}); err != nil {
-		return server.TouchpointDetail{}, err
+		return server.ReviewDetail{}, err
 	}
-	return s.buildTouchpointDetail(ctx, doc)
+	return s.buildReviewDetail(ctx, doc)
 }
 
-func (s *Store) buildTouchpointDetail(ctx context.Context, doc touchpointDoc) (server.TouchpointDetail, error) {
-	// Look up linked run by id. Touchpoints and their linked runs share a
+func (s *Store) buildReviewDetail(ctx context.Context, doc reviewDoc) (server.ReviewDetail, error) {
+	// Look up linked run by id. Reviews and their linked runs share a
 	// project.
 	var run *runDoc
 	if doc.LinkedRunID != nil && *doc.LinkedRunID != "" {
@@ -3776,7 +3776,7 @@ func (s *Store) buildTouchpointDetail(ctx context.Context, doc touchpointDoc) (s
 	}
 
 	// Look up linked issue by its payload UUID. The (project, number) primary
-	// key is preferred but the touchpoint payload carries this id reference.
+	// key is preferred but the review payload carries this id reference.
 	var linkedIssueRef *string
 	var linkedIssueNumber *int
 	var linkedIssueTitle *string
@@ -3796,8 +3796,8 @@ func (s *Store) buildTouchpointDetail(ctx context.Context, doc touchpointDoc) (s
 	// PR lock state lives in pg.LocksStore.
 	prLockHeld, _ := s.pgLocks.PRLockHeld(ctx, doc.Repo, doc.Number)
 
-	detail := server.TouchpointDetail{
-		Ref:            publicids.TouchpointRef(doc.Repo, &doc.Number),
+	detail := server.ReviewDetail{
+		Ref:            publicids.ReviewRef(doc.Repo, &doc.Number),
 		Project:        doc.Project,
 		Repo:           doc.Repo,
 		PRNumber:       doc.Number,
@@ -3844,17 +3844,17 @@ func (s *Store) buildTouchpointDetail(ctx context.Context, doc touchpointDoc) (s
 	return detail, nil
 }
 
-func (s *Store) replaceTouchpointDoc(ctx context.Context, doc touchpointDoc) error {
+func (s *Store) replaceReviewDoc(ctx context.Context, doc reviewDoc) error {
 	// Whole-doc replace, used by callers (currently none after the
-	// EnsureTouchpoint refactor) that build the new touchpointDoc
+	// EnsureReview refactor) that build the new reviewDoc
 	// shape externally. We honor the legacy semantics by routing
-	// through pgTouchpoints.PatchPayload — set every top-level key
+	// through pgReviews.PatchPayload — set every top-level key
 	// in the mutator, preserving created_at on the row.
 	payload, err := json.Marshal(doc)
 	if err != nil {
 		return err
 	}
-	_, err = s.pgTouchpoints.PatchPayload(ctx, doc.Project, doc.Number, func(p map[string]any) error {
+	_, err = s.pgReviews.PatchPayload(ctx, doc.Project, doc.Number, func(p map[string]any) error {
 		var fresh map[string]any
 		if err := json.Unmarshal(payload, &fresh); err != nil {
 			return err
@@ -3864,7 +3864,7 @@ func (s *Store) replaceTouchpointDoc(ctx context.Context, doc touchpointDoc) err
 		}
 		return nil
 	})
-	if errors.Is(err, pgstore.ErrTouchpointNotFound) {
+	if errors.Is(err, pgstore.ErrReviewNotFound) {
 		return server.ErrNotFound
 	}
 	return err
@@ -3917,7 +3917,7 @@ func (s *Store) resolveRunIDByRef(ctx context.Context, project, ref string) *str
 	return nil
 }
 
-func (d touchpointDoc) PRBranchStr() string {
+func (d reviewDoc) PRBranchStr() string {
 	return d.Branch
 }
 
@@ -3957,8 +3957,8 @@ func buildRunIndexes(docs []runDoc) (map[string]string, map[string]*runDoc, map[
 	return refByID, byLinkedIssue, byRepoPR
 }
 
-func touchpointRowFromDoc(
-	doc touchpointDoc,
+func reviewRowFromDoc(
+	doc reviewDoc,
 	issueRefByID map[string]string,
 	issueNumByID map[string]int,
 	runRefByID map[string]string,
@@ -3966,9 +3966,9 @@ func touchpointRowFromDoc(
 	runByRepoPR map[string]*runDoc,
 	prLockByKey map[string]bool,
 	now time.Time,
-) server.TouchpointRow {
-	row := server.TouchpointRow{
-		Ref:      publicids.TouchpointRef(doc.Repo, &doc.Number),
+) server.ReviewRow {
+	row := server.ReviewRow{
+		Ref:      publicids.ReviewRef(doc.Repo, &doc.Number),
 		Project:  doc.Project,
 		Repo:     doc.Repo,
 		PRNumber: doc.Number,
@@ -5988,18 +5988,18 @@ func queuedSignalFromDoc(doc signalDoc) server.QueuedSignal {
 	}
 }
 
-// RecordTouchpointDecision stamps a human reviewer's touchpoint decision onto
+// RecordReviewDecision stamps a human reviewer's review decision onto
 // the reviewed run as durable per-run attribution and appends a decision event
 // to the run's event ledger. Both writes are required: the canonical
-// reviewed_by fact and its ledger projection land together, so a touchpoint
+// reviewed_by fact and its ledger projection land together, so a review
 // approve / reject / cancel can never advance while its authorship is silently
 // dropped. The ledger event is idempotent on its natural key
 // (run_id, attempt_index, job_id, seq), so a re-drain of the same decision is a
 // safe no-op.
-func (s *Store) RecordTouchpointDecision(ctx context.Context, project, runID string, dec server.TouchpointDecision) error {
+func (s *Store) RecordReviewDecision(ctx context.Context, project, runID string, dec server.ReviewDecision) error {
 	decision := strings.TrimSpace(dec.Decision)
 	if decision == "" {
-		return fmt.Errorf("touchpoint decision requires a decision kind")
+		return fmt.Errorf("review decision requires a decision kind")
 	}
 	decidedAt := dec.DecidedAt
 	if decidedAt.IsZero() {
@@ -6018,12 +6018,12 @@ func (s *Store) RecordTouchpointDecision(ctx context.Context, project, runID str
 	if _, err := s.pgRunEvents.Insert(ctx, pgstore.RunEventRow{
 		RunID:        runID,
 		AttemptIndex: dec.AttemptIndex,
-		JobID:        "touchpoint-decision-" + decision,
+		JobID:        "review-decision-" + decision,
 		Seq:          0,
 		Project:      project,
-		Event:        "touchpoint_" + decision,
+		Event:        "review_" + decision,
 		Phase:        dec.Phase,
-		Message:      touchpointDecisionMessage(decision, dec.Actor),
+		Message:      reviewDecisionMessage(decision, dec.Actor),
 		Metadata: map[string]any{
 			"actor":     dec.Actor,
 			"decision":  decision,
@@ -6032,25 +6032,25 @@ func (s *Store) RecordTouchpointDecision(ctx context.Context, project, runID str
 		},
 		CreatedAt: decidedAt.UTC(),
 	}); err != nil {
-		return fmt.Errorf("append touchpoint decision event: %w", err)
+		return fmt.Errorf("append review decision event: %w", err)
 	}
 	return nil
 }
 
-func touchpointDecisionMessage(decision, actor string) string {
+func reviewDecisionMessage(decision, actor string) string {
 	who := strings.TrimSpace(actor)
 	if who == "" {
 		who = "an unattributed principal"
 	}
 	switch decision {
 	case "approve":
-		return fmt.Sprintf("touchpoint approved by %s", who)
+		return fmt.Sprintf("review approved by %s", who)
 	case "reject":
 		return fmt.Sprintf("changes requested by %s", who)
 	case "cancel":
-		return fmt.Sprintf("touchpoint cancelled by %s", who)
+		return fmt.Sprintf("review cancelled by %s", who)
 	default:
-		return fmt.Sprintf("touchpoint %s by %s", decision, who)
+		return fmt.Sprintf("review %s by %s", decision, who)
 	}
 }
 
@@ -8505,7 +8505,7 @@ func (s *Store) ReleaseReviewGate(ctx context.Context, project, runID, phase str
 //
 // Unlike approve (ReleaseReviewGate → pr_merge → terminal "passed", which
 // closes the issue), a cancelled gate leaves the issue OPEN: the reviewer
-// rejected this touchpoint outright but the work item is not done. Guards
+// rejected this review outright but the work item is not done. Guards
 // mirror ReleaseReviewGate — the run must be parked at review_required with the
 // named, not-yet-completed gate attempt at attemptIndex.
 func (s *Store) CancelReviewGate(ctx context.Context, project, runID, phase string, attemptIndex int, reason string) error {

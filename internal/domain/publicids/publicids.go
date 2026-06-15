@@ -97,8 +97,8 @@ func RunRef(project string, issueNumber int, runDisplay string) string {
 	return project + "#" + strconv.Itoa(issueNumber) + "/runs/" + runPart
 }
 
-// TouchpointRef returns the operator-facing touchpoint or pull request reference.
-func TouchpointRef(repo string, number *int) string {
+// ReviewRef returns the operator-facing review or pull request reference.
+func ReviewRef(repo string, number *int) string {
 	if number == nil {
 		return repo
 	}

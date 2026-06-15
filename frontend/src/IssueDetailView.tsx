@@ -1,7 +1,7 @@
 /**
  * Issue detail view (#42, #81) — issue meta + tabbed content.
  *
- * Tabs: summary / runs / settings / touchpoint.
+ * Tabs: summary / runs / settings / review.
  *   - summary: title link, body, edit form.
  *   - run: workflow's DAG painted with active run state. Phases
  *     as nodes, PR primitive as the trailing node. Cool-toned
@@ -11,7 +11,7 @@
  *   - runs: list/timeline of every run on this issue. Click a row
  *     to load that run in the run tab.
  *   - settings: issue-scoped runtime overrides and links to project-owned configuration.
- *   - touchpoint: issue-level decision surface and evidence summary.
+ *   - review: issue-level decision surface and evidence summary.
  *
  * Conceptual move per #81: "list of steps that ran" -> "graph that
  * runs". Phases render left-to-right; sibling jobs stack inside a phase.
@@ -120,7 +120,7 @@ type RunGraphProjection = {
     target_ref?: string | null;
     detail?: string | null;
   };
-  touchpoints: RunProjectionTouchpoint[];
+  reviews: RunProjectionReview[];
   signals: RunProjectionSignal[];
 };
 
@@ -254,7 +254,7 @@ type RunProjectionEvidence = {
   verification_status?: string | null;
 };
 
-type RunProjectionTouchpoint = {
+type RunProjectionReview = {
   ref: string;
   repo: string;
   pr_number: number;
@@ -460,20 +460,20 @@ type AuthContext = {
   } | null;
 };
 
-type Tab = "summary" | "runs" | "settings" | "touchpoint";
+type Tab = "summary" | "runs" | "settings" | "review";
 
 const TAB_SLUGS: Record<Tab, string> = {
   summary: "summary",
   runs: "runs",
   settings: "settings",
-  touchpoint: "touchpoint",
+  review: "review",
 };
 
 const SLUG_TO_TAB: Record<string, Tab> = {
   summary: "summary",
   runs: "runs",
   settings: "settings",
-  touchpoint: "touchpoint",
+  review: "review",
 };
 
 const POLL_INTERVAL_MS = 3000;
@@ -815,8 +815,8 @@ export function IssueDetailView() {
             <TabButton current={tab} value="settings" onSelect={selectTab}>
               settings
             </TabButton>
-            <TabButton current={tab} value="touchpoint" onSelect={selectTab}>
-              touchpoint
+            <TabButton current={tab} value="review" onSelect={selectTab}>
+              review
             </TabButton>
           </div>
 
@@ -860,7 +860,7 @@ export function IssueDetailView() {
                 executionLoading={Boolean(runGraphUrl) && runProjection === null && !error}
                 onSelectProjectionRun={(run) => navigate(projectionRunCyclePath(baseUrl, run))}
                 onSelectProjectionNode={(run, selection) => navigate(projectionSelectionPath(baseUrl, run, selection), { preventScrollReset: true })}
-                onOpenTouchpoint={() => setTab("touchpoint")}
+                onOpenReview={() => setTab("review")}
                 onOpenRunSettings={() => setTab("settings")}
               />
             )}
@@ -882,8 +882,8 @@ export function IssueDetailView() {
                 onDispatchInputChange={(name, value) => setDispatchInputValues((prev) => ({ ...prev, [name]: value }))}
               />
             )}
-            {tab === "touchpoint" && (
-              <TouchpointTab
+            {tab === "review" && (
+              <ReviewTab
                 graph={graph}
                 graphAvailable={!!graphUrl}
                 repo={detail.repo}
@@ -915,7 +915,7 @@ function IssueHeader({ detail, heading }: { detail: IssueDetail; heading: string
               ))}
               {defaultAgent && <span className="pill info">agent {defaultAgent}</span>}
               {detail.issue_lock_held && <span className="pill busy">in flight</span>}
-              {detail.preserve_test_env && <span className="pill info" title="test env stays alive through touchpoint review">preserve env</span>}
+              {detail.preserve_test_env && <span className="pill info" title="test env stays alive through review">preserve env</span>}
             </div>
           )}
         </div>
@@ -1664,10 +1664,10 @@ function DrillIn({
   if (nodeId === null) return null;
   const meta = run.metadata;
   if (nodeId === "pr") {
-    const touchpointId = stringOrNull(meta.touchpoint_ref);
-    const touchpointState = stringOrNull(meta.touchpoint_state);
-    const touchpointTitle = stringOrNull(meta.touchpoint_title);
-    const touchpointUrl = stringOrNull(meta.touchpoint_url);
+    const reviewId = stringOrNull(meta.review_ref);
+    const reviewState = stringOrNull(meta.review_state);
+    const reviewTitle = stringOrNull(meta.review_title);
+    const reviewUrl = stringOrNull(meta.review_url);
     const primitiveState = stringOrNull(meta.pr_primitive_state);
     const primitiveError = stringOrNull(meta.pr_primitive_error);
     const prNumber = numberOrNull(meta.pr_number);
@@ -1676,14 +1676,14 @@ function DrillIn({
       <div className="run-panel">
         <div className="run-panel-header">
           <div>
-            <strong>touchpoint</strong>
+            <strong>review</strong>
             <span
               className={`pill ${
-                primitiveState === "failed" ? "drain" : touchpointId || prNumber ? "free" : ""
+                primitiveState === "failed" ? "drain" : reviewId || prNumber ? "free" : ""
               }`}
               style={{ marginLeft: "0.5rem" }}
             >
-              {primitiveState === "failed" ? "failed" : touchpointState ?? (prNumber ? "opened" : "pending")}
+              {primitiveState === "failed" ? "failed" : reviewState ?? (prNumber ? "opened" : "pending")}
             </span>
           </div>
           <button type="button" className="link" onClick={onClose}>
@@ -1691,26 +1691,26 @@ function DrillIn({
           </button>
         </div>
         <div className="run-panel-meta">
-          {touchpointId && (
+          {reviewId && (
             <div>
-              <span className="key">touchpoint</span>{" "}
-              <span className="mono" title={touchpointId}>{touchpointId.slice(0, 8)}…</span>
+              <span className="key">review</span>{" "}
+              <span className="mono" title={reviewId}>{reviewId.slice(0, 8)}…</span>
             </div>
           )}
-          {touchpointTitle && (
+          {reviewTitle && (
             <div>
-              <span className="key">title</span> <span>{touchpointTitle}</span>
+              <span className="key">title</span> <span>{reviewTitle}</span>
             </div>
           )}
           {prNumber !== null && repo ? (
             <div>
               <span className="key">PR</span>{" "}
-              <a className="mono" href={touchpointUrl || `https://github.com/${repo}/pull/${prNumber}`} target="_blank" rel="noreferrer">
+              <a className="mono" href={reviewUrl || `https://github.com/${repo}/pull/${prNumber}`} target="_blank" rel="noreferrer">
                 #{prNumber}
               </a>
             </div>
           ) : (
-            <div className="dim mono">No touchpoint evidence opened yet for this run.</div>
+            <div className="dim mono">No review evidence opened yet for this run.</div>
           )}
           {prBranch && (
             <div>
@@ -1763,7 +1763,7 @@ function DrillIn({
 }
 
 // reviewDecisionLabel renders the terse, lowercase attribution verb for a
-// reviewer's touchpoint decision, matching the design-system voice.
+// reviewer's review decision, matching the design-system voice.
 function reviewDecisionLabel(decision: string | null): string {
   if (decision === "reject") return "changes requested by";
   if (decision === "cancel") return "cancelled by";
@@ -1890,7 +1890,7 @@ function RunsPane({
   executionLoading,
   onSelectProjectionRun,
   onSelectProjectionNode,
-  onOpenTouchpoint,
+  onOpenReview,
   onOpenRunSettings,
 }: {
   graph: IssueGraph | null;
@@ -1916,7 +1916,7 @@ function RunsPane({
   executionLoading: boolean;
   onSelectProjectionRun: (run: RunProjectionRun) => void;
   onSelectProjectionNode: (run: RunProjectionRun, selection: ProjectionSelection) => void;
-  onOpenTouchpoint: () => void;
+  onOpenReview: () => void;
   onOpenRunSettings: () => void;
 }) {
   const dispatching = dispatchState.kind === "dispatching";
@@ -2063,7 +2063,7 @@ function RunsPane({
         repo={repo}
         currentWorkflow={currentWorkflow}
         onBackToRuns={() => onSelectRun(null)}
-        onOpenTouchpoint={onOpenTouchpoint}
+        onOpenReview={onOpenReview}
       />
     );
   }
@@ -2082,7 +2082,7 @@ function RunsPane({
             <th>Duration</th>
             <th title="The prior cycle that directly produced this cycle, when any.">Previous</th>
             <th>Cost</th>
-            <th>Touchpoint</th>
+            <th>Review</th>
             <th></th>
           </tr>
         </thead>
@@ -3145,7 +3145,7 @@ function RunDetailView({
   repo,
   currentWorkflow,
   onBackToRuns,
-  onOpenTouchpoint,
+  onOpenReview,
 }: {
   graph: IssueGraph;
   run: GraphNode | null;
@@ -3153,7 +3153,7 @@ function RunDetailView({
   repo: string | null;
   currentWorkflow: Workflow | null;
   onBackToRuns: () => void;
-  onOpenTouchpoint: () => void;
+  onOpenReview: () => void;
 }) {
   const location = useLocation();
   if (!run) {
@@ -3250,15 +3250,15 @@ function RunDetailView({
             <span className="val mono">{cumulativeCost !== null ? `$${cumulativeCost.toFixed(4)}` : "—"}</span>
           </div>
           <div className="row">
-            <span className="key">touchpoint</span>
+            <span className="key">review</span>
             <span className="val">
               {prNumber !== null && repo ? (
                 <a className="mono" href={`https://github.com/${repo}/pull/${prNumber}`} target="_blank" rel="noreferrer">
                   #{prNumber}
                 </a>
               ) : (
-                <button type="button" className="link" onClick={onOpenTouchpoint}>
-                  view touchpoint
+                <button type="button" className="link" onClick={onOpenReview}>
+                  view review
                 </button>
               )}
             </span>
@@ -3285,7 +3285,7 @@ function RunDetailView({
   );
 }
 
-function TouchpointTab({
+function ReviewTab({
   graph,
   graphAvailable,
   repo,
@@ -3324,22 +3324,22 @@ function TouchpointTab({
   if (!graphAvailable) {
     return (
       <div className="empty">
-        Touchpoint evidence isn't available for runner issues yet.
+        Review evidence isn't available for runner issues yet.
       </div>
     );
   }
   if (!graph) {
-    return <div className="empty">Loading touchpoint…</div>;
+    return <div className="empty">Loading review…</div>;
   }
 
   const projection = graph.projection;
-  const projectionTouchpoints = projection?.touchpoints ?? [];
+  const projectionReviews = projection?.reviews ?? [];
   const projectedRun = latestProjectionRun(projection);
   // Scope the approve/reject/cancel decision to the issue's current run's
-  // touchpoint rather than the first parked one on the issue (see
-  // pickDecisionTouchpoint).
-  const projectedTouchpoint = pickDecisionTouchpoint(
-    projectionTouchpoints,
+  // review rather than the first parked one on the issue (see
+  // pickDecisionReview).
+  const projectedReview = pickDecisionReview(
+    projectionReviews,
     projection?.current_run_ref ?? null,
   );
   const pendingSignal = projection?.signals.find((signal) => (
@@ -3351,15 +3351,15 @@ function TouchpointTab({
   const latestPr = prNodes[prNodes.length - 1] ?? null;
   const latestPrMeta = latestPr?.metadata ?? {};
   const prNumber =
-    projectedTouchpoint?.pr_number
+    projectedReview?.pr_number
     ?? numberOrNull(latestMeta.pr_number)
     ?? numberOrNull(latestPrMeta.number)
     ?? prNumberFromNode(latestPr);
-  const touchpointTitle = projectedTouchpoint?.title ?? stringOrNull(latestMeta.touchpoint_title) ?? stringOrNull(latestPrMeta.title);
-  const touchpointState = projectedTouchpoint?.state ?? stringOrNull(latestMeta.touchpoint_state) ?? latestPr?.state;
-  const touchpointUrl = projectedTouchpoint?.html_url ?? stringOrNull(latestMeta.touchpoint_url) ?? stringOrNull(latestPrMeta.html_url);
-  const evidenceRepo = projectedTouchpoint?.repo ?? repo ?? stringOrNull(latestPrMeta.repo);
-  const validationUrl = projectedRun?.validation_url ?? projectedTouchpoint?.validation_url ?? stringOrNull(latestMeta.validation_url);
+  const reviewTitle = projectedReview?.title ?? stringOrNull(latestMeta.review_title) ?? stringOrNull(latestPrMeta.title);
+  const reviewState = projectedReview?.state ?? stringOrNull(latestMeta.review_state) ?? latestPr?.state;
+  const reviewUrl = projectedReview?.html_url ?? stringOrNull(latestMeta.review_url) ?? stringOrNull(latestPrMeta.html_url);
+  const evidenceRepo = projectedReview?.repo ?? repo ?? stringOrNull(latestPrMeta.repo);
+  const validationUrl = projectedRun?.validation_url ?? projectedReview?.validation_url ?? stringOrNull(latestMeta.validation_url);
   const projectionEvidence = projectedRun?.evidence ?? [];
   const structuredVideos = projectionEvidence.filter(isInlineVideoEvidence);
   const structuredScreenshots = projectionEvidence.filter(isInlineScreenshotEvidence);
@@ -3457,8 +3457,8 @@ function TouchpointTab({
         <div className="row">
           <span className="key">state</span>
           <span className="val">
-            <span className={`pill ${touchpointState === "open" || touchpointState === "ready" ? "busy" : touchpointState ? "free" : ""}`}>
-              {touchpointState ?? "pending evidence"}
+            <span className={`pill ${reviewState === "open" || reviewState === "ready" ? "busy" : reviewState ? "free" : ""}`}>
+              {reviewState ?? "pending evidence"}
             </span>
           </span>
         </div>
@@ -3487,8 +3487,8 @@ function TouchpointTab({
           <span className="key">PR</span>
           <span className="val">
             {prNumber !== null && evidenceRepo ? (
-              <a className="mono" href={touchpointUrl || `https://github.com/${evidenceRepo}/pull/${prNumber}`} target="_blank" rel="noreferrer">
-                #{prNumber}{touchpointTitle ? ` — ${touchpointTitle}` : ""}
+              <a className="mono" href={reviewUrl || `https://github.com/${evidenceRepo}/pull/${prNumber}`} target="_blank" rel="noreferrer">
+                #{prNumber}{reviewTitle ? ` — ${reviewTitle}` : ""}
               </a>
             ) : (
               <span className="dim">No PR evidence yet.</span>
@@ -3515,7 +3515,7 @@ function TouchpointTab({
           {structuredVideos.length > 0 && <StructuredVideoEvidence items={structuredVideos} />}
           {structuredScreenshots.length > 0 && <StructuredScreenshotEvidence items={structuredScreenshots} />}
           {listedEvidence.length > 0 && (
-            <div className="project-info touchpoint-evidence-list">
+            <div className="project-info review-evidence-list">
               {listedEvidence.map((item) => {
                 const href = evidenceHref(item);
                 return (
@@ -3590,7 +3590,7 @@ function TouchpointTab({
         )}
       </div>
 
-      <h2>Cancel touchpoint</h2>
+      <h2>Cancel review</h2>
       <p className="dim">aborts the run and tears down its environment. does not merge and does not close the issue. an optional reason uses the feedback above.</p>
       <div className="review-actions">
         {cancel.kind === "armed" || cancel.kind === "submitting" ? (
@@ -3788,30 +3788,30 @@ function formatGraphState(state: string): string {
   return state.replace(/_/g, " ");
 }
 
-function touchpointNeedsDecision(tp: RunProjectionTouchpoint): boolean {
+function reviewNeedsDecision(tp: RunProjectionReview): boolean {
   return ["ready", "needs_review", "open", "review_required"].includes(tp.state);
 }
 
-// pickDecisionTouchpoint chooses which touchpoint a reviewer's
+// pickDecisionReview chooses which review a reviewer's
 // approve/reject/cancel acts on. When several runs on one issue are parked at
 // their gate at once, scope the decision to the issue's current (latest) run
-// rather than silently picking the first parked touchpoint — otherwise an
+// rather than silently picking the first parked review — otherwise an
 // approve can land on a stale run's PR (the bug that mis-routed an approve to an
-// old synthetic run's PR). Falls back to any touchpoint needing a decision,
-// then the most recent touchpoint.
-export function pickDecisionTouchpoint(
-  touchpoints: RunProjectionTouchpoint[],
+// old synthetic run's PR). Falls back to any review needing a decision,
+// then the most recent review.
+export function pickDecisionReview(
+  reviews: RunProjectionReview[],
   currentRunRef: string | null,
-): RunProjectionTouchpoint | null {
+): RunProjectionReview | null {
   const scoped = currentRunRef
-    ? touchpoints.find(
-        (tp) => tp.linked_run_ref === currentRunRef && touchpointNeedsDecision(tp),
+    ? reviews.find(
+        (tp) => tp.linked_run_ref === currentRunRef && reviewNeedsDecision(tp),
       )
     : undefined;
   return (
     scoped
-    ?? touchpoints.find((tp) => touchpointNeedsDecision(tp))
-    ?? touchpoints[touchpoints.length - 1]
+    ?? reviews.find((tp) => reviewNeedsDecision(tp))
+    ?? reviews[reviews.length - 1]
     ?? null
   );
 }
@@ -5821,7 +5821,7 @@ function IssueEditForm({
           checked={preserveTestEnv}
           onChange={(e) => setPreserveTestEnv(e.target.checked)}
         />
-        <span>preserve test env through touchpoint review</span>
+        <span>preserve test env through review</span>
       </label>
       {error && <div className="error">{error}</div>}
       <div style={{ display: "flex", gap: "0.5rem" }}>

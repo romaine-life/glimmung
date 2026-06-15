@@ -19,7 +19,7 @@ func TestOperationFromSQLUsesBoundedSpecialCases(t *testing.T) {
 		want string
 	}{
 		{name: "insert", sql: "INSERT INTO runs (id) VALUES ($1)", want: "insert_runs"},
-		{name: "update", sql: "UPDATE touchpoints SET updated_at = now()", want: "update_touchpoints"},
+		{name: "update", sql: "UPDATE reviews SET updated_at = now()", want: "update_reviews"},
 		{name: "delete", sql: "DELETE FROM run_events WHERE created_at < now()", want: "delete_run_events"},
 		{name: "migration", sql: "CREATE TABLE IF NOT EXISTS projects (name text)", want: "migration"},
 		{name: "cron", sql: "SELECT cron.schedule('run_events_ttl', '0 4 * * *', $$DELETE FROM run_events$$)", want: "cron_schedule"},

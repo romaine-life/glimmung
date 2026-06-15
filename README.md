@@ -1,7 +1,7 @@
 # glimmung
 
 Go service for issue-driven agentic development. Glimmung stores projects,
-workflows, issues, runs, leases, touchpoints, and signals in Postgres; serves
+workflows, issues, runs, leases, reviews, and signals in Postgres; serves
 the Vite + React dashboard; and coordinates runner Kubernetes jobs.
 
 > *The Glimmung scanned the assembled list of beings he had summoned. From a thousand worlds they had come, each with a craft to contribute.*
@@ -27,7 +27,7 @@ Full design + intent: [issue #1](https://github.com/romaine-life/glimmung/issues
 Project -> Workflow -> Issue -> Run -> Phase/Job -> RunReport
                          \        \
                           \        -> Lease + callback token
-                           -> Touchpoint / PR review surface
+                           -> Review / PR review surface
 ```
 
 - **Project** = a repo (e.g. `spirelens`), declares the github_repo only.
@@ -66,7 +66,7 @@ boundary and follow-up implementation surface.
 See [Quality Timeframes](docs/quality-timeframes.md) for the default
 long-term engineering quality bar used when planning substantial work.
 See
-[Touchpoints, RunReports, And Playbook Integration](docs/touchpoints-runreports-playbooks.md)
+[Reviews, RunReports, And Playbook Integration](docs/reviews-runreports-playbooks.md)
 for the review surface, per-run audit report, and integration-strategy
 vocabulary.
 
@@ -165,10 +165,10 @@ surface.
 | GET    | `/v1/issues/by-number/{project}/{issue_number}` | Issue detail by canonical project issue number. |
 | POST   | `/v1/runs/dispatch`               | UI/API-initiated dispatch (`{project, issue_number, workflow_name?}`); per-issue lock-serialized. |
 | GET    | `/v1/projects/{project}/issues/{issue_number}/runs/{run_number}/report` | Factual RunReport for one Run: attempts, cost, validation URL, screenshot markdown, and terminal status. |
-| GET    | `/v1/touchpoints`                 | Touchpoint index across registered projects (GitHub PR syndication metadata + linked Issue/Run state). |
-| GET    | `/v1/projects/{project}/issues/{n}/touchpoint` | Canonical live Touchpoint summary for one Glimmung Issue. |
-| POST   | `/v1/projects/{project}/issues/{issue_number}/runs/{run_number}/touchpoint/finalize` | Admin/idempotent finalizer for a review-ready Run: promotes canonical review facts such as `validation_url`, creates or reuses the GitHub PR, links `run.pr_number`, and ensures the Touchpoint. |
-| POST   | `/v1/projects/{project}/issues/{issue_number}/runs/{run_number}/cycles/{cycle_number}/touchpoint/finalize` | Same finalizer for a review-ready cycle Run, matching the UI run-cycle URL shape. |
+| GET    | `/v1/reviews`                 | Review index across registered projects (GitHub PR syndication metadata + linked Issue/Run state). |
+| GET    | `/v1/projects/{project}/issues/{n}/review` | Canonical live Review summary for one Glimmung Issue. |
+| POST   | `/v1/projects/{project}/issues/{issue_number}/runs/{run_number}/review/finalize` | Admin/idempotent finalizer for a review-ready Run: promotes canonical review facts such as `validation_url`, creates or reuses the GitHub PR, links `run.pr_number`, and ensures the Review. |
+| POST   | `/v1/projects/{project}/issues/{issue_number}/runs/{run_number}/cycles/{cycle_number}/review/finalize` | Same finalizer for a review-ready cycle Run, matching the UI run-cycle URL shape. |
 | POST   | `/v1/signals`                     | Enqueue a Signal. PR signals use GitHub coordinates only: `{target_type:"pr", target_repo:"owner/repo", target_ref:"42", source:"glimmung_ui", payload:{kind:"reject", feedback:"..."}}`. |
 | POST   | `/v1/signals/drain`               | Admin drain endpoint for queued signals; production also runs the Go signal drain loop in-process. |
 
@@ -410,7 +410,7 @@ surface.
 
 Runner clients that open or update a GitHub PR should use the dispatch inputs
 and lease metadata as the PR body source of truth: include `issue_ref`,
-`run_ref`, the Touchpoint/PR URL when known, the validation URL, and evidence
+`run_ref`, the Review/PR URL when known, the validation URL, and evidence
 links from the RunReport. GitHub remains a syndication surface; the canonical
 review state stays in the Glimmung Issue workspace.
 
@@ -419,7 +419,7 @@ review state stays in the Glimmung Issue workspace.
 Azure Database for PostgreSQL Flexible Server, provisioned by
 [`tofu/postgres.tf`](tofu/postgres.tf). Runtime tables include `projects`,
 `workflows`, `leases`, `runs`, `run_events`, `locks`, `signals`, `issues`,
-`playbooks`, `reports`, `slots`, `slot_history`, `touchpoints`, and supporting
+`playbooks`, `reports`, `slots`, `slot_history`, `reviews`, and supporting
 counter/schema tables. Schema is applied idempotently at service startup by
 [`internal/store/pg/migrations.go`](internal/store/pg/migrations.go).
 
@@ -586,7 +586,7 @@ The attended-pickup launch flow ([#127](https://github.com/romaine-life/glimmung
 is dogfooded against real Glimmung PR rows: a Glimmung run produces an
 actual PR in this repo, and that PR is the fixture used to exercise the
 `start Tank session` flow before #127 can close. The launch URL hands the
-glimmung run / issue / touchpoint refs, plus the validation URL embedded in
+glimmung run / issue / review refs, plus the validation URL embedded in
 the PR body, to tank-operator, which gives the session its
 `/workspace/GLIMMUNG_CONTEXT.{json,md}` and an mcp-glimmung route.
 
@@ -602,9 +602,9 @@ cost exceeds $X. The substrate that lands here is reused by every other
 
 Register a workflow with explicit phases, marking the verification phase with
 `verify: true` and adding `recycle_policy` on the phase or PR primitive where
-needed. Every workflow must declare one `primitive: pr_touchpoint` job in an
-explicit `purpose: review_touchpoint`, `run_on: success` phase so
-PR/touchpoint materialization is visible in job logs only after verification
+needed. Every workflow must declare one `primitive: pr_review` job in an
+explicit `purpose: review`, `run_on: success` phase so
+PR/review materialization is visible in job logs only after verification
 passes. The current workflow shape is documented in
 [`docs/workflow-shape.md`](docs/workflow-shape.md).
 Older fields such as `retry_workflow_filename`, `default_budget`, and
@@ -725,7 +725,7 @@ Active triage behavior:
 - **Budget enforcement**: no-run and budget abort cases are recorded as
   processed decisions instead of dispatching more work.
 - **One PR signal contract**: `target_repo` is the GitHub repo (`owner/repo`)
-  and `target_ref` is the PR number. Glimmung project names and Touchpoint refs
+  and `target_ref` is the PR number. Glimmung project names and Review refs
   are resolved after the signal lands, not accepted as alternate PR targets.
 
 ### Triage recycle contract

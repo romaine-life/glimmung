@@ -206,13 +206,13 @@ type RunnerJobCompletionStore interface {
 	RecordRunnerJobCompletion(ctx context.Context, project, runID string, p CompletionPayload) (RunnerJobCompletionResult, error)
 }
 
-// TouchpointDecision is a human reviewer's durable decision on a run's
-// touchpoint gate: who decided, what they decided, and when. The signal drain
+// ReviewDecision is a human reviewer's durable decision on a run's
+// review gate: who decided, what they decided, and when. The signal drain
 // captures it from the approve / reject / cancel signal and stamps it onto the
 // reviewed run so the decision's authorship survives on run-facing surfaces
 // (RunReport, run event ledger) rather than being discarded once the gate
 // releases.
-type TouchpointDecision struct {
+type ReviewDecision struct {
 	// Decision is the reviewer action: "approve", "reject", or "cancel".
 	Decision string
 	// Actor is the authenticated principal that submitted the decision.
@@ -586,10 +586,10 @@ func processRunCompletion(
 		// Every gated workflow ends after cleanup_final. Reaching this code
 		// path with no prior abort means the gate was approved, the pr_merge
 		// primitive ran successfully, and final cleanup completed.
-		// Reaching this with no linked PR is malformed: the pr_touchpoint
-		// primitive in the touchpoint phase should have set run.PRNumber.
+		// Reaching this with no linked PR is malformed: the pr_review
+		// primitive in the review phase should have set run.PRNumber.
 		if run.PRNumber == nil || *run.PRNumber < 1 {
-			abortReason := "PR primitive: touchpoint job completed without linking a PR"
+			abortReason := "PR primitive: review job completed without linking a PR"
 			return markRunAborted(ctx, w, r, store, runLauncher, run, runRef, decision.AbortMalformed, abortReason)
 		}
 		state := "passed"
@@ -601,9 +601,9 @@ func processRunCompletion(
 		advancePlaybooksForTerminalRun(ctx, store, runLauncher, project, runID)
 		if state == "passed" {
 			// A gated run reached terminal "passed" by going through the
-			// touchpoint_gate (the only way a gated workflow advances is
+			// review_gate (the only way a gated workflow advances is
 			// through approve → pr_merge). Close the issue so the
-			// review-surfaces contract invariant "Merged Touchpoints close
+			// review-surfaces contract invariant "Merged Reviews close
 			// their Issue in the normal isolated-PR case" holds.
 			closeIssueOnGatedTerminal(ctx, store, wf, run)
 		}
@@ -962,7 +962,7 @@ func phaseRunsOnAbortPath(phase PhaseSpec) bool {
 
 func phaseIsPrimary(phase PhaseSpec) bool {
 	switch phasePurpose(phase) {
-	case PhasePurposeTeardown, PhasePurposeReviewTouchpoint, PhasePurposeReviewGate:
+	case PhasePurposeTeardown, PhasePurposeReview, PhasePurposeReviewGate:
 		return false
 	default:
 		return true
@@ -988,8 +988,8 @@ func phasePurpose(phase PhaseSpec) string {
 	if phase.EvidenceVerificationGate {
 		return PhasePurposeEvidenceGate
 	}
-	if phaseHasPrimitive(phase, JobPrimitivePRTouchpoint) {
-		return PhasePurposeReviewTouchpoint
+	if phaseHasPrimitive(phase, JobPrimitivePRReview) {
+		return PhasePurposeReview
 	}
 	if phase.Verify {
 		return PhasePurposeVerification

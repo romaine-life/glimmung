@@ -23,7 +23,7 @@ safely.
 The orchestrator Job pod is already authenticated to glimmung through the
 run's per-attempt callback token — the same possession-is-proof token that
 authorizes `POST /v1/run-callbacks/{callback_token}/run/completed`,
-`…/github-token`, `…/pr-touchpoint`, and `…/pr-merge`. That token bounds
+`…/github-token`, `…/pr-review`, and `…/pr-merge`. That token bounds
 every credential glimmung mints under this contract to a single run
 attempt. The lease's own callback token is intentionally not exposed to
 phase pods.
@@ -67,7 +67,7 @@ correctness.
 ## HTTP surface
 
 Both endpoints share the existing `/v1/run-callbacks/{callback_token}/run/*`
-family, alongside `github-token`, `pr-touchpoint`, `pr-merge`, and
+family, alongside `github-token`, `pr-review`, `pr-merge`, and
 `completed`. Glimmung's run launcher pre-bakes the full URLs for the
 phase script as `GLIMMUNG_SSH_CERT_URL` and `GLIMMUNG_TAILSCALE_AUTHKEY_URL`
 env vars (the callback token is already baked into the path; the secret
@@ -333,8 +333,8 @@ per-run working directory and is discarded with it.
   SSH connections; it only signs certificates that other parties accept.
 - This is not a long-lived agent on the remote host. The remote host runs
   sshd and tailscaled; neither is glimmung-aware.
-- This is not a substitute for the existing PR/touchpoint primitives. PR
-  open, merge, and review-feedback flow still go through `pr_touchpoint`,
+- This is not a substitute for the existing PR/review primitives. PR
+  open, merge, and review-feedback flow still go through `pr_review`,
   `pr_merge`, and the signal bus.
 
 ## Feature Contracts

@@ -4,7 +4,7 @@ This note names the external systems worth reading while the Glimmung workflow
 model is settling. It is not an adoption plan. The local contracts in
 [`workflow-shape.md`](workflow-shape.md) and
 [`run-graph-display-design.md`](run-graph-display-design.md) stay primary:
-Glimmung owns issues, runs, phases, jobs, evidence, touchpoints, queueing, and
+Glimmung owns issues, runs, phases, jobs, evidence, reviews, queueing, and
 human decisions.
 
 The useful pattern is to borrow proven primitives without inheriting another
@@ -25,7 +25,7 @@ Glimmung shape.
   inside one phase run in parallel and do not depend on each other.
 - **Required safety rails:** Every workflow has an entry phase, a verifying
   phase, and a teardown cleanup phase.
-- **Human surface:** Touchpoints and run reports explain what a reviewer needs
+- **Human surface:** Reviews and run reports explain what a reviewer needs
   to inspect or decide. CI-style logs are inputs to that surface, not the
   surface itself.
 
@@ -43,7 +43,7 @@ Glimmung shape.
 | [Buildkite hooks](https://buildkite.com/docs/agent/hooks) and [annotations](https://buildkite.com/docs/pipelines/configure/annotations) | Agent hooks, per-build annotations, concise evidence attached to CI work. | Hook points around execution and human-readable evidence snippets. | Buildkite-style pipeline ownership or treating annotations as the primary review object. |
 | [Concourse tasks](https://concourse-ci.org/docs/tasks/) | Explicit task inputs, outputs, images, and isolated execution. | Strong input/output discipline for phase jobs and artifacts. | Concourse's resource/check model as Glimmung's issue/run model. |
 | [SWE-agent](https://github.com/princeton-nlp/SWE-agent/blob/main/docs/index.md) | Issue-to-patch agent loop, trajectories, sandboxed execution. | Agent execution traces, issue-oriented repair loop, evidence from the working session. | A single-agent benchmark harness as the platform boundary. |
-| [OpenHands](https://github.com/OpenHands/OpenHands) | General software-development agent runtime and workspace interaction. | Agent workspace ergonomics, task execution loop, human-in-the-loop affordances. | Replacing Glimmung's queue, workflow registration, evidence, or touchpoint model. |
+| [OpenHands](https://github.com/OpenHands/OpenHands) | General software-development agent runtime and workspace interaction. | Agent workspace ergonomics, task execution loop, human-in-the-loop affordances. | Replacing Glimmung's queue, workflow registration, evidence, or review model. |
 
 ## Negative Reference
 
@@ -86,10 +86,10 @@ these questions:
 - Are jobs within a phase still strictly parallel?
 - Is verification explicit and self-enforcing or gated by a Glimmung-owned
   gate?
-- Does cleanup run on every terminal outcome without running review touchpoints
+- Does cleanup run on every terminal outcome without running reviews
   after aborts?
 - Are capacity decisions modeled as Glimmung queue/lease decisions?
-- Does evidence flow into run reports and touchpoints instead of disappearing
+- Does evidence flow into run reports and reviews instead of disappearing
   into executor-native logs?
 - Does the change avoid making GitHub Actions, Argo, Tekton, or another system
   the canonical owner of run identity?

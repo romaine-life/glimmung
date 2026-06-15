@@ -1,4 +1,4 @@
-# Touchpoints, RunReports, And Playbook Integration
+# Reviews, RunReports, And Playbook Integration
 
 This document fixes the object boundaries for review surfaces and execution
 telemetry. Older `Report` terminology is migration debt; new design and API
@@ -17,7 +17,7 @@ Run -> RunReport
 ```
 
 Each RunReport is strictly scoped to one Run. Do not introduce a RunReport
-grouping object for v1. Cross-run totals can be derived by Touchpoint or
+grouping object for v1. Cross-run totals can be derived by Review or
 Playbook views when needed.
 
 The materialized API is:
@@ -29,7 +29,7 @@ GET /v1/projects/{project}/issues/{issue_number}/runs/{run_number}/report
 It is derived from the Run document and includes attempt summaries,
 cumulative cost, validation URL, typed evidence, screenshot markdown kept only
 as migrated display content, abort reason, reviewer attribution (who approved,
-rejected, or cancelled the touchpoint gate, and when), and the terminal
+rejected, or cancelled the review gate, and when), and the terminal
 timestamp when present.
 
 A RunReport may eventually include:
@@ -45,41 +45,41 @@ A RunReport may eventually include:
 RunReport can be persisted or materialized from Run attempts, runner events,
 and artifacts later. The invariant is the one-Run scope.
 
-## Touchpoint
+## Review
 
-A Touchpoint is the user-facing decision surface for exactly one Issue.
+A Review is the user-facing decision surface for exactly one Issue.
 
 It answers: what should the user inspect or decide now?
 
 Cardinality:
 
 ```text
-Issue <-> Touchpoint
+Issue <-> Review
 ```
 
 This is a strict one-to-one product invariant, not a pagination or v1
-implementation detail. An Issue never has multiple Touchpoints, and a
-Touchpoint should not be addressed as an independent child collection of an
-Issue. If work is recycled or rerun, the same Touchpoint updates to
+implementation detail. An Issue never has multiple Reviews, and a
+Review should not be addressed as an independent child collection of an
+Issue. If work is recycled or rerun, the same Review updates to
 reflect the current decision surface.
 
-The Touchpoint is a live summary and navigation page for the Issue's current
+The Review is a live summary and navigation page for the Issue's current
 decision state. It is not the historical log and it is not the place to
 persist per-Run records. It updates as new Runs happen. Anything that is
 specific to one Run belongs in the Run and RunReport UI. History lives under
 Runs and RunReports.
 
-A merged Touchpoint closes its Issue. In the normal isolated-PR case, merge is
+A merged Review closes its Issue. In the normal isolated-PR case, merge is
 the acceptance event for the work represented by that Issue; after the
-Touchpoint reaches `merged`, the linked Issue should transition to `closed`.
+Review reaches `merged`, the linked Issue should transition to `closed`.
 Follow-on orchestration that needs different integration behavior should model
 that explicitly through Playbook integration strategy or dependencies rather
-than leaving the Issue open after its Touchpoint has merged.
+than leaving the Issue open after its Review has merged.
 
-A Touchpoint may eventually expose an audit/debug history of changes to the
+A Review may eventually expose an audit/debug history of changes to the
 live surface itself. That history is acceptable only as history of one
-Touchpoint being updated; it must not imply that an Issue has multiple
-Touchpoint instances.
+Review being updated; it must not imply that an Issue has multiple
+Review instances.
 
 Potential generic actions:
 
@@ -89,11 +89,11 @@ Potential generic actions:
 - rerun or request a second unattended pass
 
 V1 actions should stay generic rather than workflow-defined. Request changes
-should requeue work, not merely annotate the Touchpoint.
+should requeue work, not merely annotate the Review.
 
 ## UI Responsibility
 
-The Touchpoint should behave like a compact checklist/dashboard and navigation
+The Review should behave like a compact checklist/dashboard and navigation
 hub for the current Issue decision. It may show:
 
 - validation URL
@@ -105,16 +105,16 @@ hub for the current Issue decision. It may show:
 - run summary and recommendation
 
 The Issue tab remains the primary prose/context surface. Epic and Playbook
-context belongs mostly there. The Touchpoint should focus on the current exact
+context belongs mostly there. The Review should focus on the current exact
 evidence, links into the relevant Run UI, and the decision in front of the
 user. If evidence or state needs to be retained per Run, model and render it
-from the Run or RunReport instead of adding Touchpoint history.
+from the Run or RunReport instead of adding Review history.
 
-The Touchpoint UI should not feel like a record detail page or a ledger. Avoid
+The Review UI should not feel like a record detail page or a ledger. Avoid
 showing Run counts, attempt tables, historical PR lists, or multiple
-Touchpoint-looking rows in the Touchpoint section. Those are valuable
+Review-looking rows in the Review section. Those are valuable
 inspection tools, but they belong in the Runs tab, RunReport pages, or a
-future debug view. The default Touchpoint experience is the current live
+future debug view. The default Review experience is the current live
 frontend for user interaction.
 
 ## Terminology Migration
@@ -122,17 +122,17 @@ frontend for user interaction.
 Conceptual rename:
 
 ```text
-Current Report -> Touchpoint
-Current ReportVersion -> TouchpointVersion, if versions remain useful
+Current Report -> Review
+Current ReportVersion -> ReviewVersion, if versions remain useful
 New RunReport -> per-Run factual execution report
 ```
 
-Live API and frontend surfaces use Touchpoint and RunReport terminology.
-Postgres `touchpoints` is the physical Touchpoint storage table; do not add
+Live API and frontend surfaces use Review and RunReport terminology.
+Postgres `reviews` is the physical Review storage table; do not add
 Report-named routes, UI controls, runtime reads, aliases, or tests for
 terminology cleanup.
 
-## Playbooks And Touchpoints
+## Playbooks And Reviews
 
 A Playbook is an execution sequencer, not primarily a human approval workflow.
 
@@ -150,7 +150,7 @@ bulk queue
   dependency and concurrency rules control execution
 ```
 
-Automatic Playbook entries should not create full normal Touchpoints by
+Automatic Playbook entries should not create full normal Reviews by
 default. Telemetry still exists through Runs and RunReports, but review
 surfaces should not pile up when no human is expected to review each entry.
 
@@ -160,7 +160,7 @@ Automatic entries may have a minimal connective page when useful:
 - link to the overall Playbook
 - link to the current Run or next execution
 
-Create a full Touchpoint at human decision boundaries, such as final review of
+Create a full Review at human decision boundaries, such as final review of
 a shared feature branch, failure triage, or attended intervention.
 
 ## Issue Dependencies
@@ -174,7 +174,7 @@ same readiness rule:
 IssueDependency
   issue_id
   depends_on_issue_id
-  condition: succeeded | touchpoint_approved | merged | closed
+  condition: succeeded | review_approved | merged | closed
 ```
 
 Dependencies answer:
@@ -207,11 +207,11 @@ V1 vocabulary:
 - `shared_feature_branch`
 - `rolling_main`
 
-`isolated_prs`: each issue gets its own branch, Touchpoint, and merge.
+`isolated_prs`: each issue gets its own branch, Review, and merge.
 Dependencies only control order. Use for unrelated or loosely related work.
 
 `shared_feature_branch`: all automatic Playbook entries build on one branch or
-work context. A final Touchpoint reviews the whole feature. Use for one large
+work context. A final Review reviews the whole feature. Use for one large
 feature split into smaller agent tasks.
 
 `rolling_main`: each successful entry merges to `main` before the next entry
@@ -262,6 +262,6 @@ applies to marking a branch or work context as in use by a running issue.
 - Break large work into discoverable, queueable segments.
 - Preserve branch and main guardrails while supporting fast iteration.
 - Keep RunReport one-to-one with Run for v1.
-- Keep Touchpoint strictly one-to-one with Issue.
-- Put cross-run summaries in the Touchpoint or dashboard as derived data.
+- Keep Review strictly one-to-one with Issue.
+- Put cross-run summaries in the Review or dashboard as derived data.
 - Make dangerous integration behavior like rolling merges explicit.

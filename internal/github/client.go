@@ -294,7 +294,7 @@ func (c *Client) MergePullRequest(ctx context.Context, req PullRequestMergeReque
 		}, nil
 	}
 
-	// 1.5. Promote a draft PR to ready-for-review. The touchpoint flow opens
+	// 1.5. Promote a draft PR to ready-for-review. The review flow opens
 	// the PR as a draft (so it isn't a premature merge candidate while CI and
 	// verification run); the gate's approve is the point it becomes mergeable.
 	// GitHub's REST merge endpoint rejects a draft with 405 "Pull Request is

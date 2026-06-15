@@ -103,7 +103,7 @@ after registration changes.
   a failed workflow-owned `dispatch` step. Declared workflow steps remain
   `not_started`; the synthetic dispatch step owns the terminal failure instead
   of leaving the human UI without a failed node.
-- `touchpoint_gate` is a gated runner phase name, not an executor kind:
+- `review_gate` is a gated runner phase name, not an executor kind:
   reaching the `purpose: review_gate` phase creates a durable parked `k8s_job`
   attempt at the human decision boundary, and approve later releases that same
   attempt's managed `pr_merge` job through the ordinary runner event,

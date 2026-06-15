@@ -9,20 +9,20 @@ import (
 	"strings"
 )
 
-type TouchpointStore interface {
-	ListTouchpoints(ctx context.Context, filter TouchpointListFilter) ([]TouchpointRow, error)
-	GetTouchpointForIssue(ctx context.Context, project string, issueNumber int) (TouchpointDetail, error)
-	EnsureTouchpoint(ctx context.Context, req TouchpointCreate) (TouchpointDetail, error)
+type ReviewStore interface {
+	ListReviews(ctx context.Context, filter ReviewListFilter) ([]ReviewRow, error)
+	GetReviewForIssue(ctx context.Context, project string, issueNumber int) (ReviewDetail, error)
+	EnsureReview(ctx context.Context, req ReviewCreate) (ReviewDetail, error)
 }
 
-type TouchpointListFilter struct {
+type ReviewListFilter struct {
 	Project string
 	Repo    string
 	State   string
 	Limit   *int
 }
 
-type TouchpointRow struct {
+type ReviewRow struct {
 	Ref                  string               `json:"ref"`
 	Project              string               `json:"project"`
 	Repo                 string               `json:"repo"`
@@ -42,10 +42,10 @@ type TouchpointRow struct {
 	RunAttempts          int                  `json:"run_attempts"`
 	RunCumulativeCostUSD float64              `json:"run_cumulative_cost_usd"`
 	PRLockHeld           bool                 `json:"pr_lock_held"`
-	Evidence             []TouchpointEvidence `json:"evidence"`
+	Evidence             []ReviewEvidence `json:"evidence"`
 }
 
-type TouchpointDetail struct {
+type ReviewDetail struct {
 	Ref                  string               `json:"ref"`
 	Project              string               `json:"project"`
 	Repo                 string               `json:"repo"`
@@ -73,10 +73,10 @@ type TouchpointDetail struct {
 	Comments             []map[string]any     `json:"comments"`
 	Reviews              []map[string]any     `json:"reviews"`
 	PRLockHeld           bool                 `json:"pr_lock_held"`
-	Evidence             []TouchpointEvidence `json:"evidence"`
+	Evidence             []ReviewEvidence `json:"evidence"`
 }
 
-type TouchpointCreate struct {
+type ReviewCreate struct {
 	Project        string
 	Repo           string
 	Number         int
@@ -88,11 +88,11 @@ type TouchpointCreate struct {
 	HTMLURL        string
 	LinkedIssueRef string
 	LinkedRunRef   string
-	Evidence       []TouchpointEvidence
+	Evidence       []ReviewEvidence
 	EvidenceSet    bool
 }
 
-type TouchpointCreateRequest struct {
+type ReviewCreateRequest struct {
 	Project        string               `json:"project"`
 	Repo           string               `json:"repo"`
 	Number         int                  `json:"number"`
@@ -104,42 +104,42 @@ type TouchpointCreateRequest struct {
 	HTMLURL        string               `json:"html_url"`
 	LinkedIssueRef *string              `json:"linked_issue_ref"`
 	LinkedRunRef   *string              `json:"linked_run_ref"`
-	Evidence       []TouchpointEvidence `json:"evidence,omitempty"`
+	Evidence       []ReviewEvidence `json:"evidence,omitempty"`
 }
 
-type TouchpointEvidence = EvidenceArtifact
+type ReviewEvidence = EvidenceArtifact
 
-func listTouchpoints(store ReadStore) http.HandlerFunc {
+func listReviews(store ReadStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		tpStore, ok := store.(TouchpointStore)
+		tpStore, ok := store.(ReviewStore)
 		if !ok || tpStore == nil {
-			writeProblem(w, http.StatusServiceUnavailable, "touchpoint store not configured")
+			writeProblem(w, http.StatusServiceUnavailable, "review store not configured")
 			return
 		}
 		limit, ok := parseOptionalIssueLimit(w, r)
 		if !ok {
 			return
 		}
-		filter := TouchpointListFilter{
+		filter := ReviewListFilter{
 			Project: r.URL.Query().Get("project"),
 			Repo:    r.URL.Query().Get("repo"),
 			State:   r.URL.Query().Get("state"),
 			Limit:   limit,
 		}
-		rows, err := tpStore.ListTouchpoints(r.Context(), filter)
+		rows, err := tpStore.ListReviews(r.Context(), filter)
 		if err != nil {
-			writeInternalError(w, r, err, "list touchpoints failed")
+			writeInternalError(w, r, err, "list reviews failed")
 			return
 		}
 		writeJSON(w, http.StatusOK, rows)
 	}
 }
 
-func issueTouchpointDetail(store ReadStore) http.HandlerFunc {
+func issueReviewDetail(store ReadStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		tpStore, ok := store.(TouchpointStore)
+		tpStore, ok := store.(ReviewStore)
 		if !ok || tpStore == nil {
-			writeProblem(w, http.StatusServiceUnavailable, "touchpoint store not configured")
+			writeProblem(w, http.StatusServiceUnavailable, "review store not configured")
 			return
 		}
 		issueNumber, err := strconv.Atoi(r.PathValue("issue_number"))
@@ -147,27 +147,27 @@ func issueTouchpointDetail(store ReadStore) http.HandlerFunc {
 			writeProblem(w, http.StatusBadRequest, "issue_number must be a positive integer")
 			return
 		}
-		detail, err := tpStore.GetTouchpointForIssue(r.Context(), r.PathValue("project"), issueNumber)
+		detail, err := tpStore.GetReviewForIssue(r.Context(), r.PathValue("project"), issueNumber)
 		switch {
 		case errors.Is(err, ErrNotFound):
-			writeProblem(w, http.StatusNotFound, "touchpoint not found")
+			writeProblem(w, http.StatusNotFound, "review not found")
 			return
 		case err != nil:
-			writeInternalError(w, r, err, "get touchpoint failed")
+			writeInternalError(w, r, err, "get review failed")
 			return
 		}
 		writeJSON(w, http.StatusOK, detail)
 	}
 }
 
-func createTouchpoint(store ReadStore) http.HandlerFunc {
+func createReview(store ReadStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		tpStore, ok := store.(TouchpointStore)
+		tpStore, ok := store.(ReviewStore)
 		if !ok || tpStore == nil {
-			writeProblem(w, http.StatusServiceUnavailable, "touchpoint store not configured")
+			writeProblem(w, http.StatusServiceUnavailable, "review store not configured")
 			return
 		}
-		var body TouchpointCreateRequest
+		var body ReviewCreateRequest
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			writeProblem(w, http.StatusBadRequest, "invalid JSON body")
 			return
@@ -192,7 +192,7 @@ func createTouchpoint(store ReadStore) http.HandlerFunc {
 			writeProblem(w, http.StatusBadRequest, "branch required")
 			return
 		}
-		req := TouchpointCreate{
+		req := ReviewCreate{
 			Project: body.Project,
 			Repo:    body.Repo,
 			Number:  body.Number,
@@ -213,13 +213,13 @@ func createTouchpoint(store ReadStore) http.HandlerFunc {
 		if body.LinkedRunRef != nil {
 			req.LinkedRunRef = *body.LinkedRunRef
 		}
-		detail, err := tpStore.EnsureTouchpoint(r.Context(), req)
+		detail, err := tpStore.EnsureReview(r.Context(), req)
 		switch {
 		case errors.Is(err, ErrNotFound):
 			writeProblem(w, http.StatusBadRequest, "referenced project not found")
 			return
 		case err != nil:
-			writeInternalError(w, r, err, "ensure touchpoint failed")
+			writeInternalError(w, r, err, "ensure review failed")
 			return
 		}
 		writeJSON(w, http.StatusOK, detail)

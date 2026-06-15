@@ -12,7 +12,7 @@ type fakeGraphStore struct {
 	issue       IssueDetail
 	issues      []IssueRow
 	runs        []RunReport
-	touchpoints []TouchpointRow
+	reviews []ReviewRow
 	signals     []GraphSignal
 	runnerLogs  RunnerLogsResponse
 }
@@ -66,9 +66,9 @@ func (s fakeGraphStore) GetRunReportByNumber(context.Context, string, int, strin
 	return RunReport{}, ErrUnsupported
 }
 
-func (s fakeGraphStore) ListTouchpoints(_ context.Context, filter TouchpointListFilter) ([]TouchpointRow, error) {
-	out := make([]TouchpointRow, 0, len(s.touchpoints))
-	for _, row := range s.touchpoints {
+func (s fakeGraphStore) ListReviews(_ context.Context, filter ReviewListFilter) ([]ReviewRow, error) {
+	out := make([]ReviewRow, 0, len(s.reviews))
+	for _, row := range s.reviews {
 		if filter.Project == "" || row.Project == filter.Project {
 			out = append(out, row)
 		}
@@ -76,12 +76,12 @@ func (s fakeGraphStore) ListTouchpoints(_ context.Context, filter TouchpointList
 	return out, nil
 }
 
-func (s fakeGraphStore) GetTouchpointForIssue(context.Context, string, int) (TouchpointDetail, error) {
-	return TouchpointDetail{}, ErrUnsupported
+func (s fakeGraphStore) GetReviewForIssue(context.Context, string, int) (ReviewDetail, error) {
+	return ReviewDetail{}, ErrUnsupported
 }
 
-func (s fakeGraphStore) EnsureTouchpoint(context.Context, TouchpointCreate) (TouchpointDetail, error) {
-	return TouchpointDetail{}, ErrUnsupported
+func (s fakeGraphStore) EnsureReview(context.Context, ReviewCreate) (ReviewDetail, error) {
+	return ReviewDetail{}, ErrUnsupported
 }
 
 func (s fakeGraphStore) ListGraphSignals(context.Context, GraphSignalFilter) ([]GraphSignal, error) {
@@ -100,13 +100,13 @@ func (s fakeGraphStore) ListRunnerEventsByID(context.Context, string, string, *i
 	return s.runnerLogs, nil
 }
 
-func TestIssueGraphByNumberBuildsRunAttemptAndTouchpointNodes(t *testing.T) {
+func TestIssueGraphByNumberBuildsRunAttemptAndReviewNodes(t *testing.T) {
 	issueNumber := 17
 	runNumber := 1
 	runDisplay := "1"
 	now := time.Date(2026, 5, 12, 18, 0, 0, 0, time.UTC)
 	runRef := "glimmung#17/runs/1"
-	touchpointRef := "romaine-life/glimmung#452"
+	reviewRef := "romaine-life/glimmung#452"
 	store := fakeGraphStore{
 		fakeReadStore: fakeReadStore{workflows: []Workflow{{
 			Project: "glimmung",
@@ -180,8 +180,8 @@ func TestIssueGraphByNumberBuildsRunAttemptAndTouchpointNodes(t *testing.T) {
 				}},
 			}},
 		}},
-		touchpoints: []TouchpointRow{{
-			Ref:          touchpointRef,
+		reviews: []ReviewRow{{
+			Ref:          reviewRef,
 			Project:      "glimmung",
 			Repo:         "romaine-life/glimmung",
 			PRNumber:     452,
@@ -189,7 +189,7 @@ func TestIssueGraphByNumberBuildsRunAttemptAndTouchpointNodes(t *testing.T) {
 			State:        "ready",
 			HTMLURL:      stringPtr("https://github.com/romaine-life/glimmung/pull/452"),
 			LinkedRunRef: stringPtr(runRef),
-			Evidence: []TouchpointEvidence{{
+			Evidence: []ReviewEvidence{{
 				Kind:         "screenshot",
 				Ref:          "blob://artifacts/runs/glimmung/run-1/screenshots/default.png",
 				Label:        "default",
@@ -229,8 +229,8 @@ func TestIssueGraphByNumberBuildsRunAttemptAndTouchpointNodes(t *testing.T) {
 	if got, ok := attemptNode.Metadata["jobs_count"].(float64); !ok || got != 1 {
 		t.Fatalf("attempt jobs_count=%#v", got)
 	}
-	assertGraphNode(t, graph, "pr:"+touchpointRef, "pr")
-	assertGraphEdge(t, graph, "run:"+runRef, "pr:"+touchpointRef, "opened")
+	assertGraphNode(t, graph, "pr:"+reviewRef, "pr")
+	assertGraphEdge(t, graph, "run:"+runRef, "pr:"+reviewRef, "opened")
 	assertGraphEdge(t, graph, "run:"+runRef, "signal:glimmung_ui:"+runRef+":"+now.Add(time.Minute).Format(time.RFC3339Nano), "feedback")
 	if graph.Projection.IssueRef != "glimmung#17" {
 		t.Fatalf("projection issue_ref=%q", graph.Projection.IssueRef)
@@ -430,8 +430,8 @@ func TestWorkflowTopologyForRunMarksRecycleOriginArrowActive(t *testing.T) {
 				Kind:      "k8s_job",
 				DependsOn: []string{"evidence-gate"},
 				RunOn:     PhaseRunOnSuccess,
-				Purpose:   PhasePurposeReviewTouchpoint,
-				Jobs:      []RunnerJobSpec{{ID: "pr-touchpoint", Primitive: JobPrimitivePRTouchpoint}},
+				Purpose:   PhasePurposeReview,
+				Jobs:      []RunnerJobSpec{{ID: "pr-review", Primitive: JobPrimitivePRReview}},
 			},
 		},
 		PR: PrPrimitive{
@@ -461,7 +461,7 @@ func TestWorkflowTopologyForRunMarksRecycleOriginArrowActive(t *testing.T) {
 	}
 }
 
-func TestWorkflowTopologyForRunMarksTouchpointRecycleOriginArrowActive(t *testing.T) {
+func TestWorkflowTopologyForRunMarksReviewRecycleOriginArrowActive(t *testing.T) {
 	workflow := Workflow{
 		Project: "ambience",
 		Name:    "default",
@@ -482,8 +482,8 @@ func TestWorkflowTopologyForRunMarksTouchpointRecycleOriginArrowActive(t *testin
 				Kind:      "k8s_job",
 				DependsOn: []string{"evidence-gate"},
 				RunOn:     PhaseRunOnSuccess,
-				Purpose:   PhasePurposeReviewTouchpoint,
-				Jobs:      []RunnerJobSpec{{ID: "pr-touchpoint", Primitive: JobPrimitivePRTouchpoint}},
+				Purpose:   PhasePurposeReview,
+				Jobs:      []RunnerJobSpec{{ID: "pr-review", Primitive: JobPrimitivePRReview}},
 			},
 		},
 		PR: PrPrimitive{
@@ -505,10 +505,10 @@ func TestWorkflowTopologyForRunMarksTouchpointRecycleOriginArrowActive(t *testin
 		t.Fatalf("recycle arrows=%#v", topology.RecycleArrows)
 	}
 	if topology.RecycleArrows[1].Source != "review-surface" {
-		t.Fatalf("touchpoint recycle source=%q, want registered touchpoint phase", topology.RecycleArrows[1].Source)
+		t.Fatalf("review recycle source=%q, want registered review phase", topology.RecycleArrows[1].Source)
 	}
 	if topology.RecycleArrows[0].Active || !topology.RecycleArrows[1].Active {
-		t.Fatalf("recycle arrows active=%#v, want only touchpoint recycle active", topology.RecycleArrows)
+		t.Fatalf("recycle arrows active=%#v, want only review recycle active", topology.RecycleArrows)
 	}
 }
 

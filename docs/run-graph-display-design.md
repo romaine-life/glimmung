@@ -13,7 +13,7 @@ Issue
         -> Job
           -> Step
     -> Evidence
-  -> Touchpoint
+  -> Review
 ```
 
 The executor behind a phase is a runner Kubernetes job. The user-facing graph
@@ -35,7 +35,7 @@ Workflow phase -> Phase
 Runner job -> Job
 Runner step -> Step
 Attempt        -> Display counter or executor-level retry attribute only
-Report         -> Touchpoint / evidence, depending on context
+Report         -> Review / evidence, depending on context
 ```
 
 The API can expose either raw names or display labels, but the UI should
@@ -44,7 +44,7 @@ prefer phase/job/step language unless it is showing raw backend metadata.
 The key distinction is **Phase vs Attempt**:
 
 - A **Run** is the user/reviewer intent. A user pressing Run starts a new
-  run. Reviewer feedback or a touchpoint requesting more work starts a new
+  run. Reviewer feedback or a review requesting more work starts a new
   run.
 - A **Cycle** is the durable unit of execution, scheduling, logs, cost,
   lifecycle, abort, and reporting. The issue history's leftmost number is a
@@ -62,24 +62,24 @@ The key distinction is **Phase vs Attempt**:
 This lets Glimmung show a flat issue cycle history while preserving the
 pipeline shape inside each run: issue -> run -> cycle -> phase -> job -> step.
 
-**Touchpoint** replaces the old user-facing `Report` concept. A
-Touchpoint is the issue-level live summary and navigation page: what the
-human needs to inspect, approve, reject, or discuss now. Touchpoints are
+**Review** replaces the old user-facing `Report` concept. A
+Review is the issue-level live summary and navigation page: what the
+human needs to inspect, approve, reject, or discuss now. Reviews are
 strictly one-to-one with Issues; repeated Runs, cycles, and PR
-updates revise the same Touchpoint rather than creating additional
-Touchpoints. A GitHub PR, validation URL, WebM videos, screenshots, generated design
-portfolio rows, logs, or artifacts can be linked from the Touchpoint as
+updates revise the same Review rather than creating additional
+Reviews. A GitHub PR, validation URL, WebM videos, screenshots, generated design
+portfolio rows, logs, or artifacts can be linked from the Review as
 current evidence, but anything that must be retained per Run belongs in the
 Run and RunReport UI.
 
-The Touchpoint must not feel like an instance detail page. It is the live
+The Review must not feel like an instance detail page. It is the live
 frontend for interacting with the Issue: inspect the current evidence, make
 the current decision, request changes, rerun, or enter attended work. It may
 have an audit/debug history later, but that history describes updates to the
-same Touchpoint; it is not a collection of Touchpoint instances.
+same Review; it is not a collection of Review instances.
 
 The fuller object-boundary and Playbook integration vocabulary lives in
-[Touchpoints, RunReports, And Playbook Integration](touchpoints-runreports-playbooks.md).
+[Reviews, RunReports, And Playbook Integration](reviews-runreports-playbooks.md).
 
 ## Why Not Argo First
 
@@ -95,7 +95,7 @@ Glimmung needs to explain things Argo does not own:
 - Run cycle lineage.
 - Validation environments.
 - Screenshots and UI review evidence.
-- PR/evidence/touchpoint state.
+- PR/evidence/review state.
 - Budgets and cost.
 - Human approval, request-changes, and attended-mode decisions.
 - Playbook integration strategy such as shared feature branches.
@@ -131,16 +131,16 @@ The run page should support deep links to:
 - a phase,
 - a job,
 - a specific step log,
-- the related Touchpoint.
+- the related Review.
 
 ## Run Overview
 
 The overview should show the high-level execution shape:
 
 ```text
-prepare -> llm-work -> llm-verify -> evidence-gate -> touchpoint
-Cycle 1 (run 1.1): prepare -> llm-work -> touchpoint
-Cycle 2 (run 1.2): prepare -> llm-work -> llm-verify -> evidence-gate -> touchpoint
+prepare -> llm-work -> llm-verify -> evidence-gate -> review
+Cycle 1 (run 1.1): prepare -> llm-work -> review
+Cycle 2 (run 1.2): prepare -> llm-work -> llm-verify -> evidence-gate -> review
 ```
 
 For more complex runs, the overview should show phase ordering and
@@ -259,15 +259,15 @@ terminal log is useful without requiring immediate full-screen expansion.
 On desktop, the step list plus log viewer should be the dominant lower
 surface. On mobile, the step list can stack above the log.
 
-## Touchpoint vs Run Graph
+## Review vs Run Graph
 
 The run graph is explanatory. It tells the user what happened and why.
 
-The Touchpoint is decision-oriented. It tells the user what to inspect
+The Review is decision-oriented. It tells the user what to inspect
 or decide now, and acts as navigation to the relevant Run surfaces.
 
 Do not overload the run graph with every approval workflow. The graph
-should link to evidence and decision surfaces, while the Touchpoint
+should link to evidence and decision surfaces, while the Review
 should aggregate the things that need human attention:
 
 - validation URL,
@@ -279,12 +279,12 @@ should aggregate the things that need human attention:
 - run summary and recommendation,
 - approve/request changes/rerun actions.
 
-Touchpoints are one-to-one with issues. They should not need their own
+Reviews are one-to-one with issues. They should not need their own
 top-level tab or an issue-local collection route. The issue workspace should
-surface the current Touchpoint alongside issue context and the run/phase
+surface the current Review alongside issue context and the run/phase
 graph. Historical or per-Run evidence should live in Run and RunReport views,
-with the Touchpoint linking to the relevant current Run instead of carrying
-its own history. The Touchpoint UI should not enumerate Runs, retries, or
+with the Review linking to the relevant current Run instead of carrying
+its own history. The Review UI should not enumerate Runs, retries, or
 past PRs as its primary content; those belong in the Runs tab and RunReport
 surfaces.
 
@@ -303,7 +303,7 @@ Add portfolio rows for at least:
 - cycle run created by recycle/retry,
 - waiting/no-capacity state,
 - aborted/cancelled state,
-- Touchpoint evidence checklist.
+- Review evidence checklist.
 
 These rows should use fixture data and passive review state. Marking a
 row `Needs review` does not trigger agent work. It only creates a queue
@@ -366,7 +366,7 @@ RunGraphProjection
   current_run_ref
   default_focus
   next_action
-  touchpoints[]
+  reviews[]
   signals[]
 
 Run
@@ -461,7 +461,7 @@ remaining jobs.
 
 GitHub Check Runs are intentionally not part of this contract. Glimmung
 keeps run state canonical in the issue workspace and syndicates PR URLs as
-Touchpoint evidence; adding GitHub Check Runs should be a separate product
+Review evidence; adding GitHub Check Runs should be a separate product
 issue if GitHub-runner status boxes become necessary.
 
 ## Refactor Sequence
@@ -472,7 +472,7 @@ issue if GitHub-runner status boxes become necessary.
 4. Build the live run graph against the projection.
 5. Move current tab-only issue detail behavior behind retired-route tombstones
    or redirects.
-6. Add Touchpoint surfaces once the graph and evidence model are stable.
+6. Add Review surfaces once the graph and evidence model are stable.
 
 This order keeps the refactor visible and reviewable while avoiding a
 large backend/UI rewrite with no stable design target.

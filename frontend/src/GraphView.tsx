@@ -102,7 +102,7 @@ export function GraphView({
     const issueProject = String(issue.metadata.project ?? "");
     const issueNumber = issue.metadata.number;
     if (issueProject && typeof issueNumber === "number") {
-      navigate(`/projects/${encodeURIComponent(issueProject)}/issues/${issueNumber}/touchpoint`);
+      navigate(`/projects/${encodeURIComponent(issueProject)}/issues/${issueNumber}/review`);
     }
   };
 

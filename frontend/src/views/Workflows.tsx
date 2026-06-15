@@ -21,10 +21,10 @@ function phaseModel(wf: Workflow): GraphPhase[] {
     recycle: recycleOf(p.recycle_policy),
   }));
   // The PR primitive's recycle lands a fresh run at its target on changes_requested.
-  // Attach it to the touchpoint phase (its source) so the graph draws that arc.
+  // Attach it to the review phase (its source) so the graph draws that arc.
   const pr = recycleOf(wf.pr?.recycle_policy);
   if (pr) {
-    const tp = phases.find((p) => /touchpoint|pr/i.test(p.name) || /touchpoint|pr/i.test(p.kind));
+    const tp = phases.find((p) => /review|pr/i.test(p.name) || /review|pr/i.test(p.kind));
     if (tp && !tp.recycle) tp.recycle = pr;
   }
   return phases;

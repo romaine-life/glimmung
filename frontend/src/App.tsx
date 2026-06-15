@@ -19,7 +19,7 @@ import { Overview } from "./views/Overview";
 import { NeedsAttention } from "./views/NeedsAttention";
 import { Issues } from "./views/Issues";
 import { Runs } from "./views/Runs";
-import { Touchpoints } from "./views/Touchpoints";
+import { Reviews } from "./views/Reviews";
 import { Workflows } from "./views/Workflows";
 import { Leases } from "./views/Leases";
 import { TestSlots } from "./views/TestSlots";
@@ -402,7 +402,7 @@ export function App() {
           <Route path="issues" element={<Issues />} />
           <Route path="runs" element={<Runs />} />
           {/* Review */}
-          <Route path="touchpoints" element={<Touchpoints />} />
+          <Route path="reviews" element={<Reviews />} />
           {/* Orchestrate */}
           <Route path="workflows" element={<Workflows />} />
           {/* Capacity */}
@@ -440,7 +440,7 @@ export function App() {
             <Route path={ISSUE_DETAIL_CHILD_ROUTES.runJob} element={null} />
             <Route path={ISSUE_DETAIL_CHILD_ROUTES.runStep} element={null} />
             <Route path={ISSUE_DETAIL_CHILD_ROUTES.settings} element={null} />
-            <Route path={ISSUE_DETAIL_CHILD_ROUTES.touchpoint} element={null} />
+            <Route path={ISSUE_DETAIL_CHILD_ROUTES.review} element={null} />
           </Route>
           <Route path="projects/:project/needs-attention" element={<ProjectNeedsAttentionRoute />} />
           <Route path="projects/:project/runs" element={<ProjectRunsRoute />} />
@@ -534,7 +534,7 @@ function Layout() {
 
   // The "needs attention" nav dot derives from snap.inflight_locks,
   // which the server pushes on every SSE snapshot tick. The 20-second
-  // poll of /v1/issues + /v1/touchpoints that previously fed this
+  // poll of /v1/issues + /v1/reviews that previously fed this
   // boolean was deleted because it forced unnecessary cross-project work on
   // every tick only to compute a single bool.
   const ctx: LayoutContext = {

@@ -30,15 +30,15 @@
     "want": "ambience#42/runs/unknown"
   },
   {
-    "name": "touchpoint with number",
-    "function": "touchpoint_ref",
+    "name": "review with number",
+    "function": "review_ref",
     "repo": "romaine-life/ambience",
     "number": 42,
     "want": "romaine-life/ambience#42"
   },
   {
-    "name": "touchpoint without number",
-    "function": "touchpoint_ref",
+    "name": "review without number",
+    "function": "review_ref",
     "repo": "romaine-life/ambience",
     "number": null,
     "want": "romaine-life/ambience"

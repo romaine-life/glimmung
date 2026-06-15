@@ -3,7 +3,7 @@
   { "path": "/needs-attention", "label": "needs-attention" },
   { "path": "/issues", "label": "issues" },
   { "path": "/runs", "label": "runs" },
-  { "path": "/touchpoints", "label": "touchpoints" },
+  { "path": "/reviews", "label": "reviews" },
   { "path": "/workflows", "label": "workflows" },
   { "path": "/leases", "label": "leases" },
   { "path": "/test-slots", "label": "test-slots" },

@@ -119,8 +119,8 @@ func TestSyntheticDispatchCopiesSelectedPhaseOutputsFromPriorRun(t *testing.T) {
 		Project:      "proj",
 		IssueNumber:  7,
 		WorkflowName: "main",
-		StartAtPhase: "touchpoint",
-		Reason:       "retry touchpoint without rerunning verifier",
+		StartAtPhase: "review",
+		Reason:       "retry review without rerunning verifier",
 		CopyPhaseOutputsFrom: &SyntheticCopyPhaseOutputsFrom{
 			Run:    "17.1",
 			Phases: map[string][]string{"verify": []string{"verification"}},
@@ -174,11 +174,11 @@ func TestSyntheticDispatchRejectsCopiedPhaseAtOrAfterStart(t *testing.T) {
 		Project:      "proj",
 		IssueNumber:  7,
 		WorkflowName: "main",
-		StartAtPhase: "touchpoint",
+		StartAtPhase: "review",
 		Reason:       "bad copy",
 		CopyPhaseOutputsFrom: &SyntheticCopyPhaseOutputsFrom{
 			Run:    "17.1",
-			Phases: map[string][]string{"touchpoint": []string{"pr_url"}},
+			Phases: map[string][]string{"review": []string{"pr_url"}},
 		},
 		ExecutionContext: SyntheticExecutionContext{SlotLeaseRef: "lease-1"},
 	})

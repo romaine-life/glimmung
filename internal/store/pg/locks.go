@@ -32,7 +32,7 @@ type LocksStore struct {
 }
 
 // LockState describes a held lock as seen by readers. Returned by
-// ListHeldByScope and used by Store.ListIssues / ListTouchpoints
+// ListHeldByScope and used by Store.ListIssues / ListReviews
 // to populate the per-row IssueLockHeld display flag.
 type LockState struct {
 	Scope     string
@@ -163,7 +163,7 @@ func (s *LocksStore) AnyLockHeld(ctx context.Context, scope string) (bool, error
 
 // ListHeldByScope returns all currently-held (and unexpired) locks for a
 // given scope, keyed by lock key. Used by Store.ListIssues and
-// Store.ListTouchpoints to populate per-row "lock held" display flags.
+// Store.ListReviews to populate per-row "lock held" display flags.
 func (s *LocksStore) ListHeldByScope(ctx context.Context, scope string) (map[string]LockState, error) {
 	if s == nil || s.pool == nil {
 		return map[string]LockState{}, nil

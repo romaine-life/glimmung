@@ -1,17 +1,17 @@
 /**
- * Touchpoints view across registered repos. Each row links to the detail view,
+ * Reviews view across registered repos. Each row links to the detail view,
  * where the reject-with-feedback action lives.
  *
- * Sourced from `/v1/touchpoints`. Rows include both agent-opened GitHub PR
- * touchpoints and manually mirrored PRs with no run linkage.
+ * Sourced from `/v1/reviews`. Rows include both agent-opened GitHub PR
+ * reviews and manually mirrored PRs with no run linkage.
  *
- * Row click navigates to the canonical issue Touchpoint tab when the
- * Touchpoint is linked to an Issue.
+ * Row click navigates to the canonical issue Review tab when the
+ * Review is linked to an Issue.
  */
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
-type TouchpointRow = {
+type ReviewRow = {
   ref: string;
   project: string;
   repo: string;
@@ -31,13 +31,13 @@ type TouchpointRow = {
   pr_lock_held: boolean;
 };
 
-export function TouchpointsView({
+export function ReviewsView({
   projectFilter,
 }: {
   projectFilter: string | null;
 }) {
   const navigate = useNavigate();
-  const [rows, setRows] = useState<TouchpointRow[] | null>(null);
+  const [rows, setRows] = useState<ReviewRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -45,9 +45,9 @@ export function TouchpointsView({
     setLoading(true);
     setError(null);
     try {
-      const r = await fetch("/v1/touchpoints");
-      if (!r.ok) throw new Error(`/v1/touchpoints -> ${r.status}`);
-      setRows((await r.json()) as TouchpointRow[]);
+      const r = await fetch("/v1/reviews");
+      if (!r.ok) throw new Error(`/v1/reviews -> ${r.status}`);
+      setRows((await r.json()) as ReviewRow[]);
     } catch (e) {
       setError(String(e));
       setRows(null);
@@ -70,7 +70,7 @@ export function TouchpointsView({
   return (
     <>
       <h2>
-        Touchpoints{visibleRows ? ` (${visibleRows.length})` : ""}
+        Reviews{visibleRows ? ` (${visibleRows.length})` : ""}
         {projectFilter && (
           <span className="filter-hint"> — filtered to {projectFilter}</span>
         )}
@@ -89,8 +89,8 @@ export function TouchpointsView({
       ) : visibleRows && visibleRows.length === 0 ? (
         <div className="empty">
           {projectFilter
-            ? `No touchpoints for ${projectFilter}.`
-            : "No touchpoints yet."}
+            ? `No reviews for ${projectFilter}.`
+            : "No reviews yet."}
         </div>
       ) : visibleRows ? (
         <table>
@@ -114,7 +114,7 @@ export function TouchpointsView({
                 className={row.pr_lock_held ? "eligible" : ""}
                 onClick={() => {
                   if (row.issue_number !== null) {
-                    navigate(`/projects/${encodeURIComponent(row.project)}/issues/${row.issue_number}/touchpoint`);
+                    navigate(`/projects/${encodeURIComponent(row.project)}/issues/${row.issue_number}/review`);
                   }
                 }}
                 style={{ cursor: row.issue_number !== null ? "pointer" : "default" }}
@@ -172,7 +172,7 @@ function runStatePill(state: string): string {
   return "dim";
 }
 
-function prStatePill(row: TouchpointRow): string {
+function prStatePill(row: ReviewRow): string {
   if (row.merged) return "free";
   if (row.state === "ready" || row.state === "needs_review") return "busy";
   if (row.state === "closed") return "dim";

@@ -4,15 +4,15 @@ import { resolveProjectWorkflow } from "./workflowLookup";
 
 const workflows = [
   { project: "glimmung", name: "default", id: 1 },
-  { project: "glimmung", name: "touchpoint-agent", id: 2 },
+  { project: "glimmung", name: "review-agent", id: 2 },
   { project: "tank-operator", name: "default", id: 3 },
 ];
 
 describe("resolveProjectWorkflow", () => {
   it("prefers an exact candidate match within the requested project", () => {
-    expect(resolveProjectWorkflow(workflows, "glimmung", [null, "touchpoint-agent"])).toEqual({
+    expect(resolveProjectWorkflow(workflows, "glimmung", [null, "review-agent"])).toEqual({
       project: "glimmung",
-      name: "touchpoint-agent",
+      name: "review-agent",
       id: 2,
     });
   });

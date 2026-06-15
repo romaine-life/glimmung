@@ -976,7 +976,7 @@ func agentStepBaseEnv(base []string) []string {
 		"GLIMMUNG_GITHUB_AGENT_TOKEN_URL":       true,
 		"GLIMMUNG_GITHUB_PUSH_POLICY_TOKEN":     true,
 		"GLIMMUNG_GITHUB_PUSH_POLICY_TOKEN_URL": true,
-		"GLIMMUNG_PR_TOUCHPOINT_URL":            true,
+		"GLIMMUNG_PR_REVIEW_URL":            true,
 		"GLIMMUNG_PR_MERGE_URL":                 true,
 		"GLIMMUNG_SSH_CERT_URL":                 true,
 		"GLIMMUNG_TAILSCALE_AUTHKEY_URL":        true,

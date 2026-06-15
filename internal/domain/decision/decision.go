@@ -47,7 +47,7 @@ const ConclusionAborted = "aborted"
 // verdict-neutral; review phases are non-primary for cause attribution.
 const (
 	PhasePurposeTeardown         = "teardown"
-	PhasePurposeReviewTouchpoint = "review_touchpoint"
+	PhasePurposeReview = "review"
 	PhasePurposeReviewGate       = "review_gate"
 )
 
@@ -359,7 +359,7 @@ func primaryAttemptForExplanation(run Run, workflow Workflow) *Attempt {
 
 func phaseIsPrimary(phase PhaseSpec) bool {
 	switch phase.Purpose {
-	case PhasePurposeTeardown, PhasePurposeReviewTouchpoint, PhasePurposeReviewGate:
+	case PhasePurposeTeardown, PhasePurposeReview, PhasePurposeReviewGate:
 		return false
 	default:
 		return true

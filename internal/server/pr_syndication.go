@@ -59,10 +59,10 @@ type prPrimitiveStore interface {
 	ReadIssueForDispatch(ctx context.Context, project string, issueNumber int) (IssueDispatchData, error)
 	NormalizeRunReviewFacts(ctx context.Context, project, runID string, facts RunReviewFacts) (RunReplayData, error)
 	LinkRunPullRequest(ctx context.Context, project, runID string, prNumber int) error
-	EnsureTouchpoint(ctx context.Context, req TouchpointCreate) (TouchpointDetail, error)
+	EnsureReview(ctx context.Context, req ReviewCreate) (ReviewDetail, error)
 }
 
-type runTouchpointFinalizeStore interface {
+type runReviewFinalizeStore interface {
 	ReadRunIDForNumber(ctx context.Context, project string, issueNumber int, runNumber string) (string, string, error)
 	ReadRunForReplay(ctx context.Context, project, runID string) (RunReplayData, error)
 	workflowReadStore
@@ -79,7 +79,7 @@ type PRPrimitiveResult struct {
 	BaseRef        string `json:"base_ref,omitempty"`
 	HeadSHA        string `json:"head_sha,omitempty"`
 	HTMLURL        string `json:"html_url,omitempty"`
-	TouchpointRef  string `json:"touchpoint_ref,omitempty"`
+	ReviewRef  string `json:"review_ref,omitempty"`
 	LinkedIssueRef string `json:"linked_issue_ref,omitempty"`
 	LinkedRunRef   string `json:"linked_run_ref,omitempty"`
 }
@@ -101,13 +101,13 @@ type PRMergeResult struct {
 	MergeCommitSHA string `json:"merge_commit_sha,omitempty"`
 }
 
-const touchpointMergeMethod = "squash"
+const reviewMergeMethod = "squash"
 
 type RunReviewFacts struct {
 	ValidationURL *string
 }
 
-func runnerPRTouchpointByCallbackToken(store ReadStore, prClient PullRequestClient, artifactStore ArtifactStore) http.HandlerFunc {
+func runnerPRReviewByCallbackToken(store ReadStore, prClient PullRequestClient, artifactStore ArtifactStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		completionStore, ok := store.(RunCompletionStore)
 		if !ok || completionStore == nil {
@@ -166,7 +166,7 @@ func runnerPRTouchpointByCallbackToken(store ReadStore, prClient PullRequestClie
 				writeProblem(w, http.StatusUnprocessableEntity, validationErr.Message)
 				return
 			}
-			writeInternalError(w, r, err, "ensure PR touchpoint failed")
+			writeInternalError(w, r, err, "ensure PR review failed")
 			return
 		}
 		writeJSON(w, http.StatusOK, result)
@@ -234,8 +234,8 @@ func mergeRunPullRequest(ctx context.Context, prClient PullRequestClient, run Ru
 	out, err := prClient.MergePullRequest(ctx, PullRequestMergeRequest{
 		Repo:        repo,
 		Number:      *run.PRNumber,
-		MergeMethod: touchpointMergeMethod,
-		CommitTitle: fmt.Sprintf("Glimmung touchpoint approve: %s", runRefFromData(run)),
+		MergeMethod: reviewMergeMethod,
+		CommitTitle: fmt.Sprintf("Glimmung review approve: %s", runRefFromData(run)),
 	})
 	if err != nil {
 		return PRMergeResult{}, err
@@ -253,23 +253,23 @@ func mergeRunPullRequest(ctx context.Context, prClient PullRequestClient, run Ru
 	}, nil
 }
 
-// mergeRunTouchpointByNumber handles
-// POST /v1/projects/{project}/issues/{issue_number}/runs/{run_number}/touchpoint/merge
-// — admin operator endpoint mirroring the touchpoint/finalize shape.
+// mergeRunReviewByNumber handles
+// POST /v1/projects/{project}/issues/{issue_number}/runs/{run_number}/review/merge
+// — admin operator endpoint mirroring the review/finalize shape.
 // Idempotent. Useful for triggering an approve action from the API or for
 // repairing a stuck gate.
-func mergeRunTouchpointByNumber(store ReadStore, prClient PullRequestClient) http.HandlerFunc {
+func mergeRunReviewByNumber(store ReadStore, prClient PullRequestClient) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		runNumber := strings.TrimSpace(r.PathValue("run_number"))
 		if runNumber == "" {
 			writeProblem(w, http.StatusBadRequest, "run_number required")
 			return
 		}
-		mergeRunTouchpoint(w, r, store, prClient, runNumber)
+		mergeRunReview(w, r, store, prClient, runNumber)
 	}
 }
 
-func mergeRunCycleTouchpointByNumber(store ReadStore, prClient PullRequestClient) http.HandlerFunc {
+func mergeRunCycleReviewByNumber(store ReadStore, prClient PullRequestClient) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		runNumber := strings.TrimSpace(r.PathValue("run_number"))
 		if runNumber == "" {
@@ -284,14 +284,14 @@ func mergeRunCycleTouchpointByNumber(store ReadStore, prClient PullRequestClient
 		if !ok {
 			return
 		}
-		mergeRunTouchpoint(w, r, store, prClient, fmt.Sprintf("%s.%d", runNumber, cycleNumber))
+		mergeRunReview(w, r, store, prClient, fmt.Sprintf("%s.%d", runNumber, cycleNumber))
 	}
 }
 
-func mergeRunTouchpoint(w http.ResponseWriter, r *http.Request, store ReadStore, prClient PullRequestClient, runNumber string) {
-	finalizeStore, ok := store.(runTouchpointFinalizeStore)
+func mergeRunReview(w http.ResponseWriter, r *http.Request, store ReadStore, prClient PullRequestClient, runNumber string) {
+	finalizeStore, ok := store.(runReviewFinalizeStore)
 	if !ok || finalizeStore == nil {
-		writeProblem(w, http.StatusServiceUnavailable, "run touchpoint finalize store not configured")
+		writeProblem(w, http.StatusServiceUnavailable, "run review finalize store not configured")
 		return
 	}
 	issueNumber, ok := positivePathInt(w, r, "issue_number")
@@ -329,18 +329,18 @@ func mergeRunTouchpoint(w http.ResponseWriter, r *http.Request, store ReadStore,
 	writeJSON(w, http.StatusOK, result)
 }
 
-func finalizeRunTouchpointByNumber(store ReadStore, prClient PullRequestClient, artifactStore ArtifactStore) http.HandlerFunc {
+func finalizeRunReviewByNumber(store ReadStore, prClient PullRequestClient, artifactStore ArtifactStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		runNumber := strings.TrimSpace(r.PathValue("run_number"))
 		if runNumber == "" {
 			writeProblem(w, http.StatusBadRequest, "run_number required")
 			return
 		}
-		finalizeRunTouchpoint(w, r, store, prClient, artifactStore, runNumber)
+		finalizeRunReview(w, r, store, prClient, artifactStore, runNumber)
 	}
 }
 
-func finalizeRunCycleTouchpointByNumber(store ReadStore, prClient PullRequestClient, artifactStore ArtifactStore) http.HandlerFunc {
+func finalizeRunCycleReviewByNumber(store ReadStore, prClient PullRequestClient, artifactStore ArtifactStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		runNumber := strings.TrimSpace(r.PathValue("run_number"))
 		if runNumber == "" {
@@ -355,14 +355,14 @@ func finalizeRunCycleTouchpointByNumber(store ReadStore, prClient PullRequestCli
 		if !ok {
 			return
 		}
-		finalizeRunTouchpoint(w, r, store, prClient, artifactStore, fmt.Sprintf("%s.%d", runNumber, cycleNumber))
+		finalizeRunReview(w, r, store, prClient, artifactStore, fmt.Sprintf("%s.%d", runNumber, cycleNumber))
 	}
 }
 
-func finalizeRunTouchpoint(w http.ResponseWriter, r *http.Request, store ReadStore, prClient PullRequestClient, artifactStore ArtifactStore, runNumber string) {
-	finalizeStore, ok := store.(runTouchpointFinalizeStore)
+func finalizeRunReview(w http.ResponseWriter, r *http.Request, store ReadStore, prClient PullRequestClient, artifactStore ArtifactStore, runNumber string) {
+	finalizeStore, ok := store.(runReviewFinalizeStore)
 	if !ok || finalizeStore == nil {
-		writeProblem(w, http.StatusServiceUnavailable, "touchpoint finalizer store not configured")
+		writeProblem(w, http.StatusServiceUnavailable, "review finalizer store not configured")
 		return
 	}
 	if prClient == nil {
@@ -416,7 +416,7 @@ func finalizeRunTouchpoint(w http.ResponseWriter, r *http.Request, store ReadSto
 	}
 	run = normalized
 	if prBranchForRun(run) == "" {
-		writeProblem(w, http.StatusUnprocessableEntity, "run did not emit a branch_name output; if this is a recycled run, finalize the cycle route /runs/{run_number}/cycles/{cycle_number}/touchpoint/finalize")
+		writeProblem(w, http.StatusUnprocessableEntity, "run did not emit a branch_name output; if this is a recycled run, finalize the cycle route /runs/{run_number}/cycles/{cycle_number}/review/finalize")
 		return
 	}
 	result, err := materializePRPrimitive(r.Context(), finalizeStore, prClient, artifactStore, run)
@@ -426,7 +426,7 @@ func finalizeRunTouchpoint(w http.ResponseWriter, r *http.Request, store ReadSto
 			writeProblem(w, http.StatusUnprocessableEntity, validationErr.Message)
 			return
 		}
-		writeInternalError(w, r, err, "finalize touchpoint failed")
+		writeInternalError(w, r, err, "finalize review failed")
 		return
 	}
 	writeJSON(w, http.StatusOK, result)
@@ -475,7 +475,7 @@ func materializePRPrimitive(ctx context.Context, store prPrimitiveStore, prClien
 	if branch == "" {
 		return PRPrimitiveResult{}, errors.New("run did not emit a branch_name output")
 	}
-	evidence, err := touchpointEvidenceForRun(ctx, artifactStore, run)
+	evidence, err := reviewEvidenceForRun(ctx, artifactStore, run)
 	if err != nil {
 		return PRPrimitiveResult{}, err
 	}
@@ -506,7 +506,7 @@ func materializePRPrimitive(ctx context.Context, store prPrimitiveStore, prClien
 	}
 	runRef := runRefFromData(run)
 	issueRef := publicids.IssueRef(run.Project, &run.IssueNumber)
-	touchpoint, err := store.EnsureTouchpoint(ctx, TouchpointCreate{
+	review, err := store.EnsureReview(ctx, ReviewCreate{
 		Project:        run.Project,
 		Repo:           repo,
 		Number:         pr.Number,
@@ -522,7 +522,7 @@ func materializePRPrimitive(ctx context.Context, store prPrimitiveStore, prClien
 		EvidenceSet:    true,
 	})
 	if err != nil {
-		return PRPrimitiveResult{}, fmt.Errorf("ensure touchpoint: %w", err)
+		return PRPrimitiveResult{}, fmt.Errorf("ensure review: %w", err)
 	}
 	return PRPrimitiveResult{
 		Status:         "ensured",
@@ -533,7 +533,7 @@ func materializePRPrimitive(ctx context.Context, store prPrimitiveStore, prClien
 		BaseRef:        firstNonEmpty(pr.BaseRef, "main"),
 		HeadSHA:        pr.HeadSHA,
 		HTMLURL:        pr.HTMLURL,
-		TouchpointRef:  touchpoint.Ref,
+		ReviewRef:  review.Ref,
 		LinkedIssueRef: issueRef,
 		LinkedRunRef:   runRef,
 	}, nil
@@ -595,7 +595,7 @@ func prBodyForRun(run RunReplayData, issue IssueDispatchData) string {
 		run.IssueNumber,
 		url.PathEscape(runDisplayForURL(run)),
 	)
-	touchpointURL := fmt.Sprintf("https://glimmung.romaine.life/projects/%s/issues/%d/touchpoint",
+	reviewURL := fmt.Sprintf("https://glimmung.romaine.life/projects/%s/issues/%d/review",
 		url.PathEscape(run.Project),
 		run.IssueNumber,
 	)
@@ -606,7 +606,7 @@ func prBodyForRun(run RunReplayData, issue IssueDispatchData) string {
 		fmt.Fprintf(&b, "- Title: %s\n", strings.TrimSpace(issue.Title))
 	}
 	fmt.Fprintf(&b, "- Run: [%s](%s)\n", runRef, runURL)
-	fmt.Fprintf(&b, "- Touchpoint: %s\n", touchpointURL)
+	fmt.Fprintf(&b, "- Review: %s\n", reviewURL)
 	fmt.Fprintf(&b, "\nGlimmung issue: %s\n", issueRef)
 	return b.String()
 }

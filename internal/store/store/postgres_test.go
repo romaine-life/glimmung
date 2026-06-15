@@ -378,7 +378,7 @@ func TestReviewGateRawHelpersParkThenReleaseK8sJob(t *testing.T) {
 	raw := map[string]any{
 		"phase_executions": []any{
 			map[string]any{
-				"name":       "touchpoint_gate",
+				"name":       "review_gate",
 				"kind":       "k8s_job",
 				"state":      "not_started",
 				"created_at": waitingAt,
@@ -396,8 +396,8 @@ func TestReviewGateRawHelpersParkThenReleaseK8sJob(t *testing.T) {
 		},
 	}
 
-	markPhaseReviewRequiredRaw(raw, "touchpoint_gate", "k8s_job", waitingAt)
-	gate := rawPhase(t, raw, "touchpoint_gate")
+	markPhaseReviewRequiredRaw(raw, "review_gate", "k8s_job", waitingAt)
+	gate := rawPhase(t, raw, "review_gate")
 	if got := stringValue(gate["state"]); got != "active" {
 		t.Fatalf("gate waiting state=%q, want active", got)
 	}
@@ -405,8 +405,8 @@ func TestReviewGateRawHelpersParkThenReleaseK8sJob(t *testing.T) {
 		t.Fatalf("merge job waiting state=%q, want not_started", got)
 	}
 
-	markPhaseDispatchingRaw(raw, "touchpoint_gate", "k8s_job", releasedAt)
-	gate = rawPhase(t, raw, "touchpoint_gate")
+	markPhaseDispatchingRaw(raw, "review_gate", "k8s_job", releasedAt)
+	gate = rawPhase(t, raw, "review_gate")
 	if got := stringValue(gate["state"]); got != "dispatching" {
 		t.Fatalf("gate released state=%q, want dispatching", got)
 	}
@@ -423,7 +423,7 @@ func TestMarkPhaseCanceledRawAbortsGateProjection(t *testing.T) {
 	raw := map[string]any{
 		"phase_executions": []any{
 			map[string]any{
-				"name":       "touchpoint_gate",
+				"name":       "review_gate",
 				"kind":       "k8s_job",
 				"state":      "active",
 				"created_at": now,
@@ -441,16 +441,16 @@ func TestMarkPhaseCanceledRawAbortsGateProjection(t *testing.T) {
 		},
 	}
 
-	markPhaseCanceledRaw(raw, "touchpoint_gate", "k8s_job", "touchpoint cancelled by reviewer", now)
+	markPhaseCanceledRaw(raw, "review_gate", "k8s_job", "review cancelled by reviewer", now)
 
-	gate := rawPhase(t, raw, "touchpoint_gate")
+	gate := rawPhase(t, raw, "review_gate")
 	if got := stringValue(gate["state"]); got != "aborted" {
 		t.Fatalf("gate state=%q, want aborted", got)
 	}
 	if got := stringValue(gate["completed_at"]); got != now {
 		t.Fatalf("gate completed_at=%q, want %q", got, now)
 	}
-	if got := stringValue(gate["reason"]); got != "touchpoint cancelled by reviewer" {
+	if got := stringValue(gate["reason"]); got != "review cancelled by reviewer" {
 		t.Fatalf("gate reason=%q", got)
 	}
 	// pr_merge never runs on cancel — its job + steps abort.
@@ -866,9 +866,9 @@ func TestNormalizeWorkflowRegisterForProjectDefaultsToK8sJob(t *testing.T) {
 			{Name: "prepare", Outputs: []string{"issue_contract"}, Jobs: []server.RunnerJobSpec{{ID: "issue-contract"}}},
 			{Name: "test", Verify: true, RecyclePolicy: &server.RecyclePolicy{MaxAttempts: 1, On: []string{"verify_fail"}, LandsAt: "prepare"}, DependsOn: []string{"prepare"}, Jobs: verificationCaseJobsForStoreTest()},
 			{Name: "cleanup_early", RunOn: server.PhaseRunOnAlways, Purpose: server.PhasePurposeTeardown, When: "${{ run.preserve_test_env }} == 'false'", DependsOn: []string{"test"}, Jobs: []server.RunnerJobSpec{{ID: "cleanup-early"}}},
-			{Name: "touchpoint", RunOn: server.PhaseRunOnSuccess, Purpose: server.PhasePurposeReviewTouchpoint, DependsOn: []string{"cleanup_early"}, Jobs: []server.RunnerJobSpec{{ID: "pr-touchpoint", Primitive: "pr_touchpoint"}}},
-			{Name: "touchpoint_gate", Kind: "k8s_job", Purpose: server.PhasePurposeReviewGate, DependsOn: []string{"touchpoint"}, Jobs: []server.RunnerJobSpec{{ID: "pr-merge", Primitive: "pr_merge"}}},
-			{Name: "cleanup_final", RunOn: server.PhaseRunOnAlways, Purpose: server.PhasePurposeTeardown, DependsOn: []string{"touchpoint_gate"}, Jobs: []server.RunnerJobSpec{{ID: "cleanup-final"}}},
+			{Name: "review", RunOn: server.PhaseRunOnSuccess, Purpose: server.PhasePurposeReview, DependsOn: []string{"cleanup_early"}, Jobs: []server.RunnerJobSpec{{ID: "pr-review", Primitive: "pr_review"}}},
+			{Name: "review_gate", Kind: "k8s_job", Purpose: server.PhasePurposeReviewGate, DependsOn: []string{"review"}, Jobs: []server.RunnerJobSpec{{ID: "pr-merge", Primitive: "pr_merge"}}},
+			{Name: "cleanup_final", RunOn: server.PhaseRunOnAlways, Purpose: server.PhasePurposeTeardown, DependsOn: []string{"review_gate"}, Jobs: []server.RunnerJobSpec{{ID: "cleanup-final"}}},
 		},
 	}
 	normalizeWorkflowRegister(&req)
@@ -891,9 +891,9 @@ func TestWorkflowDocPersistsCanonicalVerificationConstraints(t *testing.T) {
 			{Name: "prepare", Outputs: []string{"issue_contract"}, Jobs: []server.RunnerJobSpec{{ID: "issue-contract"}}},
 			{Name: "test", Verify: true, RecyclePolicy: &server.RecyclePolicy{MaxAttempts: 1, On: []string{"verify_fail"}, LandsAt: "prepare"}, DependsOn: []string{"prepare"}, Jobs: verificationCaseJobsForStoreTest()},
 			{Name: "cleanup_early", RunOn: server.PhaseRunOnAlways, Purpose: server.PhasePurposeTeardown, When: "${{ run.preserve_test_env }} == 'false'", DependsOn: []string{"test"}, Jobs: []server.RunnerJobSpec{{ID: "cleanup-early"}}},
-			{Name: "touchpoint", RunOn: server.PhaseRunOnSuccess, Purpose: server.PhasePurposeReviewTouchpoint, DependsOn: []string{"cleanup_early"}, Jobs: []server.RunnerJobSpec{{ID: "pr-touchpoint", Primitive: "pr_touchpoint"}}},
-			{Name: "touchpoint_gate", Kind: "k8s_job", Purpose: server.PhasePurposeReviewGate, DependsOn: []string{"touchpoint"}, Jobs: []server.RunnerJobSpec{{ID: "pr-merge", Primitive: "pr_merge"}}},
-			{Name: "cleanup_final", RunOn: server.PhaseRunOnAlways, Purpose: server.PhasePurposeTeardown, DependsOn: []string{"touchpoint_gate"}, Jobs: []server.RunnerJobSpec{{ID: "cleanup-final"}}},
+			{Name: "review", RunOn: server.PhaseRunOnSuccess, Purpose: server.PhasePurposeReview, DependsOn: []string{"cleanup_early"}, Jobs: []server.RunnerJobSpec{{ID: "pr-review", Primitive: "pr_review"}}},
+			{Name: "review_gate", Kind: "k8s_job", Purpose: server.PhasePurposeReviewGate, DependsOn: []string{"review"}, Jobs: []server.RunnerJobSpec{{ID: "pr-merge", Primitive: "pr_merge"}}},
+			{Name: "cleanup_final", RunOn: server.PhaseRunOnAlways, Purpose: server.PhasePurposeTeardown, DependsOn: []string{"review_gate"}, Jobs: []server.RunnerJobSpec{{ID: "cleanup-final"}}},
 		},
 	}
 	normalizeWorkflowRegister(&req)
@@ -922,9 +922,9 @@ func TestWorkflowDocRoundTripsDispatchInputs(t *testing.T) {
 			{Name: "prepare", Outputs: []string{"issue_contract"}, Jobs: []server.RunnerJobSpec{{ID: "issue-contract", Checkout: &server.RunnerCheckoutSpec{Ref: "${{ inputs.git_ref }}"}}}},
 			{Name: "test", Verify: true, RecyclePolicy: &server.RecyclePolicy{MaxAttempts: 1, On: []string{"verify_fail"}, LandsAt: "prepare"}, DependsOn: []string{"prepare"}, Jobs: verificationCaseJobsForStoreTest()},
 			{Name: "cleanup_early", RunOn: server.PhaseRunOnAlways, Purpose: server.PhasePurposeTeardown, When: "${{ run.preserve_test_env }} == 'false'", DependsOn: []string{"test"}, Jobs: []server.RunnerJobSpec{{ID: "cleanup-early"}}},
-			{Name: "touchpoint", RunOn: server.PhaseRunOnSuccess, Purpose: server.PhasePurposeReviewTouchpoint, DependsOn: []string{"cleanup_early"}, Jobs: []server.RunnerJobSpec{{ID: "pr-touchpoint", Primitive: "pr_touchpoint"}}},
-			{Name: "touchpoint_gate", Kind: "k8s_job", Purpose: server.PhasePurposeReviewGate, DependsOn: []string{"touchpoint"}, Jobs: []server.RunnerJobSpec{{ID: "pr-merge", Primitive: "pr_merge"}}},
-			{Name: "cleanup_final", RunOn: server.PhaseRunOnAlways, Purpose: server.PhasePurposeTeardown, DependsOn: []string{"touchpoint_gate"}, Jobs: []server.RunnerJobSpec{{ID: "cleanup-final"}}},
+			{Name: "review", RunOn: server.PhaseRunOnSuccess, Purpose: server.PhasePurposeReview, DependsOn: []string{"cleanup_early"}, Jobs: []server.RunnerJobSpec{{ID: "pr-review", Primitive: "pr_review"}}},
+			{Name: "review_gate", Kind: "k8s_job", Purpose: server.PhasePurposeReviewGate, DependsOn: []string{"review"}, Jobs: []server.RunnerJobSpec{{ID: "pr-merge", Primitive: "pr_merge"}}},
+			{Name: "cleanup_final", RunOn: server.PhaseRunOnAlways, Purpose: server.PhasePurposeTeardown, DependsOn: []string{"review_gate"}, Jobs: []server.RunnerJobSpec{{ID: "cleanup-final"}}},
 		},
 		DispatchInputs: []server.DispatchInputSpec{
 			{Name: "git_ref", Description: "branch or sha", Required: true, Default: "main"},

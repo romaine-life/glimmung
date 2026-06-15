@@ -57,7 +57,7 @@ func readArtifact(store ArtifactStore) http.HandlerFunc {
 		// view of evidence dereferences GET /v1/artifacts/..., so refusing a
 		// blank ("white about:blank") first-frame video here makes it unservable
 		// no matter how it entered the store — including the direct-to-blob
-		// writes that bypass the touchpoint-promotion gate. Reuses that gate's
+		// writes that bypass the review-promotion gate. Reuses that gate's
 		// exact verdict function, including its fail-open extraction policy: only
 		// a confirmed blank is refused, an ffmpeg hiccup never blocks.
 		if isVideoArtifact(contentType, blobName) {

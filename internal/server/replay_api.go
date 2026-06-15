@@ -27,7 +27,7 @@ type RunReplayStore interface {
 // preserve_test_env flag at dispatch time. The cleanup_early phase consults
 // this field to decide whether to execute (false, the default) or return
 // `skipped` so the validation environment stays alive through the
-// touchpoint gate.
+// review gate.
 type RunReplayData struct {
 	ID                   string
 	Project              string
@@ -281,7 +281,7 @@ func replayRunDecisionByNumber(store ReadStore) http.HandlerFunc {
 					} else {
 						// Last phase advanced — every Glimmung workflow ends
 						// in a human-reviewed PR, so a successful advance off
-						// the final phase means the touchpoint PR is the
+						// the final phase means the review PR is the
 						// terminal review surface.
 						result.WouldOpenPR = true
 					}
