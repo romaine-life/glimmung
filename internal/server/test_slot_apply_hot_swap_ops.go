@@ -71,18 +71,23 @@ type k8sJobClient interface {
 // has two containers:
 //
 //  1. Init container (contract.<kind>.builder_image): git clone +
-//     contract.<kind>.build_command. Leaves source at /work/source.
+//     contract.<kind>.build_command. Leaves a source dir at /work/source
+//     (static/runner) or a single executable at /work/artifact (backend).
 //  2. Main container (alpine/k8s): resolves target pods via
 //     kubectl-get against contract.<kind>.pod_selector, then for each
-//     pod tar-streams /work/source into contract.<kind>.target and
-//     sends the configured restart signal.
+//     pod either tar-streams /work/source into contract.<kind>.target
+//     (static/runner) or streams /work/artifact onto the target file and
+//     health-gates the SIGHUP re-exec (backend), sending the configured
+//     restart signal where one is set.
 //
-// Supports static web assets (static) and session-pod runner artifacts
-// (agent_runner, codex_runner, antigravity_runner). Static differs in
-// two ways: it targets the slot's app pods (the handler picks the
-// namespace) and is served live from an override dir, so the swap clears
-// that dir first and sends no restart signal. Backend still routes
-// through the legacy glimmung-agent CLI.
+// Supports static web assets (static), the orchestrator backend binary
+// (backend), and session-pod runner artifacts (agent_runner,
+// codex_runner, antigravity_runner). Static targets the slot's app pods
+// and is served live from an override dir, so the swap clears that dir
+// first and sends no restart signal. Backend also targets the slot's app
+// pods, but streams a single executable to a file the supervisor re-execs
+// from on SIGHUP and then health-gates the result. Runner kinds extract a
+// directory into a session-pod volume and SIGHUP their supervisor.
 func ApplyHotSwap(ctx context.Context, k8s k8sJobClient, opts ApplyHotSwapOptions) (result ApplyHotSwapResult, err error) {
 	start := time.Now()
 	result = ApplyHotSwapResult{
@@ -102,7 +107,7 @@ func ApplyHotSwap(ctx context.Context, k8s k8sJobClient, opts ApplyHotSwapOption
 
 	art, ok := resolveArtifact(opts.Contract, opts.ArtifactKind)
 	if !ok {
-		result.Error = fmt.Sprintf("artifact_kind %q is not supported by the apply endpoint (supported: static, agent_runner, codex_runner, antigravity_runner; use the glimmung-agent CLI for backend)", opts.ArtifactKind)
+		result.Error = fmt.Sprintf("artifact_kind %q is not supported by the apply endpoint (supported: static, backend, agent_runner, codex_runner, antigravity_runner)", opts.ArtifactKind)
 		return result, fmt.Errorf("%s", result.Error)
 	}
 	if !art.Enabled {
@@ -209,6 +214,9 @@ func ApplyHotSwap(ctx context.Context, k8s k8sJobClient, opts ApplyHotSwapOption
 		ValidationTarget:   opts.ValidationTarget,
 		RestartSignal:      art.Restart,
 		CleanTarget:        art.CleanTarget,
+		ArtifactFile:       art.ArtifactFile,
+		HealthPath:         art.HealthPath,
+		HealthPort:         art.HealthPort,
 	})
 
 	applyStart := time.Now()
@@ -263,9 +271,14 @@ func ApplyHotSwap(ctx context.Context, k8s k8sJobClient, opts ApplyHotSwapOption
 
 // resolvedArtifact is the normalized per-kind hot-swap shape the Job
 // builder consumes. Runner kinds map their AgentRunnerContract onto it;
-// static maps StaticContract. Static introduces two differences: it is
-// served live, so CleanTarget clears stale content-hashed assets before
-// extract and Restart is empty (no PID-1 signal).
+// static maps StaticContract; backend maps BackendContract. Static
+// introduces two differences: it is served live, so CleanTarget clears
+// stale content-hashed assets before extract and Restart is empty (no
+// PID-1 signal). Backend introduces two more: ArtifactFile is set (the
+// build produces one executable file streamed to Target, not a directory
+// extracted into Target), and HealthPath/HealthPort drive a post-restart
+// health gate so a crashing binary fails the swap instead of reporting
+// success.
 type resolvedArtifact struct {
 	Enabled      bool
 	Source       string
@@ -276,6 +289,19 @@ type resolvedArtifact struct {
 	Restart      string // empty = served live, no restart signal
 	BuilderImage string
 	CleanTarget  bool
+	// ArtifactFile, when non-empty, switches the Job to single-file backend
+	// semantics: the build copies this one executable (an absolute path in
+	// the builder image) to /work/artifact, and the swap streams it to
+	// Target (a file), chmod +x, atomic mv, then restarts. Source is unused
+	// in this mode.
+	ArtifactFile string
+	// HealthPath/HealthPort, when set (backend only), gate the swap: after
+	// the restart signal the swap container polls
+	// http://127.0.0.1:<HealthPort><HealthPath> inside the target pod until a
+	// 2xx or timeout. No 2xx => the swap container exits non-zero => the Job
+	// fails => Outcome=swap_failed.
+	HealthPath string
+	HealthPort int
 }
 
 func resolveArtifact(contract hotswap.Contract, artifactKind string) (resolvedArtifact, bool) {
@@ -311,6 +337,20 @@ func resolveArtifact(contract hotswap.Contract, artifactKind string) (resolvedAr
 			BuilderImage: s.BuilderImage,
 			CleanTarget:  true,
 		}, true
+	case "backend":
+		b := contract.Backend
+		return resolvedArtifact{
+			Enabled:      b.Enabled,
+			Target:       b.Target,
+			BuildCommand: b.BuildCommand,
+			PodSelector:  b.PodSelector,
+			Container:    b.Container,
+			Restart:      "SIGHUP", // supervisor re-execs PID 1 from Target
+			BuilderImage: b.BuilderImage,
+			ArtifactFile: b.Artifact,
+			HealthPath:   b.HealthPath,
+			HealthPort:   b.HealthPort,
+		}, true
 	default:
 		return resolvedArtifact{}, false
 	}
@@ -337,6 +377,14 @@ type applyHotSwapJobInputs struct {
 	ValidationTarget   string
 	RestartSignal      string
 	CleanTarget        bool
+	// ArtifactFile (backend only) is the absolute path in the builder image
+	// of the single executable to stream to Target. Non-empty switches the
+	// build + swap scripts to single-file semantics.
+	ArtifactFile string
+	// HealthPath/HealthPort (backend only) drive the post-restart health gate
+	// the swap container runs inside the target pod.
+	HealthPath string
+	HealthPort int
 }
 
 func renderApplyHotSwapJobSpec(in applyHotSwapJobInputs) map[string]any {
@@ -459,6 +507,18 @@ func buildScriptFor(in applyHotSwapJobInputs) string {
 			`sh -c `+shellQuote(strings.TrimSpace(in.FidelityCommand)+` --artifact-kind "$GLIMMUNG_HOT_SWAP_ARTIFACT_KIND" --validation-target "$GLIMMUNG_HOT_SWAP_VALIDATION_TARGET" --enforce`),
 		)
 	}
+	if strings.TrimSpace(in.ArtifactFile) != "" {
+		// Backend: the build produces a single executable at ArtifactFile
+		// (an absolute path inside the builder image). Surface exactly that
+		// one file for the swap container; there is no Source directory.
+		lines = append(lines,
+			in.BuildCommand,
+			`cp "`+in.ArtifactFile+`" /work/artifact`,
+			`chmod +x /work/artifact`,
+			`ls -la /work/artifact`,
+		)
+		return strings.Join(lines, "\n")
+	}
 	lines = append(lines,
 		in.BuildCommand,
 		`cp -R "/work/repo/`+in.Source+`" /work/source`,
@@ -496,6 +556,22 @@ func swapScriptFor(in applyHotSwapJobInputs) string {
 		`if [ -z "$pods" ]; then echo "no pods matched selector ` + shellQuote(in.TargetPodSelector) + ` in namespace ` + shellQuote(in.TargetNamespace) + `"; exit 1; fi`,
 		`for pod in $pods; do`,
 		`  echo "==> swapping into $pod"`,
+	}
+	if strings.TrimSpace(in.ArtifactFile) != "" {
+		lines = append(lines, backendSwapSteps(in)...)
+	} else {
+		lines = append(lines, dirSwapSteps(in)...)
+	}
+	lines = append(lines, `done`, `echo done`)
+	return strings.Join(lines, "\n")
+}
+
+// dirSwapSteps emits the per-pod swap for static + runner artifacts: extract
+// the built source directory into Target, optionally clearing it first, then
+// optionally SIGHUP. Static is served live (RestartSignal empty); runners
+// SIGHUP to re-exec their supervisor.
+func dirSwapSteps(in applyHotSwapJobInputs) []string {
+	steps := []string{
 		`  kubectl -n ` + shellQuote(in.TargetNamespace) + ` exec "$pod" -c ` + shellQuote(in.TargetContainer) +
 			` -- sh -c ` + shellQuote("mkdir -p "+in.Target) + ` < /dev/null`,
 	}
@@ -504,26 +580,60 @@ func swapScriptFor(in applyHotSwapJobInputs) string {
 		// otherwise be served alongside the new one. Clear the override dir's
 		// contents before extracting — not the dir itself, which is a mount.
 		// `|| true` tolerates an already-empty dir (rm over an empty glob).
-		lines = append(lines,
+		steps = append(steps,
 			`  kubectl -n `+shellQuote(in.TargetNamespace)+` exec "$pod" -c `+shellQuote(in.TargetContainer)+
 				` -- sh -c `+shellQuote(`rm -rf "`+in.Target+`"/* 2>/dev/null || true`)+` < /dev/null`,
 		)
 	}
-	lines = append(lines,
+	steps = append(steps,
 		`  tar c -C /work source | kubectl -n `+shellQuote(in.TargetNamespace)+` exec -i "$pod" -c `+shellQuote(in.TargetContainer)+
 			` -- sh -c `+shellQuote("cd "+in.Target+" && tar x --strip-components=1 -f -"),
 	)
-	// Static is served live from the override dir, so RestartSignal is empty
-	// and no PID-1 signal is sent. Runner kinds set SIGHUP to re-exec the
-	// supervisor after the copy lands.
 	if strings.TrimSpace(in.RestartSignal) != "" {
-		lines = append(lines,
+		steps = append(steps,
 			`  kubectl -n `+shellQuote(in.TargetNamespace)+` exec "$pod" -c `+shellQuote(in.TargetContainer)+
 				` -- `+restartCommandFor(in.RestartSignal),
 		)
 	}
-	lines = append(lines, `done`, `echo done`)
-	return strings.Join(lines, "\n")
+	return steps
+}
+
+// backendSwapSteps emits the per-pod swap for the backend binary: stream the
+// single executable (/work/artifact) to Target.next, chmod +x, atomically
+// replace Target, SIGHUP PID 1 so the supervisor re-execs the child, then
+// gate on health. The health poll runs inside the pod (busybox wget) so a
+// binary that fails to come up makes the swap container exit non-zero — the
+// Job fails and the endpoint reports swap_failed instead of persisted.
+// Target is a file (e.g. /var/run/<app>-hot/<app>), not a directory, so this
+// path never `mkdir`s Target itself — only its parent mount dir.
+func backendSwapSteps(in applyHotSwapJobInputs) []string {
+	targetParent := in.Target
+	if i := strings.LastIndex(in.Target, "/"); i > 0 {
+		targetParent = in.Target[:i]
+	}
+	next := in.Target + ".next"
+	steps := []string{
+		`  kubectl -n ` + shellQuote(in.TargetNamespace) + ` exec "$pod" -c ` + shellQuote(in.TargetContainer) +
+			` -- sh -c ` + shellQuote("mkdir -p "+targetParent) + ` < /dev/null`,
+		`  kubectl -n ` + shellQuote(in.TargetNamespace) + ` exec -i "$pod" -c ` + shellQuote(in.TargetContainer) +
+			` -- sh -c ` + shellQuote("cat > "+next) + ` < /work/artifact`,
+		`  kubectl -n ` + shellQuote(in.TargetNamespace) + ` exec "$pod" -c ` + shellQuote(in.TargetContainer) +
+			` -- sh -c ` + shellQuote("chmod +x "+next+" && mv -f "+next+" "+in.Target) + ` < /dev/null`,
+		`  kubectl -n ` + shellQuote(in.TargetNamespace) + ` exec "$pod" -c ` + shellQuote(in.TargetContainer) +
+			` -- ` + restartCommandFor(in.RestartSignal),
+	}
+	if strings.TrimSpace(in.HealthPath) != "" && in.HealthPort > 0 {
+		healthURL := fmt.Sprintf("http://127.0.0.1:%d%s", in.HealthPort, in.HealthPath)
+		poll := fmt.Sprintf(
+			`i=0; while [ $i -lt 30 ]; do if wget -q -O /dev/null %s 2>/dev/null; then echo "health ok after restart (%s)"; exit 0; fi; i=$((i+1)); sleep 2; done; echo "post-restart health check failed: no 2xx from %s within 60s"; exit 1`,
+			healthURL, healthURL, healthURL,
+		)
+		steps = append(steps,
+			`  kubectl -n `+shellQuote(in.TargetNamespace)+` exec "$pod" -c `+shellQuote(in.TargetContainer)+
+				` -- sh -c `+shellQuote(poll)+` < /dev/null`,
+		)
+	}
+	return steps
 }
 
 func restartCommandFor(signal string) string {

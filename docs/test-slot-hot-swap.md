@@ -40,6 +40,9 @@ whichever ones it needs.
       "artifact": "/tmp/app",
       "target": "/var/run/orchestrator-hot/app",
       "health_path": "/healthz",
+      "health_port": 8000,
+      "pod_selector": "app.kubernetes.io/name=orchestrator",
+      "container": "orchestrator",
       "builder_image": "golang:1.26-alpine"
     },
 
@@ -92,13 +95,18 @@ language heuristics, no hardcoded defaults — the contract owns this so
 the project's build environment is explicit and reproducible.
 
 For `agent_runner`, `codex_runner`, and `antigravity_runner`, `builder_image`
-is **required at contract validation time**: there is no legacy CLI path for
-these kinds, so a missing image is unambiguous misconfiguration. For `backend`
-and `static`, `builder_image` is **optional at validation time** (existing
-registered contracts predate the field) but **required at request time** when
-the apply endpoint is invoked with that kind. `static` additionally requires
-`pod_selector` and `container` at request time, for the same reason: contracts
-registered before static joined the apply endpoint predate those fields.
+is **required at contract validation time**, so a missing image is unambiguous
+misconfiguration. For `backend` and `static`, `builder_image` is **optional at
+validation time** (contracts registered before these kinds joined the apply
+endpoint predate the field) but **required at request time** when the apply
+endpoint is invoked with that kind. `static` additionally requires
+`pod_selector` and `container` at request time. `backend` additionally requires
+`pod_selector`, `container`, and `health_port` at request time: it streams a
+single executable to the supervisor's hot-artifact file on the matched app
+pods, SIGHUPs PID 1, and then polls `http://127.0.0.1:<health_port><health_path>`
+inside each pod to confirm the re-exec actually serves — a binary that never
+goes healthy fails the swap (`swap_failed`) instead of being reported as
+`persisted`.
 
 ### `fidelity_classifier`
 
@@ -148,21 +156,29 @@ the cap; the underlying Job runs to its own deadline.
 1. Resolves the active test-slot lease for `project + slot`.
 2. Reads the project's `test_slot_hot_swap` contract from metadata.
 3. Validates `artifact_kind` is supported and the request-time fields are
-   present (`builder_image` for `backend`; `builder_image`, `pod_selector`,
-   and `container` for `static`).
+   present (`builder_image`, `pod_selector`, `container`, and `health_port`
+   for `backend`; `builder_image`, `pod_selector`, and `container` for
+   `static`).
 4. Dispatches a one-off Kubernetes Job:
    - **Init container** uses `contract.<kind>.builder_image`. Clones
      the repo at `git_ref`, runs the optional `fidelity_classifier`
-     command, runs `contract.<kind>.build_command`, leaves the resulting
-     source dir at `/work/source`.
-   - **Main container** uses a kubectl-only image. Reads `/work/source`,
-     tar-streams its contents into `contract.<kind>.target` on every pod
-     matching `contract.<kind>.pod_selector`, then sends
+     command, runs `contract.<kind>.build_command`, and leaves either a
+     source dir at `/work/source` (static/runner) or, for `backend`, the
+     single built executable (`contract.backend.artifact`) at
+     `/work/artifact`.
+   - **Main container** uses a kubectl-only image and resolves the target
+     pods from `contract.<kind>.pod_selector`. For static/runner it
+     tar-streams `/work/source` into `contract.<kind>.target` and sends
      `contract.<kind>.restart` to PID 1. **Static differs:** its target is
      the slot's app pods (the `<slot_name>` namespace, not
      `<slot_name>-sessions`), the override dir is cleared before the copy so
      stale content-hashed assets don't linger, and no restart is sent
-     because static assets are served live.
+     because static assets are served live. **Backend differs:** it also
+     targets the slot's app pods, but streams `/work/artifact` onto the
+     supervisor's hot-artifact file (`chmod +x`, atomic `mv`), SIGHUPs PID 1
+     so the supervisor re-execs, then polls
+     `http://127.0.0.1:<health_port><health_path>` inside each pod until a
+     `2xx` — a re-exec that never serves fails the swap.
 5. Watches the Job to completion via `kubectl wait`.
 6. Collects build + swap logs (last 4000 chars each).
 7. Appends a hot-swap history entry to the lease — **always**, success
@@ -179,11 +195,6 @@ the cap; the underlying Job runs to its own deadline.
 - **Streaming progress.** The Job's logs are available via
   `kubectl logs job/<name>` while the swap is in flight, for live
   inspection. The final result includes the last 4000 chars.
-- **`artifact_kind=backend`.** Backend still routes to
-  `ops.TestSlotHotSwap` via the `glimmung-agent` CLI in the verify-loop
-  infrastructure. The developer-driven apply endpoint covers static web
-  assets and session runner artifacts; backend lands when its consumer
-  explicitly opts in.
 
 ## The outcome
 
@@ -212,6 +223,11 @@ skill instructions:
 | `kubectl exec $pod -- kill -HUP 1` | (Glimmung's main container sends the restart signal) |
 | Manual log inspection | Build + swap logs in the response |
 
-The manual pattern remains technically possible — but no platform
-documentation should recommend it for routine iteration. The apply
-endpoint is the supported developer dev loop.
+This is no longer just a recommendation. The legacy `glimmung-agent
+test-slot-hot-swap` CLI that automated this kubectl dance has been
+removed, and session pods run with read-only Kubernetes RBAC (a
+restricted-git session can't `kubectl cp`/`exec` into a slot at all), so
+the gated apply endpoint — which carries its own privilege in a
+`glimmung-runs` Job — is the only supported path. That is deliberate: it
+routes every slot mutation through CI-gated, health-verified, history-recorded
+glimmung, including for `backend`.

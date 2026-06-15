@@ -47,11 +47,15 @@
 //      health-poll result, timings. History recorded regardless of
 //      outcome (durable state lives in the system, not in the request).
 //
-//   4. Existing automation paths are byte-identical. The
-//      glimmung-agent test-slot-hot-swap subcommand stays unchanged.
-//      The existing static + backend hot-swap paths in TestSlotHotSwap
-//      stay unchanged. The /v1/test-slots/hot-swap-history endpoint stays
-//      unchanged. The other /v1/test-slots/* endpoints stay unchanged.
+//   4. The apply endpoint is now the ONLY hot-swap path. backend joined
+//      static + the runner kinds on the CI-gated endpoint, so the legacy
+//      glimmung-agent test-slot-hot-swap subcommand and its
+//      internal/ops/agentops/hotswap.go implementation are DELETED — a
+//      read-only / restricted-git session can no longer be told to run
+//      kubectl-fu by hand for backend. Per docs/migration-policy.md the old
+//      path is removed end to end, and these checks fail if it returns. The
+//      /v1/test-slots/hot-swap-history endpoint and the other
+//      /v1/test-slots/* endpoints stay unchanged.
 //
 // Skip slow exec gates during structural iteration with:
 //   SKIP_EXEC=1 node scripts/check-apply-test-slot-hot-swap-migration.mjs
@@ -155,6 +159,38 @@ const CHECKS = [
     kind: "grep-present",
     pattern: /WaitForJob[\s\S]{0,2000}?conditions|Complete[\s\S]{0,200}?Failed/,
   },
+  {
+    id: "ops-backend-resolved",
+    from: "Guarantee 1: end-to-end apply",
+    file: "internal/server/test_slot_apply_hot_swap_ops.go",
+    description: "resolveArtifact maps artifact_kind=backend to a resolved artifact (single-file ArtifactFile + HealthPath/HealthPort), so the apply endpoint accepts backend.",
+    kind: "grep-present",
+    pattern: /case\s+"backend":[\s\S]{0,400}?ArtifactFile:\s*b\.Artifact/,
+  },
+  {
+    id: "ops-backend-single-file-swap",
+    from: "Guarantee 1: end-to-end apply",
+    file: "internal/server/test_slot_apply_hot_swap_ops.go",
+    description: "Backend swap streams one executable to Target.next, chmod +x, atomic mv, then SIGHUP — not the runner/static dir-extract path.",
+    kind: "grep-present",
+    pattern: /func\s+backendSwapSteps[\s\S]{0,1500}?chmod \+x[\s\S]{0,200}?mv -f/,
+  },
+  {
+    id: "ops-backend-health-gate",
+    from: "Guarantee 1: end-to-end apply",
+    file: "internal/server/test_slot_apply_hot_swap_ops.go",
+    description: "Backend swap health-gates the re-exec by polling http://127.0.0.1:<HealthPort><HealthPath> inside the pod, so a crashing binary yields swap_failed, not persisted.",
+    kind: "grep-present",
+    pattern: /127\.0\.0\.1:%d%s/,
+  },
+  {
+    id: "api-backend-request-fields",
+    from: "Guarantee 1: end-to-end apply",
+    file: "internal/server/test_slot_apply_hot_swap_api.go",
+    description: "Apply endpoint enforces backend request-time fields (builder_image, pod_selector, container, health_port) before dispatch.",
+    kind: "grep-present",
+    pattern: /ArtifactKind\s*==\s*"backend"[\s\S]{0,600}?HealthPort\s*<=\s*0/,
+  },
 
   // ─────────────────────── Guarantee 2: each app declares its own builder ───────────────────────
 
@@ -172,7 +208,7 @@ const CHECKS = [
     file: "internal/domain/hotswap/hotswap.go",
     description: "Contract has runner fields of type AgentRunnerContract",
     kind: "grep-present",
-    pattern: /type\s+Contract\s+struct[\s\S]{0,500}?AgentRunner\s+AgentRunnerContract[\s\S]{0,200}?CodexRunner\s+AgentRunnerContract[\s\S]{0,200}?GeminiRunner\s+AgentRunnerContract/,
+    pattern: /type\s+Contract\s+struct[\s\S]{0,500}?AgentRunner\s+AgentRunnerContract[\s\S]{0,200}?CodexRunner\s+AgentRunnerContract[\s\S]{0,200}?AntigravityRunner\s+AgentRunnerContract/,
   },
   {
     id: "contract-builder-image-backend",
@@ -180,7 +216,7 @@ const CHECKS = [
     file: "internal/domain/hotswap/hotswap.go",
     description: "BackendContract has BuilderImage field (per-app build environment)",
     kind: "grep-present",
-    pattern: /type\s+BackendContract\s+struct[\s\S]{0,800}?BuilderImage\s+string/,
+    pattern: /type\s+BackendContract\s+struct[\s\S]{0,2400}?BuilderImage\s+string/,
   },
   {
     id: "contract-builder-image-static",
@@ -188,7 +224,7 @@ const CHECKS = [
     file: "internal/domain/hotswap/hotswap.go",
     description: "StaticContract has BuilderImage field",
     kind: "grep-present",
-    pattern: /type\s+StaticContract\s+struct[\s\S]{0,400}?BuilderImage\s+string/,
+    pattern: /type\s+StaticContract\s+struct[\s\S]{0,1600}?BuilderImage\s+string/,
   },
   {
     id: "contract-builder-image-agent-runner",
@@ -297,20 +333,27 @@ const CHECKS = [
     base: "origin/main",
   },
   {
-    id: "existing-glimmung-agent-cli-unchanged",
-    from: "Guarantee 4: nothing-else-touched",
-    description: "cmd/glimmung-agent/main.go's test-slot-hot-swap subcommand is byte-identical to origin/main (existing verify-loop callers keep working)",
-    kind: "git-diff-empty",
-    paths: ["cmd/glimmung-agent/main.go"],
-    base: "origin/main",
+    id: "legacy-cli-hotswap-subcommand-removed",
+    from: "Guarantee 4: legacy path retired",
+    file: "cmd/glimmung-agent/main.go",
+    description: "The glimmung-agent test-slot-hot-swap subcommand is gone — backend hot-swap runs only through the CI-gated apply endpoint. Reintroduction fails this check.",
+    kind: "grep-absent",
+    pattern: /test-slot-hot-swap|TestSlotHotSwap/,
   },
   {
-    id: "existing-hotswap-ops-static-backend-unchanged",
-    from: "Guarantee 4: nothing-else-touched",
-    description: "TestSlotHotSwap's static + backend handling paths in internal/ops/agentops/hotswap.go preserve their behavior (the AgentRunner path is added in a separate file, not by interleaving into the existing function)",
-    kind: "git-diff-empty",
-    paths: ["internal/ops/agentops/hotswap.go"],
-    base: "origin/main",
+    id: "legacy-agentops-hotswap-file-removed",
+    from: "Guarantee 4: legacy path retired",
+    file: "internal/ops/agentops/hotswap.go",
+    description: "internal/ops/agentops/hotswap.go (the client-side kubectl cp + SIGHUP TestSlotHotSwap implementation) is deleted end to end.",
+    kind: "file-absent",
+  },
+  {
+    id: "legacy-cli-backend-pointer-removed",
+    from: "Guarantee 4: legacy path retired",
+    file: "internal/server/test_slot_apply_hot_swap_ops.go",
+    description: "The apply endpoint no longer routes backend callers to the legacy glimmung-agent CLI (that pointer is removed now that backend is wired into the endpoint).",
+    kind: "grep-absent",
+    pattern: /glimmung-agent CLI/,
   },
   {
     id: "existing-server-routes-only-add",
@@ -326,12 +369,20 @@ const CHECKS = [
     ],
   },
   {
-    id: "existing-static-block-unchanged",
-    from: "Guarantee 4: nothing-else-touched",
-    description: "BackendContract struct's existing field set is preserved (new BuilderImage is additive — old fields still in declaration order)",
-    kind: "grep-present",
+    id: "contract-backend-apply-shape",
+    from: "Guarantee 2: per-app builder",
     file: "internal/domain/hotswap/hotswap.go",
-    pattern: /type\s+BackendContract\s+struct[\s\S]{0,800}?Enabled\s+bool[\s\S]{0,200}?Strategy\s+string[\s\S]{0,200}?BuildCommand\s+string[\s\S]{0,200}?Artifact\s+string[\s\S]{0,200}?Target\s+string[\s\S]{0,200}?HealthPath\s+string/,
+    description: "BackendContract gained the apply-endpoint fields HealthPort + PodSelector + Container (health-gated swap of the app pod), preserving the build inputs.",
+    kind: "grep-present",
+    pattern: /type\s+BackendContract\s+struct[\s\S]{0,2400}?HealthPort\s+int[\s\S]{0,400}?PodSelector\s+string[\s\S]{0,300}?Container\s+string/,
+  },
+  {
+    id: "contract-backend-cli-fields-removed",
+    from: "Guarantee 4: legacy path retired",
+    file: "internal/domain/hotswap/hotswap.go",
+    description: "BackendContract's CLI-only CopyContainer/RestartContainer/RestartCommand fields are deleted (they only fed the removed glimmung-agent hot-swap path).",
+    kind: "grep-absent",
+    pattern: /CopyContainer|RestartContainer|RestartCommand/,
   },
   {
     id: "existing-static-contract-fields-unchanged",
@@ -359,6 +410,14 @@ const CHECKS = [
     description: "Test asserts ApplyHotSwap renders the correct Job spec for each artifact_kind (builder_image, init container, main container, volumes)",
     kind: "grep-present",
     pattern: /TestApplyHotSwap|TestDispatchApplyHotSwap/,
+  },
+  {
+    id: "test-backend-dispatches-job",
+    from: "Tests",
+    file: "internal/server/test_slot_apply_hot_swap_ops_test.go",
+    description: "Test asserts the backend Job spec uses single-file streaming + SIGHUP + the in-pod health gate, and NOT the dir-extract path.",
+    kind: "grep-present",
+    pattern: /TestApplyHotSwapBackendDispatchesJob/,
   },
   {
     id: "test-endpoint-happy-path",
@@ -431,7 +490,7 @@ const CHECKS = [
   {
     id: "exec-go-test-agentops",
     from: "Executable gates",
-    description: "go test ./internal/ops/agentops/... passes (covers existing TestSlotHotSwap regression + new ApplyHotSwap)",
+    description: "go test ./internal/ops/agentops/... passes (the CLI hot-swap path is removed; this covers the remaining agent-job ops)",
     kind: "exec",
     command: ["go", "test", "./internal/ops/agentops/..."],
   },
@@ -491,6 +550,7 @@ async function dispatch(check) {
     case "grep-absent":         return await grepAbsent(check);
     case "grep-multi-present":  return await grepMultiPresent(check);
     case "git-diff-empty":      return gitDiffEmpty(check);
+    case "file-absent":         return await fileAbsent(check);
     case "exec":                return execCheck(check);
     default: return { pass: false, evidence: `unknown kind: ${check.kind}` };
   }
@@ -503,6 +563,13 @@ async function grepPresent({ file, pattern }) {
   if (!m) return { pass: false, evidence: `pattern not found in ${file}: ${pattern}` };
   const { line } = locate(content, m.index);
   return { pass: true, evidence: `${file}:${line}` };
+}
+
+async function fileAbsent({ file }) {
+  if (await fileExists(file)) {
+    return { pass: false, evidence: `${file} still present but should be deleted` };
+  }
+  return { pass: true, evidence: `${file}: deleted` };
 }
 
 async function grepAbsent({ file, pattern }) {
