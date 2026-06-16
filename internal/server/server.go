@@ -494,6 +494,22 @@ func newHandlerWithReconcilers(settings Settings, store ReadStore, authResolver 
 	// Poll surface for the non-blocking apply above: returns the durable
 	// hot-swap history entry for a dispatched job (running → terminal).
 	mux.Handle("GET /v1/test-slots/apply-hot-swap/{project}/{job}", requireAdmin(adminAuthenticator, http.HandlerFunc(getApplyHotSwapStatus(store))))
+	// /v1/test-slots/deploy-to-image — deploy the CI-built image for a verified
+	// commit onto a slot (docs/test-slot-deploy-plan.md), the replacement for
+	// the artifact build-and-stream apply above. Lands alongside it during the
+	// staged migration. The performer wraps the launcher's DeploySlotToImage
+	// (reconcile-at-ref with the image pinned + apiserver image verify); the
+	// resolver maps git_ref to its commit SHA via the GitHub API.
+	var deployPerformer deploySlotPerformer
+	if dl, ok := runLauncher.(slotImageDeployer); ok {
+		deployPerformer = func(ctx context.Context, lease Lease, project Project, verifiedRef, image, imageValueKey string) error {
+			return dl.DeploySlotToImage(ctx, lease, project, runnerTokenMinter, verifiedRef, image, imageValueKey)
+		}
+	}
+	deployRefResolver := func(ctx context.Context, slug, ref, token string) (string, error) {
+		return githubResolveSHA(ctx, nil, slug, ref, token)
+	}
+	mux.Handle("POST /v1/test-slots/deploy-to-image", requireAdmin(adminAuthenticator, http.HandlerFunc(deployTestSlotToImage(store, runnerTokenMinter, deployPerformer, deployRefResolver))))
 	mux.Handle("POST /v1/projects/{project}/issues/{issue_number}/runs/{run_number}/replay", requireAdmin(adminAuthenticator, http.HandlerFunc(replayRunDecisionByNumber(store))))
 	mux.Handle("POST /v1/runs/dispatch", requireAdmin(adminAuthenticator, http.HandlerFunc(dispatchRunHandler(settings, store, runLauncher))))
 	mux.Handle("POST /v1/runs/synthetic-dispatch", requireAdmin(adminAuthenticator, http.HandlerFunc(syntheticDispatchRunHandler(settings, store, runLauncher))))
