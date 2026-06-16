@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -81,6 +82,13 @@ func TestDeployTestSlotToImageHappyPath(t *testing.T) {
 	if resp["status"] != "running" {
 		t.Fatalf("resp.status = %v, want running", resp["status"])
 	}
+	// The poll handle the mcp tool drives the running→terminal transition with;
+	// it must be present and tagged as a deploy job (shared by both history
+	// entries so the apply-hot-swap status route serves the deploy unchanged).
+	job, _ := resp["job"].(string)
+	if !strings.HasPrefix(job, "deploy-") {
+		t.Fatalf("resp.job = %v, want a deploy- handle", resp["job"])
+	}
 	select {
 	case c := <-calls:
 		if c.ref != "abc123def456" || c.image != "abc123def456" || c.key != "image.tag" {
@@ -125,6 +133,22 @@ func TestDeployTestSlotToImageNotConfigured(t *testing.T) {
 	handler.ServeHTTP(rec, authedApplyRequest(t, `{"project":"tank-operator","slot_name":"tank-operator-slot-1","git_ref":"feat/x"}`))
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d, want 503; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestTestSlotDeployImageValueKeyDefaultsToImageTag: the deploy image-value key
+// defaults to "image.tag" — the universal chart convention the chart-image-tag
+// drift fix (glimmung#622) standardized on — so a standard project needs no
+// per-app test_slot_deploy config, while a non-standard chart overrides it.
+func TestTestSlotDeployImageValueKeyDefaultsToImageTag(t *testing.T) {
+	if got := testSlotDeployImageValueKey(Project{Name: "p"}); got != "image.tag" {
+		t.Fatalf("default key = %q, want image.tag", got)
+	}
+	override := Project{Name: "p", Metadata: map[string]any{
+		"test_slot_deploy": map[string]any{"image_value_key": "edge.image"},
+	}}
+	if got := testSlotDeployImageValueKey(override); got != "edge.image" {
+		t.Fatalf("override key = %q, want edge.image", got)
 	}
 }
 
