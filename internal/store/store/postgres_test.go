@@ -1310,6 +1310,28 @@ func TestAggregateNativePhaseCompletionPreservesEvidenceRefs(t *testing.T) {
 	}
 }
 
+func TestAggregateNativePhaseCompletionPromotesVerificationOutput(t *testing.T) {
+	payload := aggregateRunnerPhaseCompletion([]string{"verify"}, map[string]runnerJobCompletionDoc{
+		"verify": {
+			JobID:      "verify",
+			Conclusion: "success",
+			PhaseOutputs: map[string]string{
+				"verification": `{"status":"pass","evidence_refs":["screenshots/issue148.png"],"reasons":["tooltip showed Energy generated 1"]}`,
+			},
+		},
+	})
+
+	if payload.VerificationStatus != "pass" {
+		t.Fatalf("verification status=%q, want pass", payload.VerificationStatus)
+	}
+	if len(payload.EvidenceRefs) != 1 || payload.EvidenceRefs[0] != "screenshots/issue148.png" {
+		t.Fatalf("evidence refs=%#v", payload.EvidenceRefs)
+	}
+	if len(payload.VerificationReasons) != 1 || payload.VerificationReasons[0] != "verify: tooltip showed Energy generated 1" {
+		t.Fatalf("reasons=%#v", payload.VerificationReasons)
+	}
+}
+
 func TestAggregateNativePhaseCompletionSynthesizesVerificationOutput(t *testing.T) {
 	payload := aggregateRunnerPhaseCompletion([]string{"verify-case-01", "verify-case-02"}, map[string]runnerJobCompletionDoc{
 		"verify-case-01": {

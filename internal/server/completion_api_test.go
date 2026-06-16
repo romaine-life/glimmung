@@ -81,8 +81,8 @@ type fakeCompletionStore struct {
 	reviewFactsErr error
 	linkPRNumber   int
 	linkPRErr      error
-	reviewReq  *ReviewCreate
-	reviewErr  error
+	reviewReq      *ReviewCreate
+	reviewErr      error
 }
 
 type patchingCompletionStore struct {
@@ -2108,6 +2108,27 @@ func TestCompletionPayloadFromRunnerExtractsVerificationFailure(t *testing.T) {
 		failure.SuspectedCause != "test_expectation_mismatch" ||
 		failure.CauseDetail != "claim assumed schema defaults" {
 		t.Fatalf("failure=%#v", failure)
+	}
+}
+
+func TestCompletionPayloadFromRunnerPromotesVerificationOutput(t *testing.T) {
+	jobID := "verify"
+	payload := completionPayloadFromNative(RunnerCompletedRequest{
+		JobID:      &jobID,
+		Conclusion: "success",
+		Outputs: map[string]string{
+			"verification": `{"status":"pass","evidence_refs":["screenshots/issue148.png"],"reasons":["tooltip showed Energy generated 1"]}`,
+		},
+	})
+
+	if payload.VerificationStatus != "pass" {
+		t.Fatalf("verification status=%q, want pass", payload.VerificationStatus)
+	}
+	if len(payload.EvidenceRefs) != 1 || payload.EvidenceRefs[0] != "screenshots/issue148.png" {
+		t.Fatalf("evidence refs=%#v", payload.EvidenceRefs)
+	}
+	if len(payload.VerificationReasons) != 1 || payload.VerificationReasons[0] != "tooltip showed Energy generated 1" {
+		t.Fatalf("reasons=%#v", payload.VerificationReasons)
 	}
 }
 

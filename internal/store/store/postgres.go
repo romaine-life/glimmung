@@ -3519,26 +3519,26 @@ func sliceOrEmpty[T any](values []T) []T {
 // Review store.
 
 type reviewDoc struct {
-	ID            string                      `json:"id"`
-	Project       string                      `json:"project"`
-	Repo          string                      `json:"repo"`
-	Number        int                         `json:"number"`
-	Title         string                      `json:"title"`
-	Body          string                      `json:"body"`
-	State         string                      `json:"state"`
-	Branch        string                      `json:"branch"`
-	BaseRef       string                      `json:"base_ref"`
-	HeadSHA       string                      `json:"head_sha"`
-	HTMLURL       string                      `json:"html_url"`
-	LinkedIssueID *string                     `json:"linked_issue_id"`
-	LinkedRunID   *string                     `json:"linked_run_id"`
-	MergedAt      *string                     `json:"merged_at"`
-	MergedBy      *string                     `json:"merged_by"`
-	Comments      []map[string]any            `json:"comments"`
-	Reviews       []map[string]any            `json:"reviews"`
+	ID            string                  `json:"id"`
+	Project       string                  `json:"project"`
+	Repo          string                  `json:"repo"`
+	Number        int                     `json:"number"`
+	Title         string                  `json:"title"`
+	Body          string                  `json:"body"`
+	State         string                  `json:"state"`
+	Branch        string                  `json:"branch"`
+	BaseRef       string                  `json:"base_ref"`
+	HeadSHA       string                  `json:"head_sha"`
+	HTMLURL       string                  `json:"html_url"`
+	LinkedIssueID *string                 `json:"linked_issue_id"`
+	LinkedRunID   *string                 `json:"linked_run_id"`
+	MergedAt      *string                 `json:"merged_at"`
+	MergedBy      *string                 `json:"merged_by"`
+	Comments      []map[string]any        `json:"comments"`
+	Reviews       []map[string]any        `json:"reviews"`
 	Evidence      []server.ReviewEvidence `json:"evidence"`
-	CreatedAt     string                      `json:"created_at"`
-	UpdatedAt     string                      `json:"updated_at"`
+	CreatedAt     string                  `json:"created_at"`
+	UpdatedAt     string                  `json:"updated_at"`
 }
 
 func (s *Store) ListReviews(ctx context.Context, filter server.ReviewListFilter) ([]server.ReviewRow, error) {
@@ -8232,6 +8232,21 @@ func aggregateRunnerPhaseCompletion(expected []string, completions map[string]ru
 			for _, artifact := range completion.Verification.Evidence {
 				evidenceArtifacts = appendEvidenceArtifact(evidenceArtifacts, artifact)
 			}
+		} else if parsed := verificationDocFromPhaseOutput(completion.PhaseOutputs["verification"]); parsed != nil {
+			verificationStatus = combineVerificationStatus(verificationStatus, parsed.Status)
+			if verificationFailure == nil && parsed.Status != "pass" && parsed.Status != "" {
+				verificationFailure = serverVerificationFailureFromDoc(parsed.Failure)
+			}
+			for _, reason := range parsed.Reasons {
+				if strings.TrimSpace(reason) != "" {
+					reasons = append(reasons, id+": "+reason)
+				}
+			}
+			evidenceRefs = appendMissingStrings(evidenceRefs, parsed.EvidenceRefs...)
+			evidenceRefs = appendMissingStrings(evidenceRefs, server.EvidenceRefsFromArtifacts(parsed.Evidence)...)
+			for _, artifact := range parsed.Evidence {
+				evidenceArtifacts = appendEvidenceArtifact(evidenceArtifacts, artifact)
+			}
 		}
 	}
 	if verificationStatus != "" {
@@ -8265,6 +8280,36 @@ func aggregateRunnerPhaseCompletion(expected []string, completions map[string]ru
 		payload.ScreenshotsMarkdown = &joined
 	}
 	return payload
+}
+
+func verificationDocFromPhaseOutput(raw string) *verificationDoc {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	var payload struct {
+		Status       string                    `json:"status"`
+		Reasons      []string                  `json:"reasons"`
+		Failure      *verificationFailureDoc   `json:"failure"`
+		EvidenceRefs []string                  `json:"evidence_refs"`
+		Evidence     []server.EvidenceArtifact `json:"evidence"`
+		CostUSD      float64                   `json:"cost_usd"`
+	}
+	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+		return nil
+	}
+	status := strings.TrimSpace(payload.Status)
+	if status == "" {
+		return nil
+	}
+	return &verificationDoc{
+		Status:       status,
+		Reasons:      sliceOrEmpty(payload.Reasons),
+		Failure:      payload.Failure,
+		EvidenceRefs: sliceOrEmpty(cleanStringRefs(payload.EvidenceRefs)),
+		Evidence:     sliceOrEmpty(payload.Evidence),
+		CostUSD:      payload.CostUSD,
+	}
 }
 
 func synthesizedVerificationOutput(status string, reasons []string, failure *server.VerificationFailure, evidenceRefs []string, evidence []server.EvidenceArtifact) string {
