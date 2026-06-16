@@ -772,6 +772,19 @@ func (l *KubernetesRunLauncher) runTestSlotHelmReconcile(ctx context.Context, le
 		return err
 	}
 	jobName := testSlotHelmJobName(lease, renderMode)
+	// Each reconcile must apply fresh. The installer job name is lease+renderMode-
+	// keyed, and a finished job lingers for its TTL, so a repeat reconcile — e.g.
+	// deploy-image-to-slot deploying image B over a just-deployed A on the same
+	// lease — would hit createJob's 409-as-success and silently reuse the stale
+	// job, never reconciling the new image (the running-image verify then fails
+	// on a slot still serving the old image). Delete the prior job first;
+	// Background propagation removes the Job object synchronously so the name is
+	// free for the new job, while its pods GC in the background (the verify reads
+	// the slot's app pods, not the installer's).
+	delPath := "/apis/batch/v1/namespaces/" + l.Settings.RunnerNamespace + "/jobs/" + jobName
+	if status, _, err := l.request(ctx, http.MethodDelete, delPath, deleteOptions("Background")); err != nil && status != http.StatusNotFound {
+		return err
+	}
 	if err := l.createJob(ctx, testSlotInstallJobManifest(l.Settings, config, lease, project, substitutions, renderMode)); err != nil {
 		return err
 	}
