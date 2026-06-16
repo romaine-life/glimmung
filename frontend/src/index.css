@@ -2023,6 +2023,53 @@ h2 .inline-action,
   align-items: center;
   gap: 6px;
 }
+
+/* Issue labels editor (settings tab). Chips reuse the .pill console-tag
+   geometry; the editor only lays them out and adds an inline remove
+   affordance. The editable chip relaxes the fixed 18px pill height so the
+   remove control has room without clipping. */
+.issue-labels-hint {
+  margin: 0;
+  font-size: var(--text-sm);
+  line-height: 1.5;
+}
+.label-editor {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-height: 22px;
+}
+.label-edit-chip {
+  height: auto;
+  min-height: 20px;
+  padding: 2px 4px 2px 9px;
+  gap: 4px;
+}
+.label-edit-remove {
+  position: relative;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  height: 15px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font-size: 0.95rem;
+  line-height: 1;
+  opacity: 0.65;
+  cursor: pointer;
+}
+.label-edit-remove:hover:not(:disabled) {
+  opacity: 1;
+}
+.label-edit-remove:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
 .project-kicker {
   color: var(--fg-dimmer);
   font-size: 0.72rem;
