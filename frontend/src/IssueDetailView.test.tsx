@@ -610,6 +610,44 @@ describe("IssueDetailView run execution graph", () => {
     });
   });
 
+  it("clears all labels and patches an empty array", async () => {
+    let patchBody: Record<string, unknown> | null = null;
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url =
+        typeof input === "string"
+          ? new URL(input, "https://glimmung.test")
+          : input instanceof URL
+            ? input
+            : new URL(input.url);
+      if (url.pathname === "/v1/issues/by-number/ambience/172" && init?.method === "PATCH") {
+        patchBody = JSON.parse(String(init.body)) as Record<string, unknown>;
+        return json({ ...issueDetail, labels: (patchBody.labels as string[]) ?? [] });
+      }
+      if (url.pathname === "/v1/config") return json({ auth_url: "https://auth.test", tank_operator_base_url: "https://tank.test" });
+      if (url.pathname === "/v1/auth/me") return json({ signed_in: true, email: "admin@example.com" });
+      if (url.pathname === "/v1/issues/by-number/ambience/172") return json(issueDetail);
+      if (url.pathname === "/v1/issues/by-number/ambience/172/graph") return json(issueGraph);
+      if (url.pathname === "/v1/workflows") return json([agentWorkflow]);
+      throw new Error(`unhandled fetch ${url.pathname}`);
+    }));
+
+    renderIssueDetail("/projects/ambience/issues/172/settings", runtimeContext);
+
+    await screen.findByRole("heading", { name: "Issue labels" });
+    const chips = screen.getByLabelText("issue label chips");
+    // Remove the only label; the editor falls back to its empty state.
+    await userEvent.click(
+      within(chips).getByRole("button", { name: "remove label ambient-effects" }),
+    );
+    expect(within(chips).getByText("no labels yet")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Save labels" }));
+
+    await waitFor(() => {
+      expect(patchBody).toEqual({ labels: [] });
+    });
+  });
+
   it("renders declared dispatch inputs as a form and sends entered values on dispatch", async () => {
     const unlockedIssue = {
       ...issueDetail,
