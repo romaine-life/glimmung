@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-func newDeployToImageStore(t *testing.T) *fakeLeaseStore {
+func newDeployImageStore(t *testing.T) *fakeLeaseStore {
 	t.Helper()
 	return &fakeLeaseStore{
 		fakeReadStore: fakeReadStore{
@@ -46,12 +46,12 @@ func newDeployToImageStore(t *testing.T) *fakeLeaseStore {
 	}
 }
 
-// TestDeployTestSlotToImageHappyPath pins the dispatch contract: lease resolved
+// TestDeployImageToTestSlotHappyPath pins the dispatch contract: lease resolved
 // by slot_name, ref resolved to a commit SHA, the deploy performer invoked with
 // the resolved SHA (as both ref and image — CI tags by SHA) and the per-app
 // image value key, and a 202 "running" returned with the resolved SHA.
-func TestDeployTestSlotToImageHappyPath(t *testing.T) {
-	store := newDeployToImageStore(t)
+func TestDeployImageToTestSlotHappyPath(t *testing.T) {
+	store := newDeployImageStore(t)
 	type performerCall struct{ ref, image, key string }
 	calls := make(chan performerCall, 1)
 	performer := func(_ context.Context, _ Lease, _ Project, verifiedRef, image, imageValueKey string) error {
@@ -64,7 +64,7 @@ func TestDeployTestSlotToImageHappyPath(t *testing.T) {
 		}
 		return "abc123def456", nil
 	}
-	handler := http.HandlerFunc(deployTestSlotToImage(store, nil, performer, resolveRef))
+	handler := http.HandlerFunc(deployImageToTestSlot(store, nil, performer, resolveRef))
 	body := `{"project":"tank-operator","slot_name":"tank-operator-slot-1","git_ref":"feat/x"}`
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, authedApplyRequest(t, body))
@@ -99,11 +99,11 @@ func TestDeployTestSlotToImageHappyPath(t *testing.T) {
 	}
 }
 
-func TestDeployTestSlotToImageRequiresGitRef(t *testing.T) {
-	store := newDeployToImageStore(t)
+func TestDeployImageToTestSlotRequiresGitRef(t *testing.T) {
+	store := newDeployImageStore(t)
 	performer := func(context.Context, Lease, Project, string, string, string) error { return nil }
 	resolveRef := func(context.Context, string, string, string) (string, error) { return "sha", nil }
-	handler := http.HandlerFunc(deployTestSlotToImage(store, nil, performer, resolveRef))
+	handler := http.HandlerFunc(deployImageToTestSlot(store, nil, performer, resolveRef))
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, authedApplyRequest(t, `{"project":"tank-operator","slot_name":"tank-operator-slot-1"}`))
 	if rec.Code != http.StatusBadRequest {
@@ -111,11 +111,11 @@ func TestDeployTestSlotToImageRequiresGitRef(t *testing.T) {
 	}
 }
 
-func TestDeployTestSlotToImageNoLease(t *testing.T) {
-	store := newDeployToImageStore(t)
+func TestDeployImageToTestSlotNoLease(t *testing.T) {
+	store := newDeployImageStore(t)
 	performer := func(context.Context, Lease, Project, string, string, string) error { return nil }
 	resolveRef := func(context.Context, string, string, string) (string, error) { return "sha", nil }
-	handler := http.HandlerFunc(deployTestSlotToImage(store, nil, performer, resolveRef))
+	handler := http.HandlerFunc(deployImageToTestSlot(store, nil, performer, resolveRef))
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, authedApplyRequest(t, `{"project":"tank-operator","slot_name":"tank-operator-slot-9","git_ref":"feat/x"}`))
 	if rec.Code != http.StatusNotFound {
@@ -123,12 +123,12 @@ func TestDeployTestSlotToImageNoLease(t *testing.T) {
 	}
 }
 
-// TestDeployTestSlotToImageNotConfigured: a nil performer (launcher doesn't
-// implement DeploySlotToImage) fails closed with 503, not a nil-call panic.
-func TestDeployTestSlotToImageNotConfigured(t *testing.T) {
-	store := newDeployToImageStore(t)
+// TestDeployImageToTestSlotNotConfigured: a nil performer (launcher doesn't
+// implement DeployImageToSlot) fails closed with 503, not a nil-call panic.
+func TestDeployImageToTestSlotNotConfigured(t *testing.T) {
+	store := newDeployImageStore(t)
 	resolveRef := func(context.Context, string, string, string) (string, error) { return "sha", nil }
-	handler := http.HandlerFunc(deployTestSlotToImage(store, nil, nil, resolveRef))
+	handler := http.HandlerFunc(deployImageToTestSlot(store, nil, nil, resolveRef))
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, authedApplyRequest(t, `{"project":"tank-operator","slot_name":"tank-operator-slot-1","git_ref":"feat/x"}`))
 	if rec.Code != http.StatusServiceUnavailable {
@@ -152,14 +152,14 @@ func TestTestSlotDeployImageValueKeyDefaultsToImageTag(t *testing.T) {
 	}
 }
 
-// TestDeployTestSlotToImageRequiresHelmConfig: a project with a hot-swap
+// TestDeployImageToTestSlotRequiresHelmConfig: a project with a hot-swap
 // contract but no test_slot_helm cannot be deployed (deploy reuses the helm
 // reconcile, so it needs the chart config, not the retiring hot-swap contract).
-func TestDeployTestSlotToImageRequiresHelmConfig(t *testing.T) {
+func TestDeployImageToTestSlotRequiresHelmConfig(t *testing.T) {
 	store := newApplyHotSwapStore(t) // has test_slot_hot_swap, not test_slot_helm
 	performer := func(context.Context, Lease, Project, string, string, string) error { return nil }
 	resolveRef := func(context.Context, string, string, string) (string, error) { return "sha", nil }
-	handler := http.HandlerFunc(deployTestSlotToImage(store, nil, performer, resolveRef))
+	handler := http.HandlerFunc(deployImageToTestSlot(store, nil, performer, resolveRef))
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, authedApplyRequest(t, `{"project":"tank-operator","slot_name":"tank-operator-slot-1","git_ref":"feat/x"}`))
 	if rec.Code != http.StatusUnprocessableEntity {

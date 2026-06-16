@@ -2305,7 +2305,7 @@ func testSlotInstallJobManifest(settings Settings, config testSlotHelmSettings, 
 		"TOKEN=\"$(cat /var/run/glim-clone/token)\"\n" +
 		"REPO_URL=\"https://x-access-token:${TOKEN}@github.com/" + project.GitHubRepo + ".git\"\n" +
 		"if [ -n \"$GIT_REF\" ]; then\n" +
-		// Fetch the exact ref by branch/tag name OR commit sha. deploy-to-image
+		// Fetch the exact ref by branch/tag name OR commit sha. deploy-image-to-slot
 		// pins GIT_REF to the verified HEAD sha so the chart and the CI image
 		// are the same commit (anti-TOCTOU); `git clone --branch <sha>` is
 		// invalid, but `git fetch` accepts a reachable sha (GitHub
