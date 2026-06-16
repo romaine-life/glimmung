@@ -13,35 +13,35 @@ import (
 	"github.com/google/uuid"
 )
 
-// TestSlotDeployToImageRequest is the deploy-to-image request body. There is no
+// DeployImageToTestSlotRequest is the deploy-image-to-slot request body. There is no
 // artifact_kind and no validation_target: the operation deploys the whole
 // CI-built image for a verified commit, so there is nothing to select.
-type TestSlotDeployToImageRequest struct {
+type DeployImageToTestSlotRequest struct {
 	Project   string  `json:"project"`
 	SlotIndex *int    `json:"slot_index,omitempty"`
 	SlotName  *string `json:"slot_name,omitempty"`
 	GitRef    string  `json:"git_ref"`
 }
 
-// deploySlotPerformer is the function seam the test harness stubs. Production
-// wires it to KubernetesRunLauncher.DeploySlotToImage. It reconciles the slot's
+// deployImagePerformer is the function seam the test harness stubs. Production
+// wires it to KubernetesRunLauncher.DeployImageToSlot. It reconciles the slot's
 // chart at the verified ref with the CI image pinned, then verifies the running
 // image — a Job-backed operation that can run minutes, so the handler runs it
 // detached and records the outcome durably rather than holding the request open.
-type deploySlotPerformer func(ctx context.Context, lease Lease, project Project, verifiedRef, image, imageValueKey string) error
+type deployImagePerformer func(ctx context.Context, lease Lease, project Project, verifiedRef, image, imageValueKey string) error
 
 // refResolver resolves a git ref to its commit SHA. Production wires a live
 // GitHub call (githubResolveSHA); tests stub it.
 type refResolver func(ctx context.Context, slug, ref, token string) (string, error)
 
-// slotImageDeployer is the concrete-launcher capability the deploy route wires
+// imageToSlotDeployer is the concrete-launcher capability the deploy route wires
 // its performer from. *KubernetesRunLauncher implements it; the route type-
 // asserts rather than widening TestSlotPreparer so the test fakes are untouched.
-type slotImageDeployer interface {
-	DeploySlotToImage(ctx context.Context, lease Lease, project Project, minter RunnerGitHubTokenMinter, verifiedRef, image, imageValueKey string) error
+type imageToSlotDeployer interface {
+	DeployImageToSlot(ctx context.Context, lease Lease, project Project, minter RunnerGitHubTokenMinter, verifiedRef, image, imageValueKey string) error
 }
 
-// deployTestSlotToImage is the deploy-to-image endpoint — the replacement for
+// deployImageToTestSlot is the deploy-image-to-slot endpoint — the replacement for
 // the artifact build-and-stream apply_test_slot_hot_swap. It deploys the exact
 // CI-built image for a verified commit onto a slot and verifies the slot runs
 // it. Async-with-poll, mirroring the apply endpoint: the POST resolves the ref
@@ -56,7 +56,7 @@ type slotImageDeployer interface {
 // the caller's responsibility; this endpoint only ever operates on a git ref
 // (never an agent working tree), so it cannot deploy unpushed code, and the
 // SHA→image resolution deploys exactly the image CI built for that commit.
-func deployTestSlotToImage(store ReadStore, minter RunnerGitHubTokenMinter, performer deploySlotPerformer, resolveRef refResolver) http.HandlerFunc {
+func deployImageToTestSlot(store ReadStore, minter RunnerGitHubTokenMinter, performer deployImagePerformer, resolveRef refResolver) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		writer, ok := store.(TestSlotHotSwapHistoryStore)
 		stateStore, hasState := store.(StateStore)
@@ -65,10 +65,10 @@ func deployTestSlotToImage(store ReadStore, minter RunnerGitHubTokenMinter, perf
 			return
 		}
 		if performer == nil || resolveRef == nil {
-			writeProblem(w, http.StatusServiceUnavailable, "deploy-to-image not configured (run launcher has no slot deployer)")
+			writeProblem(w, http.StatusServiceUnavailable, "deploy-image-to-slot not configured (run launcher has no slot deployer)")
 			return
 		}
-		var req TestSlotDeployToImageRequest
+		var req DeployImageToTestSlotRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			writeProblem(w, http.StatusBadRequest, "invalid JSON body")
 			return
@@ -160,9 +160,9 @@ func deployTestSlotToImage(store ReadStore, minter RunnerGitHubTokenMinter, perf
 		// breadcrumb, and a re-deploy is idempotent — helm upgrade --install).
 		bgCtx := context.WithoutCancel(r.Context())
 		startEntry := TestSlotHotSwapHistoryEntry{
-			Operation: "deploy_to_image",
+			Operation: "image_deploy",
 			Status:    "running",
-			Summary:   fmt.Sprintf("deploy_to_image dispatched git_ref=%s sha=%s slot=%s status=running", req.GitRef, sha, slotName),
+			Summary:   fmt.Sprintf("image_deploy dispatched git_ref=%s sha=%s slot=%s status=running", req.GitRef, sha, slotName),
 			Diagnostics: map[string]any{
 				"job_name":        deployJob,
 				"slot_name":       slotName,
@@ -187,9 +187,9 @@ func deployTestSlotToImage(store ReadStore, minter RunnerGitHubTokenMinter, perf
 				diag["error"] = derr.Error()
 			}
 			_, _ = writer.AppendTestSlotHotSwapHistory(bgCtx, req.Project, leaseRef, TestSlotHotSwapHistoryEntry{
-				Operation:   "deploy_to_image",
+				Operation:   "image_deploy",
 				Status:      status,
-				Summary:     fmt.Sprintf("deploy_to_image finalized git_ref=%s sha=%s slot=%s status=%s", req.GitRef, sha, slotName, status),
+				Summary:     fmt.Sprintf("image_deploy finalized git_ref=%s sha=%s slot=%s status=%s", req.GitRef, sha, slotName, status),
 				Diagnostics: diag,
 				CreatedAt:   time.Now().UTC(),
 			})

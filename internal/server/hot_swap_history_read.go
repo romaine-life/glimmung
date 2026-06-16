@@ -40,7 +40,7 @@ func hotSwapEntryJobName(entry TestSlotHotSwapHistoryEntry) string {
 }
 
 // latestHotSwapEntryForJob returns the most recent apply_hot_swap or
-// deploy_to_image history entry recorded against job, and whether one exists.
+// image_deploy history entry recorded against job, and whether one exists.
 // The initial "running" entry and the terminal entry share a job_name, so the
 // latest is the authoritative status. Both slot-mutating operations record
 // against this surface so the one status/poll route serves either.
@@ -48,7 +48,7 @@ func latestHotSwapEntryForJob(lease Lease, job string) (TestSlotHotSwapHistoryEn
 	var latest TestSlotHotSwapHistoryEntry
 	found := false
 	for _, e := range hotSwapHistoryEntries(lease) {
-		if (e.Operation != "apply_hot_swap" && e.Operation != "deploy_to_image") || hotSwapEntryJobName(e) != job {
+		if (e.Operation != "apply_hot_swap" && e.Operation != "image_deploy") || hotSwapEntryJobName(e) != job {
 			continue
 		}
 		latest = e

@@ -110,7 +110,7 @@ contract block, or fidelity classifier is reintroduced into live code.
 
 ## What gets built
 
-- **glimmung:** a `deploy_slot_to_image` operation — resolve SHA → fingerprint,
+- **glimmung:** a `deploy_image_to_slot` operation — resolve SHA → fingerprint,
   set the slot Deployment's image, roll, and verify the running image; the
   durable SHA → image resolution; the **behind-main** check in the verify gate
   (today's mergeability check treats a *behind* branch as mergeable, which is
@@ -146,7 +146,7 @@ complex, most app-specific corner of the old design. Accepted.
 1. **Done — `tank-operator#1253`:** un-freeze the `control_action_events`
    ledger the verify gate reads (authorize control-action writes off the
    verified per-session subject).
-2. **glimmung — add the deploy path:** `deploy_slot_to_image` + SHA→image
+2. **glimmung — add the deploy path:** `deploy_image_to_slot` + SHA→image
    resolution + the behind-main check, landing *alongside* the existing
    `apply_test_slot_hot_swap` so slots keep working during rollout.
 3. **mcp-glimmung — switch the tool:** ref-in / deploy-out; stop accepting

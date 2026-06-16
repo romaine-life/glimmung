@@ -8,7 +8,7 @@ import (
 	"strings"
 )
 
-// DeploySlotToImage redeploys a test slot's hot runtime to a specific,
+// DeployImageToSlot redeploys a test slot's hot runtime to a specific,
 // already-CI-built image for a verified commit. It is the replacement for the
 // artifact build-and-stream hot-swap (apply_test_slot_hot_swap): instead of
 // building artifacts in an ephemeral Job and streaming them into running pods,
@@ -26,7 +26,7 @@ import (
 //   - imageValueKey: the chart's image value path the override sets
 //     (helm --set <imageValueKey>=<image>). Empty means "no override" — the
 //     chart at verifiedRef already pins the image.
-func (l *KubernetesRunLauncher) DeploySlotToImage(ctx context.Context, lease Lease, project Project, minter RunnerGitHubTokenMinter, verifiedRef, image, imageValueKey string) error {
+func (l *KubernetesRunLauncher) DeployImageToSlot(ctx context.Context, lease Lease, project Project, minter RunnerGitHubTokenMinter, verifiedRef, image, imageValueKey string) error {
 	slotName := strings.TrimSpace(mapStringValueOrEmpty(lease.Metadata, "runner_slot_name"))
 	if slotName == "" {
 		return fmt.Errorf("lease has no runner_slot_name")
