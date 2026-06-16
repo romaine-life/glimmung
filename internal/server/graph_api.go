@@ -106,6 +106,13 @@ type RunProjectionRun struct {
 	IsCycle             bool                    `json:"is_cycle"`
 	CycleNumber         *int                    `json:"cycle_number,omitempty"`
 	RunCycleNumber      *int                    `json:"run_cycle_number,omitempty"`
+	// QueueState is "queued" while the run waits for test-slot capacity and
+	// "admitted" once a slot is claimed; AdmissionError carries the reason a
+	// queued run was rejected. The dashboard reads these to show a run waiting
+	// for capacity instead of leaving the operator to infer it.
+	QueueState          *string                 `json:"queue_state,omitempty"`
+	AdmissionError      *string                 `json:"admission_error,omitempty"`
+	SlotLeaseRef        *string                 `json:"slot_lease_ref,omitempty"`
 	ValidationURL       *string                 `json:"validation_url,omitempty"`
 	AbortReason         *string                 `json:"abort_reason,omitempty"`
 	TerminalObservation *RunTerminalObservation `json:"terminal_observation,omitempty"`
@@ -1046,6 +1053,9 @@ func runProjectionFromReport(run RunReport, workflow Workflow, reviews []ReviewR
 		IsCycle:             run.IsCycle,
 		CycleNumber:         run.CycleNumber,
 		RunCycleNumber:      run.RunCycleNumber,
+		QueueState:          run.QueueState,
+		AdmissionError:      run.AdmissionError,
+		SlotLeaseRef:        run.SlotLeaseRef,
 		ValidationURL:       run.ValidationURL,
 		AbortReason:         run.AbortReason,
 		TerminalObservation: run.TerminalObservation,

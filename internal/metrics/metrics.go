@@ -198,6 +198,21 @@ func RecordRunCreated(workflow string) {
 	runsCreatedTotal.WithLabelValues(safeLabel(workflow)).Inc()
 }
 
+var runsQueuedTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "glimmung_runs_queued_total",
+		Help: "Dispatched runs created in the queued state because no test-slot capacity was available, labelled by workflow. The run-queue reconciler admits them when a slot frees.",
+	},
+	[]string{"workflow"},
+)
+
+// RecordRunQueued counts a dispatched run that had to wait for test-slot
+// capacity (admitted as "queued" rather than "dispatched"). Pair with
+// glimmung_runs_created_total to see what fraction of dispatches wait.
+func RecordRunQueued(workflow string) {
+	runsQueuedTotal.WithLabelValues(safeLabel(workflow)).Inc()
+}
+
 // --- Leases ------------------------------------------------------------------
 
 var (
@@ -664,6 +679,7 @@ func init() {
 		budgetBreachesTotal,
 		reviewDecisionsTotal,
 		runsCreatedTotal,
+		runsQueuedTotal,
 		leasesAcquiredTotal,
 		leasesReleasedTotal,
 		leasesHeld,

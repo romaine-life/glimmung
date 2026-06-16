@@ -41,6 +41,12 @@ type IssueDispatchData struct {
 	Labels          []string
 	Agent           *agentruntime.Policy
 	PreserveTestEnv bool
+	// LastRunState is the state of the issue's most recent run, or nil if the
+	// issue has never run. Dispatch serializes active work per issue on this
+	// durable state in addition to the issue lock, so a run that waits a long
+	// time for test-slot capacity (past the issue lock's TTL) cannot be
+	// duplicated by a second dispatch after the lock lapses.
+	LastRunState *string
 }
 
 // CreateRunRequest carries all parameters for creating a new run document.
@@ -286,6 +292,20 @@ func dispatchRunWithAgentRuntime(ctx context.Context, dispatchStore RunDispatchS
 		return PublicDispatchResult{}, &dispatchProblem{status: http.StatusUnprocessableEntity, message: err.Error()}
 	}
 
+	// Serialize active work per issue on durable run state, not only the issue
+	// lock. The lock's TTL (runnerLeaseTTLSeconds, >= 4h) can lapse under a run
+	// that waits a long time for test-slot capacity; without this check a second
+	// dispatch after the lapse would create a duplicate run for the same issue.
+	// The atomic issue lock claimed below still guards the simultaneous-dispatch
+	// race within the TTL window.
+	if state := strings.TrimSpace(stringValueFromPtr(issue.LastRunState)); isActiveIssueRunState(state) {
+		return PublicDispatchResult{
+			State:    "already_running",
+			Workflow: &wf.Name,
+			Detail:   stringPtr(fmt.Sprintf("issue %s#%d already has a non-terminal run (state %q); not dispatching a duplicate", req.Project, req.IssueNumber, state)),
+		}, nil
+	}
+
 	holderID := newDispatchID()
 	leaseTTLSeconds := runnerLeaseTTLSeconds(wf)
 	if err := dispatchStore.ClaimIssueLock(ctx, req.Project, req.IssueNumber, holderID, leaseTTLSeconds); err != nil {
@@ -319,53 +339,12 @@ func dispatchRunWithAgentRuntime(ctx context.Context, dispatchStore RunDispatchS
 		triggerSource = map[string]any{"kind": "dispatch"}
 	}
 
-	requirements := initPhase.Requirements
-	if len(requirements) == 0 {
-		requirements = wf.DefaultRequirements
-	}
-	initialLease, err := acquireLeaseInstrumented(ctx, LeasePurposeDispatch, LeaseAcquireRequest{
-		Project:      req.Project,
-		Workflow:     &wf.Name,
-		Requirements: requirements,
-		Metadata: runCycleLeaseMetadata(RunReplayData{
-			Project:              req.Project,
-			WorkflowName:         wf.Name,
-			IssueNumber:          req.IssueNumber,
-			IssueRepo:            issueRepo,
-			TriggerSource:        triggerSource,
-			RunInputs:            runInputs,
-			EvidenceRequirements: evidenceRequirements,
-			AgentRuntime:         agentRuntime,
-		}, issue, issueRepo, initPhase.Name, 0, nil),
-		TTLSeconds: runnerLeaseTTLP(leaseTTLSeconds),
-	}, dispatchStore.AcquireLease)
-	if err != nil {
-		dispatchStore.ReleaseIssueLock(ctx, req.Project, req.IssueNumber, holderID)
-		if errors.Is(err, ErrUnavailable) {
-			return PublicDispatchResult{
-				State:       "no_capacity",
-				IssueRef:    &issueRef,
-				IssueNumber: &issueNum,
-				Workflow:    &wfNameStr,
-				Detail:      stringPtr("no project test slot capacity available; run was not created"),
-			}, nil
-		}
-		return PublicDispatchResult{}, &dispatchProblem{status: http.StatusInternalServerError, message: "acquire test slot failed"}
-	}
-	initialLeaseRef := LeasePublicRefFromLease(initialLease)
-	if initialLease.State != "claimed" {
-		_, _ = dispatchStore.CancelLeaseByRef(ctx, req.Project, initialLeaseRef)
-		dispatchStore.ReleaseIssueLock(ctx, req.Project, req.IssueNumber, holderID)
-		detail := runnerLeaseNotClaimedError(initialLease).Error() + "; run was not created"
-		return PublicDispatchResult{
-			State:       "dispatch_failed",
-			IssueRef:    &issueRef,
-			IssueNumber: &issueNum,
-			Workflow:    &wfNameStr,
-			Detail:      &detail,
-		}, nil
-	}
-
+	// No slot lease is acquired here. The run is created queued; admitRunCycle
+	// below acquires a lease on the fast path (returns "dispatched"), or leaves
+	// the run queued for the run-queue reconciler to admit when a slot frees
+	// (returns "queued"). This is the same admission path the verify-loop
+	// recycle uses, so dispatch no longer hard-fails on transient no-capacity —
+	// it enqueues a visible, durable, waiting run instead.
 	run, err := dispatchStore.CreateRun(ctx, CreateRunRequest{
 		Project:                 req.Project,
 		Workflow:                wf.Name,
@@ -378,7 +357,7 @@ func dispatchRunWithAgentRuntime(ctx context.Context, dispatchStore RunDispatchS
 		InitialPhaseKind:        phaseKind,
 		InitialWorkflowFilename: workflowFilename,
 		IssueLockHolderID:       holderID,
-		SlotLeaseRef:            initialLeaseRef,
+		SlotLeaseRef:            "",
 		TriggerSource:           triggerSource,
 		RunInputs:               runInputs,
 		EvidenceRequirements:    evidenceRequirements,
@@ -386,7 +365,6 @@ func dispatchRunWithAgentRuntime(ctx context.Context, dispatchStore RunDispatchS
 		PreserveTestEnv:         issue.PreserveTestEnv,
 	})
 	if err != nil {
-		_, _ = dispatchStore.CancelLeaseByRef(ctx, req.Project, initialLeaseRef)
 		dispatchStore.ReleaseIssueLock(ctx, req.Project, req.IssueNumber, holderID)
 		return PublicDispatchResult{}, &dispatchProblem{status: http.StatusInternalServerError, message: "create run failed"}
 	}
@@ -406,7 +384,6 @@ func dispatchRunWithAgentRuntime(ctx context.Context, dispatchStore RunDispatchS
 		IssueRepo:            issueRepo,
 		CallbackToken:        &run.CallbackToken,
 		IssueLockHolderID:    &holderID,
-		SlotLeaseRef:         &initialLeaseRef,
 		TriggerSource:        triggerSource,
 		RunInputs:            runInputs,
 		EvidenceRequirements: evidenceRequirements,
@@ -414,12 +391,20 @@ func dispatchRunWithAgentRuntime(ctx context.Context, dispatchStore RunDispatchS
 	}
 	admission, err := admitRunCycle(ctx, dispatchStore, runLauncher, runData, wf, issue, issueRepo, LeasePurposeDispatch)
 	if err != nil {
-		_, _ = dispatchStore.CancelLeaseByRef(ctx, req.Project, initialLeaseRef)
+		// The run is durably created and queued, holding the issue lock; the
+		// run-queue reconciler will retry admission on the next capacity event.
+		// Surface the transient store error without stranding the run.
 		return PublicDispatchResult{}, &dispatchProblem{status: http.StatusInternalServerError, message: "admit run cycle failed"}
 	}
-	if admission.State == "admission_failed" || admission.State == "dispatch_failed" {
-		_, _ = dispatchStore.CancelLeaseByRef(ctx, req.Project, initialLeaseRef)
+	if admission.State == "queued" {
+		metrics.RecordRunQueued(wf.Name)
+		// Nudge the reconciler in case capacity freed between the failed acquire
+		// inside admitRunCycle and now. Idempotent if the project is still busy.
+		wakeRunQueue(req.Project)
 	}
+	// admission_failed / dispatch_failed already aborted the run inside
+	// admitRunCycle, which releases the issue lock and cancels any lease it
+	// acquired; there is nothing for dispatch to unwind here.
 	return PublicDispatchResult{
 		State:       admission.State,
 		IssueRef:    &issueRef,
@@ -434,6 +419,19 @@ func dispatchRunWithAgentRuntime(ctx context.Context, dispatchStore RunDispatchS
 		Host:        admission.Host,
 		Detail:      admission.Detail,
 	}, nil
+}
+
+// isActiveIssueRunState reports whether the issue's most recent run state means
+// there is still active or human-pending work that a new dispatch must not
+// duplicate. Terminal states (passed/failed/aborted) and the recycle hand-off
+// to a fresh cycle do not block a new run.
+func isActiveIssueRunState(state string) bool {
+	switch strings.TrimSpace(state) {
+	case "queued", "in_progress", "review_required", "needs_review":
+		return true
+	default:
+		return false
+	}
 }
 
 func dispatchEvidenceRequirements(wf *Workflow, issue IssueDispatchData) []EvidenceRequirement {

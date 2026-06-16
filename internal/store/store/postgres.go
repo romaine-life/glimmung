@@ -8936,6 +8936,16 @@ func (s *Store) ReadIssueForDispatch(ctx context.Context, project string, issueN
 	if labels == nil {
 		labels = []string{}
 	}
+	// Surface the latest run's state so dispatch can serialize active work per
+	// issue on durable run state, not only the TTL-bounded issue lock.
+	var lastRunState *string
+	latestRun, _, err := s.latestRunForIssue(ctx, doc)
+	if err != nil {
+		return server.IssueDispatchData{}, err
+	}
+	if latestRun != nil {
+		lastRunState = optionalNonEmptyStringPtr(latestRun.State)
+	}
 	return server.IssueDispatchData{
 		ID:              doc.ID,
 		Title:           doc.Title,
@@ -8943,6 +8953,7 @@ func (s *Store) ReadIssueForDispatch(ctx context.Context, project string, issueN
 		Labels:          labels,
 		Agent:           doc.Metadata.Agent,
 		PreserveTestEnv: doc.PreserveTestEnv,
+		LastRunState:    lastRunState,
 	}, nil
 }
 

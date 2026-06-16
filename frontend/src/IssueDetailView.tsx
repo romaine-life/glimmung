@@ -436,7 +436,7 @@ type RunnerStepRef = {
 export type DispatchState =
   | { kind: "idle" }
   | { kind: "dispatching" }
-  | { kind: "result"; state: string }
+  | { kind: "result"; state: string; detail?: string | null }
   | { kind: "error"; message: string };
 
 type DispatchRunResponse = {
@@ -444,6 +444,10 @@ type DispatchRunResponse = {
   run_number?: number | string | null;
   run_cycle_number?: number | string | null;
   cycle_number?: number | string | null;
+  // detail explains a non-dispatched outcome — "queued awaiting capacity", an
+  // already-running issue, a dispatch failure. The backend always sends it for
+  // those states; surfacing it is what stops the silent settle.
+  detail?: string | null;
 };
 
 type AuthContext = {
@@ -658,16 +662,20 @@ export function IssueDetailView() {
         throw new Error(`/v1/runs/dispatch -> ${r.status}: ${text}`);
       }
       const result = await r.json() as DispatchRunResponse;
-      setDispatchState({ kind: "result", state: result.state ?? "dispatched" });
+      setDispatchState({ kind: "result", state: result.state ?? "dispatched", detail: result.detail ?? null });
       setRefreshTick((t) => t + 1);
-      setTab("runs");
       const runId = runRouteSegment(result.run_number);
       const cycleId = runRouteSegment(result.run_cycle_number);
       if (runId && cycleId) {
+        // A run exists — either dispatched and running, or queued waiting for a
+        // test slot. Land on it so the user watches real, durable state instead
+        // of guessing whether the click did anything.
+        setTab("runs");
         navigate(issueRunSelectionPath(baseUrl, { runId, cycleId }));
-      } else {
-        navigate(`${baseUrl}/runs`);
       }
+      // Otherwise no run was created (already_running, no_workflow, a dispatch
+      // failure before run creation). Stay put so the result pill and its detail
+      // stay visible rather than being silently swallowed by a tab switch.
     } catch (e) {
       setDispatchState({ kind: "error", message: String(e) });
     }
@@ -2808,6 +2816,12 @@ function ProjectionRunMetaSummary({ run, repo }: { run: RunProjectionRun; repo: 
         <span className="key">state</span>{" "}
         <span className={`pill ${runStatePill(run.state)}`}>{run.state}</span>
       </div>
+      {run.queue_state === "queued" && (
+        <div>
+          <span className="key">queue</span>{" "}
+          <span className="mono">{run.admission_error?.trim() || "waiting for a free test slot"}</span>
+        </div>
+      )}
       <div>
         <span className="key">workflow</span> <span className="mono">{run.workflow}</span>
       </div>
@@ -3321,8 +3335,16 @@ function RunDispatchSettingsPanel({
           {dispatchLabel}
         </button>
         {dispatchState.kind === "result" && (
-          <span className={`pill ${dispatchResultPill(dispatchState.state)}`}>
-            {dispatchResultLabel(dispatchState.state)}
+          <span
+            className="dispatch-error"
+            role={dispatchResultIsFailure(dispatchState.state) ? "alert" : undefined}
+          >
+            <span className={`pill ${dispatchResultPill(dispatchState.state)}`}>
+              {dispatchResultLabel(dispatchState.state)}
+            </span>
+            {dispatchState.detail && (
+              <span className="dispatch-error-message">{dispatchState.detail}</span>
+            )}
           </span>
         )}
         {dispatchState.kind === "error" && (
@@ -3971,6 +3993,19 @@ function dispatchResultPill(state: string): string {
   if (state === "no_capacity" || state === "queued") return "pending";
   if (state === "dispatch_failed") return "drain";
   return "info";
+}
+
+// A dispatch result is a failure (no run created, or the run aborted at
+// admission) when it is neither a started run nor a queued one. Drives the
+// role="alert" treatment so the reason is announced, not silently settled.
+function dispatchResultIsFailure(state: string): boolean {
+  switch (state) {
+    case "dispatched":
+    case "queued":
+      return false;
+    default:
+      return true;
+  }
 }
 
 function graphStatePill(state: string): string {

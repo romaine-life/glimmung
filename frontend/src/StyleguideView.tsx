@@ -129,6 +129,10 @@ const DESIGN_SYSTEM_ITEMS: PortfolioItem[] = [
         <div className="run-actions" style={{ display: "flex", alignItems: "center", gap: "0.75rem", flexWrap: "wrap" }}>
           <button type="button" className="link">new run</button>
           <span className="pill free">dispatched</span>
+          <span className="dispatch-error">
+            <span className="pill pending">queued</span>
+            <span className="dispatch-error-message">waiting for a free test slot</span>
+          </span>
           <button type="button" className="link" disabled>in flight</button>
           <button type="button" className="link" disabled>sign in</button>
           <RunCancelAction
@@ -150,6 +154,10 @@ const DESIGN_SYSTEM_ITEMS: PortfolioItem[] = [
             onConfirm={() => undefined}
           />
           <span className="pill drain">error</span>
+          <span className="dispatch-error" role="alert">
+            <span className="pill drain">dispatch failed</span>
+            <span className="dispatch-error-message">runner dispatch failed: kube unavailable</span>
+          </span>
         </div>
       </Specimen>
     ),

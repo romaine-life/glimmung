@@ -431,8 +431,10 @@ Runner lease acquisition is slot-backed and project-local. The allocator reads
 the requested project's durable slot rows inside the configured slot count,
 selects the first provisioned unclaimed test slot, and writes one claimed lease
 document. Leases held by other projects do not consume this project's test-slot
-capacity. If no prepared slot is available, callers get `no_capacity`;
-executor work is not launched.
+capacity. If no prepared slot is available, lease acquisition reports no
+capacity and no executor work is launched; the run-dispatch path turns that
+into a `queued` run that the run-queue reconciler admits when a slot frees,
+rather than failing the dispatch.
 
 Release paths:
 - **Fast**: workflow's own release step (if it has one).

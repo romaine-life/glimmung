@@ -719,10 +719,15 @@ launch. It is not a first-class product entity. Recycle policy is represented
 by a new cycle, not by appending another product-level attempt to the prior
 cycle.
 
-Manual run dispatch is admission-gated: if no test slot is available, the API
-returns `no_capacity` and does not create a run or cycle. Queueing remains an
-issue-level product workflow; queued cycles that already exist are admitted by
-the run-queue reconciler when capacity appears.
+Manual run dispatch is admission-gated but non-blocking: it creates the run
+first, then admits it. If a test slot is free the run starts immediately
+(`dispatched`); if not, the run is created in the `queued` state holding the
+issue lock, and the run-queue reconciler admits it when capacity appears — the
+same admission path verify-loop recycle cycles already use. Dispatch no longer
+hard-fails on transient no-capacity. Per-issue serialization is enforced on
+durable run state, not only the issue lock: a dispatch is refused
+(`already_running`) while the issue already has a non-terminal run, so a
+long-queued run cannot be duplicated even after the issue lock's TTL lapses.
 
 Synthetic dispatch is deliberately stricter and less helpful than normal
 dispatch. It is an operator escape hatch for creating a new Run at an explicit
