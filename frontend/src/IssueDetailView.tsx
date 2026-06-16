@@ -875,6 +875,7 @@ export function IssueDetailView() {
                 globalAgentRuntime={snap?.agent_runtime ?? null}
                 projectAgentRuntime={projectAgentRuntime}
                 onIssueAgentSaved={() => setRefreshTick((t) => t + 1)}
+                onLabelsSaved={() => setRefreshTick((t) => t + 1)}
                 dispatchState={dispatchState}
                 onDispatch={() => void dispatchRun()}
                 dispatchInputSpecs={dispatchInputSpecs}
@@ -2952,6 +2953,7 @@ function IssueSettingsPane({
   globalAgentRuntime,
   projectAgentRuntime,
   onIssueAgentSaved,
+  onLabelsSaved,
   dispatchState,
   onDispatch,
   dispatchInputSpecs,
@@ -2967,6 +2969,7 @@ function IssueSettingsPane({
   globalAgentRuntime: AgentRuntimeConfig | null;
   projectAgentRuntime: AgentRuntimeConfig | null;
   onIssueAgentSaved: () => void;
+  onLabelsSaved: () => void;
   dispatchState: DispatchState;
   onDispatch: () => void;
   dispatchInputSpecs: DispatchInputSpec[];
@@ -2989,6 +2992,7 @@ function IssueSettingsPane({
         dispatchInputValues={dispatchInputValues}
         onDispatchInputChange={onDispatchInputChange}
       />
+      <IssueLabelsPanel issue={issue} signedIn={signedIn} onSaved={onLabelsSaved} />
       <section className="run-panel">
         <div className="run-section-header">
           <h2>Workflow definition</h2>
@@ -3028,6 +3032,200 @@ function IssueSettingsPane({
         projectAgentRuntime={projectAgentRuntime}
         onSaved={onIssueAgentSaved}
       />
+    </section>
+  );
+}
+
+// Split free-text label entry into clean tokens. Accepts comma-separated
+// input so a pasted "a, b, c" expands into three labels.
+function parseLabelTokens(raw: string): string[] {
+  return raw
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+}
+
+// Append tokens that aren't already present (case-insensitive) so the same
+// label can't be staged twice with different casing.
+function mergeLabels(current: string[], tokens: string[]): string[] {
+  const next = [...current];
+  for (const token of tokens) {
+    if (!next.some((label) => label.toLowerCase() === token.toLowerCase())) {
+      next.push(token);
+    }
+  }
+  return next;
+}
+
+// IssueLabelsPanel edits the issue's labels from the settings tab. Labels are
+// issue metadata that steer future runs: budget.ResolveBudget reads
+// `agent-budget:<usd>` and EvidenceRequirementsFromIssueLabels reads
+// `evidence:screenshot` / `evidence:video`, so this surface sits next to the
+// other dispatch-affecting settings. Edits are staged locally and committed
+// with a single PATCH that carries only `labels`; on success the parent
+// reloads the issue from durable state so the header pills and any future
+// dispatch reflect the saved set (issues-and-runs contract: issue UI reloads
+// from durable state).
+function IssueLabelsPanel({
+  issue,
+  signedIn,
+  onSaved,
+}: {
+  issue: IssueDetail;
+  signedIn: boolean;
+  onSaved: () => void;
+}) {
+  // Content key, not array identity: a refetch returns a fresh array each
+  // render, so keying the reseed on the joined content keeps staged edits from
+  // being wiped by an unrelated refresh while still picking up real changes
+  // (e.g. the values we just saved, or an edit from another surface). The
+  // separator is a newline — a character a single-line label entry can't
+  // contain — so a label with spaces survives the round-trip intact.
+  const persistedKey = issue.labels.join("\n");
+  const persisted = persistedKey === "" ? [] : persistedKey.split("\n");
+  const [labels, setLabels] = useState<string[]>(persisted);
+  const [draft, setDraft] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    setLabels(persistedKey === "" ? [] : persistedKey.split("\n"));
+    setDraft("");
+    setError(null);
+  }, [issue.ref, persistedKey]);
+
+  const stagedKey = labels.join("\n");
+  const draftTokens = parseLabelTokens(draft);
+  const dirty = stagedKey !== persistedKey || draftTokens.length > 0;
+
+  const addDraft = () => {
+    if (draftTokens.length === 0) return;
+    setLabels((current) => mergeLabels(current, draftTokens));
+    setDraft("");
+  };
+
+  const removeLabel = (label: string) => {
+    setLabels((current) => current.filter((existing) => existing !== label));
+  };
+
+  const onDraftKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter" || e.key === ",") {
+      e.preventDefault();
+      addDraft();
+    } else if (e.key === "Backspace" && draft === "" && labels.length > 0) {
+      // Empty-field backspace pops the last chip — the standard tag-input feel.
+      removeLabel(labels[labels.length - 1]);
+    }
+  };
+
+  const reset = () => {
+    setLabels(persisted);
+    setDraft("");
+    setError(null);
+  };
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    if (issue.number === null) {
+      setError("Issue number required for edits");
+      return;
+    }
+    // Fold any text the user typed but didn't commit so a pending entry isn't
+    // silently dropped on save.
+    const finalLabels = mergeLabels(labels, draftTokens);
+    setBusy(true);
+    try {
+      const url = `/v1/issues/by-number/${encodeURIComponent(issue.project)}/${issue.number}`;
+      const r = await authedFetch(url, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ labels: finalLabels }),
+      });
+      if (!r.ok) {
+        setError(`${r.status}: ${await r.text()}`);
+        return;
+      }
+      setLabels(finalLabels);
+      setDraft("");
+      onSaved();
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const disabled = busy || !signedIn;
+  const saveLabel = busy ? "Saving…" : !signedIn ? "sign in" : "Save labels";
+
+  return (
+    <section className="run-panel issue-labels-panel">
+      <div className="run-section-header">
+        <h2>Issue labels</h2>
+        <span className="pill info">steers new runs</span>
+      </div>
+      <p className="issue-labels-hint dim">
+        labels travel with the issue. <span className="mono">evidence:screenshot</span> /{" "}
+        <span className="mono">evidence:video</span> require browser evidence on the next run;{" "}
+        <span className="mono">agent-budget:&lt;usd&gt;</span> caps its spend.
+      </p>
+      <form onSubmit={submit} className="admin-form" style={{ marginTop: "0.5rem" }}>
+        <div className="label-editor" aria-label="issue label chips">
+          {labels.length === 0 ? (
+            <span className="dim">no labels yet</span>
+          ) : (
+            labels.map((label) => (
+              <span className="pill info label-edit-chip" key={label}>
+                <span>{label}</span>
+                <button
+                  type="button"
+                  className="label-edit-remove"
+                  aria-label={`remove label ${label}`}
+                  onClick={() => removeLabel(label)}
+                  disabled={disabled}
+                >
+                  ×
+                </button>
+              </span>
+            ))
+          )}
+        </div>
+        <label>
+          <span>add label</span>
+          <input
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={onDraftKeyDown}
+            placeholder="type a label, press enter"
+            className="mono"
+            spellCheck={false}
+            autoCapitalize="off"
+            autoComplete="off"
+            disabled={disabled}
+          />
+        </label>
+        {error && <div className="error">{error}</div>}
+        <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", flexWrap: "wrap" }}>
+          <button
+            type="submit"
+            disabled={disabled || !dirty}
+            title={!signedIn ? "Sign in to edit labels." : undefined}
+          >
+            {saveLabel}
+          </button>
+          {draftTokens.length > 0 && signedIn && (
+            <button type="button" className="link" onClick={addDraft} disabled={busy}>
+              add
+            </button>
+          )}
+          {dirty && signedIn && (
+            <button type="button" className="link" onClick={reset} disabled={busy}>
+              reset
+            </button>
+          )}
+        </div>
+      </form>
     </section>
   );
 }
