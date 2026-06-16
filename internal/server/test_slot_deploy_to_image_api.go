@@ -1,0 +1,231 @@
+package server
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
+	"net/url"
+	"strings"
+	"time"
+)
+
+// TestSlotDeployToImageRequest is the deploy-to-image request body. There is no
+// artifact_kind and no validation_target: the operation deploys the whole
+// CI-built image for a verified commit, so there is nothing to select.
+type TestSlotDeployToImageRequest struct {
+	Project   string  `json:"project"`
+	SlotIndex *int    `json:"slot_index,omitempty"`
+	SlotName  *string `json:"slot_name,omitempty"`
+	GitRef    string  `json:"git_ref"`
+}
+
+// deploySlotPerformer is the function seam the test harness stubs. Production
+// wires it to KubernetesRunLauncher.DeploySlotToImage. It reconciles the slot's
+// chart at the verified ref with the CI image pinned, then verifies the running
+// image — a Job-backed operation that can run minutes, so the handler runs it
+// detached and records the outcome durably rather than holding the request open.
+type deploySlotPerformer func(ctx context.Context, lease Lease, project Project, verifiedRef, image, imageValueKey string) error
+
+// refResolver resolves a git ref to its commit SHA. Production wires a live
+// GitHub call (githubResolveSHA); tests stub it.
+type refResolver func(ctx context.Context, slug, ref, token string) (string, error)
+
+// slotImageDeployer is the concrete-launcher capability the deploy route wires
+// its performer from. *KubernetesRunLauncher implements it; the route type-
+// asserts rather than widening TestSlotPreparer so the test fakes are untouched.
+type slotImageDeployer interface {
+	DeploySlotToImage(ctx context.Context, lease Lease, project Project, minter RunnerGitHubTokenMinter, verifiedRef, image, imageValueKey string) error
+}
+
+// deployTestSlotToImage is the deploy-to-image endpoint — the replacement for
+// the artifact build-and-stream apply_test_slot_hot_swap. It deploys the exact
+// CI-built image for a verified commit onto a slot and verifies the slot runs
+// it. Async-with-poll, mirroring the apply endpoint: the POST resolves the ref
+// to a SHA, dispatches the deploy on a detached context, writes an initial
+// "running" history entry, and returns 202 with that breadcrumb; the detached
+// worker writes the terminal entry when the reconcile-and-verify completes. The
+// caller polls the existing GET /v1/test-slots/apply-hot-swap/{project}/{job}...
+// status surface via the lease history, so no HTTP request is held open for the
+// deploy and the durable outcome survives client disconnects and proxy deadlines.
+//
+// The legitimacy gate (published + CI-green + mergeable + current-with-main) is
+// the caller's responsibility; this endpoint only ever operates on a git ref
+// (never an agent working tree), so it cannot deploy unpushed code, and the
+// SHA→image resolution deploys exactly the image CI built for that commit.
+func deployTestSlotToImage(store ReadStore, minter RunnerGitHubTokenMinter, performer deploySlotPerformer, resolveRef refResolver) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		writer, ok := store.(TestSlotHotSwapHistoryStore)
+		stateStore, hasState := store.(StateStore)
+		if !ok || writer == nil || !hasState || stateStore == nil {
+			writeProblem(w, http.StatusServiceUnavailable, "test-slot history store not configured")
+			return
+		}
+		if performer == nil || resolveRef == nil {
+			writeProblem(w, http.StatusServiceUnavailable, "deploy-to-image not configured (run launcher has no slot deployer)")
+			return
+		}
+		var req TestSlotDeployToImageRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeProblem(w, http.StatusBadRequest, "invalid JSON body")
+			return
+		}
+		req.Project = strings.TrimSpace(req.Project)
+		req.GitRef = strings.TrimSpace(req.GitRef)
+		if req.Project == "" {
+			writeProblem(w, http.StatusBadRequest, "project required")
+			return
+		}
+		if req.GitRef == "" {
+			writeProblem(w, http.StatusBadRequest, "git_ref required")
+			return
+		}
+
+		lease, err := resolveTestSlotLease(r, stateStore, TestSlotReturnRequest{
+			Project:   req.Project,
+			SlotIndex: req.SlotIndex,
+			SlotName:  req.SlotName,
+		})
+		if err != nil {
+			if errors.Is(err, ErrNotFound) {
+				writeProblem(w, http.StatusNotFound, "test slot lease not found")
+				return
+			}
+			writeProblem(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		leaseRef := LeasePublicRefFromLease(lease)
+		slotName := strings.TrimSpace(mapStringValueOrEmpty(lease.Metadata, "runner_slot_name"))
+		if slotName == "" {
+			writeProblem(w, http.StatusBadRequest, "lease has no runner_slot_name (cannot derive target namespace)")
+			return
+		}
+
+		projects, err := store.ListProjects(r.Context())
+		if err != nil {
+			writeInternalError(w, r, err, "list projects: "+err.Error())
+			return
+		}
+		var project Project
+		for _, p := range projects {
+			if p.Name == req.Project {
+				project = p
+				break
+			}
+		}
+		if project.Name == "" {
+			writeProblem(w, http.StatusNotFound, "project not found")
+			return
+		}
+		if _, ok := testSlotHelmConfig(project); !ok {
+			writeProblem(w, http.StatusUnprocessableEntity, "project has no enabled test_slot_helm config")
+			return
+		}
+		slug := strings.TrimSpace(project.GitHubRepo)
+		if slug == "" {
+			writeProblem(w, http.StatusUnprocessableEntity, "project has no github_repo")
+			return
+		}
+		imageValueKey := testSlotDeployImageValueKey(project)
+
+		// Resolve the ref to its commit SHA. The slot deploys the image CI built
+		// for that exact commit; tagging-by-SHA makes resolution the identity.
+		repoToken := ""
+		if minter != nil {
+			tok, err := minter.RepositoryInstallationToken(r.Context(), slug, map[string]string{"contents": "read"})
+			if err != nil {
+				writeInternalError(w, r, err, "mint clone token for deploy: "+err.Error())
+				return
+			}
+			repoToken = tok
+		}
+		sha, err := resolveRef(r.Context(), slug, req.GitRef, repoToken)
+		if err != nil {
+			writeProblem(w, http.StatusUnprocessableEntity, "resolve git_ref to commit sha: "+err.Error())
+			return
+		}
+		image := sha // CI tags each image with its git SHA; the chart's image value key pins it.
+
+		// Dispatch detached: a client disconnect must not abort the deploy or the
+		// durable history write. The reconcile itself is a Kubernetes Job, so the
+		// work survives this process too; only the terminal-outcome write rides
+		// the goroutine (a process restart mid-deploy leaves the "running"
+		// breadcrumb, and a re-deploy is idempotent — helm upgrade --install).
+		bgCtx := context.WithoutCancel(r.Context())
+		startEntry := TestSlotHotSwapHistoryEntry{
+			Operation: "deploy_to_image",
+			Status:    "running",
+			Summary:   fmt.Sprintf("deploy_to_image dispatched git_ref=%s sha=%s slot=%s status=running", req.GitRef, sha, slotName),
+			Diagnostics: map[string]any{
+				"slot_name":       slotName,
+				"git_ref":         req.GitRef,
+				"sha":             sha,
+				"image":           image,
+				"image_value_key": imageValueKey,
+			},
+			CreatedAt: time.Now().UTC(),
+		}
+		if leaseWithHistory, histErr := writer.AppendTestSlotHotSwapHistory(bgCtx, req.Project, leaseRef, startEntry); histErr == nil {
+			lease = leaseWithHistory
+		}
+
+		deployLease := lease
+		go func() {
+			derr := performer(bgCtx, deployLease, project, sha, image, imageValueKey)
+			status := "succeeded"
+			diag := map[string]any{"slot_name": slotName, "git_ref": req.GitRef, "sha": sha, "image": image}
+			if derr != nil {
+				status = "deploy_failed"
+				diag["error"] = derr.Error()
+			}
+			_, _ = writer.AppendTestSlotHotSwapHistory(bgCtx, req.Project, leaseRef, TestSlotHotSwapHistoryEntry{
+				Operation:   "deploy_to_image",
+				Status:      status,
+				Summary:     fmt.Sprintf("deploy_to_image finalized git_ref=%s sha=%s slot=%s status=%s", req.GitRef, sha, slotName, status),
+				Diagnostics: diag,
+				CreatedAt:   time.Now().UTC(),
+			})
+		}()
+
+		writeJSON(w, http.StatusAccepted, map[string]any{
+			"lease":         leaseRef,
+			"status":        "running",
+			"git_ref":       req.GitRef,
+			"sha":           sha,
+			"image":         image,
+			"history_entry": startEntry,
+		})
+	}
+}
+
+// testSlotDeployImageValueKey reads the per-project chart image value key the
+// deploy override sets (helm --set <key>=<sha>). Empty means "no override" — the
+// chart at the verified ref already pins the image. This is the only per-app
+// deploy config; it lives under project metadata `test_slot_deploy`.
+func testSlotDeployImageValueKey(project Project) string {
+	for _, key := range []string{"test_slot_deploy", "testSlotDeploy"} {
+		if raw, ok := mapFromMap(project.Metadata, key); ok {
+			if value := configString(raw, "image_value_key", "imageValueKey"); value != "" {
+				return value
+			}
+		}
+	}
+	return ""
+}
+
+// githubResolveSHA resolves a git ref (branch, tag, or SHA) to its commit SHA via
+// the GitHub commits API. The live wiring for the deploy endpoint's refResolver.
+func githubResolveSHA(ctx context.Context, httpClient *http.Client, slug, ref, token string) (string, error) {
+	var payload struct {
+		SHA string `json:"sha"`
+	}
+	apiURL := githubAPIBase + "/repos/" + slug + "/commits/" + url.PathEscape(ref)
+	if err := githubGetJSON(ctx, httpClient, apiURL, token, &payload); err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(payload.SHA) == "" {
+		return "", fmt.Errorf("no commit sha for ref %q in %s", ref, slug)
+	}
+	return payload.SHA, nil
+}
