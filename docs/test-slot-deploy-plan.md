@@ -153,9 +153,52 @@ complex, most app-specific corner of the old design. Accepted.
    `artifact_kind`.
 4. **Cutover + deletion:** remove the artifact-stream path, the
    `test_slot_hot_swap` build contract, and the tank-operator classifier end to
-   end; land the migration guards. No parallel path survives.
-5. **Per-app:** confirm/adopt pre-merge CI image builds for every in-scope
-   project.
+   end; land the migration guards. No parallel path survives. **Gated on stage 6
+   green for every in-scope app** — the old path is not deleted until the new
+   one is proven per app.
+5. **Per-app CI images:** confirm/adopt pre-merge CI image builds for every
+   in-scope project (the precondition stage 6 deploys from).
+6. **Per-app deploy smoke (gates cutover):** prove the new path end to end on
+   every in-scope app — see below. This is the gate that authorizes stage 4; the
+   last rollout skipped it and shipped a false pass.
+
+## Stage 6 — per-app deploy smoke (the cutover gate)
+
+The last rollout's failure mode was a **false pass**: it validated narrowly,
+declared done, and broke things the validation never exercised. So cutover is
+gated on a per-app, end-to-end smoke that **observes the change in the running
+slot**, not on a Job reporting success ("observed outcomes beat claimed intent"
+— `docs/quality-timeframes.md`, `product-inspirations`). Per in-scope project,
+the smoke proves:
+
+1. **The deploy lands a known build (process check).** Deploy a specific
+   verified ref and assert the slot's pod is running the *exact* resolved image
+   fingerprint (k8s image read). Catches "the deploy mechanism didn't apply."
+2. **The app actually serves that build, observed from outside (content
+   check — the load-bearing one).** Read a unique, build-derived value back from
+   the slot's real surface: the commit SHA via a `/version`/health field where
+   one exists, otherwise the build-stamped frontend asset (the bundle hash
+   changes per build) or a deliberately injected sentinel. The value must be
+   unique per run so a stale image cannot false-pass. This is "it showed up in
+   the slot." Catches "image deployed but the app serves stale."
+3. **Replace, not first-install.** Deploy version A, then B, and assert the slot
+   moved A → B. The replace onto an already-running slot is the realistic
+   condition; validating only a clean slot is the exact gap that bit the last
+   rollout.
+4. **The gate refuses illegitimate code (negative path).** Push a CI-red ref and
+   a behind-main ref and assert the slot is **not** updated and the tool reports
+   why. The gate's whole value is blocking bad code — prove the block, not just
+   the pass.
+5. **Clean terminal, no trip.** The deploy/verify recorded a durable success,
+   the slot is healthy afterward, and there is no error surface.
+
+Coverage spans the projects whose deploy shapes differ — ambience (WASM edge),
+chess-tactics (node), glimmung, tank-operator (multi-pod + session pods), and
+spirelens/kill-me if in scope. The smoke is **automated and retained** as a
+glimmung slot-smoke playbook (glimmung already owns the verify loop, evidence,
+and `slot-playwright`), not a one-time manual pass — so every future change to
+the deploy path re-proves every app. **Stage 4 does not proceed until this is
+green for every in-scope project.**
 
 ## Open items to verify before stage 2
 
