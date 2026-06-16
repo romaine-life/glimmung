@@ -95,7 +95,7 @@ func TestApplyTestSlotHotSwapHappyPathResolves(t *testing.T) {
 		}, nil
 	}
 
-	handler := http.HandlerFunc(applyTestSlotHotSwap(store, nil, nil, performer))
+	handler := http.HandlerFunc(applyTestSlotHotSwap(store, nil, nil, performer, nil))
 	body := `{"project":"tank-operator","slot_name":"tank-operator-slot-1","artifact_kind":"agent_runner","git_ref":"feat/durable-stop-request","validation_target":"existing_session"}`
 	req := authedApplyRequest(t, body)
 	rec := httptest.NewRecorder()
@@ -159,7 +159,7 @@ func TestApplyTestSlotHotSwapCodexRunnerResolves(t *testing.T) {
 		}, nil
 	}
 
-	handler := http.HandlerFunc(applyTestSlotHotSwap(store, nil, nil, performer))
+	handler := http.HandlerFunc(applyTestSlotHotSwap(store, nil, nil, performer, nil))
 	body := `{"project":"tank-operator","slot_name":"tank-operator-slot-1","artifact_kind":"codex_runner","git_ref":"feat/codex","validation_target":"new_session"}`
 	req := authedApplyRequest(t, body)
 	rec := httptest.NewRecorder()
@@ -195,7 +195,7 @@ func TestApplyTestSlotHotSwapAntigravityRunnerResolves(t *testing.T) {
 		}, nil
 	}
 
-	handler := http.HandlerFunc(applyTestSlotHotSwap(store, nil, nil, performer))
+	handler := http.HandlerFunc(applyTestSlotHotSwap(store, nil, nil, performer, nil))
 	body := `{"project":"tank-operator","slot_name":"tank-operator-slot-1","artifact_kind":"antigravity_runner","git_ref":"feat/antigravity","validation_target":"existing_session"}`
 	req := authedApplyRequest(t, body)
 	rec := httptest.NewRecorder()
@@ -236,7 +236,7 @@ func TestApplyTestSlotHotSwapStaticResolvesAppNamespace(t *testing.T) {
 		return ApplyHotSwapResult{ArtifactKind: opts.ArtifactKind, GitRef: opts.GitRef, Outcome: "persisted", Timings: map[string]string{}}, nil
 	}
 
-	handler := http.HandlerFunc(applyTestSlotHotSwap(store, nil, nil, performer))
+	handler := http.HandlerFunc(applyTestSlotHotSwap(store, nil, nil, performer, nil))
 	body := `{"project":"tank-operator","slot_name":"tank-operator-slot-1","artifact_kind":"static","git_ref":"feat/ui","validation_target":"existing_session"}`
 	req := authedApplyRequest(t, body)
 	rec := httptest.NewRecorder()
@@ -278,7 +278,7 @@ func TestApplyTestSlotHotSwapRejectsStaticWithoutPodSelector(t *testing.T) {
 		return ApplyHotSwapResult{}, nil
 	}
 
-	handler := http.HandlerFunc(applyTestSlotHotSwap(store, nil, nil, performer))
+	handler := http.HandlerFunc(applyTestSlotHotSwap(store, nil, nil, performer, nil))
 	body := `{"project":"tank-operator","slot_name":"tank-operator-slot-1","artifact_kind":"static","git_ref":"feat/ui","validation_target":"existing_session"}`
 	req := authedApplyRequest(t, body)
 	rec := httptest.NewRecorder()
@@ -307,7 +307,7 @@ func TestApplyTestSlotHotSwapRecordsFailureHistory(t *testing.T) {
 		}, errors.New("apply failed")
 	}
 
-	handler := http.HandlerFunc(applyTestSlotHotSwap(store, nil, nil, performer))
+	handler := http.HandlerFunc(applyTestSlotHotSwap(store, nil, nil, performer, nil))
 	body := `{"project":"tank-operator","slot_index":1,"artifact_kind":"agent_runner","git_ref":"feat/x","validation_target":"existing_session"}`
 	req := authedApplyRequest(t, body)
 	rec := httptest.NewRecorder()
@@ -339,7 +339,7 @@ func TestApplyTestSlotHotSwapExtendsLeaseToConfiguredMinimum(t *testing.T) {
 		}, nil
 	}
 
-	handler := http.HandlerFunc(applyTestSlotHotSwap(store, nil, nil, performer))
+	handler := http.HandlerFunc(applyTestSlotHotSwap(store, nil, nil, performer, nil))
 	body := `{"project":"tank-operator","slot_name":"tank-operator-slot-1","artifact_kind":"agent_runner","git_ref":"feat/x","validation_target":"existing_session"}`
 	req := authedApplyRequest(t, body)
 	rec := httptest.NewRecorder()
@@ -391,7 +391,7 @@ func TestApplyTestSlotHotSwapClampsTimeout(t *testing.T) {
 		return ApplyHotSwapResult{Outcome: "persisted", Timings: map[string]string{}}, nil
 	}
 
-	handler := http.HandlerFunc(applyTestSlotHotSwap(store, nil, nil, performer))
+	handler := http.HandlerFunc(applyTestSlotHotSwap(store, nil, nil, performer, nil))
 	body := `{"project":"tank-operator","slot_name":"tank-operator-slot-1","artifact_kind":"agent_runner","git_ref":"feat/x","validation_target":"existing_session","timeout_seconds":9999}`
 	req := authedApplyRequest(t, body)
 	rec := httptest.NewRecorder()
@@ -426,7 +426,7 @@ func TestApplyTestSlotHotSwapRejectsBackendWithoutBuilderImage(t *testing.T) {
 		return ApplyHotSwapResult{}, nil
 	}
 
-	handler := http.HandlerFunc(applyTestSlotHotSwap(store, nil, nil, performer))
+	handler := http.HandlerFunc(applyTestSlotHotSwap(store, nil, nil, performer, nil))
 	body := `{"project":"tank-operator","slot_name":"tank-operator-slot-1","artifact_kind":"backend","git_ref":"feat/x","validation_target":"existing_session"}`
 	req := authedApplyRequest(t, body)
 	rec := httptest.NewRecorder()
@@ -466,7 +466,7 @@ func TestApplyTestSlotHotSwapBackendResolvesToAppNamespace(t *testing.T) {
 		return ApplyHotSwapResult{ArtifactKind: opts.ArtifactKind, Outcome: "persisted", Timings: map[string]string{}}, nil
 	}
 
-	handler := http.HandlerFunc(applyTestSlotHotSwap(store, nil, nil, performer))
+	handler := http.HandlerFunc(applyTestSlotHotSwap(store, nil, nil, performer, nil))
 	body := `{"project":"tank-operator","slot_name":"tank-operator-slot-1","artifact_kind":"backend","git_ref":"feat/x","validation_target":"existing_session"}`
 	req := authedApplyRequest(t, body)
 	rec := httptest.NewRecorder()
@@ -511,7 +511,7 @@ func TestApplyTestSlotHotSwapRejectsBackendWithoutHealthPort(t *testing.T) {
 		return ApplyHotSwapResult{}, nil
 	}
 
-	handler := http.HandlerFunc(applyTestSlotHotSwap(store, nil, nil, performer))
+	handler := http.HandlerFunc(applyTestSlotHotSwap(store, nil, nil, performer, nil))
 	body := `{"project":"tank-operator","slot_name":"tank-operator-slot-1","artifact_kind":"backend","git_ref":"feat/x","validation_target":"existing_session"}`
 	req := authedApplyRequest(t, body)
 	rec := httptest.NewRecorder()
@@ -532,7 +532,7 @@ func TestApplyTestSlotHotSwapRequiresValidationTargetForClassifier(t *testing.T)
 		return ApplyHotSwapResult{}, nil
 	}
 
-	handler := http.HandlerFunc(applyTestSlotHotSwap(store, nil, nil, performer))
+	handler := http.HandlerFunc(applyTestSlotHotSwap(store, nil, nil, performer, nil))
 	body := `{"project":"tank-operator","slot_name":"tank-operator-slot-1","artifact_kind":"agent_runner","git_ref":"feat/x"}`
 	req := authedApplyRequest(t, body)
 	rec := httptest.NewRecorder()
@@ -553,7 +553,7 @@ func TestApplyTestSlotHotSwapRejectsUnsupportedValidationTarget(t *testing.T) {
 		return ApplyHotSwapResult{}, nil
 	}
 
-	handler := http.HandlerFunc(applyTestSlotHotSwap(store, nil, nil, performer))
+	handler := http.HandlerFunc(applyTestSlotHotSwap(store, nil, nil, performer, nil))
 	body := `{"project":"tank-operator","slot_name":"tank-operator-slot-1","artifact_kind":"agent_runner","git_ref":"feat/x","validation_target":"maybe"}`
 	req := authedApplyRequest(t, body)
 	rec := httptest.NewRecorder()
@@ -574,7 +574,7 @@ func TestApplyTestSlotHotSwapRejectsMissingFields(t *testing.T) {
 	performer := func(_ context.Context, _ ApplyHotSwapOptions) (ApplyHotSwapResult, error) {
 		return ApplyHotSwapResult{}, nil
 	}
-	handler := http.HandlerFunc(applyTestSlotHotSwap(store, nil, nil, performer))
+	handler := http.HandlerFunc(applyTestSlotHotSwap(store, nil, nil, performer, nil))
 
 	bodies := []string{
 		`{"slot_name":"tank-operator-slot-1","artifact_kind":"agent_runner","git_ref":"x"}`,  // missing project
@@ -603,7 +603,7 @@ func TestApplyTestSlotHotSwapMintsCloneToken(t *testing.T) {
 	}
 	minter := fakeRunnerGitHubTokenMinter{token: "ghs_minted"}
 
-	handler := http.HandlerFunc(applyTestSlotHotSwap(store, nil, minter, performer))
+	handler := http.HandlerFunc(applyTestSlotHotSwap(store, nil, minter, performer, nil))
 	body := `{"project":"tank-operator","slot_name":"tank-operator-slot-1","artifact_kind":"agent_runner","git_ref":"feat/x","validation_target":"existing_session"}`
 	req := authedApplyRequest(t, body)
 	rec := httptest.NewRecorder()
@@ -617,6 +617,71 @@ func TestApplyTestSlotHotSwapMintsCloneToken(t *testing.T) {
 	}
 	if seen.RepoURL != "https://x-access-token@github.com/romaine-life/tank-operator.git" {
 		t.Fatalf("performer RepoURL = %q, want x-access-token URL", seen.RepoURL)
+	}
+}
+
+// TestApplyTestSlotHotSwapDispatchReturnsRunningAndPlumbsDiff pins the async
+// dispatch contract: the handler returns the performer's "running" handle, and
+// the resolved diff context (base + changed files) flows to the performer and
+// into the initial history entry's diagnostics.
+func TestApplyTestSlotHotSwapDispatchReturnsRunningAndPlumbsDiff(t *testing.T) {
+	store := newApplyHotSwapStore(t)
+	var seen ApplyHotSwapOptions
+	performer := func(_ context.Context, opts ApplyHotSwapOptions) (ApplyHotSwapResult, error) {
+		seen = opts
+		return ApplyHotSwapResult{
+			JobName:      "apply-hot-swap-run1",
+			JobNamespace: "glimmung-runs",
+			ArtifactKind: opts.ArtifactKind,
+			GitRef:       opts.GitRef,
+			Outcome:      "running",
+			Timings:      map[string]string{},
+		}, nil
+	}
+	resolveDiff := func(_ context.Context, slug, baseRef, headRef, token string) (hotSwapDiff, error) {
+		return hotSwapDiff{
+			BaseRef:      "main",
+			HeadRef:      headRef,
+			ChangedFiles: []string{"frontend/src/App.tsx", "frontend/src/repos.ts"},
+		}, nil
+	}
+	minter := fakeRunnerGitHubTokenMinter{token: "ghs_x"}
+
+	handler := http.HandlerFunc(applyTestSlotHotSwap(store, nil, minter, performer, resolveDiff))
+	body := `{"project":"tank-operator","slot_name":"tank-operator-slot-1","artifact_kind":"agent_runner","git_ref":"feat/x","validation_target":"existing_session"}`
+	req := authedApplyRequest(t, body)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	var result TestSlotApplyHotSwapResult
+	if err := json.Unmarshal(rec.Body.Bytes(), &result); err != nil {
+		t.Fatalf("decode: %v body=%s", err, rec.Body.String())
+	}
+	if result.Apply.Outcome != "running" {
+		t.Fatalf("apply.outcome = %q, want running", result.Apply.Outcome)
+	}
+	if result.Apply.JobName != "apply-hot-swap-run1" {
+		t.Fatalf("apply.job_name = %q, want the dispatched handle", result.Apply.JobName)
+	}
+	if result.Entry.Status != "running" {
+		t.Fatalf("history entry status = %q, want running", result.Entry.Status)
+	}
+	// Diff context flowed to the performer.
+	if seen.BaseRef != "main" {
+		t.Fatalf("performer BaseRef = %q, want main", seen.BaseRef)
+	}
+	if len(seen.ChangedFiles) != 2 {
+		t.Fatalf("performer ChangedFiles = %v, want 2", seen.ChangedFiles)
+	}
+	// ...and into the initial entry's diagnostics for operator visibility.
+	if got, _ := result.Entry.Diagnostics["changed_files"].(float64); int(got) != 2 {
+		t.Fatalf("entry diagnostics changed_files = %v, want 2", result.Entry.Diagnostics["changed_files"])
+	}
+	if got, _ := result.Entry.Diagnostics["job_name"].(string); got != "apply-hot-swap-run1" {
+		t.Fatalf("entry diagnostics job_name = %v, want apply-hot-swap-run1", result.Entry.Diagnostics["job_name"])
 	}
 }
 

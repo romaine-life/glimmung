@@ -3,7 +3,6 @@ package server
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -11,13 +10,11 @@ import (
 	"github.com/romaine-life/glimmung/internal/domain/hotswap"
 )
 
-// fakeK8sJobClient records the calls ApplyHotSwap makes against the
-// k8s API surface. Lets the test assert on dispatched Job spec + the
-// happy/failure paths without standing up a real k8s API.
+// fakeK8sJobClient records the calls DispatchHotSwap + finalizeHotSwap make
+// against the k8s API surface. Lets the test assert on the dispatched Job spec
+// and the finalize log/classify paths without standing up a real k8s API.
 type fakeK8sJobClient struct {
 	appliedJobs []map[string]any
-	waitResult  string
-	waitErr     error
 	buildLogs   string
 	swapLogs    string
 	deleted     []string
@@ -26,10 +23,6 @@ type fakeK8sJobClient struct {
 func (f *fakeK8sJobClient) ApplyJob(_ context.Context, _ string, spec map[string]any) error {
 	f.appliedJobs = append(f.appliedJobs, spec)
 	return nil
-}
-
-func (f *fakeK8sJobClient) WaitForJob(_ context.Context, _ string, _ string, _ time.Duration) (string, error) {
-	return f.waitResult, f.waitErr
 }
 
 func (f *fakeK8sJobClient) GetPodLogs(_ context.Context, _ string, _ string, container string) (string, error) {
@@ -44,18 +37,15 @@ func (f *fakeK8sJobClient) DeleteJob(_ context.Context, _ string, name string) e
 	return nil
 }
 
-// TestApplyHotSwapHappyPathDispatchesJob asserts the Job spec carries
-// the contract's builder_image, build_command, target, container, and
-// pod selector — and that the swap script does pod resolution + tar-
-// stream + SIGHUP via kubectl inside the alpine/k8s container (not
-// from the glimmung pod, which has no kubectl).
-func TestApplyHotSwapHappyPathDispatchesJob(t *testing.T) {
-	k8s := &fakeK8sJobClient{
-		waitResult: "complete",
-		buildLogs:  "build ok",
-		swapLogs:   "swap ok",
-	}
-	result, err := ApplyHotSwap(context.Background(), k8s, ApplyHotSwapOptions{
+// TestDispatchHotSwapHappyPathDispatchesJob asserts the Job spec carries the
+// contract's builder_image, build_command, target, container, and pod selector
+// — and that the swap script does pod resolution + tar-stream + SIGHUP via
+// kubectl inside the alpine/k8s container (not from the glimmung pod, which has
+// no kubectl). The dispatch returns "running" and does NOT wait or delete: the
+// gated finalizer owns the terminal outcome and Job cleanup.
+func TestDispatchHotSwapHappyPathDispatchesJob(t *testing.T) {
+	k8s := &fakeK8sJobClient{}
+	result, err := DispatchHotSwap(context.Background(), k8s, ApplyHotSwapOptions{
 		Project:          "tank-operator",
 		ArtifactKind:     "agent_runner",
 		GitRef:           "feat/x",
@@ -85,14 +75,22 @@ func TestApplyHotSwapHappyPathDispatchesJob(t *testing.T) {
 	if err != nil {
 		t.Fatalf("err: %v (result %+v)", err, result)
 	}
-	if result.Outcome != "persisted" {
-		t.Fatalf("outcome = %q, want persisted", result.Outcome)
+	if result.Outcome != "running" {
+		t.Fatalf("outcome = %q, want running", result.Outcome)
+	}
+	if result.JobName == "" {
+		t.Fatal("dispatch must return a job handle")
 	}
 	if result.ValidationTarget != "new_session" {
 		t.Fatalf("validation target = %q, want new_session", result.ValidationTarget)
 	}
 	if len(k8s.appliedJobs) != 1 {
 		t.Fatalf("applied jobs = %d, want 1", len(k8s.appliedJobs))
+	}
+	// Dispatch must not delete the Job — the finalizer does that once it is
+	// terminal. A delete here would race the build to death.
+	if len(k8s.deleted) != 0 {
+		t.Fatalf("dispatch deleted jobs = %d, want 0 (finalizer owns cleanup)", len(k8s.deleted))
 	}
 
 	// Marshal + grep the Job spec for the contract-shaped fields.
@@ -113,25 +111,18 @@ func TestApplyHotSwapHappyPathDispatchesJob(t *testing.T) {
 		"tar x --strip-components=1 -f -",            // strip the source/ member so the non-root pod never chmods the root-owned mount dir
 		"kill -HUP 1",                                // SIGHUP signal
 		"feat/x",                                     // git ref
+		`"activeDeadlineSeconds":30`,                 // timeout enforced on the Job, not a held request
 	}
 	for _, c := range checks {
 		if !strings.Contains(s, c) {
 			t.Errorf("Job spec missing %q\nspec=%s", c, s)
 		}
 	}
-	// Cleanup ran
-	if len(k8s.deleted) != 1 {
-		t.Fatalf("delete jobs = %d, want 1", len(k8s.deleted))
-	}
 }
 
-func TestApplyHotSwapCodexRunnerDispatchesJob(t *testing.T) {
-	k8s := &fakeK8sJobClient{
-		waitResult: "complete",
-		buildLogs:  "build ok",
-		swapLogs:   "swap ok",
-	}
-	result, err := ApplyHotSwap(context.Background(), k8s, ApplyHotSwapOptions{
+func TestDispatchHotSwapCodexRunnerDispatchesJob(t *testing.T) {
+	k8s := &fakeK8sJobClient{}
+	result, err := DispatchHotSwap(context.Background(), k8s, ApplyHotSwapOptions{
 		Project:         "tank-operator",
 		ArtifactKind:    "codex_runner",
 		GitRef:          "feat/codex",
@@ -156,8 +147,8 @@ func TestApplyHotSwapCodexRunnerDispatchesJob(t *testing.T) {
 	if err != nil {
 		t.Fatalf("err: %v (result %+v)", err, result)
 	}
-	if result.Outcome != "persisted" {
-		t.Fatalf("outcome = %q, want persisted", result.Outcome)
+	if result.Outcome != "running" {
+		t.Fatalf("outcome = %q, want running", result.Outcome)
 	}
 	if len(k8s.appliedJobs) != 1 {
 		t.Fatalf("applied jobs = %d, want 1", len(k8s.appliedJobs))
@@ -179,13 +170,9 @@ func TestApplyHotSwapCodexRunnerDispatchesJob(t *testing.T) {
 	}
 }
 
-func TestApplyHotSwapAntigravityRunnerDispatchesJob(t *testing.T) {
-	k8s := &fakeK8sJobClient{
-		waitResult: "complete",
-		buildLogs:  "build ok",
-		swapLogs:   "swap ok",
-	}
-	result, err := ApplyHotSwap(context.Background(), k8s, ApplyHotSwapOptions{
+func TestDispatchHotSwapAntigravityRunnerDispatchesJob(t *testing.T) {
+	k8s := &fakeK8sJobClient{}
+	result, err := DispatchHotSwap(context.Background(), k8s, ApplyHotSwapOptions{
 		Project:         "tank-operator",
 		ArtifactKind:    "antigravity_runner",
 		GitRef:          "feat/antigravity",
@@ -210,8 +197,8 @@ func TestApplyHotSwapAntigravityRunnerDispatchesJob(t *testing.T) {
 	if err != nil {
 		t.Fatalf("err: %v (result %+v)", err, result)
 	}
-	if result.Outcome != "persisted" {
-		t.Fatalf("outcome = %q, want persisted", result.Outcome)
+	if result.Outcome != "running" {
+		t.Fatalf("outcome = %q, want running", result.Outcome)
 	}
 	if len(k8s.appliedJobs) != 1 {
 		t.Fatalf("applied jobs = %d, want 1", len(k8s.appliedJobs))
@@ -234,19 +221,13 @@ func TestApplyHotSwapAntigravityRunnerDispatchesJob(t *testing.T) {
 	}
 }
 
-// TestApplyHotSwapBackendDispatchesJob asserts the backend path: build a
-// single binary from the ref, stream it onto the supervisor's hot-artifact
-// file in the slot's APP namespace, SIGHUP PID 1, then health-gate the
-// re-exec inside the pod. It must NOT use the runner/static dir-extract
-// path: backend streams one file (cat > target.next; chmod; atomic mv) and
-// polls the in-pod health endpoint instead of tar-extracting a directory.
-func TestApplyHotSwapBackendDispatchesJob(t *testing.T) {
-	k8s := &fakeK8sJobClient{
-		waitResult: "complete",
-		buildLogs:  "build ok",
-		swapLogs:   "health ok after restart",
-	}
-	result, err := ApplyHotSwap(context.Background(), k8s, ApplyHotSwapOptions{
+// TestDispatchHotSwapBackendDispatchesJob asserts the backend path: build a
+// single binary from the ref, stream it onto the supervisor's hot-artifact file
+// in the slot's APP namespace, SIGHUP PID 1, then health-gate the re-exec inside
+// the pod. It must NOT use the runner/static dir-extract path.
+func TestDispatchHotSwapBackendDispatchesJob(t *testing.T) {
+	k8s := &fakeK8sJobClient{}
+	result, err := DispatchHotSwap(context.Background(), k8s, ApplyHotSwapOptions{
 		Project:         "tank-operator",
 		ArtifactKind:    "backend",
 		GitRef:          "feat/x",
@@ -273,19 +254,14 @@ func TestApplyHotSwapBackendDispatchesJob(t *testing.T) {
 	if err != nil {
 		t.Fatalf("err: %v (result %+v)", err, result)
 	}
-	if result.Outcome != "persisted" {
-		t.Fatalf("outcome = %q, want persisted", result.Outcome)
+	if result.Outcome != "running" {
+		t.Fatalf("outcome = %q, want running", result.Outcome)
 	}
 	if len(k8s.appliedJobs) != 1 {
 		t.Fatalf("applied jobs = %d, want 1", len(k8s.appliedJobs))
 	}
 	jobJSON, _ := json.Marshal(k8s.appliedJobs[0])
 	s := string(jobJSON)
-	// Substrings free of <, >, & so Go's json.Marshal HTML-escaping (which
-	// turns `>` into >, `&&` into &&) doesn't make the
-	// assertions brittle. Together these prove: app-pod selector, single-file
-	// build surface, stdin stream (exec -i) onto a staged .next file, atomic
-	// replace, SIGHUP re-exec, and the in-pod health gate.
 	mustContain := []string{
 		`"glimmung.io/apply-hot-swap-kind":"backend"`,
 		"golang:1.26-alpine",                               // builder image
@@ -308,17 +284,12 @@ func TestApplyHotSwapBackendDispatchesJob(t *testing.T) {
 	}
 }
 
-// TestApplyHotSwapStaticDispatchesJob asserts the static path: build from
-// the ref, clear the override dir, tar-stream dist into every matched app
-// replica in the slot's APP namespace, and send NO restart (static is
-// served live from the override dir).
-func TestApplyHotSwapStaticDispatchesJob(t *testing.T) {
-	k8s := &fakeK8sJobClient{
-		waitResult: "complete",
-		buildLogs:  "build ok",
-		swapLogs:   "swap ok",
-	}
-	result, err := ApplyHotSwap(context.Background(), k8s, ApplyHotSwapOptions{
+// TestDispatchHotSwapStaticDispatchesJob asserts the static path: build from the
+// ref, clear the override dir, tar-stream dist into every matched app replica in
+// the slot's APP namespace, and send NO restart (static is served live).
+func TestDispatchHotSwapStaticDispatchesJob(t *testing.T) {
+	k8s := &fakeK8sJobClient{}
+	result, err := DispatchHotSwap(context.Background(), k8s, ApplyHotSwapOptions{
 		Project:         "tank-operator",
 		ArtifactKind:    "static",
 		GitRef:          "feat/ui",
@@ -342,8 +313,8 @@ func TestApplyHotSwapStaticDispatchesJob(t *testing.T) {
 	if err != nil {
 		t.Fatalf("err: %v (result %+v)", err, result)
 	}
-	if result.Outcome != "persisted" {
-		t.Fatalf("outcome = %q, want persisted", result.Outcome)
+	if result.Outcome != "running" {
+		t.Fatalf("outcome = %q, want running", result.Outcome)
 	}
 	if len(k8s.appliedJobs) != 1 {
 		t.Fatalf("applied jobs = %d, want 1", len(k8s.appliedJobs))
@@ -376,15 +347,58 @@ func TestApplyHotSwapStaticDispatchesJob(t *testing.T) {
 	}
 }
 
-// TestApplyHotSwapFetchesRefWithAuth pins the clone fix: the build Job
-// authenticates via GIT_ASKPASS (token never on a command line / in set -x)
-// and fetches the ref by name OR sha. `git clone --branch <sha>` is invalid,
-// and the restricted-mode gate pins git_ref to the verified HEAD sha, so the
-// Job must fetch-by-ref, not clone --branch.
-func TestApplyHotSwapFetchesRefWithAuth(t *testing.T) {
-	k8s := &fakeK8sJobClient{waitResult: "complete", buildLogs: "ok", swapLogs: "ok"}
+// TestDispatchHotSwapPlumbsDiffContextAndSlotLabel pins the issue-3 wiring: the
+// classifier's diff context (base/head/changed-files) reaches the build
+// container as env, and the slot-name label the finalizer joins on is stamped on
+// the Job.
+func TestDispatchHotSwapPlumbsDiffContextAndSlotLabel(t *testing.T) {
+	k8s := &fakeK8sJobClient{}
+	_, err := DispatchHotSwap(context.Background(), k8s, ApplyHotSwapOptions{
+		Project:         "tank-operator",
+		ArtifactKind:    "static",
+		GitRef:          "feat/ui",
+		RepoURL:         "https://github.com/romaine-life/tank-operator.git",
+		TargetNamespace: "tank-operator-slot-1",
+		SlotName:        "tank-operator-slot-1",
+		JobNamespace:    "glimmung",
+		Timeout:         600 * time.Second,
+		BaseRef:         "main",
+		HeadRef:         "feat/ui",
+		ChangedFiles:    []string{"frontend/src/App.tsx", "backend-go/cmd/tank-operator/server.go"},
+		Contract: hotswap.Contract{
+			Enabled: true,
+			Static: hotswap.StaticContract{
+				Enabled: true, Source: "frontend/dist", Target: "/var/run/o",
+				BuildCommand: "true", PodSelector: "app.kubernetes.io/name=tank-operator",
+				Container: "tank-operator", BuilderImage: "node:20-alpine",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	s := string(mustJSON(t, k8s.appliedJobs[0]))
+	for _, c := range []string{
+		`"name":"GLIMMUNG_BASE_REF","value":"main"`,
+		`"name":"GLIMMUNG_HEAD_REF","value":"feat/ui"`,
+		`"name":"GLIMMUNG_CHANGED_FILES"`,
+		"frontend/src/App.tsx",                                // changed file present in env
+		`"glimmung.io/slot-name":"tank-operator-slot-1"`,      // finalizer join key
+		`"activeDeadlineSeconds":600`,                         // honored timeout_seconds
+	} {
+		if !strings.Contains(s, c) {
+			t.Errorf("Job spec missing %q\nspec=%s", c, s)
+		}
+	}
+}
+
+// TestDispatchHotSwapFetchesRefWithAuth pins the clone fix: the build Job
+// authenticates via GIT_ASKPASS (token never on a command line / in set -x) and
+// fetches the ref by name OR sha.
+func TestDispatchHotSwapFetchesRefWithAuth(t *testing.T) {
+	k8s := &fakeK8sJobClient{}
 	sha := "f3771d1cca46d3c9e6f931e8ca5b52a486947d3a"
-	result, err := ApplyHotSwap(context.Background(), k8s, ApplyHotSwapOptions{
+	result, err := DispatchHotSwap(context.Background(), k8s, ApplyHotSwapOptions{
 		Project:         "tank-operator",
 		ArtifactKind:    "agent_runner",
 		GitRef:          sha, // gate pins to a sha; --branch <sha> would fail
@@ -405,8 +419,8 @@ func TestApplyHotSwapFetchesRefWithAuth(t *testing.T) {
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	if result.Outcome != "persisted" {
-		t.Fatalf("outcome = %q, want persisted", result.Outcome)
+	if result.Outcome != "running" {
+		t.Fatalf("outcome = %q, want running", result.Outcome)
 	}
 	jobJSON, _ := json.Marshal(k8s.appliedJobs[0])
 	s := string(jobJSON)
@@ -427,12 +441,10 @@ func TestApplyHotSwapFetchesRefWithAuth(t *testing.T) {
 	}
 }
 
-func TestApplyHotSwapRejectsUnsupportedKind(t *testing.T) {
+func TestDispatchHotSwapRejectsUnsupportedKind(t *testing.T) {
 	k8s := &fakeK8sJobClient{}
-	// backend is now a supported kind (see TestApplyHotSwapBackendDispatchesJob);
-	// only genuinely-unknown kinds reach the default rejection.
 	for _, kind := range []string{"", "frontend", "image"} {
-		_, err := ApplyHotSwap(context.Background(), k8s, ApplyHotSwapOptions{
+		_, err := DispatchHotSwap(context.Background(), k8s, ApplyHotSwapOptions{
 			ArtifactKind: kind,
 			Contract:     hotswap.Contract{Enabled: true, AgentRunner: hotswap.AgentRunnerContract{Enabled: true, BuilderImage: "x"}},
 		})
@@ -448,9 +460,9 @@ func TestApplyHotSwapRejectsUnsupportedKind(t *testing.T) {
 	}
 }
 
-func TestApplyHotSwapRejectsMissingBuilderImage(t *testing.T) {
+func TestDispatchHotSwapRejectsMissingBuilderImage(t *testing.T) {
 	k8s := &fakeK8sJobClient{}
-	_, err := ApplyHotSwap(context.Background(), k8s, ApplyHotSwapOptions{
+	_, err := DispatchHotSwap(context.Background(), k8s, ApplyHotSwapOptions{
 		ArtifactKind:    "agent_runner",
 		TargetNamespace: "ns",
 		RepoURL:         "https://github.com/romaine-life/tank-operator.git",
@@ -464,76 +476,53 @@ func TestApplyHotSwapRejectsMissingBuilderImage(t *testing.T) {
 	}
 }
 
-// TestApplyHotSwapJobFailureSurfacesLogs asserts that when WaitForJob
-// returns failed, the result Outcome is build_failed/swap_failed and
-// the relevant log tail is in the response.
-func TestApplyHotSwapJobFailureSurfacesLogs(t *testing.T) {
-	k8s := &fakeK8sJobClient{
-		waitResult: "failed",
-		waitErr:    errors.New("job failed: BackoffLimitExceeded"),
-		buildLogs:  "npm ERR! missing script: build",
-		swapLogs:   "",
+// TestFinalizeHotSwapClassifiesOutcome pins the terminal classification the
+// gated finalizer applies to a completed Job: success → persisted; a deadline
+// overrun → timeout; a failure with empty swap logs (or an errored build) →
+// build_failed; a failure that reached the swap container → swap_failed.
+func TestFinalizeHotSwapClassifiesOutcome(t *testing.T) {
+	cases := []struct {
+		name          string
+		succeeded     bool
+		failureReason string
+		buildLogs     string
+		swapLogs      string
+		want          string
+	}{
+		{name: "success", succeeded: true, buildLogs: "build ok", swapLogs: "swap ok", want: "persisted"},
+		{name: "deadline", succeeded: false, failureReason: "DeadlineExceeded", buildLogs: "...", swapLogs: "", want: "timeout"},
+		{name: "build error empty swap", succeeded: false, failureReason: "BackoffLimitExceeded", buildLogs: "npm ERR! missing script: build", swapLogs: "", want: "build_failed"},
+		{name: "swap reached", succeeded: false, failureReason: "BackoffLimitExceeded", buildLogs: "build ok", swapLogs: "kubectl: no pods matched", want: "swap_failed"},
 	}
-	result, err := ApplyHotSwap(context.Background(), k8s, ApplyHotSwapOptions{
-		ArtifactKind:    "agent_runner",
-		GitRef:          "main",
-		RepoURL:         "https://github.com/romaine-life/tank-operator.git",
-		TargetNamespace: "ns",
-		JobNamespace:    "glimmung",
-		Timeout:         30 * time.Second,
-		Contract: hotswap.Contract{
-			Enabled: true,
-			AgentRunner: hotswap.AgentRunnerContract{
-				Enabled: true, Source: "x", Target: "/x", BuildCommand: "true",
-				PodSelector: "k=v", Container: "c", Restart: "SIGHUP",
-				BuilderImage: "node:20-alpine",
-			},
-		},
-	})
-	if err == nil {
-		t.Fatal("expected error from failed Job")
-	}
-	if result.Outcome != "build_failed" {
-		t.Fatalf("outcome = %q, want build_failed (build logs contain 'ERR', swap logs empty)", result.Outcome)
-	}
-	if result.BuildLogsTail == "" {
-		t.Fatal("build logs tail should be populated on failure")
-	}
-}
-
-// TestApplyHotSwapJobTimeoutSurfaces asserts the timeout outcome label.
-func TestApplyHotSwapJobTimeoutSurfaces(t *testing.T) {
-	k8s := &fakeK8sJobClient{
-		waitResult: "timeout",
-		waitErr:    errors.New("job did not complete within 30s"),
-	}
-	result, _ := ApplyHotSwap(context.Background(), k8s, ApplyHotSwapOptions{
-		ArtifactKind:    "agent_runner",
-		GitRef:          "main",
-		RepoURL:         "https://github.com/romaine-life/tank-operator.git",
-		TargetNamespace: "ns",
-		JobNamespace:    "glimmung",
-		Timeout:         30 * time.Second,
-		Contract: hotswap.Contract{
-			Enabled: true,
-			AgentRunner: hotswap.AgentRunnerContract{
-				Enabled: true, Source: "x", Target: "/x", BuildCommand: "true",
-				PodSelector: "k=v", Container: "c", Restart: "SIGHUP",
-				BuilderImage: "node:20-alpine",
-			},
-		},
-	})
-	if result.Outcome != "timeout" {
-		t.Fatalf("outcome = %q, want timeout", result.Outcome)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			k8s := &fakeK8sJobClient{buildLogs: tc.buildLogs, swapLogs: tc.swapLogs}
+			result := finalizeHotSwap(context.Background(), k8s, finalizeHotSwapInputs{
+				JobName:          "apply-hot-swap-abc",
+				JobNamespace:     "glimmung-runs",
+				ArtifactKind:     "static",
+				ValidationTarget: "existing_session",
+			}, tc.succeeded, tc.failureReason)
+			if result.Outcome != tc.want {
+				t.Fatalf("outcome = %q, want %q", result.Outcome, tc.want)
+			}
+			if tc.buildLogs != "" && result.BuildLogsTail == "" {
+				t.Error("build logs tail should be populated")
+			}
+			if !tc.succeeded && result.Error == "" {
+				t.Error("a non-success outcome should carry an error string")
+			}
+		})
 	}
 }
 
-// TestApplyHotSwapSubstitutesSlotNameInSelectorAndContainer pins the {slot_name}
-// substitution for projects (e.g. chess-tactics) whose app pods are labeled and
-// whose container is named by the slot name rather than a static label.
-func TestApplyHotSwapSubstitutesSlotNameInSelectorAndContainer(t *testing.T) {
-	k8s := &fakeK8sJobClient{waitResult: "complete", buildLogs: "ok", swapLogs: "ok"}
-	_, err := ApplyHotSwap(context.Background(), k8s, ApplyHotSwapOptions{
+// TestDispatchHotSwapSubstitutesSlotNameInSelectorAndContainer pins the
+// {slot_name} substitution for projects (e.g. chess-tactics) whose app pods are
+// labeled and whose container is named by the slot name rather than a static
+// label.
+func TestDispatchHotSwapSubstitutesSlotNameInSelectorAndContainer(t *testing.T) {
+	k8s := &fakeK8sJobClient{}
+	_, err := DispatchHotSwap(context.Background(), k8s, ApplyHotSwapOptions{
 		Project:         "chess-tactics",
 		ArtifactKind:    "static",
 		GitRef:          "feat/x",

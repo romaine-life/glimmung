@@ -136,22 +136,29 @@ boot runner code from the branch image.
 }
 ```
 
-### Sync UX, ArgoCD pattern
+### Async dispatch + durable finalize + poll
 
-The endpoint **blocks until done or timeout**. Researched against
-Google AIP-151 (which prescribes async-only operations for >10s); we
-chose ArgoCD's `app sync` pattern instead because the caller is a
-developer iterating, not a platform service that fans out. The dev
-wants one call to return done/failed/diagnostics, mirroring `kubectl`
-and `helm install`'s blocking-first design.
+The POST **dispatches the build-and-swap Job and returns immediately** with a
+`running` handle (`job_name`) plus an initial history entry — it does not hold a
+connection open for the build. The build-and-swap deadline is enforced on the
+Job itself (`spec.activeDeadlineSeconds`, default 120s, caller-overridable via
+`timeout_seconds`, clamped to a hard 600s); a `ControlPlaneLoopsEnabled`-gated
+finalizer records the terminal outcome when the Job completes; and the caller
+polls `GET /v1/test-slots/apply-hot-swap/{project}/{job}` until the entry is
+terminal.
 
-Timeout defaults to 120s (covers the 30-90s expected build-and-swap
-range plus buffer for cold image pulls); caller can specify
-`timeout_seconds` in the request, clamped server-side to a hard max of
-600s. A caller asking for 8 hours can't hold a connection open beyond
-the cap; the underlying Job runs to its own deadline.
+This replaced the original "endpoint blocks until done" shape. Blocking tied
+both the result and the history write to the inbound connection, so a ~30s
+client/proxy deadline aborted the request (and, because the same request context
+fed the history write, corrupted or dropped the durable record) while the
+Kubernetes Job ran on to completion. The async shape removes the long-held
+connection entirely: every durable write runs on a request-detached context
+(`context.WithoutCancel`), so a client disconnect, proxy deadline, or
+orchestrator rollout can never abort it, and the `mcp-glimmung` wrapper turns
+dispatch + poll back into a synchronous developer UX without holding any single
+HTTP request open for the whole build.
 
-### What the endpoint does
+### What the dispatch (POST) does
 
 1. Resolves the active test-slot lease for `project + slot`.
 2. Reads the project's `test_slot_hot_swap` contract from metadata.
@@ -159,57 +166,70 @@ the cap; the underlying Job runs to its own deadline.
    present (`builder_image`, `pod_selector`, `container`, and `health_port`
    for `backend`; `builder_image`, `pod_selector`, and `container` for
    `static`).
-4. Dispatches a one-off Kubernetes Job:
-   - **Init container** uses `contract.<kind>.builder_image`. Clones
-     the repo at `git_ref`, runs the optional `fidelity_classifier`
-     command, runs `contract.<kind>.build_command`, and leaves either a
-     source dir at `/work/source` (static/runner) or, for `backend`, the
-     single built executable (`contract.backend.artifact`) at
+4. Resolves the fidelity classifier's diff context. The build Job's shallow
+   single-SHA checkout cannot compute a real diff, so glimmung computes the
+   changed-file set server-side via the GitHub Compare API
+   (`base...git_ref`, merge-base three-dot; `base_ref` defaults to the repo's
+   default branch) and passes it to the build container as
+   `GLIMMUNG_CHANGED_FILES` / `GLIMMUNG_BASE_REF` / `GLIMMUNG_HEAD_REF`.
+5. Dispatches a one-off Kubernetes Job (`activeDeadlineSeconds` = the resolved
+   timeout; an `app.kubernetes.io/name=glimmung-apply-hot-swap` label and a
+   `glimmung.io/slot-name` label the finalizer joins on):
+   - **Init container** uses `contract.<kind>.builder_image`. Clones the repo
+     at `git_ref`, runs the optional `fidelity_classifier` command (which now
+     sees the real changed-file set), runs `contract.<kind>.build_command`, and
+     leaves either a source dir at `/work/source` (static/runner) or, for
+     `backend`, the single built executable (`contract.backend.artifact`) at
      `/work/artifact`.
-   - **Main container** uses a kubectl-only image and resolves the target
-     pods from `contract.<kind>.pod_selector`. For static/runner it
-     tar-streams `/work/source` into `contract.<kind>.target` and sends
-     `contract.<kind>.restart` to PID 1. **Static differs:** its target is
-     the slot's app pods (the `<slot_name>` namespace, not
-     `<slot_name>-sessions`), the override dir is cleared before the copy so
-     stale content-hashed assets don't linger, and no restart is sent
-     because static assets are served live. **Backend differs:** it also
-     targets the slot's app pods, but streams `/work/artifact` onto the
-     supervisor's hot-artifact file (`chmod +x`, atomic `mv`), SIGHUPs PID 1
-     so the supervisor re-execs, then polls
+   - **Main container** uses a kubectl-only image and resolves the target pods
+     from `contract.<kind>.pod_selector`. For static/runner it tar-streams
+     `/work/source` into `contract.<kind>.target` and sends
+     `contract.<kind>.restart` to PID 1. **Static differs:** its target is the
+     slot's app pods (the `<slot_name>` namespace, not `<slot_name>-sessions`),
+     the override dir is cleared before the copy so stale content-hashed assets
+     don't linger, and no restart is sent because static assets are served live.
+     **Backend differs:** it also targets the slot's app pods, but streams
+     `/work/artifact` onto the supervisor's hot-artifact file (`chmod +x`,
+     atomic `mv`), SIGHUPs PID 1 so the supervisor re-execs, then polls
      `http://127.0.0.1:<health_port><health_path>` inside each pod until a
      `2xx` — a re-exec that never serves fails the swap.
-5. Watches the Job to completion via `kubectl wait`.
-6. Collects build + swap logs (last 4000 chars each).
-7. Appends a hot-swap history entry to the lease — **always**, success
-   or failure. Durable state in the system, not in the response.
-8. Extends the lease when it has less than the configured hot-swap
-   minimum TTL remaining.
-9. Returns a structured result.
+6. Appends an initial `running` hot-swap history entry carrying the job handle.
+7. Extends the lease so the slot survives the full build-and-swap.
+8. Returns the structured result with status `running` + the job handle.
 
-### What's deliberately out of scope (v1)
+### What the finalizer does
 
-- **Async / fire-and-forget mode.** Sync is the documented shape;
-  async will be additive if we ever need it (the Job's history record
-  already exists in the lease, so the platform shape supports both).
-- **Streaming progress.** The Job's logs are available via
-  `kubectl logs job/<name>` while the swap is in flight, for live
-  inspection. The final result includes the last 4000 chars.
+A gated, event-driven finalizer watches `glimmung-apply-hot-swap` Jobs (it runs
+only in the prod control plane, never in a slot process — same isolation gate as
+the run-job watcher). When a Job reaches a terminal condition it:
+
+1. Joins the Job back to its leased slot via the `glimmung.io/slot-name` label.
+2. Collects build + swap logs (last 4000 chars each) and classifies the outcome.
+3. Appends the **terminal** hot-swap history entry — idempotently, keyed by the
+   job handle, so duplicate apiserver events and post-restart re-lists never
+   double-record.
+4. Re-checks the lease minimum TTL and deletes the Job.
+
+If the dispatching caller is gone, the finalizer still records everything — the
+durable lease history is the source of truth.
 
 ## The outcome
 
-The response has an `Outcome` field with four bounded values:
+The history entry's status starts at `running` and is finalized to one of four
+bounded terminal values:
 
-- `persisted` — Job's "complete" condition fired; new code is running
-  in the target pod(s).
-- `build_failed` — init container exited non-zero. Build logs in the
-  response surface the failure.
-- `swap_failed` — main container exited non-zero. Swap logs surface
-  the failure.
-- `timeout` — Job didn't complete within the request's timeout. The
-  Job continues running on the cluster (its own deadline is set higher
-  than the request's), so the final result lands in the lease history
-  even though the request returned early.
+- `persisted` — the Job's "complete" condition fired; new code is running in the
+  target pod(s).
+- `build_failed` — the init container exited non-zero. Build logs in the entry
+  surface the failure.
+- `swap_failed` — the swap container exited non-zero. Swap logs surface the
+  failure.
+- `timeout` — the Job hit its `activeDeadlineSeconds` (reason `DeadlineExceeded`)
+  before completing.
+
+Poll `GET /v1/test-slots/apply-hot-swap/{project}/{job}` for the latest status;
+it returns the durable history entry (`running` until the finalizer records a
+terminal value).
 
 ## Migrating from the manual kubectl pattern
 

@@ -41,11 +41,26 @@
 //      for agent_runner, golang:1.26-alpine for backend). No language
 //      heuristics, no hardcoded defaults — the contract owns this.
 //
-//   3. Sync by default, ArgoCD pattern. Endpoint blocks until done or
-//      timeout. Server-side timeout default ~120s, hard cap ~600s.
-//      Structured response includes build-log tail, swap details,
-//      health-poll result, timings. History recorded regardless of
-//      outcome (durable state lives in the system, not in the request).
+//   3. Async dispatch + durable finalize + poll (supersedes the original
+//      synchronous design). The POST dispatches the build-and-swap Job and
+//      returns immediately with a "running" handle + an initial history
+//      entry; the build-and-swap deadline is enforced on the Job
+//      (activeDeadlineSeconds, default ~120s, hard cap ~600s), not on a held
+//      HTTP request; a ControlPlaneLoopsEnabled-gated finalizer records the
+//      terminal outcome (persisted | build_failed | swap_failed | timeout)
+//      when the Job completes; the caller polls
+//      GET /v1/test-slots/apply-hot-swap/{project}/{job} until terminal.
+//      The durable hot-swap history — not the response body — is the source
+//      of truth, and every write runs on a request-detached context
+//      (context.WithoutCancel) so a client disconnect, proxy deadline, or
+//      orchestrator rollout can never abort it. This replaced the original
+//      "endpoint blocks until done" shape, which tied the result and the
+//      history write to the inbound connection and surfaced only a ~30s
+//      proxy timeout while the Job ran on to completion. Issue 3: the
+//      classifier diff context (base...head changed files) is resolved
+//      server-side and plumbed into the build container as
+//      GLIMMUNG_CHANGED_FILES, since the shallow build checkout cannot
+//      compute a real diff.
 //
 //   4. The apply endpoint is now the ONLY hot-swap path. backend joined
 //      static + the runner kinds on the CI-gated endpoint, so the legacy
@@ -139,9 +154,33 @@ const CHECKS = [
     id: "ops-dispatcher-fn",
     from: "Guarantee 1: end-to-end apply",
     file: "internal/server/test_slot_apply_hot_swap_ops.go",
-    description: "Dispatcher function ApplyHotSwap takes a k8sJobClient (no kubectl shell-out — glimmung pod has no kubectl; matches the native_launcher request() pattern)",
+    description: "Dispatcher function DispatchHotSwap takes a k8sJobClient (no kubectl shell-out — glimmung pod has no kubectl; matches the native_launcher request() pattern) and returns without waiting",
     kind: "grep-present",
-    pattern: /func\s+ApplyHotSwap\([\s\S]{0,200}?k8sJobClient/,
+    pattern: /func\s+DispatchHotSwap\([\s\S]{0,200}?k8sJobClient/,
+  },
+  {
+    id: "ops-dispatcher-nonblocking",
+    from: "Guarantee 1: end-to-end apply",
+    file: "internal/server/test_slot_apply_hot_swap_ops.go",
+    description: "DispatchHotSwap returns Outcome=\"running\" after ApplyJob — it does NOT block on a synchronous WaitForJob (the gated finalizer owns completion).",
+    kind: "grep-present",
+    pattern: /ApplyJob\([\s\S]{0,400}?Outcome\s*=\s*"running"/,
+  },
+  {
+    id: "ops-no-synchronous-wait",
+    from: "Guarantee 1: end-to-end apply",
+    file: "internal/server/test_slot_apply_hot_swap_ops.go",
+    description: "The blocking WaitForJob poll-to-completion is removed from the apply path — the deadline lives on the Job (activeDeadlineSeconds) and the finalizer reads the terminal status. Reintroduction fails this check.",
+    kind: "grep-absent",
+    pattern: /WaitForJob/,
+  },
+  {
+    id: "ops-job-active-deadline",
+    from: "Guarantee 1: end-to-end apply",
+    file: "internal/server/test_slot_apply_hot_swap_ops.go",
+    description: "The build-and-swap timeout is enforced as the Job's spec.activeDeadlineSeconds (k8s fails the Job with DeadlineExceeded on overrun), not by a held request.",
+    kind: "grep-present",
+    pattern: /activeDeadlineSeconds/,
   },
   {
     id: "ops-dispatcher-job-spec",
@@ -152,12 +191,40 @@ const CHECKS = [
     pattern: /initContainers|InitContainers/,
   },
   {
-    id: "ops-dispatcher-watches-job",
+    id: "ops-finalize-classifies-terminal",
     from: "Guarantee 1: end-to-end apply",
     file: "internal/server/test_slot_apply_hot_swap_ops.go",
-    description: "Dispatcher polls Job's status.conditions via the k8s HTTP API (Complete/Failed types), not by kubectl-wait. Bounded by Timeout.",
+    description: "finalizeHotSwap classifies an already-terminal Job from its status + logs into the bounded outcome set, mapping DeadlineExceeded → timeout. It does not wait — the gated finalizer invokes it once the apiserver reports the Job terminal.",
     kind: "grep-present",
-    pattern: /WaitForJob[\s\S]{0,2000}?conditions|Complete[\s\S]{0,200}?Failed/,
+    pattern: /func\s+finalizeHotSwap\([\s\S]{0,800}?DeadlineExceeded[\s\S]{0,200}?"timeout"/,
+  },
+  {
+    id: "finalizer-watcher-gated",
+    from: "Guarantee 1: end-to-end apply",
+    file: "internal/server/apply_hot_swap_watcher.go",
+    description: "The apply-hot-swap finalizer is a ControlPlaneLoopsEnabled-gated watcher (slot processes never finalize prod Jobs), reusing the cluster-wide k8sJobWatcher to detect terminal Jobs event-driven.",
+    kind: "grep-multi-present",
+    patterns: [
+      /func\s+StartApplyHotSwapJobWatcher\(/,
+      /func\s+shouldStartApplyHotSwapJobWatcher\([\s\S]{0,200}?ControlPlaneLoopsEnabled/,
+      /func\s+\(w \*k8sJobWatcher\)\s+dispatchHotSwapTerminal\(/,
+    ],
+  },
+  {
+    id: "finalizer-wired-gated-block",
+    from: "Guarantee 1: end-to-end apply",
+    file: "cmd/glimmung-go/main.go",
+    description: "StartApplyHotSwapJobWatcher is wired in the ControlPlaneLoopsEnabled-gated reconciler block alongside the run-job watcher.",
+    kind: "grep-present",
+    pattern: /StartApplyHotSwapJobWatcher\(/,
+  },
+  {
+    id: "finalizer-idempotent",
+    from: "Guarantee 1: end-to-end apply",
+    file: "internal/server/apply_hot_swap_watcher.go",
+    description: "The finalizer is idempotent across duplicate apiserver events / post-restart re-lists: it skips appending a second terminal entry when one already exists for the job.",
+    kind: "grep-present",
+    pattern: /hotSwapJobHasTerminalEntry/,
   },
   {
     id: "ops-backend-resolved",
@@ -286,12 +353,52 @@ const CHECKS = [
     pattern: /(?:MaxApplyHotSwap|maxApplyHotSwap)?Timeout[\s\S]{0,400}?(?:600|10\*time\.Minute|10 ?\* ?Minute)/,
   },
   {
-    id: "endpoint-blocks-on-job",
-    from: "Guarantee 3: sync UX + durable state",
+    id: "endpoint-detached-durable-write",
+    from: "Guarantee 3: async dispatch + durable state",
     file: "internal/server/test_slot_apply_hot_swap_api.go",
-    description: "Handler blocks until job completion (no fire-and-forget on success path)",
+    description: "The dispatch + initial history write run on a request-detached context (context.WithoutCancel), so a client disconnect can never abort the durable record — the issue-2 fix.",
     kind: "grep-present",
-    pattern: /(?:DispatchApplyHotSwap|ApplyHotSwap)[\s\S]{0,400}?writeJSON\(/,
+    pattern: /context\.WithoutCancel\([\s\S]{0,3000}?AppendTestSlotHotSwapHistory/,
+  },
+  {
+    id: "endpoint-returns-handle-nonblocking",
+    from: "Guarantee 3: async dispatch + durable state",
+    file: "internal/server/test_slot_apply_hot_swap_api.go",
+    description: "The handler dispatches via the performer and returns the structured result (job handle + initial running entry) without waiting for the Job to finish.",
+    kind: "grep-present",
+    pattern: /performer\([\s\S]{0,4000}?writeJSON\(/,
+  },
+  {
+    id: "status-poll-endpoint-registered",
+    from: "Guarantee 3: async dispatch + durable state",
+    file: "internal/server/server.go",
+    description: "GET /v1/test-slots/apply-hot-swap/{project}/{job} poll route registered so the caller can turn a non-blocking dispatch into a synchronous result without a long-held request.",
+    kind: "grep-present",
+    pattern: /GET\s+\/v1\/test-slots\/apply-hot-swap\/\{project\}\/\{job\}/,
+  },
+  {
+    id: "status-poll-handler-exists",
+    from: "Guarantee 3: async dispatch + durable state",
+    file: "internal/server/test_slot_apply_hot_swap_status.go",
+    description: "getApplyHotSwapStatus handler reads the durable hot-swap history entry for a dispatched job (running → terminal).",
+    kind: "grep-present",
+    pattern: /func\s+getApplyHotSwapStatus\(/,
+  },
+  {
+    id: "classifier-diff-resolved",
+    from: "Guarantee 3: async dispatch + durable state",
+    file: "internal/server/test_slot_apply_hot_swap_api.go",
+    description: "The handler resolves the classifier diff context (base...head changed files) via the injectable hotSwapDiffResolver seam before dispatch — issue 3.",
+    kind: "grep-present",
+    pattern: /hotSwapDiffResolver|resolveDiff\(/,
+  },
+  {
+    id: "classifier-diff-plumbed-to-build",
+    from: "Guarantee 3: async dispatch + durable state",
+    file: "internal/server/test_slot_apply_hot_swap_ops.go",
+    description: "The resolved changed-file set is plumbed into the build container as GLIMMUNG_CHANGED_FILES so the fidelity classifier sees a real diff instead of the empty shallow-checkout diff — issue 3.",
+    kind: "grep-present",
+    pattern: /GLIMMUNG_CHANGED_FILES/,
   },
   {
     id: "endpoint-history-on-failure",
@@ -315,11 +422,11 @@ const CHECKS = [
   },
   {
     id: "observability-outcome-prometheus-counter",
-    from: "Guarantee 3: sync UX + durable state",
-    file: "internal/server/test_slot_apply_hot_swap_ops.go",
-    description: "ApplyHotSwap's terminal outcome increments glimmung_hot_swap_outcomes_total via a deferred metrics.RecordHotSwap call (so every return path is counted exactly once).",
+    from: "Guarantee 3: async dispatch + durable state",
+    file: "internal/server/apply_hot_swap_watcher.go",
+    description: "The finalizer increments glimmung_hot_swap_outcomes_total via metrics.RecordHotSwap when it records each terminal outcome (counted once per Job, on the durable-finalize path rather than the now-non-blocking handler).",
     kind: "grep-present",
-    pattern: /defer\s+func\(\)\s*\{[\s\S]{0,200}?metrics\.RecordHotSwap\(result\.Outcome/,
+    pattern: /metrics\.RecordHotSwap\(result\.Outcome/,
   },
 
   // ─────────────────────── Guarantee 4: nothing already-working is touched ───────────────────────
@@ -407,9 +514,9 @@ const CHECKS = [
     id: "test-ops-apply-hot-swap-job-spec",
     from: "Tests",
     file: "internal/server/test_slot_apply_hot_swap_ops_test.go",
-    description: "Test asserts ApplyHotSwap renders the correct Job spec for each artifact_kind (builder_image, init container, main container, volumes)",
+    description: "Test asserts DispatchHotSwap renders the correct Job spec for each artifact_kind (builder_image, init container, main container, volumes) and returns running.",
     kind: "grep-present",
-    pattern: /TestApplyHotSwap|TestDispatchApplyHotSwap/,
+    pattern: /TestDispatchHotSwap/,
   },
   {
     id: "test-backend-dispatches-job",
@@ -417,7 +524,28 @@ const CHECKS = [
     file: "internal/server/test_slot_apply_hot_swap_ops_test.go",
     description: "Test asserts the backend Job spec uses single-file streaming + SIGHUP + the in-pod health gate, and NOT the dir-extract path.",
     kind: "grep-present",
-    pattern: /TestApplyHotSwapBackendDispatchesJob/,
+    pattern: /TestDispatchHotSwapBackendDispatchesJob/,
+  },
+  {
+    id: "test-finalizer-gate-and-record",
+    from: "Tests",
+    file: "internal/server/apply_hot_swap_watcher_test.go",
+    description: "Tests cover the finalizer gate (unreachable when ControlPlaneLoopsEnabled=false), the durable terminal record, idempotency, and the status poll surface.",
+    kind: "grep-multi-present",
+    patterns: [
+      /TestShouldStartApplyHotSwapJobWatcherGate/,
+      /TestDispatchHotSwapTerminalRecordsOutcome/,
+      /TestDispatchHotSwapTerminalIsIdempotent/,
+      /TestGetApplyHotSwapStatusReturnsLatestEntry/,
+    ],
+  },
+  {
+    id: "test-classifier-diff",
+    from: "Tests",
+    file: "internal/server/hot_swap_diff_test.go",
+    description: "Test asserts glimmung resolves the changed-file set via the GitHub Compare API (three-dot, default-branch base) for the classifier — issue 3.",
+    kind: "grep-present",
+    pattern: /TestResolveHotSwapDiffComputesChangedFiles/,
   },
   {
     id: "test-endpoint-happy-path",
