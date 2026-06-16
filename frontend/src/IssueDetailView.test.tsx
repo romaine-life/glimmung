@@ -675,6 +675,93 @@ describe("IssueDetailView run execution graph", () => {
     });
   });
 
+  it("opens a queued run when dispatch finds no capacity", async () => {
+    const unlockedIssue = {
+      ...issueDetail,
+      issue_lock_held: false,
+      last_run_state: "passed",
+    };
+
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url =
+        typeof input === "string"
+          ? new URL(input, "https://glimmung.test")
+          : input instanceof URL
+            ? input
+            : new URL(input.url);
+      if (url.pathname === "/v1/issues/by-number/ambience/172") return json(unlockedIssue);
+      if (url.pathname === "/v1/issues/by-number/ambience/172/graph") return json(issueGraph);
+      if (url.pathname === "/v1/workflows") return json([]);
+      if (url.pathname === "/v1/runs/dispatch" && init?.method === "POST") {
+        return json({
+          state: "queued",
+          issue_ref: "ambience#172",
+          issue_number: 172,
+          run_number: 8,
+          cycle_number: 8,
+          run_cycle_number: 1,
+          run_ref: "ambience#172/runs/8.1",
+          detail: "queued awaiting project test slot capacity",
+        });
+      }
+      throw new Error(`unhandled fetch ${url.pathname}`);
+    }));
+
+    renderIssueDetail("/projects/ambience/issues/172/settings");
+
+    await userEvent.click(await screen.findByRole("button", { name: "dispatch" }));
+
+    // A queued run is a real, durable run — dispatch lands on it so the user
+    // sees it waiting for capacity instead of the click silently settling.
+    await waitFor(() => {
+      expect(screen.getByTestId("path")).toHaveTextContent(
+        "/projects/ambience/issues/172/runs/8/cycles/1",
+      );
+    });
+  });
+
+  it("surfaces a no-run dispatch outcome instead of silently settling", async () => {
+    const unlockedIssue = {
+      ...issueDetail,
+      issue_lock_held: false,
+      last_run_state: "passed",
+    };
+
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url =
+        typeof input === "string"
+          ? new URL(input, "https://glimmung.test")
+          : input instanceof URL
+            ? input
+            : new URL(input.url);
+      if (url.pathname === "/v1/issues/by-number/ambience/172") return json(unlockedIssue);
+      if (url.pathname === "/v1/issues/by-number/ambience/172/graph") return json(issueGraph);
+      if (url.pathname === "/v1/workflows") return json([]);
+      if (url.pathname === "/v1/runs/dispatch" && init?.method === "POST") {
+        return json({
+          state: "already_running",
+          issue_ref: "ambience#172",
+          issue_number: 172,
+          run_number: null,
+          workflow: "default",
+          detail: 'issue ambience#172 already has a non-terminal run (state "in_progress"); not dispatching a duplicate',
+        });
+      }
+      throw new Error(`unhandled fetch ${url.pathname}`);
+    }));
+
+    renderIssueDetail("/projects/ambience/issues/172/settings");
+
+    await userEvent.click(await screen.findByRole("button", { name: "dispatch" }));
+
+    // The reason is shown in place; the view does not navigate away to a run
+    // that was never created.
+    expect(await screen.findByText(/already has a non-terminal run/)).toBeInTheDocument();
+    expect(screen.getByTestId("path")).toHaveTextContent(
+      "/projects/ambience/issues/172/settings",
+    );
+  });
+
   it("shows run history as flat run counts, base cycle values, and run-cycle ordinals", async () => {
     const baseRun = runProjection.runs[0];
     const historyRuns = [

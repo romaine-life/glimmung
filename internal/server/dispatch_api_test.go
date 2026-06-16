@@ -380,8 +380,13 @@ func TestDispatchRunDispatchedNativeK8sJob(t *testing.T) {
 	if store.runReq == nil || store.runReq.InitialPhaseKind != "k8s_job" {
 		t.Fatalf("run request=%#v", store.runReq)
 	}
-	if store.runReq.SlotLeaseRef == "" || store.startReq == nil || store.startReq.SlotLeaseRef != store.runReq.SlotLeaseRef {
-		t.Fatalf("lease should be attached before run admission: run=%#v start=%#v", store.runReq, store.startReq)
+	// The run is created queued without a pre-attached lease; admission
+	// acquires the slot lease and attaches it at StartRunCycle.
+	if store.runReq.SlotLeaseRef != "" {
+		t.Fatalf("dispatch should create the run queued without a pre-attached lease, got %q", store.runReq.SlotLeaseRef)
+	}
+	if store.startReq == nil || store.startReq.SlotLeaseRef == "" {
+		t.Fatalf("admission should attach the acquired lease at StartRunCycle: start=%#v", store.startReq)
 	}
 	if store.leaseReq == nil || store.leaseReq.Metadata["runner_k8s"] != true {
 		t.Fatalf("lease request=%#v", store.leaseReq)
@@ -516,10 +521,11 @@ func TestDispatchRunRejectsUndeclaredInput(t *testing.T) {
 	}
 }
 
-func TestDispatchRunPersistsPostRunWorkContextOnPreclaimedLease(t *testing.T) {
-	base := minimalDispatchStore()
-	base.leaseResult.Metadata["work_context_branch"] = "issue-168-run-unknown"
-	store := &patchingDispatchStore{fakeDispatchStore: base}
+// Dispatch now creates the run before acquiring a lease, so the lease is
+// acquired with the run's work-context already resolved (run id known). The
+// branch is stamped at acquire time rather than patched after a pre-claim.
+func TestDispatchRunStampsWorkContextBranchOnAcquiredLease(t *testing.T) {
+	store := minimalDispatchStore()
 	launcher := &fakeRunLauncher{}
 	rec := httptest.NewRecorder()
 	newDispatchTestHandler(store, launcher).ServeHTTP(rec, dispatchRequest("proj", 168))
@@ -529,11 +535,52 @@ func TestDispatchRunPersistsPostRunWorkContextOnPreclaimedLease(t *testing.T) {
 	if !launcher.called {
 		t.Fatal("run launcher was not called")
 	}
-	if got := base.leaseReq.Metadata["work_context_branch"]; got != nil {
-		t.Fatalf("pre-run lease request should not stamp a provisional branch, got %#v", got)
+	if store.leaseReq == nil {
+		t.Fatal("admission did not acquire a lease")
+	}
+	if got, want := store.leaseReq.Metadata["work_context_branch"], "glimmung/run-1"; got != want {
+		t.Fatalf("acquired lease work_context_branch=%#v, want %q", got, want)
+	}
+	if got, want := store.leaseReq.Metadata["work_context_id"], "run-1"; got != want {
+		t.Fatalf("acquired lease work_context_id=%#v, want %q", got, want)
+	}
+}
+
+// admitRunCycle still supports a run created with a pre-claimed slot lease
+// (synthetic dispatch / resume): it reads that lease and patches the resolved
+// work-context branch onto its metadata in place.
+func TestAdmitRunCyclePatchesWorkContextOnPreclaimedLease(t *testing.T) {
+	base := minimalDispatchStore()
+	base.leaseResult.Metadata["work_context_branch"] = "issue-168-run-unknown"
+	store := &patchingDispatchStore{fakeDispatchStore: base}
+	launcher := &fakeRunLauncher{}
+	leaseRef := "proj-1"
+	callbackToken := "tok"
+	runNumber, cycleNumber, runCycleNumber := 1, 1, 1
+	runDisplay := "1.1"
+	run := RunReplayData{
+		ID:               "run-1",
+		Project:          "proj",
+		WorkflowName:     base.wf.Name,
+		IssueNumber:      168,
+		IssueRepo:        base.githubRepo,
+		CallbackToken:    &callbackToken,
+		RunNumber:        &runNumber,
+		CycleNumber:      &cycleNumber,
+		RunCycleNumber:   &runCycleNumber,
+		RunDisplayNumber: &runDisplay,
+		SlotLeaseRef:     &leaseRef,
+		TriggerSource:    map[string]any{"kind": "dispatch"},
+	}
+	admission, err := admitRunCycle(context.Background(), store, launcher, run, base.wf, *base.issue, base.githubRepo, LeasePurposeDispatch)
+	if err != nil {
+		t.Fatalf("admitRunCycle: %v", err)
+	}
+	if admission.State != "dispatched" {
+		t.Fatalf("state=%q detail=%v", admission.State, admission.Detail)
 	}
 	if store.patchedLeasePayload == nil {
-		t.Fatal("lease metadata was not persisted after run creation")
+		t.Fatal("pre-claimed lease metadata was not persisted")
 	}
 	patched := anyMap(store.patchedLeasePayload["metadata"])
 	if got, want := patched["work_context_id"], "run-1"; got != want {
@@ -541,9 +588,6 @@ func TestDispatchRunPersistsPostRunWorkContextOnPreclaimedLease(t *testing.T) {
 	}
 	if got, want := patched["work_context_branch"], "glimmung/run-1"; got != want {
 		t.Fatalf("patched work_context_branch=%#v, want %q", got, want)
-	}
-	if got, want := launcher.req.Lease.Metadata["work_context_branch"], "glimmung/run-1"; got != want {
-		t.Fatalf("launch work_context_branch=%#v, want %q", got, want)
 	}
 }
 
@@ -735,7 +779,10 @@ func TestDispatchRunLaunchUsesPostCommitContext(t *testing.T) {
 	}
 }
 
-func TestDispatchRunNoCapacity(t *testing.T) {
+// When no test-slot capacity is available, dispatch no longer hard-fails:
+// it creates the run queued (visible, durable, holding the issue lock) for
+// the run-queue reconciler to admit when a slot frees.
+func TestDispatchRunQueuesWhenNoCapacity(t *testing.T) {
 	store := minimalDispatchStore()
 	store.leaseErr = ErrUnavailable
 	rec := httptest.NewRecorder()
@@ -743,14 +790,64 @@ func TestDispatchRunNoCapacity(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
-	if got := readDispatchResult(t, rec).State; got != "no_capacity" {
-		t.Fatalf("state=%q", got)
+	result := readDispatchResult(t, rec)
+	if result.State != "queued" {
+		t.Fatalf("state=%q, want queued", result.State)
 	}
-	if store.runReq != nil || store.startReq != nil {
-		t.Fatalf("no-capacity dispatch should not create or start a run: run=%#v start=%#v", store.runReq, store.startReq)
+	if result.RunNumber == nil || *result.RunNumber != 1 {
+		t.Fatalf("queued dispatch must still create a run, got run_number=%v", result.RunNumber)
 	}
-	if !store.lockReleased {
-		t.Fatal("expected issue lock release after no-capacity dispatch")
+	if result.Detail == nil || !strings.Contains(*result.Detail, "queued") {
+		t.Fatalf("queued dispatch should explain the wait, detail=%v", result.Detail)
+	}
+	if store.runReq == nil {
+		t.Fatal("queued dispatch must create the run so it is durable and visible")
+	}
+	if store.runReq.SlotLeaseRef != "" {
+		t.Fatalf("queued run must be created without a lease, got %q", store.runReq.SlotLeaseRef)
+	}
+	if store.startReq != nil {
+		t.Fatal("queued run must not start a cycle until a slot is admitted")
+	}
+	if store.lockReleased {
+		t.Fatal("queued run holds the issue lock; it must not be released")
+	}
+}
+
+// A second dispatch while the issue already has a non-terminal run is refused
+// on durable run state, not only the (TTL-bounded) issue lock — so a run that
+// waits a long time for capacity cannot be duplicated after the lock lapses.
+func TestDispatchRunRefusesDuplicateWhileIssueRunActive(t *testing.T) {
+	for _, state := range []string{"queued", "in_progress", "review_required", "needs_review"} {
+		store := minimalDispatchStore()
+		store.issue.LastRunState = &state
+		rec := httptest.NewRecorder()
+		newDispatchTestHandler(store, &fakeRunLauncher{}).ServeHTTP(rec, dispatchRequest("proj", 1))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("state=%s status=%d body=%s", state, rec.Code, rec.Body.String())
+		}
+		if got := readDispatchResult(t, rec).State; got != "already_running" {
+			t.Fatalf("last_run_state=%s -> dispatch state=%q, want already_running", state, got)
+		}
+		if store.runReq != nil || store.lockTTL != 0 {
+			t.Fatalf("active-issue dispatch must not create a run or claim the lock: run=%#v lockTTL=%d", store.runReq, store.lockTTL)
+		}
+	}
+}
+
+// A terminal prior run does not block a fresh dispatch (user rerun).
+func TestDispatchRunProceedsAfterTerminalIssueRun(t *testing.T) {
+	for _, state := range []string{"passed", "failed", "aborted", "recycled"} {
+		store := minimalDispatchStore()
+		store.issue.LastRunState = &state
+		rec := httptest.NewRecorder()
+		newDispatchTestHandler(store, &fakeRunLauncher{}).ServeHTTP(rec, dispatchRequest("proj", 1))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("state=%s status=%d body=%s", state, rec.Code, rec.Body.String())
+		}
+		if got := readDispatchResult(t, rec).State; got != "dispatched" {
+			t.Fatalf("last_run_state=%s -> dispatch state=%q, want dispatched", state, got)
+		}
 	}
 }
 

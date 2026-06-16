@@ -46,7 +46,15 @@ browser memory.
 - Dispatch resolves agent runtime from global defaults, project config, and
   issue policy before creating run state, then snapshots the resolved default
   and slot profiles onto the Run and initial lease.
-- Dispatch serializes active work per issue with the issue lock.
+- Dispatch serializes active work per issue on durable run state and the issue
+  lock: a second dispatch is refused (`already_running`) while the issue has a
+  non-terminal run, so serialization holds even if the lock's TTL lapses under a
+  long wait.
+- Dispatch creates the run before claiming a slot. When no test slot is free the
+  run is created `queued` (holding the issue lock) and the run-queue reconciler
+  admits it when capacity appears; dispatch does not hard-fail on transient
+  no-capacity, and the queued/waiting state is visible in run state and the
+  dashboard rather than left for the user to infer.
 - No runner work starts without a claimed lease or the configured admission
   state for queued runs.
 - Job completion callbacks include `job_id`; phase completion waits for every
