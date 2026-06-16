@@ -23,10 +23,16 @@ const applyHotSwapTimeoutDefault = 120 * time.Second
 // holding a request open indefinitely.
 const applyHotSwapTimeoutMax = 600 * time.Second
 
-// applyHotSwapPerformer is the function-typed seam the test harness
-// uses to inject a stub. Production wires this to ApplyHotSwap with a
-// real httpK8sJobClient.
+// applyHotSwapPerformer is the function-typed seam the test harness uses to
+// inject a stub. Production wires this to DispatchHotSwap with a real
+// httpK8sJobClient. It submits the Job and returns a "running" result with the
+// job handle; it does NOT wait for completion (the gated finalizer does).
 type applyHotSwapPerformer func(ctx context.Context, opts ApplyHotSwapOptions) (ApplyHotSwapResult, error)
+
+// hotSwapDiffResolver is the function-typed seam for computing the classifier's
+// diff context. Production wires it to resolveHotSwapDiff (a live GitHub Compare
+// call); tests pass nil to skip the network or a stub to assert plumbing.
+type hotSwapDiffResolver func(ctx context.Context, slug, baseRef, headRef, token string) (hotSwapDiff, error)
 
 type TestSlotApplyHotSwapRequest struct {
 	Project          string  `json:"project"`
@@ -36,6 +42,10 @@ type TestSlotApplyHotSwapRequest struct {
 	GitRef           string  `json:"git_ref"`
 	ValidationTarget string  `json:"validation_target,omitempty"`
 	TimeoutSeconds   *int    `json:"timeout_seconds,omitempty"`
+	// BaseRef is the diff base for the fidelity classifier. When empty,
+	// glimmung resolves the repository's default branch. The classifier's
+	// changed-file set is computed as base...git_ref.
+	BaseRef string `json:"base_ref,omitempty"`
 }
 
 type TestSlotApplyHotSwapResult struct {
@@ -46,30 +56,36 @@ type TestSlotApplyHotSwapResult struct {
 }
 
 // applyTestSlotHotSwap is the developer-driven build-and-swap endpoint.
-// Sync UX per the ArgoCD `app sync` pattern (researched against
-// Google AIP-151; ArgoCD is the closer analog for developer-driven k8s
-// deploys). Blocks until the dispatched Job completes or the timeout
-// elapses. Records hot-swap history on every outcome.
+// It is asynchronous-with-poll: the POST dispatches the build-and-swap Job and
+// returns immediately with a "running" result + job handle; the gated
+// apply-hot-swap finalizer records the terminal outcome when the Job completes;
+// the caller polls getApplyHotSwapStatus until the entry is terminal. No single
+// HTTP request is held open for the build, so timeout_seconds is honored by the
+// caller's poll loop and the durable outcome survives client disconnects,
+// proxy deadlines, and orchestrator rollouts. The earlier synchronous design
+// (one request blocked for the whole build) tied the result and the history
+// write to the inbound connection — a ~30s proxy deadline aborted both.
 //
 // Caller flow:
 //
-//  1. POST { project, slot_index|slot_name, artifact_kind, git_ref, validation_target, timeout_seconds }
+//  1. POST { project, slot_index|slot_name, artifact_kind, git_ref, validation_target, timeout_seconds, base_ref? }
 //  2. Endpoint resolves the active test-slot lease for project+slot.
 //  3. Endpoint reads the project's hot-swap contract from metadata.
-//  4. Endpoint validates artifact_kind is supported (static, backend, or
-//     the runner artifacts agent_runner, codex_runner, antigravity_runner)
-//     and the kind's request-time fields are present.
-//  5. Endpoint dispatches a build-and-swap Job via ops.ApplyHotSwap,
-//     blocks on completion.
-//  6. Endpoint appends a hot-swap history entry (success or failure).
-//  7. Endpoint extends the lease when it has less than the configured
-//     hot-swap minimum TTL remaining.
-//  8. Endpoint returns the structured result.
+//  4. Endpoint validates artifact_kind is supported (static, backend, or the
+//     runner artifacts agent_runner, codex_runner, antigravity_runner) and the
+//     kind's request-time fields are present.
+//  5. Endpoint resolves the classifier diff context (base...git_ref) and
+//     dispatches a build-and-swap Job via DispatchHotSwap (timeout enforced as
+//     the Job's activeDeadlineSeconds), then returns without waiting.
+//  6. Endpoint appends an initial "running" hot-swap history entry carrying the
+//     job handle — the breadcrumb the finalizer and the status poll join on.
+//  7. Endpoint extends the lease so the slot survives the full build-and-swap.
+//  8. Endpoint returns the structured result with status "running".
 //
-// Hot-swap history is appended on EVERY outcome — durable state lives
-// in the system, not in the request body. A caller that disconnects
-// mid-request can re-query the lease history to see the result.
-func applyTestSlotHotSwap(store ReadStore, preparer TestSlotPreparer, minter RunnerGitHubTokenMinter, performer applyHotSwapPerformer) http.HandlerFunc {
+// Hot-swap history is the durable state — it lives in the system, not in the
+// request body. A caller that disconnects can re-query the lease history (or
+// the status endpoint) to see the terminal result the finalizer records.
+func applyTestSlotHotSwap(store ReadStore, preparer TestSlotPreparer, minter RunnerGitHubTokenMinter, performer applyHotSwapPerformer, resolveDiff hotSwapDiffResolver) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		writer, ok := store.(TestSlotHotSwapHistoryStore)
 		stateStore, hasState := store.(StateStore)
@@ -251,15 +267,31 @@ func applyTestSlotHotSwap(store ReadStore, preparer TestSlotPreparer, minter Run
 			}
 		}
 
-		// Pod selector: the contract's <runner>.pod_selector flows into
-		// the Job's swap script, which
-		// resolves target pods at run-time via kubectl inside the
-		// alpine/k8s container — no kubectl needed in the glimmung
-		// pod. (Earlier cut resolved pods up-front in the handler and
-		// hit "kubectl: not found" in the glimmung runtime image.)
+		// Pod selector: the contract's <runner>.pod_selector flows into the
+		// Job's swap script, which resolves target pods at run time via kubectl
+		// inside the alpine/k8s container — no kubectl needed in the glimmung pod.
 
-		ctx := r.Context()
-		applyResult, applyErr := performer(ctx, ApplyHotSwapOptions{
+		// Diff context for the fidelity classifier. The build Job's shallow
+		// single-SHA checkout cannot compute a real diff, so glimmung resolves
+		// the changed-file set here (GitHub Compare API, merge-base three-dot)
+		// and passes it down. Best-effort: a failure is recorded in diagnostics
+		// but does not block the swap — the in-container classifier still runs.
+		var diff hotSwapDiff
+		var diffErr error
+		if resolveDiff != nil {
+			if slug := strings.TrimSpace(project.GitHubRepo); slug != "" && repoToken != "" {
+				diff, diffErr = resolveDiff(r.Context(), slug, req.BaseRef, req.GitRef, repoToken)
+			}
+		}
+
+		// Dispatch on a context detached from the inbound request: a client that
+		// disconnects mid-call must not abort the Job submission or the durable
+		// initial-history write. The build-and-swap itself runs as a Kubernetes
+		// Job (deadline enforced via activeDeadlineSeconds) and is finalized by
+		// the gated apply-hot-swap watcher — fully decoupled from this request.
+		bgCtx := context.WithoutCancel(r.Context())
+
+		applyResult, _ := performer(bgCtx, ApplyHotSwapOptions{
 			Project:          req.Project,
 			ArtifactKind:     req.ArtifactKind,
 			GitRef:           req.GitRef,
@@ -270,20 +302,35 @@ func applyTestSlotHotSwap(store ReadStore, preparer TestSlotPreparer, minter Run
 			ValidationTarget: validationTarget,
 			Contract:         contract,
 			Timeout:          timeout,
+			BaseRef:          diff.BaseRef,
+			HeadRef:          req.GitRef,
+			ChangedFiles:     diff.ChangedFiles,
 		})
 
-		// Record hot-swap history on EVERY outcome. The history entry's
-		// status mirrors applyResult.Outcome — durable state in the
-		// system, regardless of whether the request succeeded.
+		// Record the dispatch outcome. On a successful dispatch this is the
+		// "running" breadcrumb the caller polls against; the gated finalizer
+		// later appends the terminal entry. If the dispatch itself failed (the
+		// Job never reached the apiserver) the status is already terminal
+		// ("swap_failed") and no finalizer will touch it.
 		status := applyResult.Outcome
 		if status == "" {
 			status = "swap_failed"
 		}
-		summary := fmt.Sprintf("apply_hot_swap kind=%s git_ref=%s validation_target=%s outcome=%s", req.ArtifactKind, req.GitRef, validationTarget, status)
+		summary := fmt.Sprintf("apply_hot_swap dispatched kind=%s git_ref=%s validation_target=%s job=%s status=%s", req.ArtifactKind, req.GitRef, validationTarget, applyResult.JobName, status)
 		diagnostics := map[string]any{
-			"build_logs_tail":   applyResult.BuildLogsTail,
-			"swap_logs_tail":    applyResult.SwapLogsTail,
+			"job_name":          applyResult.JobName,
+			"job_namespace":     applyResult.JobNamespace,
+			"slot_name":         slotName,
 			"validation_target": validationTarget,
+			"base_ref":          diff.BaseRef,
+			"head_ref":          req.GitRef,
+			"changed_files":     len(diff.ChangedFiles),
+		}
+		if diff.Truncated {
+			diagnostics["changed_files_truncated"] = true
+		}
+		if diffErr != nil {
+			diagnostics["changed_files_error"] = diffErr.Error()
 		}
 		if applyResult.Error != "" {
 			diagnostics["error"] = applyResult.Error
@@ -296,35 +343,24 @@ func applyTestSlotHotSwap(store ReadStore, preparer TestSlotPreparer, minter Run
 			Timings:     applyResult.Timings,
 			CreatedAt:   time.Now().UTC(),
 		}
-		leaseWithHistory, histErr := writer.AppendTestSlotHotSwapHistory(ctx, req.Project, leaseRef, entry)
+		// The initial-history write uses the detached context so a disconnected
+		// caller still leaves a durable breadcrumb the finalizer (and a
+		// re-query) can attach to.
+		leaseWithHistory, histErr := writer.AppendTestSlotHotSwapHistory(bgCtx, req.Project, leaseRef, entry)
 		if histErr != nil {
-			// History write failed — log the apply outcome in the body
-			// even so. The history failure isn't load-bearing for the
-			// caller (they still get the result); it is load-bearing
-			// for later operators inspecting the lease. We return 200
-			// with the apply result either way.
 			diagnostics["history_write_error"] = histErr.Error()
 		} else {
 			lease = leaseWithHistory
 		}
 
-		leaseExtension, extendErr := ensureHotSwapLeaseMinimum(ctx, store, preparer, minter, project, lease)
+		// Extend the lease now so the slot survives the full build-and-swap
+		// (the build alone can run ~90s); the finalizer re-checks the minimum
+		// when the Job reaches its terminal condition.
+		leaseExtension, extendErr := ensureHotSwapLeaseMinimum(bgCtx, store, preparer, minter, project, lease)
 		if extendErr != nil {
 			diagnostics["lease_extension_error"] = extendErr.Error()
 		}
 
-		if applyErr != nil {
-			// Apply failed — return 200 with the structured result so
-			// the caller (MCP tool wrapper) can present the failure
-			// cleanly. The Outcome field encodes the failure mode.
-			writeJSON(w, http.StatusOK, TestSlotApplyHotSwapResult{
-				Lease:          leaseRef,
-				Apply:          applyResult,
-				Entry:          entry,
-				LeaseExtension: leaseExtension,
-			})
-			return
-		}
 		writeJSON(w, http.StatusOK, TestSlotApplyHotSwapResult{
 			Lease:          leaseRef,
 			Apply:          applyResult,

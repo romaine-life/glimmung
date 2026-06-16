@@ -239,6 +239,22 @@ func main() {
 		server.StartRunQueueReconciler(context.Background(), rt, runLauncher, log.Printf)
 		server.StartRunDispatchTimeoutReconciler(context.Background(), settings, rt, runLauncher, log.Printf)
 		server.StartRunnerJobWatcher(context.Background(), settings, rt, runLauncher, log.Printf)
+		// Gated finalizer for developer-driven apply-hot-swap Jobs: records the
+		// terminal outcome durably regardless of whether the dispatching caller
+		// is still connected. preparer/minter are best-effort lease-extension
+		// deps derived from the launcher + GitHub client, mirroring the wiring
+		// in newHandlerWithReconcilers.
+		var hotSwapPreparer server.TestSlotPreparer
+		if p, ok := any(runLauncher).(server.TestSlotPreparer); ok {
+			hotSwapPreparer = p
+		}
+		var hotSwapMinter server.RunnerGitHubTokenMinter
+		if ghClient != nil {
+			if m, ok := any(ghClient).(server.RunnerGitHubTokenMinter); ok {
+				hotSwapMinter = m
+			}
+		}
+		server.StartApplyHotSwapJobWatcher(context.Background(), settings, rt, hotSwapPreparer, hotSwapMinter, log.Printf)
 		if ghClient != nil {
 			// One-shot recovery sweep at startup: re-arm per-lease TTL
 			// timers, resume in-flight warming/activating/cleaning work, and

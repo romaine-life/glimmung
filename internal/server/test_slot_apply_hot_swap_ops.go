@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"github.com/romaine-life/glimmung/internal/domain/hotswap"
-	"github.com/romaine-life/glimmung/internal/metrics"
 )
 
 // ApplyHotSwapOptions describes the inputs to the server-side
@@ -34,7 +33,21 @@ type ApplyHotSwapOptions struct {
 	SwapContainerImage string
 	ServiceAccount     string
 	Contract           hotswap.Contract
-	Timeout            time.Duration
+	// Timeout bounds the build-and-swap end to end. It is enforced as the
+	// Job's spec.activeDeadlineSeconds — k8s fails the Job with reason
+	// DeadlineExceeded if it overruns — so the deadline lives on the durable
+	// Kubernetes object, not on a held HTTP connection. The finalizer maps
+	// that reason to Outcome="timeout".
+	Timeout time.Duration
+	// BaseRef / HeadRef / ChangedFiles carry the diff context for the
+	// project's fidelity classifier. glimmung resolves these server-side
+	// (GitHub Compare API) because the build Job's shallow single-SHA
+	// checkout cannot compute a real diff. HeadRef mirrors GitRef. They are
+	// passed into the build container as GLIMMUNG_BASE_REF / GLIMMUNG_HEAD_REF
+	// / GLIMMUNG_CHANGED_FILES.
+	BaseRef      string
+	HeadRef      string
+	ChangedFiles []string
 }
 
 // ApplyHotSwapResult is the structured outcome returned to the caller.
@@ -61,14 +74,16 @@ type ApplyHotSwapResult struct {
 // this endpoint (glimmung pod has no kubectl in the runtime image).
 type k8sJobClient interface {
 	ApplyJob(ctx context.Context, namespace string, spec map[string]any) error
-	WaitForJob(ctx context.Context, namespace, name string, timeout time.Duration) (terminal string, err error)
 	GetPodLogs(ctx context.Context, namespace, podLabelSelector, container string) (string, error)
 	DeleteJob(ctx context.Context, namespace, name string) error
 }
 
-// ApplyHotSwap dispatches the build-and-swap Job and watches it to
-// completion. Synchronous; the caller (HTTP handler) blocks. The Job
-// has two containers:
+// DispatchHotSwap renders and submits the build-and-swap Job, then returns
+// immediately with Outcome="running" and the job handle. It does NOT wait for
+// completion — the build-and-swap deadline lives on the Job
+// (activeDeadlineSeconds) and the gated apply-hot-swap finalizer records the
+// terminal outcome durably, so neither the result nor the timeout depends on a
+// held HTTP connection. The Job has two containers:
 //
 //  1. Init container (contract.<kind>.builder_image): git clone +
 //     contract.<kind>.build_command. Leaves a source dir at /work/source
@@ -88,8 +103,7 @@ type k8sJobClient interface {
 // pods, but streams a single executable to a file the supervisor re-execs
 // from on SIGHUP and then health-gates the result. Runner kinds extract a
 // directory into a session-pod volume and SIGHUP their supervisor.
-func ApplyHotSwap(ctx context.Context, k8s k8sJobClient, opts ApplyHotSwapOptions) (result ApplyHotSwapResult, err error) {
-	start := time.Now()
+func DispatchHotSwap(ctx context.Context, k8s k8sJobClient, opts ApplyHotSwapOptions) (result ApplyHotSwapResult, err error) {
 	result = ApplyHotSwapResult{
 		ArtifactKind:     opts.ArtifactKind,
 		GitRef:           opts.GitRef,
@@ -98,12 +112,6 @@ func ApplyHotSwap(ctx context.Context, k8s k8sJobClient, opts ApplyHotSwapOption
 		Outcome:          "swap_failed",
 		Timings:          map[string]string{},
 	}
-	// Wires the deferral named in scripts/check-apply-test-slot-hot-swap-migration.mjs:
-	// every terminal outcome (persisted | build_failed | swap_failed | timeout)
-	// increments glimmung_hot_swap_outcomes_total{outcome} exactly once.
-	defer func() {
-		metrics.RecordHotSwap(result.Outcome, time.Since(start))
-	}()
 
 	art, ok := resolveArtifact(opts.Contract, opts.ArtifactKind)
 	if !ok {
@@ -193,30 +201,47 @@ func ApplyHotSwap(ctx context.Context, k8s k8sJobClient, opts ApplyHotSwapOption
 	jobName := "apply-hot-swap-" + randHex(8)
 	result.JobName = jobName
 
+	// The build-and-swap deadline lives on the Job, not on this request:
+	// activeDeadlineSeconds makes k8s fail the Job (reason DeadlineExceeded)
+	// if it overruns, which the finalizer maps to Outcome="timeout". This is
+	// why the endpoint can return immediately and still honor timeout_seconds.
+	deadlineSeconds := 0
+	if opts.Timeout > 0 {
+		deadlineSeconds = int(opts.Timeout / time.Second)
+		if deadlineSeconds < 1 {
+			deadlineSeconds = 1
+		}
+	}
+
 	spec := renderApplyHotSwapJobSpec(applyHotSwapJobInputs{
-		JobName:            jobName,
-		JobNamespace:       opts.JobNamespace,
-		ServiceAccount:     opts.ServiceAccount,
-		Project:            opts.Project,
-		ArtifactKind:       opts.ArtifactKind,
-		GitRef:             opts.GitRef,
-		RepoURL:            opts.RepoURL,
-		RepoToken:          opts.RepoToken,
-		BuilderImage:       art.BuilderImage,
-		BuildCommand:       art.BuildCommand,
-		FidelityCommand:    opts.Contract.FidelityClassifier.Command,
-		SwapContainerImage: opts.SwapContainerImage,
-		Source:             art.Source,
-		Target:             art.Target,
-		TargetNamespace:    opts.TargetNamespace,
-		TargetPodSelector:  art.PodSelector,
-		TargetContainer:    art.Container,
-		ValidationTarget:   opts.ValidationTarget,
-		RestartSignal:      art.Restart,
-		CleanTarget:        art.CleanTarget,
-		ArtifactFile:       art.ArtifactFile,
-		HealthPath:         art.HealthPath,
-		HealthPort:         art.HealthPort,
+		JobName:               jobName,
+		JobNamespace:          opts.JobNamespace,
+		ServiceAccount:        opts.ServiceAccount,
+		Project:               opts.Project,
+		SlotName:              opts.SlotName,
+		ArtifactKind:          opts.ArtifactKind,
+		GitRef:                opts.GitRef,
+		RepoURL:               opts.RepoURL,
+		RepoToken:             opts.RepoToken,
+		BaseRef:               opts.BaseRef,
+		HeadRef:               opts.HeadRef,
+		ChangedFiles:          opts.ChangedFiles,
+		BuilderImage:          art.BuilderImage,
+		BuildCommand:          art.BuildCommand,
+		FidelityCommand:       opts.Contract.FidelityClassifier.Command,
+		SwapContainerImage:    opts.SwapContainerImage,
+		Source:                art.Source,
+		Target:                art.Target,
+		TargetNamespace:       opts.TargetNamespace,
+		TargetPodSelector:     art.PodSelector,
+		TargetContainer:       art.Container,
+		ValidationTarget:      opts.ValidationTarget,
+		RestartSignal:         art.Restart,
+		CleanTarget:           art.CleanTarget,
+		ArtifactFile:          art.ArtifactFile,
+		HealthPath:            art.HealthPath,
+		HealthPort:            art.HealthPort,
+		ActiveDeadlineSeconds: deadlineSeconds,
 	})
 
 	applyStart := time.Now()
@@ -228,45 +253,71 @@ func ApplyHotSwap(ctx context.Context, k8s k8sJobClient, opts ApplyHotSwapOption
 	}
 	result.Timings["job_apply"] = time.Since(applyStart).String()
 
-	waitStart := time.Now()
-	terminal, waitErr := k8s.WaitForJob(ctx, opts.JobNamespace, jobName, opts.Timeout)
-	result.Timings["job_wait"] = time.Since(waitStart).String()
+	// Dispatched. The Job runs to completion — or hits its
+	// activeDeadlineSeconds — independent of this request; the gated
+	// apply-hot-swap finalizer records the terminal outcome durably. Report
+	// "running" plus the job handle so the caller can poll for the result.
+	result.Outcome = "running"
+	return result, nil
+}
 
-	// Always collect logs (success or fail). The pod log selector is the
-	// Job's pod (label job-name=<name> is auto-added by the Job controller).
-	podSelector := "job-name=" + jobName
-	buildLogs, _ := k8s.GetPodLogs(ctx, opts.JobNamespace, podSelector, "build")
+// finalizeHotSwapInputs is the terminal-Job context the finalizer needs to
+// build a structured outcome. The gated apply-hot-swap watcher derives it from
+// the Job's labels + name, not from the original request — so finalize is
+// independent of whoever (if anyone) is still connected.
+type finalizeHotSwapInputs struct {
+	JobName          string
+	JobNamespace     string
+	ArtifactKind     string
+	GitRef           string
+	ValidationTarget string
+}
+
+// finalizeHotSwap turns an already-terminal apply-hot-swap Job into a
+// structured outcome: it collects the build + swap log tails and classifies
+// the result (persisted | build_failed | swap_failed | timeout). It does NOT
+// wait — the caller invokes it only after the apiserver has reported the Job
+// terminal, so the durable outcome never depends on a held connection. Pure
+// read + classify; the caller owns history append + Job cleanup.
+func finalizeHotSwap(ctx context.Context, k8s k8sJobClient, in finalizeHotSwapInputs, succeeded bool, failureReason string) ApplyHotSwapResult {
+	result := ApplyHotSwapResult{
+		JobName:          in.JobName,
+		JobNamespace:     in.JobNamespace,
+		ArtifactKind:     in.ArtifactKind,
+		GitRef:           in.GitRef,
+		ValidationTarget: in.ValidationTarget,
+		Timings:          map[string]string{},
+	}
+	podSelector := "job-name=" + in.JobName
+	buildLogs, _ := k8s.GetPodLogs(ctx, in.JobNamespace, podSelector, "build")
 	result.BuildLogsTail = tailLog(buildLogs, 4000)
-	swapLogs, _ := k8s.GetPodLogs(ctx, opts.JobNamespace, podSelector, "swap")
+	swapLogs, _ := k8s.GetPodLogs(ctx, in.JobNamespace, podSelector, "swap")
 	result.SwapLogsTail = tailLog(swapLogs, 4000)
 
-	if waitErr != nil {
-		switch terminal {
-		case "timeout":
-			result.Outcome = "timeout"
-		case "failed":
-			// Distinguish build failure from swap failure by inspecting
-			// the logs. If the build logs end with a non-zero shell exit
-			// pattern OR the swap logs are empty, it was a build failure.
-			if strings.TrimSpace(swapLogs) == "" || strings.Contains(strings.ToLower(buildLogs), "error") {
-				result.Outcome = "build_failed"
-			} else {
-				result.Outcome = "swap_failed"
-			}
-		default:
+	if succeeded {
+		result.Outcome = "persisted"
+		return result
+	}
+	switch strings.TrimSpace(failureReason) {
+	case "DeadlineExceeded":
+		result.Outcome = "timeout"
+		result.Error = "hot-swap job exceeded its deadline (activeDeadlineSeconds)"
+	default:
+		// Distinguish a build failure from a swap failure by the logs: if the
+		// swap container produced no output, or the build logs carry an error,
+		// the build is the likelier culprit.
+		if strings.TrimSpace(swapLogs) == "" || strings.Contains(strings.ToLower(buildLogs), "error") {
+			result.Outcome = "build_failed"
+		} else {
 			result.Outcome = "swap_failed"
 		}
-		result.Error = waitErr.Error()
-		return result, waitErr
+		reason := strings.TrimSpace(failureReason)
+		if reason == "" {
+			reason = "job failed"
+		}
+		result.Error = fmt.Sprintf("hot-swap job failed (reason=%s)", reason)
 	}
-
-	result.Outcome = "persisted"
-	result.Timings["total"] = time.Since(start).String()
-
-	// Best-effort cleanup; ttlSecondsAfterFinished covers it if delete fails.
-	_ = k8s.DeleteJob(ctx, opts.JobNamespace, jobName)
-
-	return result, nil
+	return result
 }
 
 // resolvedArtifact is the normalized per-kind hot-swap shape the Job
@@ -361,10 +412,14 @@ type applyHotSwapJobInputs struct {
 	JobNamespace       string
 	ServiceAccount     string
 	Project            string
+	SlotName           string
 	ArtifactKind       string
 	GitRef             string
 	RepoURL            string
 	RepoToken          string
+	BaseRef            string
+	HeadRef            string
+	ChangedFiles       []string
 	BuilderImage       string
 	BuildCommand       string
 	FidelityCommand    string
@@ -377,6 +432,10 @@ type applyHotSwapJobInputs struct {
 	ValidationTarget   string
 	RestartSignal      string
 	CleanTarget        bool
+	// ActiveDeadlineSeconds, when > 0, is set as the Job's
+	// spec.activeDeadlineSeconds so Kubernetes enforces the build-and-swap
+	// timeout on the durable Job object (reason DeadlineExceeded on overrun).
+	ActiveDeadlineSeconds int
 	// ArtifactFile (backend only) is the absolute path in the builder image
 	// of the single executable to stream to Target. Non-empty switches the
 	// build + swap scripts to single-file semantics.
@@ -398,6 +457,11 @@ func renderApplyHotSwapJobSpec(in applyHotSwapJobInputs) map[string]any {
 		"glimmung.io/apply-hot-swap-kind":        in.ArtifactKind,
 		"glimmung.io/hot-swap-validation-target": validationTarget,
 	}
+	// slot-name is the join key the gated finalizer uses to resolve which
+	// leased slot's hot-swap history this Job's terminal outcome belongs to.
+	if strings.TrimSpace(in.SlotName) != "" {
+		labels["glimmung.io/slot-name"] = in.SlotName
+	}
 	buildScript := buildScriptFor(in)
 	swapScript := swapScriptFor(in)
 	podSpec := map[string]any{
@@ -417,6 +481,13 @@ func renderApplyHotSwapJobSpec(in applyHotSwapJobInputs) map[string]any {
 					map[string]any{"name": "GIT_TOKEN", "value": in.RepoToken},
 					map[string]any{"name": "GLIMMUNG_HOT_SWAP_ARTIFACT_KIND", "value": in.ArtifactKind},
 					map[string]any{"name": "GLIMMUNG_HOT_SWAP_VALIDATION_TARGET", "value": in.ValidationTarget},
+					// Diff context for the fidelity classifier. glimmung
+					// resolves these server-side because the shallow build
+					// checkout cannot compute a real diff; the classifier
+					// prefers GLIMMUNG_CHANGED_FILES over its own git fallback.
+					map[string]any{"name": "GLIMMUNG_BASE_REF", "value": in.BaseRef},
+					map[string]any{"name": "GLIMMUNG_HEAD_REF", "value": in.HeadRef},
+					map[string]any{"name": "GLIMMUNG_CHANGED_FILES", "value": strings.Join(in.ChangedFiles, "\n")},
 				},
 				"volumeMounts": []any{
 					map[string]any{"name": "work", "mountPath": "/work"},
@@ -438,6 +509,17 @@ func renderApplyHotSwapJobSpec(in applyHotSwapJobInputs) map[string]any {
 	if strings.TrimSpace(in.ServiceAccount) != "" {
 		podSpec["serviceAccountName"] = in.ServiceAccount
 	}
+	jobSpec := map[string]any{
+		"backoffLimit":            0,
+		"ttlSecondsAfterFinished": 600,
+		"template": map[string]any{
+			"metadata": map[string]any{"labels": labels},
+			"spec":     podSpec,
+		},
+	}
+	if in.ActiveDeadlineSeconds > 0 {
+		jobSpec["activeDeadlineSeconds"] = in.ActiveDeadlineSeconds
+	}
 	return map[string]any{
 		"apiVersion": "batch/v1",
 		"kind":       "Job",
@@ -446,14 +528,7 @@ func renderApplyHotSwapJobSpec(in applyHotSwapJobInputs) map[string]any {
 			"namespace": in.JobNamespace,
 			"labels":    labels,
 		},
-		"spec": map[string]any{
-			"backoffLimit":            0,
-			"ttlSecondsAfterFinished": 600,
-			"template": map[string]any{
-				"metadata": map[string]any{"labels": labels},
-				"spec":     podSpec,
-			},
-		},
+		"spec": jobSpec,
 	}
 }
 
@@ -681,44 +756,6 @@ func (c *httpK8sJobClient) ApplyJob(ctx context.Context, namespace string, spec 
 	return nil
 }
 
-func (c *httpK8sJobClient) WaitForJob(ctx context.Context, namespace, name string, timeout time.Duration) (string, error) {
-	if strings.TrimSpace(namespace) == "" || strings.TrimSpace(name) == "" {
-		return "", fmt.Errorf("namespace + name required")
-	}
-	deadline := time.NewTimer(timeout)
-	defer deadline.Stop()
-	ticker := time.NewTicker(2 * time.Second)
-	defer ticker.Stop()
-	path := "/apis/batch/v1/namespaces/" + namespace + "/jobs/" + name
-	for {
-		_, job, err := c.request(ctx, http.MethodGet, path, nil)
-		if err != nil {
-			return "", err
-		}
-		statusMap, _ := job["status"].(map[string]any)
-		conditions, _ := statusMap["conditions"].([]any)
-		for _, raw := range conditions {
-			cond, _ := raw.(map[string]any)
-			t, _ := cond["type"].(string)
-			s, _ := cond["status"].(string)
-			r, _ := cond["reason"].(string)
-			if t == "Complete" && s == "True" {
-				return "complete", nil
-			}
-			if t == "Failed" && s == "True" {
-				return "failed", fmt.Errorf("job failed: %s", r)
-			}
-		}
-		select {
-		case <-deadline.C:
-			return "timeout", fmt.Errorf("job did not complete within %s", timeout)
-		case <-ticker.C:
-			continue
-		case <-ctx.Done():
-			return "", ctx.Err()
-		}
-	}
-}
 
 func (c *httpK8sJobClient) GetPodLogs(ctx context.Context, namespace, labelSelector, container string) (string, error) {
 	// First find the pod name(s) matching the selector.
