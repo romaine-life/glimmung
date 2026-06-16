@@ -1554,6 +1554,54 @@ func TestTestSlotInstallJobManifestRendersHelmApplyJob(t *testing.T) {
 	}
 }
 
+// TestTestSlotInstallJobManifestClonesShaByFetch guards the deploy-to-image
+// regression caught by the Stage-6 live smoke: the reconcile clone must fetch
+// the exact ref (commit sha OR branch), because deploy-to-image pins
+// config.GitRef to a verified commit sha so the chart and the CI image are the
+// same commit — and `git clone --branch <sha>` is invalid ("Remote branch <sha>
+// not found in upstream origin"). `git fetch` accepts a reachable sha (GitHub
+// allowReachableSHA1InWant) or a ref name, so the one clone serves both callers.
+func TestTestSlotInstallJobManifestClonesShaByFetch(t *testing.T) {
+	leaseNumber := 7
+	lease := Lease{
+		Project:     "tank-operator",
+		LeaseNumber: &leaseNumber,
+		Metadata: map[string]any{
+			"runner_slot_name":  "tank-operator-slot-1",
+			"runner_slot_index": "1",
+		},
+	}
+	project := Project{
+		Name:       "tank-operator",
+		GitHubRepo: "romaine-life/tank-operator",
+		Metadata: map[string]any{
+			"runner_standby_dns": map[string]any{"record_base": "tank.dev.romaine.life"},
+			"test_slot_helm":     map[string]any{"enabled": true},
+		},
+	}
+	config, ok := testSlotHelmConfig(project)
+	if !ok {
+		t.Fatal("expected helm config")
+	}
+	config.GitRef = "e8c3f183abbf75ccc7066d981bb422cb1d1ae2ff" // a commit sha, not a branch
+	manifest := testSlotInstallJobManifest(
+		Settings{RunnerNamespace: "glimmung-runs", RunnerServiceAccount: "glimmung-runner", RunnerJobTTLSeconds: 3600},
+		config, lease, project,
+		testSlotSubstitutions(lease, project, "tank-operator-slot-1", "tank-operator-slot-1-sessions"),
+		testSlotRenderModeHot,
+	)
+	spec := manifest["spec"].(map[string]any)["template"].(map[string]any)["spec"].(map[string]any)
+	initScript := spec["initContainers"].([]any)[0].(map[string]any)["command"].([]string)[2]
+	for _, want := range []string{"git fetch --depth=1 origin", "git checkout -q FETCH_HEAD"} {
+		if !strings.Contains(initScript, want) {
+			t.Fatalf("clone script missing %q (sha clone must fetch, not --branch): %s", want, initScript)
+		}
+	}
+	if strings.Contains(initScript, "clone --branch") {
+		t.Fatalf("clone script must not use `git clone --branch` (breaks on a sha): %s", initScript)
+	}
+}
+
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
