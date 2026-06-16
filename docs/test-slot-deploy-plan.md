@@ -1,0 +1,171 @@
+# Test-slot validation: deploy the CI-built image, not hand-streamed artifacts
+
+**Status:** Accepted plan / migration spec. Supersedes the artifact-streaming
+hot-swap model — `docs/test-slot-hot-swap.md`, the `apply_test_slot_hot_swap`
+build-and-stream path, the per-project `metadata.test_slot_hot_swap` build
+contract, and tank-operator's `scripts/classify-tank-test-fidelity.mjs`
+fidelity classifier. Those are deletion targets here, not designs to extend
+(see `docs/migration-policy.md`).
+
+## Decision
+
+A test slot is validated by **deploying the exact image CI already built and
+pushed to ACR for the verified commit** — never by building artifacts in an
+ephemeral Job and streaming them into running pods. "Hot swap" — artifact
+streaming, per-artifact kind selection, and fidelity detection — is removed end
+to end. The replacement is "deploy what CI built," which is simultaneously the
+*correct* thing and the *fast* thing.
+
+## Why this, and why now
+
+- **Hot-swap only ever existed to dodge a slow image build.** Streaming a
+  hand-built binary into a running pod was a workaround for not having a ready
+  artifact. CI already builds the image — so the problem hot-swap solved is
+  solved upstream, canonically, by the Dockerfile build itself.
+- **CI-green ⟺ the fingerprinted image is in ACR.** They are the same event.
+  PR CI builds and pushes the fingerprinted proof image; merge promotes that
+  same image (it does not rebuild). So the moment a commit is legitimate, the
+  exact artifact that will ship is already in the registry, keyed to that SHA.
+  The thing the gate verifies and the thing the slot deploys become one object.
+- **Fidelity goes up.** The old hot-swap Job rebuilt artifacts with its own
+  command (`go build` with ad-hoc flags, a from-scratch Go toolchain install),
+  which is not guaranteed byte-identical to the Dockerfile build. Deploying the
+  CI image means the slot runs the *exact* artifact CI built and main will
+  deploy — the test target stops being an approximation.
+- **The detection was the wrong shape and it failed open.** The fidelity
+  classifier's impact-allowlist + rebuild-trigger-denylist let any unrecognized
+  file fall through as "assumed swappable," silently testing stale code — a
+  fidelity guard that fails open is worse than none. It was enabled on exactly
+  one project (tank-operator) and absent/disabled on every other, which is the
+  tell that it was a one-app wart mistaken for a platform feature.
+- **The loop is CI-bound anyway.** Because validation requires CI-green code
+  (below), the wall-clock is dominated by CI, not by the final deploy step. A
+  ~30–60s image redeploy versus a ~90s artifact stream is noise against minutes
+  of CI — so the streaming machinery bought almost nothing while costing the
+  whole detection/config/maintenance surface.
+
+## Invariant
+
+A slot runs **exactly the CI-built, fingerprinted image** for a branch head that
+is **published, CI-green, mergeable, and current with main** — verified after
+deploy. No partial state, no hand-built artifact, no agent judgement in the
+path. The only thing that can land on a slot is the real, verified,
+going-to-ship build.
+
+## Mechanism
+
+1. **One governed tool, agent says one thing.** "Validate `<branch>` on a slot"
+   (or fire automatically on publish). The agent supplies a ref and nothing
+   else — no artifact kind, no cluster access, no token. Every step runs in a
+   glimmung-owned Job/operation with its own scoped identity, so it stays
+   observable and hookable (the reason the platform moved off `kubectl cp` in
+   the first place — that property is preserved).
+2. **Legitimacy gate (reuse the existing verify gate + control-action ledger).**
+   The tool refuses to deploy unless the head is published, CI-green, mergeable,
+   and **not behind main**. These facts come from the durable
+   `control_action_events` ledger that the hot-swap verify gate already reads
+   (the ledger un-frozen by `romaine-life/tank-operator#1253`). Because the tool
+   only ever operates on a *published git ref* — never an agent working tree —
+   uncommitted scratch code is structurally unable to reach a slot. The gate is
+   what stops broken/stale code; the ref-only input is what stops un-pushed
+   code.
+3. **Resolve SHA → CI image.** Map the verified commit to the fingerprinted ACR
+   image CI built for it. The mapping already exists in build metadata
+   (`git_sha` is stamped on the deployment / image metadata) and should be
+   recorded in the same ledger the gate reads, so resolution is a durable
+   lookup, not a guess.
+4. **Deploy the image — two levels, both "deploy the verified image":**
+   - **App-level** (backend, static, any app): repoint the slot's app
+     Deployment at `app-<fingerprint>` and roll. Fast — the slot already ran the
+     prior image, so only the changed layer pulls.
+   - **Runner / session-level**: start a fresh session pod on the slot from the
+     CI-built session image, which boots the new runner natively. Same
+     principle, different tag.
+5. **Verify the end state.** Confirm the slot's running image equals the
+   resolved fingerprint (health gate + image assertion) and record the terminal
+   outcome durably. "Reached the right destination" is verified, never assumed.
+
+## What gets deleted (end to end — no compat layer, no parallel path)
+
+Per `docs/migration-policy.md`, the old path is removed, not fenced off:
+
+- `apply_test_slot_hot_swap` build-and-stream path: the in-Job artifact build,
+  the tar-over-exec streaming into running pods, the SIGHUP-on-streamed-artifact
+  restart, and the artifact-kind dispatch (`resolveArtifact`,
+  `renderApplyHotSwapJobSpec`, the per-kind switch).
+- The per-project `metadata.test_slot_hot_swap` build contract:
+  `build_command`, `builder_image`, `source`/`target`, every per-artifact block
+  (`static`, `backend`, `agent_runner`, `codex_runner`, `antigravity_runner`),
+  and `restart`.
+- tank-operator `scripts/classify-tank-test-fidelity.mjs`, the
+  `fidelity_classifier` contract block, the `GLIMMUNG_HOT_SWAP_*` env plumbing,
+  and the `--enforce` gate.
+- mcp-glimmung's `artifact_kind` parameter and the multi-kind surface (never
+  shipped; do not build it).
+- Old behaviour tests and docs (`docs/test-slot-hot-swap.md`) — replaced by this
+  doc and the new deploy-from-image contract.
+
+A migration guard must fail if any artifact-build/stream path, per-artifact
+contract block, or fidelity classifier is reintroduced into live code.
+
+## What gets built
+
+- **glimmung:** a `deploy_slot_to_image` operation — resolve SHA → fingerprint,
+  set the slot Deployment's image, roll, and verify the running image; the
+  durable SHA → image resolution; the **behind-main** check in the verify gate
+  (today's mergeability check treats a *behind* branch as mergeable, which is
+  the exact "tested something that got merge-conflict-fixed later" waste this is
+  meant to kill).
+- **mcp-glimmung:** the tool becomes ref-in / deploy-and-verify-out, with no
+  `artifact_kind`.
+- **tank-operator:** delete the classifier and its CI guard/wiring. Keep the
+  verify gate and the control-action ledger (already corrected in #1253).
+
+## Per-app implications
+
+- **Per-app config collapses.** It drops from the per-artifact hot-swap
+  contract to nothing beyond the existing `test_slot_helm` (how an app deploys
+  to a slot) plus the SHA → image lookup. There is nothing to allowlist —
+  whole images are deployed, so "which files are swappable" stops being a
+  question. This obsoletes the swappable-surface allowlist that was being
+  designed.
+- **Precondition.** Every in-scope project must have CI that builds and pushes a
+  runnable image to ACR *before* main. tank-operator does. ambience,
+  chess-tactics, glimmung, spirelens, and kill-me must be confirmed and adopted
+  where missing (the project owner has been standardizing on this path).
+
+## What we deliberately give up
+
+The single lost capability is **patching a change into a live, mid-conversation
+session without restarting it.** That is a debugging convenience, never a
+validation need (validation runs on a fresh session), and it was the most
+complex, most app-specific corner of the old design. Accepted.
+
+## Staging (each stage leaves the system coherent)
+
+1. **Done — `tank-operator#1253`:** un-freeze the `control_action_events`
+   ledger the verify gate reads (authorize control-action writes off the
+   verified per-session subject).
+2. **glimmung — add the deploy path:** `deploy_slot_to_image` + SHA→image
+   resolution + the behind-main check, landing *alongside* the existing
+   `apply_test_slot_hot_swap` so slots keep working during rollout.
+3. **mcp-glimmung — switch the tool:** ref-in / deploy-out; stop accepting
+   `artifact_kind`.
+4. **Cutover + deletion:** remove the artifact-stream path, the
+   `test_slot_hot_swap` build contract, and the tank-operator classifier end to
+   end; land the migration guards. No parallel path survives.
+5. **Per-app:** confirm/adopt pre-merge CI image builds for every in-scope
+   project.
+
+## Open items to verify before stage 2
+
+- Confirm each in-scope project's CI pushes a *runnable* image (not a
+  build-only check) to ACR pre-merge, and the tag is resolvable from the SHA.
+- Confirm the runner/session path: runner code ships in the *session* images
+  (`session-agent-claude`, `session-agent-codex`), resolved by a different tag
+  than the app image.
+- Confirm GitHub `mergeable_state` exposes `behind` distinctly so the
+  behind-main check is precise (vs. inferring from ahead/behind counts).
+- Decide where the SHA → image fingerprint mapping is recorded (extend the
+  control-action ledger vs. a glimmung-side projection) so resolution is durable
+  and auditable.

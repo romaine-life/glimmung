@@ -1,5 +1,11 @@
 # Test-slot hot-swap
 
+> **Superseded by [`docs/test-slot-deploy-plan.md`](test-slot-deploy-plan.md).**
+> The artifact build-and-stream model described here is being replaced by
+> deploying the CI-built ACR image to the slot (correct-by-construction, no
+> per-artifact build/detection). This doc is retained only until that
+> migration's cutover removes it — do not extend the model below.
+
 Build new code, place it on a running test slot, step back. One MCP
 call. This doc describes the workflow, the contract shape, and the
 guarantees the platform makes.
