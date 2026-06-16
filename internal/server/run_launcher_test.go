@@ -1288,6 +1288,66 @@ func TestActivateTestSlotRuntimeRunsHelmInstallerAfterLeaseAssignment(t *testing
 	}
 }
 
+// TestRunTestSlotHelmReconcileDeletesStaleJobBeforeCreate guards the replace bug
+// the live deploy-image-to-slot smoke surfaced: the installer job name is
+// lease+renderMode-keyed and a finished job lingers for its TTL, so a second
+// deploy to the same lease would hit createJob's 409-as-success and reuse the
+// stale job — never reconciling the new image. The reconcile must DELETE the
+// prior job before creating, so each reconcile actually applies.
+func TestRunTestSlotHelmReconcileDeletesStaleJobBeforeCreate(t *testing.T) {
+	tokenPath := tempTokenFile(t)
+	var paths []string
+	launcher := &KubernetesRunLauncher{
+		Settings: Settings{
+			K8sAPIHost:           "https://kube.test",
+			K8sSATokenPath:       tokenPath,
+			RunnerNamespace:      "glimmung-runs",
+			RunnerServiceAccount: "glimmung-runner",
+			RunnerJobTTLSeconds:  3600,
+		},
+		HTTPClient: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			paths = append(paths, req.Method+" "+req.URL.Path)
+			body := `{}`
+			if req.Method == http.MethodGet && strings.Contains(req.URL.Path, "/jobs/glim-slot-apply-") {
+				body = `{"status":{"conditions":[{"type":"Complete","status":"True"}]}}`
+			}
+			return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}, nil
+		})},
+	}
+	leaseNumber := 7
+	lease := Lease{
+		Project:     "tank-operator",
+		LeaseNumber: &leaseNumber,
+		State:       "claimed",
+		Metadata:    map[string]any{"runner_slot_name": "tank-operator-slot-1", "runner_slot_index": "1"},
+	}
+	project := Project{Name: "tank-operator", GitHubRepo: "romaine-life/tank-operator", Metadata: map[string]any{"test_slot_helm": map[string]any{"enabled": true}}}
+	config, ok := testSlotHelmConfig(project)
+	if !ok {
+		t.Fatal("expected helm config")
+	}
+	config.Values = map[string]string{"image.tag": "deadbeefdeadbeef"}
+	if err := launcher.runTestSlotHelmReconcile(context.Background(), lease, project, fakeRunnerGitHubTokenMinter{token: "ghs_test"}, config, testSlotRenderModeHot); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	jobPath := "/apis/batch/v1/namespaces/glimmung-runs/jobs/glim-slot-apply-hot-tank-operator-slot-1-7"
+	delIdx, postIdx := -1, -1
+	for i, p := range paths {
+		if p == "DELETE "+jobPath {
+			delIdx = i
+		}
+		if p == "POST /apis/batch/v1/namespaces/glimmung-runs/jobs" && postIdx == -1 {
+			postIdx = i
+		}
+	}
+	if delIdx == -1 {
+		t.Fatalf("reconcile must DELETE the prior installer job before creating; paths=%#v", paths)
+	}
+	if postIdx == -1 || delIdx > postIdx {
+		t.Fatalf("DELETE must precede the create POST (fresh reconcile); delIdx=%d postIdx=%d paths=%#v", delIdx, postIdx, paths)
+	}
+}
+
 func TestActivateTestSlotRuntimeCreatesReadyPlaywrightRuntime(t *testing.T) {
 	tokenPath := tempTokenFile(t)
 	var paths []string
