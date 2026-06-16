@@ -9,6 +9,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // TestSlotDeployToImageRequest is the deploy-to-image request body. There is no
@@ -146,6 +148,10 @@ func deployTestSlotToImage(store ReadStore, minter RunnerGitHubTokenMinter, perf
 			return
 		}
 		image := sha // CI tags each image with its git SHA; the chart's image value key pins it.
+		// Pollable handle: both history entries carry it as the job_name, so the
+		// existing GET /v1/test-slots/apply-hot-swap/{project}/{job} status route
+		// serves the deploy's running → terminal transition unchanged.
+		deployJob := "deploy-" + uuid.NewString()
 
 		// Dispatch detached: a client disconnect must not abort the deploy or the
 		// durable history write. The reconcile itself is a Kubernetes Job, so the
@@ -158,6 +164,7 @@ func deployTestSlotToImage(store ReadStore, minter RunnerGitHubTokenMinter, perf
 			Status:    "running",
 			Summary:   fmt.Sprintf("deploy_to_image dispatched git_ref=%s sha=%s slot=%s status=running", req.GitRef, sha, slotName),
 			Diagnostics: map[string]any{
+				"job_name":        deployJob,
 				"slot_name":       slotName,
 				"git_ref":         req.GitRef,
 				"sha":             sha,
@@ -173,8 +180,8 @@ func deployTestSlotToImage(store ReadStore, minter RunnerGitHubTokenMinter, perf
 		deployLease := lease
 		go func() {
 			derr := performer(bgCtx, deployLease, project, sha, image, imageValueKey)
-			status := "succeeded"
-			diag := map[string]any{"slot_name": slotName, "git_ref": req.GitRef, "sha": sha, "image": image}
+			status := "deployed"
+			diag := map[string]any{"job_name": deployJob, "slot_name": slotName, "git_ref": req.GitRef, "sha": sha, "image": image}
 			if derr != nil {
 				status = "deploy_failed"
 				diag["error"] = derr.Error()
@@ -190,6 +197,7 @@ func deployTestSlotToImage(store ReadStore, minter RunnerGitHubTokenMinter, perf
 
 		writeJSON(w, http.StatusAccepted, map[string]any{
 			"lease":         leaseRef,
+			"job":           deployJob,
 			"status":        "running",
 			"git_ref":       req.GitRef,
 			"sha":           sha,
@@ -199,10 +207,17 @@ func deployTestSlotToImage(store ReadStore, minter RunnerGitHubTokenMinter, perf
 	}
 }
 
-// testSlotDeployImageValueKey reads the per-project chart image value key the
-// deploy override sets (helm --set <key>=<sha>). Empty means "no override" — the
-// chart at the verified ref already pins the image. This is the only per-app
-// deploy config; it lives under project metadata `test_slot_deploy`.
+// testSlotDeployImageValueKey is the chart value the deploy override pins to the
+// verified commit's CI image (helm --set <key>=<sha>). It defaults to "image.tag"
+// — the universal convention across these charts and the exact key the
+// chart-image-tag drift fix (glimmung#622) standardized on — so the common
+// project needs no per-app config. A project whose chart names its image value
+// differently overrides it via metadata `test_slot_deploy.image_value_key`.
+//
+// This is a *dynamic per-deploy* override (always the commit under test), set at
+// deploy time rather than pinned in test_slot_helm.values, so it is not the
+// retired static metadata pin that drift fix deleted and does not reintroduce
+// the slot-staleness surface that the test_slot_helm guard protects against.
 func testSlotDeployImageValueKey(project Project) string {
 	for _, key := range []string{"test_slot_deploy", "testSlotDeploy"} {
 		if raw, ok := mapFromMap(project.Metadata, key); ok {
@@ -211,7 +226,7 @@ func testSlotDeployImageValueKey(project Project) string {
 			}
 		}
 	}
-	return ""
+	return "image.tag"
 }
 
 // githubResolveSHA resolves a git ref (branch, tag, or SHA) to its commit SHA via
