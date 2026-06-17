@@ -54,83 +54,28 @@ Evidence:
 History:
 - Before this capability was named, `CONTROL_PLANE_LOOPS_ENABLED` was set on
   the per-issue chart but unread by the Go binary. Slot binaries ran every
-  control-plane reconciler against shared Postgres; the omission only became
-  visible when a hot-swapped reconciler began calling the apiserver for
-  Jobs in `glimmung-runs` and hit 403 against the slot's narrowly-scoped
+  control-plane reconciler against shared Postgres; the omission became visible
+  when a slot-local reconciler called the apiserver for Jobs in
+  `glimmung-runs` and hit 403 against the slot's narrowly-scoped
   ServiceAccount. The fix made the env var real rather than expanding slot
   RBAC.
 
-## apply-hot-swap-async-finalize
+## deploy-image-to-slot
 
 Status: shipped
 
 Intent:
-`apply_test_slot_hot_swap` is asynchronous-with-poll. The POST dispatches the
-build-and-swap Kubernetes Job and returns immediately with a `running` handle
-plus an initial history entry; the build-and-swap deadline is enforced on the
-Job (`activeDeadlineSeconds`); a gated finalizer records the terminal outcome
-when the Job completes; the caller polls the status route until terminal. No
-single HTTP request is held open for the build, so `timeout_seconds` is honored
-by the poll loop and the durable outcome survives client disconnects, proxy
-deadlines, and orchestrator rollouts.
-
-This replaced a synchronous design that blocked one HTTP request for the whole
-build. Because that request's context fed the Job wait *and* the history write,
-a ~30s client/proxy deadline aborted the request and corrupted/dropped the
-durable record while the Job itself ran on to completion — the caller saw only a
-timeout. The durable lease history — never the response body — is now the source
-of truth.
+`deploy_image_to_test_slot` resolves a verified pushed ref to the CI-built
+image, dispatches the slot deploy, records durable job history, and polls the
+neutral job-status route until terminal. The slot runs the same image that PR
+CI proved and main will promote.
 
 Affected contracts:
-- Test Slots (primary — hot-swap apply + history)
-- Observability And Evidence (`glimmung_hot_swap_outcomes_total` is incremented
-  by the finalizer, once per terminal Job)
+- Test Slots (primary — deploy image + job history)
 
 Contract impact:
-- The dispatch (`DispatchHotSwap`) renders + submits the Job and returns
-  `running`; it never calls a blocking `WaitForJob`. The build-and-swap timeout
-  lives on `spec.activeDeadlineSeconds` (reason `DeadlineExceeded` → outcome
-  `timeout`).
-- The finalizer (`StartApplyHotSwapJobWatcher` → `dispatchHotSwapTerminal`)
-  reuses the cluster-wide `k8sJobWatcher` and is gated by
-  `Settings.ControlPlaneLoopsEnabled` (see `slot-control-plane-isolation`), so a
-  slot process never finalizes prod Jobs. It is idempotent: a terminal entry is
-  keyed by the job handle, so duplicate apiserver events and post-restart
-  re-lists never double-record.
-- The status route `GET /v1/test-slots/apply-hot-swap/{project}/{job}` is a
-  read-only projection of the durable lease history (the poll surface).
-- Every durable write in the dispatch path runs on `context.WithoutCancel` of
-  the request, so a client disconnect cannot abort it.
-- The fidelity classifier's diff context is resolved server-side (GitHub Compare
-  API, `base...git_ref`) and plumbed into the build container as
-  `GLIMMUNG_CHANGED_FILES`, because the shallow single-SHA build checkout cannot
-  compute a real diff.
-
-Evidence:
-- `internal/server/apply_hot_swap_watcher_test.go` —
-  `TestShouldStartApplyHotSwapJobWatcherGate` (unreachable when the control
-  plane is off), `TestDispatchHotSwapTerminalRecordsOutcome`,
-  `TestDispatchHotSwapTerminalIsIdempotent`,
-  `TestDispatchHotSwapTerminalTimeoutOutcome`,
-  `TestGetApplyHotSwapStatusReturnsLatestEntry`.
-- `internal/server/test_slot_apply_hot_swap_ops_test.go` —
-  `TestDispatchHotSwap*` (renders the Job + `activeDeadlineSeconds`, returns
-  `running`, no delete on dispatch), `TestFinalizeHotSwapClassifiesOutcome`.
-- `internal/server/test_slot_apply_hot_swap_api_test.go` —
-  `TestApplyTestSlotHotSwapDispatchReturnsRunningAndPlumbsDiff`.
-- `internal/server/hot_swap_diff_test.go` —
-  `TestResolveHotSwapDiffComputesChangedFiles`.
-- `scripts/check-apply-test-slot-hot-swap-migration.mjs` — the completion
-  manifest, updated to pin the async invariants and forbid the synchronous
-  `WaitForJob` block from returning.
-
-History:
-- The synchronous endpoint shipped first (the original
-  `check-apply-test-slot-hot-swap-migration.mjs`). A developer hot-swapping a
-  static frontend change observed the `apply_test_slot_hot_swap` MCP call return
-  `timed out` at ~30-35s while the Kubernetes Job completed successfully ~87s
-  later, and the classifier printed an empty `changed_files: []` because the
-  shallow checkout had no base ref. Both were fixed together: the call path went
-  async-with-poll (durable finalize, request-detached writes, per-request poll
-  timeouts in `mcp-glimmung`) and glimmung began resolving the diff context
-  server-side.
+- The deploy input is only project, slot, and `git_ref`.
+- Durable job history is keyed by the deploy operation and projected through
+  `GET /v1/test-slots/jobs/{project}/{job}`.
+- Build-stream project metadata and kind selection are retired and rejected on
+  project registration.

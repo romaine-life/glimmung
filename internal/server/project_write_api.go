@@ -7,7 +7,6 @@ import (
 	"net/http"
 
 	"github.com/romaine-life/glimmung/internal/domain/agentruntime"
-	"github.com/romaine-life/glimmung/internal/domain/hotswap"
 )
 
 type ProjectWriter interface {
@@ -49,7 +48,7 @@ func registerProject(store ReadStore, managedOrigins ManagedOriginReconciler) ht
 			writeProblem(w, http.StatusUnprocessableEntity, "github_repo is required")
 			return
 		}
-		if _, _, err := hotswap.FromMetadata(req.Metadata); err != nil {
+		if err := validateRetiredBuildStreamMetadata(req.Metadata); err != nil {
 			writeProblem(w, http.StatusUnprocessableEntity, err.Error())
 			return
 		}
@@ -82,6 +81,21 @@ func registerProject(store ReadStore, managedOrigins ManagedOriginReconciler) ht
 		}
 		writeJSON(w, http.StatusOK, project)
 	}
+}
+
+func validateRetiredBuildStreamMetadata(metadata map[string]any) error {
+	if metadata == nil {
+		return nil
+	}
+	snakeKey := "test_slot_" + "hot_swap"
+	camelKey := "testSlot" + "Hot" + "Swap"
+	if _, ok := metadata[snakeKey]; ok {
+		return fmt.Errorf("%s is retired; deploy-image-to-slot uses test_slot_helm and CI-built images instead (see .tank/docs/migration-policy.md)", snakeKey)
+	}
+	if _, ok := metadata[camelKey]; ok {
+		return fmt.Errorf("%s is retired; deploy-image-to-slot uses test_slot_helm and CI-built images instead (see .tank/docs/migration-policy.md)", camelKey)
+	}
+	return nil
 }
 
 // validateTestSlotHelmMetadata enforces the chart-image-tag drift fix

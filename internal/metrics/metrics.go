@@ -271,39 +271,6 @@ func RecordLeaseReleased(purpose, outcome string) {
 	leasesHeld.WithLabelValues(p).Dec()
 }
 
-// --- Hot-swap ----------------------------------------------------------------
-//
-// The hot-swap counter is the one explicitly named in
-// scripts/check-apply-test-slot-hot-swap-migration.mjs as deferred to "a
-// separate PR when glimmung gets a /metrics endpoint". This is that wire-up.
-
-var (
-	hotSwapOutcomesTotal = prometheus.NewCounterVec(
-		prometheus.CounterOpts{
-			Name: "glimmung_hot_swap_outcomes_total",
-			Help: "Hot-swap apply outcomes, labelled by named failure mode (persisted, build_failed, swap_failed, timeout).",
-		},
-		[]string{"outcome"},
-	)
-	hotSwapDurationSeconds = prometheus.NewHistogramVec(
-		prometheus.HistogramOpts{
-			Name:    "glimmung_hot_swap_duration_seconds",
-			Help:    "Hot-swap apply duration, labelled by outcome.",
-			Buckets: prometheus.ExponentialBuckets(1, 2, 10), // 1s .. ~17min
-		},
-		[]string{"outcome"},
-	)
-)
-
-// RecordHotSwap records the terminal outcome and wall-clock duration of
-// an ApplyHotSwap invocation. outcome must be one of: persisted,
-// build_failed, swap_failed, timeout.
-func RecordHotSwap(outcome string, duration time.Duration) {
-	out := safeLabel(outcome)
-	hotSwapOutcomesTotal.WithLabelValues(out).Inc()
-	hotSwapDurationSeconds.WithLabelValues(out).Observe(duration.Seconds())
-}
-
 // --- Postgres query layer ----------------------------------------------------
 //
 // Per-query observability for the pgx pool tracer. Labels stay bounded:
@@ -431,8 +398,8 @@ func RecordUnavailable(route, reason string) {
 // Project authored-config is durable Postgres state written through
 // register/sync. Each write mints an immutable version in
 // project_config_schemas and moves the config_schema_ref pointer. This counter
-// makes config churn observable so a silent overwrite (the failure mode that
-// dropped glimmung's own test_slot_hot_swap block) surfaces on a dashboard.
+// makes config churn observable so a silent overwrite of authored project
+// metadata surfaces on a dashboard.
 // outcome is a closed enum: created | updated | unchanged. See
 // docs/durable-project-config.md.
 
@@ -684,8 +651,6 @@ func init() {
 		leasesReleasedTotal,
 		leasesHeld,
 		leaseAcquireWaitSeconds,
-		hotSwapOutcomesTotal,
-		hotSwapDurationSeconds,
 		postgresQueriesTotal,
 		postgresQueryDurationSeconds,
 		unavailableTotal,

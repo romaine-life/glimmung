@@ -432,8 +432,7 @@ func projectFromRecord(rec pgstore.ProjectRecord) server.Project {
 // and the SetGlobal* delegations.
 func testLeaseDefaultsFromRow(row pgstore.TestLeaseDefaultsRow) server.TestLeaseDefaults {
 	return server.TestLeaseDefaults{
-		GlobalTTLSeconds:     row.GlobalTTLSeconds,
-		HotSwapMinTTLSeconds: row.HotSwapMinTTLSeconds,
+		GlobalTTLSeconds: row.GlobalTTLSeconds,
 	}
 }
 
@@ -562,36 +561,11 @@ func (s *Store) SetGlobalTestLeaseDefaultTTL(ctx context.Context, ttlSeconds *in
 	return testLeaseDefaultsFromRow(row), nil
 }
 
-func (s *Store) SetGlobalTestLeaseHotSwapMinTTL(ctx context.Context, ttlSeconds *int) (server.TestLeaseDefaults, error) {
-	if ttlSeconds != nil && *ttlSeconds <= 0 {
-		return server.TestLeaseDefaults{}, server.ValidationError{Message: "ttl_seconds must be positive"}
-	}
-	row, err := s.pgProjects.SetGlobalTestLeaseHotSwapMinTTL(ctx, ttlSeconds)
-	if err != nil {
-		return server.TestLeaseDefaults{}, err
-	}
-	return testLeaseDefaultsFromRow(row), nil
-}
-
 func (s *Store) SetProjectTestLeaseDefaultTTL(ctx context.Context, project string, ttlSeconds *int) (server.Project, error) {
 	if ttlSeconds != nil && *ttlSeconds <= 0 {
 		return server.Project{}, server.ValidationError{Message: "ttl_seconds must be positive"}
 	}
 	rec, err := s.pgProjects.SetTestLeaseDefaultTTL(ctx, project, ttlSeconds)
-	if errors.Is(err, pgstore.ErrProjectNotFound) {
-		return server.Project{}, server.ErrNotFound
-	}
-	if err != nil {
-		return server.Project{}, err
-	}
-	return projectFromRecord(rec), nil
-}
-
-func (s *Store) SetProjectTestLeaseHotSwapMinTTL(ctx context.Context, project string, ttlSeconds *int) (server.Project, error) {
-	if ttlSeconds != nil && *ttlSeconds <= 0 {
-		return server.Project{}, server.ValidationError{Message: "ttl_seconds must be positive"}
-	}
-	rec, err := s.pgProjects.SetTestLeaseHotSwapMinTTL(ctx, project, ttlSeconds)
 	if errors.Is(err, pgstore.ErrProjectNotFound) {
 		return server.Project{}, server.ErrNotFound
 	}
@@ -3519,26 +3493,26 @@ func sliceOrEmpty[T any](values []T) []T {
 // Review store.
 
 type reviewDoc struct {
-	ID            string                      `json:"id"`
-	Project       string                      `json:"project"`
-	Repo          string                      `json:"repo"`
-	Number        int                         `json:"number"`
-	Title         string                      `json:"title"`
-	Body          string                      `json:"body"`
-	State         string                      `json:"state"`
-	Branch        string                      `json:"branch"`
-	BaseRef       string                      `json:"base_ref"`
-	HeadSHA       string                      `json:"head_sha"`
-	HTMLURL       string                      `json:"html_url"`
-	LinkedIssueID *string                     `json:"linked_issue_id"`
-	LinkedRunID   *string                     `json:"linked_run_id"`
-	MergedAt      *string                     `json:"merged_at"`
-	MergedBy      *string                     `json:"merged_by"`
-	Comments      []map[string]any            `json:"comments"`
-	Reviews       []map[string]any            `json:"reviews"`
+	ID            string                  `json:"id"`
+	Project       string                  `json:"project"`
+	Repo          string                  `json:"repo"`
+	Number        int                     `json:"number"`
+	Title         string                  `json:"title"`
+	Body          string                  `json:"body"`
+	State         string                  `json:"state"`
+	Branch        string                  `json:"branch"`
+	BaseRef       string                  `json:"base_ref"`
+	HeadSHA       string                  `json:"head_sha"`
+	HTMLURL       string                  `json:"html_url"`
+	LinkedIssueID *string                 `json:"linked_issue_id"`
+	LinkedRunID   *string                 `json:"linked_run_id"`
+	MergedAt      *string                 `json:"merged_at"`
+	MergedBy      *string                 `json:"merged_by"`
+	Comments      []map[string]any        `json:"comments"`
+	Reviews       []map[string]any        `json:"reviews"`
 	Evidence      []server.ReviewEvidence `json:"evidence"`
-	CreatedAt     string                      `json:"created_at"`
-	UpdatedAt     string                      `json:"updated_at"`
+	CreatedAt     string                  `json:"created_at"`
+	UpdatedAt     string                  `json:"updated_at"`
 }
 
 func (s *Store) ListReviews(ctx context.Context, filter server.ReviewListFilter) ([]server.ReviewRow, error) {
@@ -5419,7 +5393,7 @@ func (s *Store) leaseDocIDByPublicRef(ctx context.Context, project, ref string) 
 	return found.ID, nil
 }
 
-func (s *Store) AppendTestSlotHotSwapHistory(ctx context.Context, project, ref string, entry server.TestSlotHotSwapHistoryEntry) (server.Lease, error) {
+func (s *Store) AppendTestSlotOpHistory(ctx context.Context, project, ref string, entry server.TestSlotOpHistoryEntry) (server.Lease, error) {
 	docs, err := s.listLeaseDocsForProject(ctx, project)
 	if err != nil {
 		return server.Lease{}, fmt.Errorf("query leases: %w", err)
@@ -5442,19 +5416,19 @@ func (s *Store) AppendTestSlotHotSwapHistory(ctx context.Context, project, ref s
 			metadata = map[string]any{}
 			payload["metadata"] = metadata
 		}
-		history := anySliceValue(metadata["test_slot_hot_swap_history"])
+		history := anySliceValue(metadata["test_slot_op_history"])
 		history = append(history, entryMap)
 		if len(history) > 20 {
 			history = history[len(history)-20:]
 		}
-		metadata["test_slot_hot_swap_history"] = history
+		metadata["test_slot_op_history"] = history
 		return nil
 	})
 	if errors.Is(err, pgstore.ErrLeaseNotFound) {
 		return server.Lease{}, server.ErrNotFound
 	}
 	if err != nil {
-		return server.Lease{}, fmt.Errorf("append hot-swap history: %w", err)
+		return server.Lease{}, fmt.Errorf("append slot operation history: %w", err)
 	}
 	doc, err := leaseDocFromPayload(patched.Payload)
 	if err != nil {

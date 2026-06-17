@@ -71,10 +71,9 @@ running, cleaning, and available explicit.
   The lease stays alive through the human review gate so the reviewer can
   poke at the live build, and the final cleanup phase tears it down after
   approve, reject, or abort releases the gate.
-- Hot swap reads `metadata.test_slot_hot_swap`, builds from `git_ref`, copies
-  into the selected leased slot, restarts as configured, records history on
-  every outcome, and extends short leases to the configured minimum remaining
-  TTL.
+- Image deploy resolves the verified `git_ref`, deploys the CI-built image into
+  the selected leased slot, records history on every outcome, and extends short
+  leases to the configured minimum remaining TTL.
 - A slot process (the binary running inside any `k8s/issue/` release, hot or
   warm) starts the HTTP server, applies database migrations a hot-swap may
   need to land, and serves request-driven code paths. It does not start the

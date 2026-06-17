@@ -24,8 +24,6 @@ var expectedMetrics = []string{
 	"glimmung_leases_released_total",
 	"glimmung_leases_held",
 	"glimmung_lease_acquire_wait_seconds",
-	"glimmung_hot_swap_outcomes_total",
-	"glimmung_hot_swap_duration_seconds",
 	"glimmung_pg_queries_total",
 	"glimmung_pg_query_duration_seconds",
 	"glimmung_unavailable_total",
@@ -39,7 +37,6 @@ func TestHandlerServesAllRegisteredMetrics(t *testing.T) {
 	RecordDecision("retry")
 	RecordDecision("abort_budget_cost")
 	RecordDecision("abort_budget_attempts")
-	RecordHotSwap("persisted", time.Second)
 	RecordLeaseAcquire("dispatch", "granted", 100*time.Millisecond)
 	RecordLeaseReleased("dispatch", "completed")
 	RecordRunCreated("test-workflow")
@@ -152,15 +149,6 @@ func TestRecordDecisionEmptyIsNoop(t *testing.T) {
 	after := testutil.CollectAndCount(decisionsTotal)
 	if after != before {
 		t.Errorf("RecordDecision(\"\") changed counter family size: %d -> %d", before, after)
-	}
-}
-
-func TestRecordHotSwapIncrementsOutcomeCounter(t *testing.T) {
-	before := testutil.ToFloat64(hotSwapOutcomesTotal.WithLabelValues("build_failed"))
-	RecordHotSwap("build_failed", 5*time.Second)
-	after := testutil.ToFloat64(hotSwapOutcomesTotal.WithLabelValues("build_failed"))
-	if after-before != 1 {
-		t.Errorf("hot_swap_outcomes_total{outcome=build_failed}: expected +1, got +%v", after-before)
 	}
 }
 

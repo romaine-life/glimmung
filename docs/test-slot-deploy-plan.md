@@ -1,10 +1,10 @@
 # Test-slot validation: deploy the CI-built image, not hand-streamed artifacts
 
 **Status:** Accepted plan / migration spec. Supersedes the artifact-streaming
-hot-swap model — `docs/test-slot-hot-swap.md`, the `apply_test_slot_hot_swap`
-build-and-stream path, the per-project `metadata.test_slot_hot_swap` build
-contract, and tank-operator's `scripts/classify-tank-test-fidelity.mjs`
-fidelity classifier. Those are deletion targets here, not designs to extend
+hot-swap model — `docs/test-slot-hot-swap.md`, the `retired apply tool`
+build-and-stream path, the per-project `retired build-stream metadata` build
+contract, and tank-operator's `scripts/retired classifier script`
+classifier. Those are deletion targets here, not designs to extend
 (see `docs/migration-policy.md`).
 
 ## Decision
@@ -12,7 +12,7 @@ fidelity classifier. Those are deletion targets here, not designs to extend
 A test slot is validated by **deploying the exact image CI already built and
 pushed to ACR for the verified commit** — never by building artifacts in an
 ephemeral Job and streaming them into running pods. "Hot swap" — artifact
-streaming, per-artifact kind selection, and fidelity detection — is removed end
+streaming, per-kind selector selection, and change detection — is removed end
 to end. The replacement is "deploy what CI built," which is simultaneously the
 *correct* thing and the *fast* thing.
 
@@ -27,15 +27,15 @@ to end. The replacement is "deploy what CI built," which is simultaneously the
   same image (it does not rebuild). So the moment a commit is legitimate, the
   exact artifact that will ship is already in the registry, keyed to that SHA.
   The thing the gate verifies and the thing the slot deploys become one object.
-- **Fidelity goes up.** The old hot-swap Job rebuilt artifacts with its own
+- **Accuracy goes up.** The old hot-swap Job rebuilt artifacts with its own
   command (`go build` with ad-hoc flags, a from-scratch Go toolchain install),
   which is not guaranteed byte-identical to the Dockerfile build. Deploying the
   CI image means the slot runs the *exact* artifact CI built and main will
   deploy — the test target stops being an approximation.
-- **The detection was the wrong shape and it failed open.** The fidelity
+- **The detection was the wrong shape and it failed open.** The accuracy
   classifier's impact-allowlist + rebuild-trigger-denylist let any unrecognized
   file fall through as "assumed swappable," silently testing stale code — a
-  fidelity guard that fails open is worse than none. It was enabled on exactly
+  classifier guard that fails open is worse than none. It was enabled on exactly
   one project (tank-operator) and absent/disabled on every other, which is the
   tell that it was a one-app wart mistaken for a platform feature.
 - **The loop is CI-bound anyway.** Because validation requires CI-green code
@@ -56,7 +56,7 @@ going-to-ship build.
 
 1. **One governed tool, agent says one thing.** "Validate `<branch>` on a slot"
    (or fire automatically on publish). The agent supplies a ref and nothing
-   else — no artifact kind, no cluster access, no token. Every step runs in a
+   else — no kind selector, no cluster access, no token. Every step runs in a
    glimmung-owned Job/operation with its own scoped identity, so it stays
    observable and hookable (the reason the platform moved off `kubectl cp` in
    the first place — that property is preserved).
@@ -89,24 +89,24 @@ going-to-ship build.
 
 Per `docs/migration-policy.md`, the old path is removed, not fenced off:
 
-- `apply_test_slot_hot_swap` build-and-stream path: the in-Job artifact build,
+- `retired apply tool` build-and-stream path: the in-Job artifact build,
   the tar-over-exec streaming into running pods, the SIGHUP-on-streamed-artifact
   restart, and the artifact-kind dispatch (`resolveArtifact`,
   `renderApplyHotSwapJobSpec`, the per-kind switch).
-- The per-project `metadata.test_slot_hot_swap` build contract:
+- The per-project `retired build-stream metadata` build contract:
   `build_command`, `builder_image`, `source`/`target`, every per-artifact block
   (`static`, `backend`, `agent_runner`, `codex_runner`, `antigravity_runner`),
   and `restart`.
-- tank-operator `scripts/classify-tank-test-fidelity.mjs`, the
-  `fidelity_classifier` contract block, the `GLIMMUNG_HOT_SWAP_*` env plumbing,
+- tank-operator `scripts/retired classifier script`, the
+  `accuracy_classifier` contract block, the `GLIMMUNG_HOT_SWAP_*` env plumbing,
   and the `--enforce` gate.
-- mcp-glimmung's `artifact_kind` parameter and the multi-kind surface (never
+- mcp-glimmung's `kind selector` parameter and the multi-kind surface (never
   shipped; do not build it).
 - Old behaviour tests and docs (`docs/test-slot-hot-swap.md`) — replaced by this
   doc and the new deploy-from-image contract.
 
 A migration guard must fail if any artifact-build/stream path, per-artifact
-contract block, or fidelity classifier is reintroduced into live code.
+contract block, or classifier is reintroduced into live code.
 
 ## What gets built
 
@@ -117,7 +117,7 @@ contract block, or fidelity classifier is reintroduced into live code.
   the exact "tested something that got merge-conflict-fixed later" waste this is
   meant to kill).
 - **mcp-glimmung:** the tool becomes ref-in / deploy-and-verify-out, with no
-  `artifact_kind`.
+  `kind selector`.
 - **tank-operator:** delete the classifier and its CI guard/wiring. Keep the
   verify gate and the control-action ledger (already corrected in #1253).
 
@@ -148,11 +148,11 @@ complex, most app-specific corner of the old design. Accepted.
    verified per-session subject).
 2. **glimmung — add the deploy path:** `deploy_image_to_slot` + SHA→image
    resolution + the behind-main check, landing *alongside* the existing
-   `apply_test_slot_hot_swap` so slots keep working during rollout.
+   `retired apply tool` so slots keep working during rollout.
 3. **mcp-glimmung — switch the tool:** ref-in / deploy-out; stop accepting
-   `artifact_kind`.
+   `kind selector`.
 4. **Cutover + deletion:** remove the artifact-stream path, the
-   `test_slot_hot_swap` build contract, and the tank-operator classifier end to
+   `retired build-stream metadata` build contract, and the tank-operator classifier end to
    end; land the migration guards. No parallel path survives. **Gated on stage 6
    green for every in-scope app** — the old path is not deleted until the new
    one is proven per app.

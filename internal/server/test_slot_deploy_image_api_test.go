@@ -11,6 +11,11 @@ import (
 	"time"
 )
 
+func authedDeployRequest(t *testing.T, body string) *http.Request {
+	t.Helper()
+	return httptest.NewRequest(http.MethodPost, "/v1/test-slots/deploy-image", strings.NewReader(body))
+}
+
 func newDeployImageStore(t *testing.T) *fakeLeaseStore {
 	t.Helper()
 	return &fakeLeaseStore{
@@ -67,7 +72,7 @@ func TestDeployImageToTestSlotHappyPath(t *testing.T) {
 	handler := http.HandlerFunc(deployImageToTestSlot(store, nil, performer, resolveRef))
 	body := `{"project":"tank-operator","slot_name":"tank-operator-slot-1","git_ref":"feat/x"}`
 	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, authedApplyRequest(t, body))
+	handler.ServeHTTP(rec, authedDeployRequest(t, body))
 
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
@@ -84,7 +89,7 @@ func TestDeployImageToTestSlotHappyPath(t *testing.T) {
 	}
 	// The poll handle the mcp tool drives the running→terminal transition with;
 	// it must be present and tagged as a deploy job (shared by both history
-	// entries so the apply-hot-swap status route serves the deploy unchanged).
+	// entries so the job-status route serves the deploy unchanged).
 	job, _ := resp["job"].(string)
 	if !strings.HasPrefix(job, "deploy-") {
 		t.Fatalf("resp.job = %v, want a deploy- handle", resp["job"])
@@ -105,7 +110,7 @@ func TestDeployImageToTestSlotRequiresGitRef(t *testing.T) {
 	resolveRef := func(context.Context, string, string, string) (string, error) { return "sha", nil }
 	handler := http.HandlerFunc(deployImageToTestSlot(store, nil, performer, resolveRef))
 	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, authedApplyRequest(t, `{"project":"tank-operator","slot_name":"tank-operator-slot-1"}`))
+	handler.ServeHTTP(rec, authedDeployRequest(t, `{"project":"tank-operator","slot_name":"tank-operator-slot-1"}`))
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400; body=%s", rec.Code, rec.Body.String())
 	}
@@ -117,7 +122,7 @@ func TestDeployImageToTestSlotNoLease(t *testing.T) {
 	resolveRef := func(context.Context, string, string, string) (string, error) { return "sha", nil }
 	handler := http.HandlerFunc(deployImageToTestSlot(store, nil, performer, resolveRef))
 	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, authedApplyRequest(t, `{"project":"tank-operator","slot_name":"tank-operator-slot-9","git_ref":"feat/x"}`))
+	handler.ServeHTTP(rec, authedDeployRequest(t, `{"project":"tank-operator","slot_name":"tank-operator-slot-9","git_ref":"feat/x"}`))
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404; body=%s", rec.Code, rec.Body.String())
 	}
@@ -130,7 +135,7 @@ func TestDeployImageToTestSlotNotConfigured(t *testing.T) {
 	resolveRef := func(context.Context, string, string, string) (string, error) { return "sha", nil }
 	handler := http.HandlerFunc(deployImageToTestSlot(store, nil, nil, resolveRef))
 	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, authedApplyRequest(t, `{"project":"tank-operator","slot_name":"tank-operator-slot-1","git_ref":"feat/x"}`))
+	handler.ServeHTTP(rec, authedDeployRequest(t, `{"project":"tank-operator","slot_name":"tank-operator-slot-1","git_ref":"feat/x"}`))
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d, want 503; body=%s", rec.Code, rec.Body.String())
 	}
@@ -152,16 +157,16 @@ func TestTestSlotDeployImageValueKeyDefaultsToImageTag(t *testing.T) {
 	}
 }
 
-// TestDeployImageToTestSlotRequiresHelmConfig: a project with a hot-swap
-// contract but no test_slot_helm cannot be deployed (deploy reuses the helm
-// reconcile, so it needs the chart config, not the retiring hot-swap contract).
+// TestDeployImageToTestSlotRequiresHelmConfig: a project without test_slot_helm
+// cannot be deployed because deploy reuses the helm reconcile.
 func TestDeployImageToTestSlotRequiresHelmConfig(t *testing.T) {
-	store := newApplyHotSwapStore(t) // has test_slot_hot_swap, not test_slot_helm
+	store := newDeployImageStore(t)
+	store.projects[0].Metadata = map[string]any{}
 	performer := func(context.Context, Lease, Project, string, string, string) error { return nil }
 	resolveRef := func(context.Context, string, string, string) (string, error) { return "sha", nil }
 	handler := http.HandlerFunc(deployImageToTestSlot(store, nil, performer, resolveRef))
 	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, authedApplyRequest(t, `{"project":"tank-operator","slot_name":"tank-operator-slot-1","git_ref":"feat/x"}`))
+	handler.ServeHTTP(rec, authedDeployRequest(t, `{"project":"tank-operator","slot_name":"tank-operator-slot-1","git_ref":"feat/x"}`))
 	if rec.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("status = %d, want 422; body=%s", rec.Code, rec.Body.String())
 	}
