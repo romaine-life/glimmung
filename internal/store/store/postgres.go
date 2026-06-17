@@ -610,6 +610,9 @@ func (s *Store) ListWorkflows(ctx context.Context) ([]server.Workflow, error) {
 		if err != nil {
 			return nil, err
 		}
+		if workflowHiddenFromLists(w) {
+			continue
+		}
 		out = append(out, w)
 	}
 	return out, nil
@@ -6134,7 +6137,7 @@ func (s *Store) AbortRunByID(ctx context.Context, project, runID, reason string)
 		return server.AbortRunResult{}, err
 	}
 
-	terminal := doc.State == "passed" || doc.State == "review_required" || doc.State == "aborted" || doc.State == "recycled"
+	terminal := adminAbortAlreadyTerminalState(doc.State)
 
 	// Compute run_ref for the result.
 	siblings, _ := s.issueRunDocs(ctx, project, doc.IssueNumber)
@@ -6212,6 +6215,15 @@ func terminalStateReleasesSlotLease(state string, preserveTestEnv bool) bool {
 		return true
 	case "passed":
 		return !preserveTestEnv
+	default:
+		return false
+	}
+}
+
+func adminAbortAlreadyTerminalState(state string) bool {
+	switch state {
+	case "passed", "aborted", "recycled":
+		return true
 	default:
 		return false
 	}
@@ -8988,9 +9000,25 @@ func (s *Store) ListProjectWorkflows(ctx context.Context, project string) ([]ser
 		if err != nil {
 			return nil, err
 		}
+		if workflowHiddenFromLists(w) {
+			continue
+		}
 		out = append(out, w)
 	}
 	return out, nil
+}
+
+func workflowHiddenFromLists(w server.Workflow) bool {
+	if w.Metadata == nil {
+		return false
+	}
+	if _, ok := w.Metadata["deleted_at"].(string); ok {
+		return true
+	}
+	if visible, ok := w.Metadata["visible"].(bool); ok && !visible {
+		return true
+	}
+	return false
 }
 
 // CreateRun creates a queued first cycle for a new issue run. The caller must

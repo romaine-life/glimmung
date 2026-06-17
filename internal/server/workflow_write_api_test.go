@@ -1181,7 +1181,7 @@ func TestDeleteWorkflowRequiresAdmin(t *testing.T) {
 	}
 }
 
-func TestDeleteWorkflowDeletesAndReturnsWorkflow(t *testing.T) {
+func TestDeleteWorkflowTombstonesAndReturnsWorkflow(t *testing.T) {
 	store := &fakeWorkflowWriteStore{workflow: Workflow{
 		ID:        "agent-run",
 		Project:   "ambience",

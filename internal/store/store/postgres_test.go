@@ -181,6 +181,50 @@ func TestTerminalStateReleasesSlotLease(t *testing.T) {
 	}
 }
 
+func TestAdminAbortAlreadyTerminalState(t *testing.T) {
+	cases := []struct {
+		state string
+		want  bool
+	}{
+		{state: "passed", want: true},
+		{state: "aborted", want: true},
+		{state: "recycled", want: true},
+		{state: "review_required", want: false},
+		{state: "in_progress", want: false},
+		{state: "queued", want: false},
+		{state: "", want: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.state, func(t *testing.T) {
+			if got := adminAbortAlreadyTerminalState(tc.state); got != tc.want {
+				t.Fatalf("adminAbortAlreadyTerminalState(%q)=%t, want %t", tc.state, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestWorkflowHiddenFromLists(t *testing.T) {
+	cases := []struct {
+		name     string
+		metadata map[string]any
+		want     bool
+	}{
+		{name: "nil metadata", metadata: nil, want: false},
+		{name: "normal", metadata: map[string]any{"usable": true, "visible": true}, want: false},
+		{name: "unusable remains listable", metadata: map[string]any{"usable": false, "visible": true}, want: false},
+		{name: "hidden", metadata: map[string]any{"visible": false}, want: true},
+		{name: "deleted", metadata: map[string]any{"deleted_at": "2026-06-17T00:00:00Z", "usable": false, "visible": false}, want: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := workflowHiddenFromLists(server.Workflow{Metadata: tc.metadata})
+			if got != tc.want {
+				t.Fatalf("workflowHiddenFromLists()=%t, want %t", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestRunnerJobExecutionStateVerificationControl(t *testing.T) {
 	completion := runnerJobCompletionDoc{
 		Conclusion:   "success",

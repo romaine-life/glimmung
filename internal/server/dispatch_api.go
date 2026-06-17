@@ -500,6 +500,9 @@ func resolveDispatchWorkflow(ctx context.Context, store RunDispatchStore, projec
 		if wf == nil {
 			return nil, fmt.Sprintf("workflow %s/%s not registered", project, workflowName), nil
 		}
+		if workflowTombstoned(*wf) {
+			return nil, fmt.Sprintf("workflow %s/%s is deleted", project, workflowName), nil
+		}
 		canonical := CanonicalWorkflow(*wf)
 		return &canonical, "", nil
 	}
@@ -527,4 +530,20 @@ func newDispatchID() string {
 	b := make([]byte, 16)
 	_, _ = rand.Read(b)
 	return fmt.Sprintf("%x", b)
+}
+
+func workflowTombstoned(w Workflow) bool {
+	if w.Metadata == nil {
+		return false
+	}
+	if _, ok := w.Metadata["deleted_at"].(string); ok {
+		return true
+	}
+	if usable, ok := w.Metadata["usable"].(bool); ok && !usable {
+		return true
+	}
+	if visible, ok := w.Metadata["visible"].(bool); ok && !visible {
+		return true
+	}
+	return false
 }
