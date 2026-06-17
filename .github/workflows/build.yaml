@@ -84,7 +84,7 @@ jobs:
             --paths 'Dockerfile .dockerignore go.mod go.sum cmd internal frontend/package.json frontend/package-lock.json frontend/index.html frontend/src frontend/tsconfig.json frontend/vite.config.ts design-system' \
             | tee /tmp/glimmung-image-fingerprint.txt \
             | awk -F= '$1 == "fingerprint" { print $2 }')"
-          echo "ALIAS_TAG=app-${fingerprint}" >> "$GITHUB_ENV"
+          echo "FINGERPRINT_TAG=app-${fingerprint}" >> "$GITHUB_ENV"
 
       - name: Check existing image
         id: image
@@ -94,10 +94,10 @@ jobs:
           if az acr repository show-tags \
               --name romainecr \
               --repository "${IMAGE}" \
-              --query "[?@=='${ALIAS_TAG}'] | [0]" \
-              --output tsv | grep -qx "${ALIAS_TAG}"; then
+              --query "[?@=='${FINGERPRINT_TAG}'] | [0]" \
+              --output tsv | grep -qx "${FINGERPRINT_TAG}"; then
             echo "exists=true" >>"${GITHUB_OUTPUT}"
-            echo "Found reusable image ${REGISTRY}/${IMAGE}:${ALIAS_TAG}"
+            echo "Found reusable image ${REGISTRY}/${IMAGE}:${FINGERPRINT_TAG}"
           else
             echo "exists=false" >>"${GITHUB_OUTPUT}"
             echo "No reusable image found for app fingerprint ${{ steps.fingerprint.outputs.fingerprint }}"
@@ -109,20 +109,20 @@ jobs:
         with:
           context: .
           push: true
-          tags: ${{ env.REGISTRY }}/${{ env.IMAGE }}:${{ env.ALIAS_TAG }}
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE }}:${{ env.FINGERPRINT_TAG }}
           cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE }}-build-cache:app
           cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE }}-build-cache:app,mode=max
 
       - name: Bump chart image tag
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: |
-          tag="${ALIAS_TAG}"
-          # Bump the SHA-pinned image.tag in BOTH the prod chart and the
+          tag="${FINGERPRINT_TAG}"
+          # Bump the fingerprint-pinned image.tag in BOTH the prod chart and the
           # per-issue chart so warm Glimmung test slots — which install
           # k8s/issue without a Postgres-side override — don't drift
           # behind prod between releases. Targeted sed: only the line
           # beginning with two spaces + `tag:` under image. Quote the
-          # value so YAML never reinterprets image tags.
+          # value so YAML always treats image tags as strings.
           files=(k8s/values.yaml k8s/issue/values.yaml)
           bump() {
             for f in "${files[@]}"; do

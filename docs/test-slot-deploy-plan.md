@@ -76,6 +76,8 @@ going-to-ship build.
    resolved registry tag before mutation. The longer-lived target is to project
    the CI image mapping from build metadata into the same ledger the gate reads,
    so resolution remains durable without per-project hand-maintained maps.
+   Glimmung-managed app builds do not publish commit-SHA tag aliases for
+   deploy-image compatibility; the fingerprint tag is the image identity.
 4. **Deploy the image — two levels, both "deploy the verified image":**
    - **App-level** (backend, static, any app): repoint the slot's app
      Deployment at `app-<fingerprint>` and roll. Fast — the slot already ran the

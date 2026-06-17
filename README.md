@@ -286,6 +286,10 @@ full image refs. In both forms, Glimmung validates the resolved registry tag
 before dispatching the slot deploy; a missing or unvalidated image is a clean
 deploy-image error and does not mutate the slot.
 
+Glimmung-managed app images use fingerprint tags as image identity. The app
+Docker build check publishes/reuses `app-<fingerprint>` and does not create a
+commit-SHA tag alias for deploy-image compatibility.
+
 Per-project slot shape is described by `test_slot_helm`; there is no separate
 build-stream contract, kind selector, or project-owned classifier. Glimmung
 rejects the retired build-stream metadata key on project registration so the

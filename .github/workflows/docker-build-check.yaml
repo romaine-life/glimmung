@@ -140,24 +140,6 @@ jobs:
             type=registry,ref=${{ matrix.cache-ref }},mode=max
             type=gha,mode=max,scope=${{ matrix.name }}
 
-      - name: Tag image by commit SHA (deploy-to-image resolution)
-        # The deploy-to-image flow (glimmung deploy_slot_to_image) resolves a
-        # verified commit to its CI-built image via the commit-SHA tag. The
-        # fingerprint/proof image (built above, or reused from a prior identical
-        # build) is the canonical artifact; this points <repo>:<sha> at that same
-        # manifest (a same-registry retag), so a test slot can deploy exactly the
-        # image CI built for the commit — no rebuild, no per-commit duplicate push.
-        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
-        shell: bash
-        run: |
-          set -euo pipefail
-          src='${{ steps.fingerprint.outputs.proof_tag }}'
-          sha='${{ github.event.pull_request.head.sha || github.sha }}'
-          az acr import --name romainecr \
-            --source "romainecr.azurecr.io/${{ matrix.image-repo }}:${src}" \
-            --image "${{ matrix.image-repo }}:${sha}" --force
-          echo "Tagged romainecr.azurecr.io/${{ matrix.image-repo }}:${sha} -> ${src}"
-
       - name: Build image without pushing
         if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository
         uses: docker/build-push-action@v6

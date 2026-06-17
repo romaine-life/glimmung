@@ -1698,9 +1698,10 @@ func TestTestSlotInstallJobManifestRendersHelmApplyJob(t *testing.T) {
 // TestTestSlotInstallJobManifestClonesShaByFetch guards the deploy-image-to-slot
 // regression caught by the Stage-6 live smoke: the reconcile clone must fetch
 // the exact ref (commit sha OR branch), because deploy-image-to-slot pins
-// config.GitRef to a verified commit sha so the chart and the CI image are the
-// same commit — and `git clone --branch <sha>` is invalid ("Remote branch <sha>
-// not found in upstream origin"). `git fetch` accepts a reachable sha (GitHub
+// config.GitRef to a verified commit sha so chart/template changes are rendered
+// from the same commit as the resolved fingerprinted image — and
+// `git clone --branch <sha>` is invalid ("Remote branch <sha> not found in
+// upstream origin"). `git fetch` accepts a reachable sha (GitHub
 // allowReachableSHA1InWant) or a ref name, so the one clone serves both callers.
 func TestTestSlotInstallJobManifestClonesShaByFetch(t *testing.T) {
 	leaseNumber := 7
