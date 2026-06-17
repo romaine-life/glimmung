@@ -6046,25 +6046,6 @@ func reviewDecisionMessage(decision, actor string) string {
 }
 
 func (s *Store) FindRunForPR(ctx context.Context, repo string, prNumber int) (server.RunReplayData, error) {
-	if reviewRow, err := s.pgReviews.FindByRepoNumber(ctx, repo, prNumber); err == nil {
-		doc, derr := reviewDocFromPayload(reviewRow.Payload)
-		if derr != nil {
-			return server.RunReplayData{}, derr
-		}
-		if doc.LinkedRunID != nil && strings.TrimSpace(*doc.LinkedRunID) != "" {
-			project := firstNonEmpty(doc.Project, reviewRow.Project)
-			run, rerr := s.ReadRunForReplay(ctx, project, *doc.LinkedRunID)
-			if rerr == nil {
-				return run, nil
-			}
-			if !errors.Is(rerr, server.ErrNotFound) {
-				return server.RunReplayData{}, rerr
-			}
-		}
-	} else if !errors.Is(err, pgstore.ErrReviewNotFound) {
-		return server.RunReplayData{}, err
-	}
-
 	// pg.RunsStore.FindByPR returns the most-recently-updated row
 	// across all projects via payload->>'issue_repo' + payload->>'pr_number'.
 	// A single SELECT against the runs table handles the cross-project view.
