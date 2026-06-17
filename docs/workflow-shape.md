@@ -742,9 +742,11 @@ dispatch. It is an operator escape hatch for creating a new Run at an explicit
 must not scrape prior runs, decide which outputs matter, or allocate a test
 slot. Supplied phases render as `supplied`, not `passed`; the caller owns the
 truthfulness and completeness of the provided outputs. Synthetic dispatch must
-not supply managed PR primitive phases or PR/review output keys such as
-`pr_number`, `pr_url`, `review_ref`, `merge_status`, or `merge_commit_sha`;
-those are canonical side effects of the `pr_review` / `pr_merge` primitives.
+not start after the managed `pr_review` phase; that primitive must run to seed
+canonical PR state. It also must not supply managed PR primitive phases or
+PR/review output keys such as `pr_number`, `pr_url`, `review_ref`,
+`merge_status`, or `merge_commit_sha`; those are canonical side effects of the
+`pr_review` / `pr_merge` primitives.
 
 Never store paths as canonical identifiers — compute at render
 time from the entity's slug + parent context. This avoids
