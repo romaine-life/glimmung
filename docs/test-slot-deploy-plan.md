@@ -69,19 +69,26 @@ going-to-ship build.
    uncommitted scratch code is structurally unable to reach a slot. The gate is
    what stops broken/stale code; the ref-only input is what stops un-pushed
    code.
-3. **Resolve SHA → CI image.** Map the verified commit to the fingerprinted ACR
-   image CI built for it. The deploy path must not assume the raw commit SHA is
-   the image tag. Current Glimmung stage-2 implementation reads a durable
-   project metadata mapping under `test_slot_deploy.ci_image` and validates the
-   resolved registry tag before mutation. The longer-lived target is to project
-   the CI image mapping from build metadata into the same ledger the gate reads,
-   so resolution remains durable without per-project hand-maintained maps.
-   Glimmung-managed app builds do not publish commit-SHA tag aliases for
-   deploy-image compatibility; the fingerprint tag is the image identity.
+3. **Resolve SHA → CI image.** Map the verified commit to the CI run that built
+   or reused the app image, then deploy that run's lookup alias. The deploy path
+   must not assume the raw commit SHA is the image tag. The canonical image
+   identity is still `app-<fingerprint>`; trusted app-image CI creates a
+   run-scoped ACR alias pointing at the same manifest after the fingerprinted
+   image exists:
+   - pull request: `ci-pr-<pr_number>-run-<run_id>-attempt-<attempt>`
+   - dispatch/non-PR: `ci-ref-<source_sha_hash>-run-<run_id>-attempt-<attempt>`
+
+   Glimmung resolves the verified SHA through GitHub Actions workflow-run
+   metadata, constructs the expected lookup tag, and validates the tag in ACR
+   before any slot mutation. A missing alias is a deploy-image error, not an
+   ImagePullBackOff. Hand-maintained project metadata maps such as
+   `tags_by_sha` and `images_by_sha` are retired; future durability work should
+   project the CI run/image facts into the same ledger the legitimacy gate reads.
 4. **Deploy the image — two levels, both "deploy the verified image":**
    - **App-level** (backend, static, any app): repoint the slot's app
-     Deployment at `app-<fingerprint>` and roll. Fast — the slot already ran the
-     prior image, so only the changed layer pulls.
+     Deployment at the validated CI lookup tag that points to
+     `app-<fingerprint>` and roll. Fast — the slot already ran the prior image,
+     so only the changed layer pulls.
    - **Runner / session-level**: start a fresh session pod on the slot from the
      CI-built session image, which boots the new runner natively. Same
      principle, different tag.

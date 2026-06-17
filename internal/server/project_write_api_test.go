@@ -186,24 +186,24 @@ func TestRegisterProjectRejectsMalformedTestSlotDeployCIImage(t *testing.T) {
 		want string
 	}{
 		{
-			name: "missing sha mapping",
-			body: `{"name":"tank-operator","github_repo":"romaine-life/tank-operator","metadata":{"test_slot_deploy":{"ci_image":{"repository":"romainecr.azurecr.io/tank-operator"}}}}`,
-			want: "images_by_sha or tags_by_sha",
+			name: "retired tags_by_sha",
+			body: `{"name":"tank-operator","github_repo":"romaine-life/tank-operator","metadata":{"test_slot_deploy":{"ci_image":{"repository":"romainecr.azurecr.io/tank-operator","tags_by_sha":{"abc123":"app-fingerprint123"}}}}}`,
+			want: "tags_by_sha is retired",
 		},
 		{
-			name: "raw sha tag",
-			body: `{"name":"tank-operator","github_repo":"romaine-life/tank-operator","metadata":{"test_slot_deploy":{"ci_image":{"repository":"romainecr.azurecr.io/tank-operator","tags_by_sha":{"abc123":"abc123"}}}}}`,
-			want: "raw SHA tag",
+			name: "retired images_by_sha",
+			body: `{"name":"tank-operator","github_repo":"romaine-life/tank-operator","metadata":{"test_slot_deploy":{"ci_image":{"images_by_sha":{"abc123":"romainecr.azurecr.io/tank-operator:app-fingerprint123"}}}}}`,
+			want: "images_by_sha is retired",
 		},
 		{
-			name: "tag mapping missing repository",
-			body: `{"name":"tank-operator","github_repo":"romaine-life/tank-operator","metadata":{"test_slot_deploy":{"ci_image":{"registry":"romainecr.azurecr.io","tags_by_sha":{"abc123":"app-fingerprint123"}}}}}`,
-			want: "repository is required",
+			name: "repository slash without registry",
+			body: `{"name":"tank-operator","github_repo":"romaine-life/tank-operator","metadata":{"test_slot_deploy":{"ci_image":{"repository":"team/tank-operator"}}}}`,
+			want: "repository must be either an ACR repository name or registry/repository",
 		},
 		{
-			name: "full image missing tag",
-			body: `{"name":"tank-operator","github_repo":"romaine-life/tank-operator","metadata":{"test_slot_deploy":{"ci_image":{"images_by_sha":{"abc123":"romainecr.azurecr.io/tank-operator"}}}}}`,
-			want: "explicit tag",
+			name: "workflow with whitespace",
+			body: `{"name":"tank-operator","github_repo":"romaine-life/tank-operator","metadata":{"test_slot_deploy":{"ci_image":{"repository":"romainecr.azurecr.io/tank-operator","workflow":"docker build check.yaml"}}}}`,
+			want: "workflow must not contain whitespace",
 		},
 	}
 	for _, tc := range cases {
@@ -226,7 +226,7 @@ func TestRegisterProjectRejectsMalformedTestSlotDeployCIImage(t *testing.T) {
 	}
 }
 
-func TestRegisterProjectAcceptsFingerprintTestSlotDeployCIImage(t *testing.T) {
+func TestRegisterProjectAcceptsTestSlotDeployCIImageWorkflowConfig(t *testing.T) {
 	store := &fakeProjectStore{project: Project{Name: "tank-operator", GitHubRepo: "romaine-life/tank-operator"}}
 	handler := NewWithDependencies(
 		Settings{},
@@ -237,7 +237,7 @@ func TestRegisterProjectAcceptsFingerprintTestSlotDeployCIImage(t *testing.T) {
 	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/projects", strings.NewReader(`{
 		"name":"tank-operator",
 		"github_repo":"romaine-life/tank-operator",
-		"metadata":{"test_slot_deploy":{"ci_image":{"repository":"romainecr.azurecr.io/tank-operator","tags_by_sha":{"abc123":"app-fingerprint123"}}}}
+		"metadata":{"test_slot_deploy":{"ci_image":{"repository":"romainecr.azurecr.io/tank-operator","workflow":"docker-build-check.yaml"}}}
 	}`)))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())

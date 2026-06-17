@@ -35,9 +35,10 @@ type deployImagePerformer func(ctx context.Context, lease Lease, project Project
 type refResolver func(ctx context.Context, slug, ref, token string) (string, error)
 
 // testSlotImageResolver resolves the verified commit SHA to the CI-built image
-// ref that the slot should run. Production uses project metadata backed by a
-// registry validation check; tests stub it so the HTTP contract stays narrow.
-type testSlotImageResolver func(ctx context.Context, project Project, sha string) (ResolvedTestSlotImage, error)
+// ref that the slot should run. Production uses GitHub Actions run metadata
+// backed by a registry validation check; tests stub it so the HTTP contract
+// stays narrow.
+type testSlotImageResolver func(ctx context.Context, project Project, slug, sha, token string) (ResolvedTestSlotImage, error)
 
 // imageToSlotDeployer is the concrete-launcher capability the deploy route wires
 // its performer from. *KubernetesRunLauncher implements it; the route type-
@@ -141,7 +142,7 @@ func deployImageToTestSlot(store ReadStore, minter RunnerGitHubTokenMinter, perf
 		// this endpoint records a running operation or mutates the slot.
 		repoToken := ""
 		if minter != nil {
-			tok, err := minter.RepositoryInstallationToken(r.Context(), slug, map[string]string{"contents": "read"})
+			tok, err := minter.RepositoryInstallationToken(r.Context(), slug, map[string]string{"contents": "read", "actions": "read"})
 			if err != nil {
 				writeInternalError(w, r, err, "mint clone token for deploy: "+err.Error())
 				return
@@ -153,7 +154,7 @@ func deployImageToTestSlot(store ReadStore, minter RunnerGitHubTokenMinter, perf
 			writeProblem(w, http.StatusUnprocessableEntity, "resolve git_ref to commit sha: "+err.Error())
 			return
 		}
-		resolvedImage, err := resolveImage(r.Context(), project, sha)
+		resolvedImage, err := resolveImage(r.Context(), project, slug, sha, repoToken)
 		if err != nil {
 			writeProblem(w, http.StatusUnprocessableEntity, "resolve commit sha to CI image: "+err.Error())
 			return

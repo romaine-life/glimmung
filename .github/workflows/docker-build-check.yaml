@@ -59,26 +59,35 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
-      - name: Resolve requested ref
-        if: github.event_name == 'workflow_dispatch' && inputs.git_ref != ''
+      - name: Resolve image source ref
+        id: source
         env:
           INPUT_REF: ${{ inputs.git_ref }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha || '' }}
         run: |
           set -euo pipefail
           git fetch --force --tags origin '+refs/heads/*:refs/remotes/origin/*'
-          if full_sha="$(git rev-parse --verify "${INPUT_REF}^{commit}" 2>/dev/null)"; then
-            :
-          elif git show-ref --verify --quiet "refs/remotes/origin/${INPUT_REF}"; then
-            full_sha="$(git rev-parse "refs/remotes/origin/${INPUT_REF}^{commit}")"
-          elif git show-ref --verify --quiet "refs/tags/${INPUT_REF}"; then
-            full_sha="$(git rev-parse "refs/tags/${INPUT_REF}^{commit}")"
+          if [ -n "${PR_HEAD_SHA}" ]; then
+            full_sha="${PR_HEAD_SHA}"
+          elif [ -n "${INPUT_REF}" ]; then
+            if full_sha="$(git rev-parse --verify "${INPUT_REF}^{commit}" 2>/dev/null)"; then
+              :
+            elif git show-ref --verify --quiet "refs/remotes/origin/${INPUT_REF}"; then
+              full_sha="$(git rev-parse "refs/remotes/origin/${INPUT_REF}^{commit}")"
+            elif git show-ref --verify --quiet "refs/tags/${INPUT_REF}"; then
+              full_sha="$(git rev-parse "refs/tags/${INPUT_REF}^{commit}")"
+            else
+              echo "::error::Unable to resolve git_ref '${INPUT_REF}' to a commit."
+              exit 1
+            fi
           else
-            echo "::error::Unable to resolve git_ref '${INPUT_REF}' to a commit."
-            exit 1
+            full_sha="$(git rev-parse HEAD)"
           fi
           git checkout --detach "$full_sha"
-          echo "Resolved ${INPUT_REF} -> ${full_sha}"
+          echo "Resolved image source -> ${full_sha}"
+          echo "sha=${full_sha}" >> "${GITHUB_OUTPUT}"
 
       - name: Set up Buildx
         uses: docker/setup-buildx-action@v3
@@ -139,6 +148,39 @@ jobs:
           cache-to: |
             type=registry,ref=${{ matrix.cache-ref }},mode=max
             type=gha,mode=max,scope=${{ matrix.name }}
+
+      - name: Create app CI lookup tag
+        if: matrix.name == 'app' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+        shell: bash
+        env:
+          REGISTRY: romainecr.azurecr.io
+          IMAGE_REPO: ${{ matrix.image-repo }}
+          FINGERPRINT_TAG: ${{ steps.fingerprint.outputs.proof_tag }}
+          SOURCE_SHA: ${{ steps.source.outputs.sha }}
+          EVENT_NAME: ${{ github.event_name }}
+          PR_NUMBER: ${{ github.event.pull_request.number || '' }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          if [ "${EVENT_NAME}" = "pull_request" ] && [ -n "${PR_NUMBER}" ]; then
+            lookup_tag="ci-pr-${PR_NUMBER}-run-${RUN_ID}-attempt-${RUN_ATTEMPT}"
+          else
+            ref_hash="$(printf '%s' "${SOURCE_SHA}" | sha256sum | cut -c1-12)"
+            lookup_tag="ci-ref-${ref_hash}-run-${RUN_ID}-attempt-${RUN_ATTEMPT}"
+          fi
+          az acr import --name romainecr \
+            --source "${REGISTRY}/${IMAGE_REPO}:${FINGERPRINT_TAG}" \
+            --image "${IMAGE_REPO}:${lookup_tag}" --force
+          if ! az acr repository show-tags \
+              --name romainecr \
+              --repository "${IMAGE_REPO}" \
+              --query "[?@=='${lookup_tag}'] | [0]" \
+              --output tsv | grep -qx "${lookup_tag}"; then
+            echo "::error::CI lookup tag ${REGISTRY}/${IMAGE_REPO}:${lookup_tag} was not found after import."
+            exit 1
+          fi
+          echo "Created app CI lookup image ${REGISTRY}/${IMAGE_REPO}:${lookup_tag} -> ${FINGERPRINT_TAG}"
 
       - name: Build image without pushing
         if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository

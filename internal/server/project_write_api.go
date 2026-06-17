@@ -179,37 +179,18 @@ func validateTestSlotDeployMetadata(metadata map[string]any) error {
 	if !ok {
 		return nil
 	}
-	imagesBySHA := stringMapFromAnyMap(anyMap(firstAny(ciImage["images_by_sha"], ciImage["imagesBySha"])))
-	tagsBySHA := stringMapFromAnyMap(anyMap(firstAny(ciImage["tags_by_sha"], ciImage["tagsBySha"])))
-	if len(imagesBySHA) == 0 && len(tagsBySHA) == 0 {
-		return fmt.Errorf("test_slot_deploy.ci_image must declare images_by_sha or tags_by_sha")
-	}
-	for sha, image := range imagesBySHA {
-		if strings.TrimSpace(sha) == "" || strings.TrimSpace(image) == "" {
-			return fmt.Errorf("test_slot_deploy.ci_image.images_by_sha cannot contain empty sha or image values")
-		}
-		resolved, err := resolvedTestSlotImageFromRef(image, "project_metadata:test_slot_deploy.ci_image.images_by_sha")
-		if err != nil {
-			return fmt.Errorf("test_slot_deploy.ci_image.images_by_sha[%s]: %w", sha, err)
-		}
-		if tagIsRawCommitSHA(resolved.Tag, sha) {
-			return fmt.Errorf("test_slot_deploy.ci_image.images_by_sha[%s] points at raw SHA tag %q; deploy-image requires a fingerprinted CI image tag", sha, resolved.Tag)
+	for _, key := range []string{"images_by_sha", "imagesBySha", "tags_by_sha", "tagsBySha"} {
+		if _, has := ciImage[key]; has {
+			return fmt.Errorf("test_slot_deploy.ci_image.%s is retired; deploy-image resolves GitHub Actions CI lookup tags from workflow run metadata", key)
 		}
 	}
-	if len(tagsBySHA) > 0 {
-		registry := configString(ciImage, "registry")
-		repository := firstNonEmpty(configString(ciImage, "repository"), configString(ciImage, "image_repository", "imageRepository"))
-		for sha, tag := range tagsBySHA {
-			if strings.TrimSpace(sha) == "" || strings.TrimSpace(tag) == "" {
-				return fmt.Errorf("test_slot_deploy.ci_image.tags_by_sha cannot contain empty sha or tag values")
-			}
-			if tagIsRawCommitSHA(tag, sha) {
-				return fmt.Errorf("test_slot_deploy.ci_image.tags_by_sha[%s] is a raw SHA tag; deploy-image requires a fingerprinted CI image tag", sha)
-			}
+	if repository := firstNonEmpty(configString(ciImage, "repository"), configString(ciImage, "image_repository", "imageRepository")); strings.TrimSpace(repository) != "" {
+		if _, _, ok := splitRegistryRepository(repository); !ok && strings.Contains(repository, "/") {
+			return fmt.Errorf("test_slot_deploy.ci_image.repository must be either an ACR repository name or registry/repository")
 		}
-		if _, err := resolvedTestSlotImageFromRepositoryTag(registry, repository, "validation-tag", "project_metadata:test_slot_deploy.ci_image.tags_by_sha"); err != nil {
-			return fmt.Errorf("test_slot_deploy.ci_image: %w", err)
-		}
+	}
+	if workflow := configString(ciImage, "workflow", "workflow_file", "workflowFile"); strings.ContainsAny(workflow, " \t\n\r") {
+		return fmt.Errorf("test_slot_deploy.ci_image.workflow must not contain whitespace")
 	}
 	return nil
 }

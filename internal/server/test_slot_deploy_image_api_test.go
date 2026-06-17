@@ -33,9 +33,7 @@ func newDeployImageStore(t *testing.T) *fakeLeaseStore {
 							"image_value_key": "image.tag",
 							"ci_image": map[string]any{
 								"repository": "romainecr.azurecr.io/tank-operator",
-								"tags_by_sha": map[string]any{
-									"abc123def456": "app-fingerprint123",
-								},
+								"workflow":   "docker-build-check.yaml",
 							},
 						},
 					},
@@ -58,7 +56,7 @@ func newDeployImageStore(t *testing.T) *fakeLeaseStore {
 }
 
 func stubTestSlotImageResolver(image string) testSlotImageResolver {
-	return func(context.Context, Project, string) (ResolvedTestSlotImage, error) {
+	return func(context.Context, Project, string, string, string) (ResolvedTestSlotImage, error) {
 		resolved, err := resolvedTestSlotImageFromRef(image, "test")
 		if err != nil {
 			return ResolvedTestSlotImage{}, err
@@ -67,11 +65,16 @@ func stubTestSlotImageResolver(image string) testSlotImageResolver {
 	}
 }
 
+func failingTestSlotImageResolver(err error) testSlotImageResolver {
+	return func(context.Context, Project, string, string, string) (ResolvedTestSlotImage, error) {
+		return ResolvedTestSlotImage{}, err
+	}
+}
+
 // TestDeployImageToTestSlotHappyPath pins the dispatch contract: lease resolved
-// by slot_name, ref resolved to a commit SHA, that SHA resolved to a
-// fingerprinted CI image from project metadata, the deploy performer invoked
-// with the resolved SHA as chart ref and the fingerprint image as image, and a
-// 202 "running" returned with both values.
+// by slot_name, ref resolved to a commit SHA, that SHA resolved to a validated
+// CI lookup image, the deploy performer invoked with the resolved SHA as chart
+// ref and lookup image as image, and a 202 "running" returned with both values.
 func TestDeployImageToTestSlotHappyPath(t *testing.T) {
 	store := newDeployImageStore(t)
 	type performerCall struct{ ref, image, key string }
@@ -86,7 +89,7 @@ func TestDeployImageToTestSlotHappyPath(t *testing.T) {
 		}
 		return "abc123def456", nil
 	}
-	resolveImage := projectMetadataTestSlotImageResolver(noopTestSlotImageValidator{})
+	resolveImage := stubTestSlotImageResolver("romainecr.azurecr.io/tank-operator:ci-pr-77-run-12345-attempt-2")
 	handler := http.HandlerFunc(deployImageToTestSlot(store, nil, performer, resolveRef, resolveImage))
 	body := `{"project":"tank-operator","slot_name":"tank-operator-slot-1","git_ref":"feat/x"}`
 	rec := httptest.NewRecorder()
@@ -102,11 +105,11 @@ func TestDeployImageToTestSlotHappyPath(t *testing.T) {
 	if resp["sha"] != "abc123def456" {
 		t.Fatalf("resp.sha = %v, want abc123def456", resp["sha"])
 	}
-	if resp["image"] != "romainecr.azurecr.io/tank-operator:app-fingerprint123" {
-		t.Fatalf("resp.image = %v, want fingerprint image", resp["image"])
+	if resp["image"] != "romainecr.azurecr.io/tank-operator:ci-pr-77-run-12345-attempt-2" {
+		t.Fatalf("resp.image = %v, want CI lookup image", resp["image"])
 	}
-	if resp["image_tag"] != "app-fingerprint123" {
-		t.Fatalf("resp.image_tag = %v, want app-fingerprint123", resp["image_tag"])
+	if resp["image_tag"] != "ci-pr-77-run-12345-attempt-2" {
+		t.Fatalf("resp.image_tag = %v, want ci-pr-77-run-12345-attempt-2", resp["image_tag"])
 	}
 	if resp["status"] != "running" {
 		t.Fatalf("resp.status = %v, want running", resp["status"])
@@ -120,8 +123,8 @@ func TestDeployImageToTestSlotHappyPath(t *testing.T) {
 	}
 	select {
 	case c := <-calls:
-		if c.ref != "abc123def456" || c.image != "romainecr.azurecr.io/tank-operator:app-fingerprint123" || c.key != "image.tag" {
-			t.Fatalf("performer call = %+v, want {abc123def456 romainecr.azurecr.io/tank-operator:app-fingerprint123 image.tag}", c)
+		if c.ref != "abc123def456" || c.image != "romainecr.azurecr.io/tank-operator:ci-pr-77-run-12345-attempt-2" || c.key != "image.tag" {
+			t.Fatalf("performer call = %+v, want {abc123def456 romainecr.azurecr.io/tank-operator:ci-pr-77-run-12345-attempt-2 image.tag}", c)
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("performer was not invoked")
@@ -204,14 +207,14 @@ func TestDeployImageToTestSlotRequiresResolvedValidatedFingerprintImage(t *testi
 		return nil
 	}
 	resolveRef := func(context.Context, string, string, string) (string, error) { return "unmappedsha", nil }
-	resolveImage := projectMetadataTestSlotImageResolver(noopTestSlotImageValidator{})
+	resolveImage := failingTestSlotImageResolver(fmt.Errorf("no successful app-image workflow run with a CI lookup tag for commit unmappedsha"))
 	handler := http.HandlerFunc(deployImageToTestSlot(store, nil, performer, resolveRef, resolveImage))
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, authedDeployRequest(t, `{"project":"tank-operator","slot_name":"tank-operator-slot-1","git_ref":"feat/x"}`))
 	if rec.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("status = %d, want 422; body=%s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "no CI image mapping") {
+	if !strings.Contains(rec.Body.String(), "no successful app-image workflow run with a CI lookup tag") {
 		t.Fatalf("body=%s, want resolver failure", rec.Body.String())
 	}
 	select {

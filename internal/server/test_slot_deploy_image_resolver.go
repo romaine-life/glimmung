@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -39,70 +40,132 @@ func (noopTestSlotImageValidator) ValidateTestSlotImage(context.Context, Resolve
 	return nil
 }
 
-func projectMetadataTestSlotImageResolver(validator testSlotImageValidator) testSlotImageResolver {
+type testSlotCIImageSettings struct {
+	Registry   string
+	Repository string
+	Workflow   string
+}
+
+type githubWorkflowRun struct {
+	ID           int64  `json:"id"`
+	RunAttempt   int    `json:"run_attempt"`
+	Event        string `json:"event"`
+	HeadBranch   string `json:"head_branch"`
+	HeadSHA      string `json:"head_sha"`
+	Status       string `json:"status"`
+	Conclusion   string `json:"conclusion"`
+	PullRequests []struct {
+		Number int `json:"number"`
+	} `json:"pull_requests"`
+}
+
+func githubActionsTestSlotImageResolver(httpClient *http.Client, validator testSlotImageValidator) testSlotImageResolver {
 	if validator == nil {
 		validator = noopTestSlotImageValidator{}
 	}
-	return func(ctx context.Context, project Project, sha string) (ResolvedTestSlotImage, error) {
-		resolved, err := resolveTestSlotImageFromProjectMetadata(project, sha)
+	return func(ctx context.Context, project Project, slug, sha, token string) (ResolvedTestSlotImage, error) {
+		resolved, err := resolveTestSlotImageFromGitHubActions(ctx, httpClient, project, slug, sha, token, validator)
 		if err != nil {
-			return ResolvedTestSlotImage{}, err
-		}
-		if err := validator.ValidateTestSlotImage(ctx, resolved); err != nil {
 			return ResolvedTestSlotImage{}, err
 		}
 		return resolved, nil
 	}
 }
 
-func resolveTestSlotImageFromProjectMetadata(project Project, sha string) (ResolvedTestSlotImage, error) {
+func resolveTestSlotImageFromGitHubActions(ctx context.Context, httpClient *http.Client, project Project, slug, sha, token string, validator testSlotImageValidator) (ResolvedTestSlotImage, error) {
 	sha = strings.TrimSpace(sha)
 	if sha == "" {
 		return ResolvedTestSlotImage{}, fmt.Errorf("commit sha is required")
 	}
-	raw, ok := testSlotDeployMetadata(project)
-	if !ok {
-		return ResolvedTestSlotImage{}, fmt.Errorf("project %s has no test_slot_deploy.ci_image resolver metadata", project.Name)
+	if strings.TrimSpace(slug) == "" {
+		return ResolvedTestSlotImage{}, fmt.Errorf("github repo slug is required")
 	}
-	ciImage, ok := mapFromMap(raw, "ci_image")
-	if !ok {
-		ciImage, ok = mapFromMap(raw, "ciImage")
+	settings := testSlotCIImageConfig(project)
+	runs, err := listSuccessfulWorkflowRuns(ctx, httpClient, slug, settings.Workflow, sha, token)
+	if err != nil {
+		return ResolvedTestSlotImage{}, err
 	}
-	if !ok {
-		return ResolvedTestSlotImage{}, fmt.Errorf("project %s has no test_slot_deploy.ci_image resolver metadata", project.Name)
-	}
-
-	imagesBySHA := stringMapFromAnyMap(anyMap(firstAny(ciImage["images_by_sha"], ciImage["imagesBySha"])))
-	if image := strings.TrimSpace(imagesBySHA[sha]); image != "" {
-		resolved, err := resolvedTestSlotImageFromRef(image, "project_metadata:test_slot_deploy.ci_image.images_by_sha")
+	if len(runs) > 0 {
+		run := runs[0]
+		resolved, err := resolvedTestSlotImageForWorkflowRun(settings, run, sha)
 		if err != nil {
 			return ResolvedTestSlotImage{}, err
 		}
-		if tagIsRawCommitSHA(resolved.Tag, sha) {
-			return ResolvedTestSlotImage{}, fmt.Errorf("resolved image tag %q is the raw commit SHA; test-slot deploy requires a fingerprinted CI image tag", resolved.Tag)
+		if err := validator.ValidateTestSlotImage(ctx, resolved); err != nil {
+			return ResolvedTestSlotImage{}, fmt.Errorf("validate CI lookup image for workflow run %d attempt %d: %w", run.ID, run.RunAttempt, err)
 		}
 		return resolved, nil
 	}
 
-	tagsBySHA := stringMapFromAnyMap(anyMap(firstAny(ciImage["tags_by_sha"], ciImage["tagsBySha"])))
-	tag := strings.TrimSpace(tagsBySHA[sha])
-	if tag == "" {
-		return ResolvedTestSlotImage{}, fmt.Errorf("no CI image mapping for commit %s in test_slot_deploy.ci_image", sha)
-	}
-	if tagIsRawCommitSHA(tag, sha) {
-		return ResolvedTestSlotImage{}, fmt.Errorf("resolved image tag %q is the raw commit SHA; test-slot deploy requires a fingerprinted CI image tag", tag)
-	}
-
-	registry := configString(ciImage, "registry")
-	repository := firstNonEmpty(
-		configString(ciImage, "repository"),
-		configString(ciImage, "image_repository", "imageRepository"),
-	)
-	resolved, err := resolvedTestSlotImageFromRepositoryTag(registry, repository, tag, "project_metadata:test_slot_deploy.ci_image.tags_by_sha")
+	// workflow_dispatch can build an arbitrary input ref after the run has
+	// started, so GitHub's workflow_run.head_sha may be the dispatch branch
+	// rather than the resolved image source SHA. In that case scan recent
+	// successful non-PR runs and find the run-scoped lookup tag whose ref hash
+	// was derived from the resolved source SHA.
+	recent, err := listRecentSuccessfulWorkflowRuns(ctx, httpClient, slug, settings.Workflow, token)
 	if err != nil {
 		return ResolvedTestSlotImage{}, err
 	}
-	return resolved, nil
+	var lastValidationErr error
+	for _, run := range recent {
+		if run.Event == "pull_request" {
+			continue
+		}
+		resolved, err := resolvedTestSlotImageForWorkflowRun(settings, run, sha)
+		if err != nil {
+			continue
+		}
+		if err := validator.ValidateTestSlotImage(ctx, resolved); err != nil {
+			lastValidationErr = err
+			continue
+		}
+		return resolved, nil
+	}
+	if lastValidationErr != nil {
+		return ResolvedTestSlotImage{}, fmt.Errorf("no validated CI lookup image for commit %s in workflow %s: %w", sha, settings.Workflow, lastValidationErr)
+	}
+	return ResolvedTestSlotImage{}, fmt.Errorf("no successful app-image workflow run with a CI lookup tag for commit %s in workflow %s", sha, settings.Workflow)
+}
+
+func testSlotCIImageConfig(project Project) testSlotCIImageSettings {
+	registry := "romainecr.azurecr.io"
+	registryExplicit := false
+	repository := strings.TrimSpace(project.Name)
+	workflow := "docker-build-check.yaml"
+	if deploy, ok := testSlotDeployMetadata(project); ok {
+		if ciImage, ok := mapFromMap(deploy, "ci_image"); ok {
+			if configured := configString(ciImage, "registry"); configured != "" {
+				registry = configured
+				registryExplicit = true
+			}
+			repository = firstNonEmpty(
+				configString(ciImage, "repository"),
+				configString(ciImage, "image_repository", "imageRepository"),
+				repository,
+			)
+			workflow = firstNonEmpty(configString(ciImage, "workflow", "workflow_file", "workflowFile"), workflow)
+		} else if ciImage, ok := mapFromMap(deploy, "ciImage"); ok {
+			if configured := configString(ciImage, "registry"); configured != "" {
+				registry = configured
+				registryExplicit = true
+			}
+			repository = firstNonEmpty(
+				configString(ciImage, "repository"),
+				configString(ciImage, "image_repository", "imageRepository"),
+				repository,
+			)
+			workflow = firstNonEmpty(configString(ciImage, "workflow", "workflow_file", "workflowFile"), workflow)
+		}
+	}
+	if parsedRegistry, parsedRepository, ok := splitRegistryRepository(repository); ok && !registryExplicit {
+		registry = parsedRegistry
+		repository = parsedRepository
+	}
+	return testSlotCIImageSettings{
+		Registry:   registry,
+		Repository: repository,
+		Workflow:   workflow,
+	}
 }
 
 func testSlotDeployMetadata(project Project) (map[string]any, bool) {
@@ -114,11 +177,83 @@ func testSlotDeployMetadata(project Project) (map[string]any, bool) {
 	return nil, false
 }
 
+func listSuccessfulWorkflowRuns(ctx context.Context, httpClient *http.Client, slug, workflow, sha, token string) ([]githubWorkflowRun, error) {
+	values := url.Values{}
+	values.Set("status", "success")
+	values.Set("per_page", "20")
+	values.Set("head_sha", sha)
+	return listWorkflowRuns(ctx, httpClient, slug, workflow, token, values)
+}
+
+func listRecentSuccessfulWorkflowRuns(ctx context.Context, httpClient *http.Client, slug, workflow, token string) ([]githubWorkflowRun, error) {
+	values := url.Values{}
+	values.Set("status", "success")
+	values.Set("per_page", "50")
+	return listWorkflowRuns(ctx, httpClient, slug, workflow, token, values)
+}
+
+func listWorkflowRuns(ctx context.Context, httpClient *http.Client, slug, workflow, token string, query url.Values) ([]githubWorkflowRun, error) {
+	var payload struct {
+		WorkflowRuns []githubWorkflowRun `json:"workflow_runs"`
+	}
+	apiURL := githubAPIBase + "/repos/" + slug + "/actions/workflows/" + url.PathEscape(workflow) + "/runs"
+	if encoded := query.Encode(); encoded != "" {
+		apiURL += "?" + encoded
+	}
+	if err := githubGetJSON(ctx, httpClient, apiURL, token, &payload); err != nil {
+		return nil, err
+	}
+	var out []githubWorkflowRun
+	for _, run := range payload.WorkflowRuns {
+		if run.Status == "completed" && run.Conclusion == "success" {
+			out = append(out, run)
+			continue
+		}
+		// GitHub's status=success filter already limits conclusions on the
+		// REST side; keep this tolerant for test fixtures and API drift.
+		if run.Conclusion == "" && run.Status == "" {
+			out = append(out, run)
+		}
+	}
+	return out, nil
+}
+
+func resolvedTestSlotImageForWorkflowRun(settings testSlotCIImageSettings, run githubWorkflowRun, sha string) (ResolvedTestSlotImage, error) {
+	tag, err := ciLookupTagForWorkflowRun(run, sha)
+	if err != nil {
+		return ResolvedTestSlotImage{}, err
+	}
+	return resolvedTestSlotImageFromRepositoryTag(settings.Registry, settings.Repository, tag, fmt.Sprintf("github_actions:%s:run:%d:attempt:%d", settings.Workflow, run.ID, run.RunAttempt))
+}
+
+func ciLookupTagForWorkflowRun(run githubWorkflowRun, sha string) (string, error) {
+	if run.ID <= 0 {
+		return "", fmt.Errorf("workflow run id is required")
+	}
+	attempt := run.RunAttempt
+	if attempt <= 0 {
+		attempt = 1
+	}
+	if run.Event == "pull_request" && len(run.PullRequests) > 0 && run.PullRequests[0].Number > 0 {
+		return fmt.Sprintf("ci-pr-%d-run-%d-attempt-%d", run.PullRequests[0].Number, run.ID, attempt), nil
+	}
+	sha = strings.TrimSpace(sha)
+	if sha == "" {
+		return "", fmt.Errorf("source sha is required for non-PR CI lookup tag")
+	}
+	return fmt.Sprintf("ci-ref-%s-run-%d-attempt-%d", shortRefHash(sha), run.ID, attempt), nil
+}
+
+func shortRefHash(value string) string {
+	sum := sha256.Sum256([]byte(strings.TrimSpace(value)))
+	return fmt.Sprintf("%x", sum)[:12]
+}
+
 func resolvedTestSlotImageFromRepositoryTag(registry, repository, tag, source string) (ResolvedTestSlotImage, error) {
 	repository = strings.TrimSpace(repository)
 	tag = strings.TrimSpace(tag)
 	if repository == "" {
-		return ResolvedTestSlotImage{}, fmt.Errorf("test_slot_deploy.ci_image.repository is required when tags_by_sha is used")
+		return ResolvedTestSlotImage{}, fmt.Errorf("test_slot_deploy.ci_image.repository is required")
 	}
 	if tag == "" {
 		return ResolvedTestSlotImage{}, fmt.Errorf("resolved image tag is required")
@@ -127,10 +262,12 @@ func resolvedTestSlotImageFromRepositoryTag(registry, repository, tag, source st
 		return ResolvedTestSlotImage{}, fmt.Errorf("resolved image tag %q must be a tag, not an image ref", tag)
 	}
 	registry = strings.TrimSpace(registry)
-	if registry == "" {
-		if parsedRegistry, parsedRepository, ok := splitRegistryRepository(repository); ok {
+	if parsedRegistry, parsedRepository, ok := splitRegistryRepository(repository); ok {
+		if registry == "" || registry == parsedRegistry {
 			registry = parsedRegistry
 			repository = parsedRepository
+		} else {
+			return ResolvedTestSlotImage{}, fmt.Errorf("test_slot_deploy.ci_image.repository registry %q conflicts with registry %q", parsedRegistry, registry)
 		}
 	}
 	if registry == "" {
@@ -185,15 +322,6 @@ func splitRegistryRepository(value string) (registry, repository string, ok bool
 		return first, strings.TrimPrefix(parts[1], "/"), strings.TrimSpace(parts[1]) != ""
 	}
 	return "", "", false
-}
-
-func tagIsRawCommitSHA(tag, sha string) bool {
-	tag = strings.TrimSpace(strings.ToLower(tag))
-	sha = strings.TrimSpace(strings.ToLower(sha))
-	if tag == "" || sha == "" {
-		return false
-	}
-	return tag == sha
 }
 
 type acrImageTagValidator struct {
