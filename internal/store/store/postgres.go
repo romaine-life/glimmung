@@ -2155,6 +2155,7 @@ type runnerJobDoc struct {
 type runnerStepDoc struct {
 	Slug             string                   `json:"slug"`
 	Title            *string                  `json:"title"`
+	Primitive        string                   `json:"primitive,omitempty"`
 	Type             string                   `json:"type,omitempty"`
 	Run              string                   `json:"run,omitempty"`
 	Agent            *agentStepDoc            `json:"agent,omitempty"`
@@ -2634,7 +2635,6 @@ func runReportAttemptFromDoc(doc attemptDoc, lineageByID map[string]string) serv
 			cost = &doc.Verification.CostUSD
 		}
 	}
-	evidenceRefs = appendMissingStrings(evidenceRefs, evidenceRefsFromPhaseOutputs(doc.PhaseOutputs)...)
 	evidence := evidenceArtifactsForAttempt(doc)
 	if doc.CostUSD != nil {
 		cost = doc.CostUSD
@@ -2708,10 +2708,6 @@ func evidenceArtifactsForAttempt(doc attemptDoc) []server.EvidenceArtifact {
 	if doc.Verification != nil {
 		out = append(out, doc.Verification.Evidence...)
 	}
-	for _, artifact := range server.EvidenceArtifactsFromVerificationOutput(doc.PhaseOutputs["verification"]) {
-		artifact = evidenceArtifactWithSource(artifact, doc.Phase, doc.AttemptIndex)
-		out = appendEvidenceArtifact(out, artifact)
-	}
 	for i := range out {
 		out[i] = evidenceArtifactWithSource(out[i], doc.Phase, doc.AttemptIndex)
 	}
@@ -2741,20 +2737,6 @@ func evidenceArtifactWithSource(artifact server.EvidenceArtifact, phase string, 
 		artifact.SourceAttemptIndex = &attemptIndex
 	}
 	return artifact
-}
-
-func evidenceRefsFromPhaseOutputs(outputs map[string]string) []string {
-	raw := strings.TrimSpace(outputs["verification"])
-	if raw == "" {
-		return nil
-	}
-	var payload struct {
-		EvidenceRefs []string `json:"evidence_refs"`
-	}
-	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
-		return nil
-	}
-	return appendMissingStrings(cleanStringRefs(payload.EvidenceRefs), server.EvidenceRefsFromArtifacts(server.EvidenceArtifactsFromVerificationOutput(raw))...)
 }
 
 func cleanStringRefs(values []string) []string {
@@ -3060,6 +3042,7 @@ func runnerJobDocFromSpec(job server.RunnerJobSpec) runnerJobDoc {
 		steps = append(steps, runnerStepDoc{
 			Slug:             step.Slug,
 			Title:            step.Title,
+			Primitive:        step.Primitive,
 			Type:             step.Type,
 			Run:              step.Run,
 			Agent:            agentStepDocFromSpec(step.Agent),
@@ -3301,6 +3284,7 @@ func jobFromDoc(doc runnerJobDoc) server.RunnerJobSpec {
 		steps = append(steps, server.RunnerStepSpec{
 			Slug:             step.Slug,
 			Title:            step.Title,
+			Primitive:        step.Primitive,
 			Type:             step.Type,
 			Run:              step.Run,
 			Agent:            agentStepFromDoc(step.Agent),
@@ -8218,21 +8202,6 @@ func aggregateRunnerPhaseCompletion(expected []string, completions map[string]ru
 			for _, artifact := range completion.Verification.Evidence {
 				evidenceArtifacts = appendEvidenceArtifact(evidenceArtifacts, artifact)
 			}
-		} else if parsed := verificationDocFromPhaseOutput(completion.PhaseOutputs["verification"]); parsed != nil {
-			verificationStatus = combineVerificationStatus(verificationStatus, parsed.Status)
-			if verificationFailure == nil && parsed.Status != "pass" && parsed.Status != "" {
-				verificationFailure = serverVerificationFailureFromDoc(parsed.Failure)
-			}
-			for _, reason := range parsed.Reasons {
-				if strings.TrimSpace(reason) != "" {
-					reasons = append(reasons, id+": "+reason)
-				}
-			}
-			evidenceRefs = appendMissingStrings(evidenceRefs, parsed.EvidenceRefs...)
-			evidenceRefs = appendMissingStrings(evidenceRefs, server.EvidenceRefsFromArtifacts(parsed.Evidence)...)
-			for _, artifact := range parsed.Evidence {
-				evidenceArtifacts = appendEvidenceArtifact(evidenceArtifacts, artifact)
-			}
 		}
 	}
 	if verificationStatus != "" {
@@ -8266,36 +8235,6 @@ func aggregateRunnerPhaseCompletion(expected []string, completions map[string]ru
 		payload.ScreenshotsMarkdown = &joined
 	}
 	return payload
-}
-
-func verificationDocFromPhaseOutput(raw string) *verificationDoc {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return nil
-	}
-	var payload struct {
-		Status       string                    `json:"status"`
-		Reasons      []string                  `json:"reasons"`
-		Failure      *verificationFailureDoc   `json:"failure"`
-		EvidenceRefs []string                  `json:"evidence_refs"`
-		Evidence     []server.EvidenceArtifact `json:"evidence"`
-		CostUSD      float64                   `json:"cost_usd"`
-	}
-	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
-		return nil
-	}
-	status := strings.TrimSpace(payload.Status)
-	if status == "" {
-		return nil
-	}
-	return &verificationDoc{
-		Status:       status,
-		Reasons:      sliceOrEmpty(payload.Reasons),
-		Failure:      payload.Failure,
-		EvidenceRefs: sliceOrEmpty(cleanStringRefs(payload.EvidenceRefs)),
-		Evidence:     sliceOrEmpty(payload.Evidence),
-		CostUSD:      payload.CostUSD,
-	}
 }
 
 func synthesizedVerificationOutput(status string, reasons []string, failure *server.VerificationFailure, evidenceRefs []string, evidence []server.EvidenceArtifact) string {

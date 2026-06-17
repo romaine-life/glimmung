@@ -155,17 +155,6 @@ func evidenceCandidatesForRun(run RunReplayData) []reviewEvidenceCandidate {
 				})
 			}
 		}
-		raw := strings.TrimSpace(attempt.PhaseOutputs["verification"])
-		if raw == "" {
-			continue
-		}
-		for _, artifact := range EvidenceArtifactsFromVerificationOutput(raw) {
-			candidates = append(candidates, reviewEvidenceCandidate{
-				Artifact:     artifact,
-				SourcePhase:  attempt.Phase,
-				AttemptIndex: attempt.AttemptIndex,
-			})
-		}
 	}
 	return candidates
 }

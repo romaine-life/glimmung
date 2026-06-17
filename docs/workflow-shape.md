@@ -293,10 +293,13 @@ Each expanded case does one bounded task:
 A case must not debug unrelated tooling, recapture other cases, or consume a
 suite-level retry budget. A Playwright timeout, trigger failure, MCP/tool
 failure, missing artifact, or command timeout fails that case and should stop
-the sequential verifier promptly. The verification job writes the completion
-payload with `verification.status`, `reasons`, and evidence refs/artifacts.
-Glimmung stores the phase output `verification` for reports, terminal
-observations, and any later phase that needs to read the verdict.
+the sequential verifier promptly. The verification job writes typed completion
+data with `verification.status`, `reasons`, and evidence refs/artifacts. In a
+single-job verification phase, the final step is the Glimmung-owned
+`verification_finalize` primitive that uploads evidence and writes that typed
+completion. Glimmung synthesizes the phase output `verification` from typed
+completion for reports and terminal observations; a repo-emitted
+`phase_outputs["verification"]` is diagnostic only and is not a verdict source.
 
 On a non-pass verdict the verification payload should also carry a
 structured `failure` block — the why, not just the enum:

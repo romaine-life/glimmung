@@ -23,15 +23,15 @@ const (
 	PhaseRunOnFailure = "failure"
 	PhaseRunOnAlways  = "always"
 
-	PhasePurposeWork             = "work"
-	PhasePurposeVerification     = "verification"
-	PhasePurposeEvidenceGate     = "evidence_gate"
-	PhasePurposeTeardown         = "teardown"
-	PhasePurposeReview           = "review"
-	PhasePurposeReviewGate       = "review_gate"
+	PhasePurposeWork         = "work"
+	PhasePurposeVerification = "verification"
+	PhasePurposeEvidenceGate = "evidence_gate"
+	PhasePurposeTeardown     = "teardown"
+	PhasePurposeReview       = "review"
+	PhasePurposeReviewGate   = "review_gate"
 
-	PhaseNameReview      = "review"
-	PhaseNameReviewGate  = "review_gate"
+	PhaseNameReview     = "review"
+	PhaseNameReviewGate = "review_gate"
 
 	PhaseNamePrepare = "prepare"
 
@@ -543,6 +543,7 @@ func normalizeWorkflowRegisterWithDefaultKind(req *WorkflowRegister, defaultKind
 			job.ExtraCheckouts = sliceOrEmpty(job.ExtraCheckouts)
 			for k := range job.Steps {
 				step := &job.Steps[k]
+				step.Primitive = strings.TrimSpace(step.Primitive)
 				step.Type = strings.TrimSpace(step.Type)
 				if step.Type == "" && strings.TrimSpace(step.Run) != "" {
 					step.Type = "run"
@@ -1070,8 +1071,30 @@ func validateSingleVerificationJob(workflowName string, phase PhaseSpec) error {
 			workflowName, phase.Name, VerificationShapeSingleJob,
 		)}
 	}
-	if strings.TrimSpace(phase.Jobs[0].ID) == "" {
+	job := phase.Jobs[0]
+	if strings.TrimSpace(job.ID) == "" {
 		return ValidationError{Message: fmt.Sprintf("workflow %s verification phase %q shape=%q job is missing id", workflowName, phase.Name, VerificationShapeSingleJob)}
+	}
+	finalizerCount := 0
+	finalizerIndex := -1
+	for i, step := range job.Steps {
+		if strings.TrimSpace(step.Primitive) != StepPrimitiveVerificationFinalize {
+			continue
+		}
+		finalizerCount++
+		finalizerIndex = i
+	}
+	if finalizerCount != 1 {
+		return ValidationError{Message: fmt.Sprintf(
+			"workflow %s verification phase %q shape=%q job %q must declare exactly one step with primitive %q",
+			workflowName, phase.Name, VerificationShapeSingleJob, job.ID, StepPrimitiveVerificationFinalize,
+		)}
+	}
+	if finalizerIndex != len(job.Steps)-1 {
+		return ValidationError{Message: fmt.Sprintf(
+			"workflow %s verification phase %q shape=%q job %q primitive %q must be the final step",
+			workflowName, phase.Name, VerificationShapeSingleJob, job.ID, StepPrimitiveVerificationFinalize,
+		)}
 	}
 	return nil
 }
@@ -1225,6 +1248,18 @@ func validateRunnerJobSpec(workflowName, phaseName string, jobIndex int, job Run
 			return ValidationError{Message: fmt.Sprintf("workflow %s phase %q job %q step %q duplicates step[%d]", workflowName, phaseName, job.ID, slug, prev)}
 		}
 		seenSteps[slug] = i
+		stepPrimitive := strings.TrimSpace(step.Primitive)
+		if stepPrimitive != "" {
+			if !job.Managed {
+				return ValidationError{Message: fmt.Sprintf("workflow %s phase %q job %q step %q declares primitive %q but the job is not managed", workflowName, phaseName, job.ID, slug, stepPrimitive)}
+			}
+			switch stepPrimitive {
+			case StepPrimitiveVerificationFinalize:
+			default:
+				return ValidationError{Message: fmt.Sprintf("workflow %s phase %q job %q step %q declares unknown primitive %q", workflowName, phaseName, job.ID, slug, stepPrimitive)}
+			}
+			continue
+		}
 		stepType := strings.TrimSpace(step.Type)
 		if stepType == "" {
 			stepType = "run"

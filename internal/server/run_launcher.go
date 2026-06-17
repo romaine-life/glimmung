@@ -2004,6 +2004,8 @@ func runnerJobEnv(settings Settings, req RunLaunchRequest, job RunnerJobSpec, se
 		{"name": "GLIMMUNG_GITHUB_AGENT_TOKEN_URL", "value": baseURL + runnerPath + "/github-agent-token"},
 		{"name": "GLIMMUNG_PR_REVIEW_URL", "value": baseURL + runnerPath + "/pr-review"},
 		{"name": "GLIMMUNG_PR_MERGE_URL", "value": baseURL + runnerPath + "/pr-merge"},
+		{"name": "ARTIFACTS_STORAGE_ACCOUNT", "value": settings.ArtifactsStorageAccount},
+		{"name": "ARTIFACTS_CONTAINER", "value": settings.ArtifactsContainer},
 		// Remote-host execution primitives (docs/remote-host-execution.md).
 		// The phase script POSTs a freshly-generated public key to the
 		// ssh-cert URL and POSTs an empty body to the tailscale-authkey

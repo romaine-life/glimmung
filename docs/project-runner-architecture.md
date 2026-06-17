@@ -162,9 +162,15 @@ phase-output mapping layer in v1. A step can set:
 validation_url
 image_tag
 branch_name
-verification
 screenshots[]
 ```
+
+Verification verdicts and evidence are typed completion data, not repo-owned
+phase output. Project verifiers produce conventional local files; the managed
+`verification_finalize` step uploads those files and writes the typed
+`verification` completion payload. Glimmung may synthesize a `verification`
+phase output from that typed payload for diagnostics, but it does not read a
+repo-emitted `phase_outputs["verification"]` as the verdict.
 
 For implementation branches, `work_context_branch` is the branch contract
 handed to runner jobs and `branch_name` is the durable output consumed by
@@ -323,6 +329,8 @@ The prototype is not done when a happy-path job runs. It is done when:
 - failure before the first step is visible as a job failure, not a dispatch
   timeout
 - outputs are visible immediately with provenance
+- verification evidence and verdicts are written through Glimmung-owned typed
+  completion, not repo-owned phase-output emission
 - duplicate phase output writes fail clearly
 - cleanup can find resources by Glimmung labels/metadata
 - the workflow schema and runner version used by a run are durable
