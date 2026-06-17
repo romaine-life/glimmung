@@ -59,6 +59,41 @@ type githubWorkflowRun struct {
 	} `json:"pull_requests"`
 }
 
+type githubAssociatedPullRequest struct {
+	Number int    `json:"number"`
+	State  string `json:"state"`
+	Head   struct {
+		SHA string `json:"sha"`
+	} `json:"head"`
+	Base struct {
+		Ref string `json:"ref"`
+	} `json:"base"`
+}
+
+type githubPullRequestDetail struct {
+	Number         int    `json:"number"`
+	Mergeable      *bool  `json:"mergeable"`
+	MergeableState string `json:"mergeable_state"`
+	Head           struct {
+		SHA string `json:"sha"`
+	} `json:"head"`
+	Base struct {
+		Ref string `json:"ref"`
+	} `json:"base"`
+}
+
+type githubCheckRun struct {
+	ID          int64  `json:"id"`
+	Name        string `json:"name"`
+	Status      string `json:"status"`
+	Conclusion  string `json:"conclusion"`
+	StartedAt   string `json:"started_at"`
+	CompletedAt string `json:"completed_at"`
+	App         struct {
+		Slug string `json:"slug"`
+	} `json:"app"`
+}
+
 func githubActionsTestSlotImageResolver(httpClient *http.Client, validator testSlotImageValidator) testSlotImageResolver {
 	if validator == nil {
 		validator = noopTestSlotImageValidator{}
@@ -80,7 +115,7 @@ func resolveTestSlotImageFromGitHubActions(ctx context.Context, httpClient *http
 	if strings.TrimSpace(slug) == "" {
 		return ResolvedTestSlotImage{}, fmt.Errorf("github repo slug is required")
 	}
-	if err := requireCommitContainsMain(ctx, httpClient, slug, sha, token); err != nil {
+	if err := requireDeployImageGitHubGate(ctx, httpClient, slug, sha, token); err != nil {
 		return ResolvedTestSlotImage{}, err
 	}
 	settings := testSlotCIImageConfig(project)
@@ -209,6 +244,170 @@ func requireCommitContainsMain(ctx context.Context, httpClient *http.Client, slu
 		return fmt.Errorf("commit %s does not contain current main (compare status=%s behind_by=%d); merge main before deploying to a test slot", sha, firstNonEmpty(status, "unknown"), payload.BehindBy)
 	}
 	return nil
+}
+
+func requireDeployImageGitHubGate(ctx context.Context, httpClient *http.Client, slug, sha, token string) error {
+	if err := requireCommitContainsMain(ctx, httpClient, slug, sha, token); err != nil {
+		return err
+	}
+	if _, err := requireAssociatedMergeablePullRequest(ctx, httpClient, slug, sha, token); err != nil {
+		return err
+	}
+	if err := requireCommitCIGreen(ctx, httpClient, slug, sha, token); err != nil {
+		return err
+	}
+	return nil
+}
+
+func requireAssociatedMergeablePullRequest(ctx context.Context, httpClient *http.Client, slug, sha, token string) (int, error) {
+	var pulls []githubAssociatedPullRequest
+	apiURL := githubAPIBase + "/repos/" + slug + "/commits/" + url.PathEscape(sha) + "/pulls"
+	if err := githubGetJSON(ctx, httpClient, apiURL, token, &pulls); err != nil {
+		return 0, fmt.Errorf("verify commit pull request: %w", err)
+	}
+	for _, pr := range pulls {
+		if strings.ToLower(strings.TrimSpace(pr.State)) != "open" {
+			continue
+		}
+		if headSHA := strings.TrimSpace(pr.Head.SHA); headSHA != "" && headSHA != sha {
+			continue
+		}
+		if baseRef := strings.TrimSpace(pr.Base.Ref); baseRef != "" && baseRef != "main" {
+			continue
+		}
+		if pr.Number <= 0 {
+			continue
+		}
+		return pr.Number, requirePullRequestMergeable(ctx, httpClient, slug, pr.Number, sha, token)
+	}
+	return 0, fmt.Errorf("commit %s has no associated open pull request targeting main at that head; open a PR before deploying to a test slot", sha)
+}
+
+func requirePullRequestMergeable(ctx context.Context, httpClient *http.Client, slug string, number int, sha, token string) error {
+	var detail githubPullRequestDetail
+	apiURL := githubAPIBase + "/repos/" + slug + "/pulls/" + url.PathEscape(fmt.Sprint(number))
+	if err := githubGetJSON(ctx, httpClient, apiURL, token, &detail); err != nil {
+		return fmt.Errorf("verify pull request mergeability: %w", err)
+	}
+	if headSHA := strings.TrimSpace(detail.Head.SHA); headSHA != "" && headSHA != sha {
+		return fmt.Errorf("PR #%d head is %s, not %s; deploy the current PR head", number, headSHA, sha)
+	}
+	if baseRef := strings.TrimSpace(detail.Base.Ref); baseRef != "" && baseRef != "main" {
+		return fmt.Errorf("PR #%d targets %s, not main; retarget before deploying to a test slot", number, baseRef)
+	}
+	state := strings.ToLower(strings.TrimSpace(detail.MergeableState))
+	if detail.Mergeable == nil || state == "unknown" {
+		return fmt.Errorf("PR #%d mergeability is still unknown; retry after GitHub computes mergeability", number)
+	}
+	if !*detail.Mergeable || state == "dirty" {
+		return fmt.Errorf("PR #%d is not mergeable (mergeable_state=%s); resolve merge conflicts before deploying to a test slot", number, firstNonEmpty(state, "mergeable=false"))
+	}
+	return nil
+}
+
+func requireCommitCIGreen(ctx context.Context, httpClient *http.Client, slug, sha, token string) error {
+	checkRuns, err := listCommitCheckRuns(ctx, httpClient, slug, sha, token)
+	if err != nil {
+		return fmt.Errorf("verify commit check-runs: %w", err)
+	}
+	combinedStatus, err := getCommitCombinedStatus(ctx, httpClient, slug, sha, token)
+	if err != nil {
+		return fmt.Errorf("verify commit statuses: %w", err)
+	}
+	ciStatus, ciReason := commitCIState(checkRuns, combinedStatus)
+	if ciStatus != "succeeded" {
+		return fmt.Errorf("CI for commit %s is not fully green: %s", sha, ciReason)
+	}
+	return nil
+}
+
+func listCommitCheckRuns(ctx context.Context, httpClient *http.Client, slug, sha, token string) ([]githubCheckRun, error) {
+	var payload struct {
+		CheckRuns []githubCheckRun `json:"check_runs"`
+	}
+	apiURL := githubAPIBase + "/repos/" + slug + "/commits/" + url.PathEscape(sha) + "/check-runs?per_page=100"
+	if err := githubGetJSON(ctx, httpClient, apiURL, token, &payload); err != nil {
+		return nil, err
+	}
+	return payload.CheckRuns, nil
+}
+
+type githubCombinedStatus struct {
+	State    string `json:"state"`
+	Statuses []struct {
+		Context string `json:"context"`
+		State   string `json:"state"`
+	} `json:"statuses"`
+}
+
+func getCommitCombinedStatus(ctx context.Context, httpClient *http.Client, slug, sha, token string) (githubCombinedStatus, error) {
+	var payload githubCombinedStatus
+	apiURL := githubAPIBase + "/repos/" + slug + "/commits/" + url.PathEscape(sha) + "/status"
+	if err := githubGetJSON(ctx, httpClient, apiURL, token, &payload); err != nil {
+		return githubCombinedStatus{}, err
+	}
+	return payload, nil
+}
+
+func commitCIState(checkRuns []githubCheckRun, combinedStatus githubCombinedStatus) (string, string) {
+	conclusionsOK := map[string]bool{"success": true, "skipped": true, "neutral": true}
+	var pending []string
+	var failed []string
+	completed := 0
+	for _, run := range latestCommitCheckRuns(checkRuns) {
+		name := firstNonEmpty(strings.TrimSpace(run.Name), strings.TrimSpace(run.App.Slug), "check")
+		status := strings.ToLower(strings.TrimSpace(run.Status))
+		conclusion := strings.ToLower(strings.TrimSpace(run.Conclusion))
+		if status != "completed" {
+			pending = append(pending, name)
+			continue
+		}
+		completed++
+		if !conclusionsOK[conclusion] {
+			failed = append(failed, fmt.Sprintf("%s: %s", name, firstNonEmpty(conclusion, "failed")))
+		}
+	}
+	statuses := 0
+	state := strings.ToLower(strings.TrimSpace(combinedStatus.State))
+	for _, status := range combinedStatus.Statuses {
+		statuses++
+		statusState := strings.ToLower(strings.TrimSpace(status.State))
+		if statusState == "failure" || statusState == "error" {
+			failed = append(failed, fmt.Sprintf("%s: %s", firstNonEmpty(strings.TrimSpace(status.Context), "status"), statusState))
+		}
+	}
+	if (state == "failure" || state == "error") && statuses == 0 {
+		failed = append(failed, "combined status: "+state)
+	}
+	if state == "pending" && statuses > 0 {
+		pending = append(pending, "combined status")
+	}
+	if len(failed) > 0 {
+		return "failed", strings.Join(failed, "; ")
+	}
+	if len(pending) > 0 || (completed == 0 && statuses == 0) {
+		return "started", "checks are pending or have not appeared yet"
+	}
+	return "succeeded", "all observed checks passed"
+}
+
+func latestCommitCheckRuns(checkRuns []githubCheckRun) []githubCheckRun {
+	latest := map[string]githubCheckRun{}
+	for _, run := range checkRuns {
+		name := firstNonEmpty(strings.TrimSpace(run.Name), strings.TrimSpace(run.App.Slug), "check")
+		if existing, ok := latest[name]; !ok || checkRunRecency(run) >= checkRunRecency(existing) {
+			latest[name] = run
+		}
+	}
+	out := make([]githubCheckRun, 0, len(latest))
+	for _, run := range latest {
+		out = append(out, run)
+	}
+	return out
+}
+
+func checkRunRecency(run githubCheckRun) string {
+	return firstNonEmpty(strings.TrimSpace(run.CompletedAt), strings.TrimSpace(run.StartedAt), fmt.Sprintf("%020d", run.ID))
 }
 
 func listWorkflowRuns(ctx context.Context, httpClient *http.Client, slug, workflow, token string, query url.Values) ([]githubWorkflowRun, error) {

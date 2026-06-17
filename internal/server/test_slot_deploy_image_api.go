@@ -58,10 +58,10 @@ type imageToSlotDeployer interface {
 // request is held open for the deploy and the durable outcome survives client
 // disconnects and proxy deadlines.
 //
-// The legitimacy gate (published + CI-green + mergeable + current-with-main) is
-// the caller's responsibility; this endpoint only ever operates on a git ref
-// (never an agent working tree), so it cannot deploy unpushed code, and the
-// SHA→image resolution deploys exactly the image CI built for that commit.
+// The endpoint resolves only pushed refs, then the SHA→image resolver enforces
+// the GitHub gate before any history write or slot mutation: the commit must
+// contain current main, belong to an open mergeable PR targeting main, have all
+// observed commit checks/statuses green, and have a validated CI lookup image.
 func deployImageToTestSlot(store ReadStore, minter RunnerGitHubTokenMinter, performer deployImagePerformer, resolveRef refResolver, resolveImage testSlotImageResolver) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		writer, ok := store.(TestSlotOpHistoryStore)
@@ -143,7 +143,7 @@ func deployImageToTestSlot(store ReadStore, minter RunnerGitHubTokenMinter, perf
 		// this endpoint records a running operation or mutates the slot.
 		repoToken := ""
 		if minter != nil {
-			tok, err := minter.RepositoryInstallationToken(r.Context(), slug, map[string]string{"contents": "read", "actions": "read"})
+			tok, err := minter.RepositoryInstallationToken(r.Context(), slug, map[string]string{"contents": "read", "actions": "read", "pull_requests": "read"})
 			if err != nil {
 				writeInternalError(w, r, err, "mint clone token for deploy: "+err.Error())
 				return

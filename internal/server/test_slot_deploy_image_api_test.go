@@ -135,6 +135,40 @@ func TestDeployImageToTestSlotHappyPath(t *testing.T) {
 	}
 }
 
+func TestDeployImageToTestSlotMintsTokenForDeployGateReads(t *testing.T) {
+	store := newDeployImageStore(t)
+	minter := &spyRunnerGitHubTokenMinter{token: "gh-token"}
+	performer := func(context.Context, Lease, Project, string, string, string) error { return nil }
+	resolveRef := func(_ context.Context, _ string, _ string, token string) (string, error) {
+		if token != "gh-token" {
+			return "", fmt.Errorf("resolveRef token=%q, want gh-token", token)
+		}
+		return "abc123def456", nil
+	}
+	resolveImage := func(_ context.Context, _ Project, _ string, _ string, token string) (ResolvedTestSlotImage, error) {
+		if token != "gh-token" {
+			return ResolvedTestSlotImage{}, fmt.Errorf("resolveImage token=%q, want gh-token", token)
+		}
+		return resolvedTestSlotImageFromRef("romainecr.azurecr.io/tank-operator:ci-pr-77-run-12345-attempt-2", "test")
+	}
+	handler := http.HandlerFunc(deployImageToTestSlot(store, minter, performer, resolveRef, resolveImage))
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, authedDeployRequest(t, `{"project":"tank-operator","slot_name":"tank-operator-slot-1","git_ref":"feat/x"}`))
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	if minter.calledRepo != "romaine-life/tank-operator" {
+		t.Fatalf("minter repo=%q", minter.calledRepo)
+	}
+	if minter.calledPerms["contents"] != "read" || minter.calledPerms["actions"] != "read" || minter.calledPerms["pull_requests"] != "read" {
+		t.Fatalf("minter perms=%v, want contents/actions/pull_requests read", minter.calledPerms)
+	}
+	if len(minter.calledPerms) != 3 {
+		t.Fatalf("minter requested unexpected permissions: %v", minter.calledPerms)
+	}
+}
+
 func TestDeployImageToTestSlotUsesFullRefForNonTagImageValueKey(t *testing.T) {
 	store := newDeployImageStore(t)
 	project := &store.fakeReadStore.projects[0]
