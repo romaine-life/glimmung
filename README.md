@@ -387,6 +387,40 @@ are rejected. Copy provenance is recorded in the new run's `trigger_source`
 under `copied_phase_outputs`, so the run remains auditable without adding a UI
 surface.
 
+When recovering a run whose verifier already produced valid evidence outside
+the typed completion contract, supply that verification explicitly instead of
+copying the legacy `verification` phase-output string:
+
+```json
+{
+  "start_at_phase": "review",
+  "supplied_phase_outputs": [
+    {
+      "phase": "llm-verify",
+      "verification": {
+        "status": "pass",
+        "reasons": ["tooltip showed Energy generated 1"],
+        "evidence_refs": [
+          "runs/spirelens/<run_id>/screenshots/issue148-happy-flower-tooltip.png"
+        ],
+        "evidence": [
+          {
+            "kind": "screenshot",
+            "ref": "runs/spirelens/<run_id>/screenshots/issue148-happy-flower-tooltip.png",
+            "label": "Happy Flower tooltip"
+          }
+        ]
+      }
+    }
+  ]
+}
+```
+
+Typed supplied verification is accepted only for verification phases before
+`start_at_phase`, and only with `status: "pass"` because the supplied attempt is
+recorded as a carry-forward advance. Copying a legacy phase output named
+`verification` does not promote it into typed verification.
+
 Runner clients that open or update a GitHub PR should use the dispatch inputs
 and lease metadata as the PR body source of truth: include `issue_ref`,
 `run_ref`, the Review/PR URL when known, the validation URL, and evidence
