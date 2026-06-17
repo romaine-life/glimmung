@@ -2155,6 +2155,7 @@ type runnerJobDoc struct {
 type runnerStepDoc struct {
 	Slug             string                   `json:"slug"`
 	Title            *string                  `json:"title"`
+	Primitive        string                   `json:"primitive,omitempty"`
 	Type             string                   `json:"type,omitempty"`
 	Run              string                   `json:"run,omitempty"`
 	Agent            *agentStepDoc            `json:"agent,omitempty"`
@@ -3041,6 +3042,7 @@ func runnerJobDocFromSpec(job server.RunnerJobSpec) runnerJobDoc {
 		steps = append(steps, runnerStepDoc{
 			Slug:             step.Slug,
 			Title:            step.Title,
+			Primitive:        step.Primitive,
 			Type:             step.Type,
 			Run:              step.Run,
 			Agent:            agentStepDocFromSpec(step.Agent),
@@ -3282,6 +3284,7 @@ func jobFromDoc(doc runnerJobDoc) server.RunnerJobSpec {
 		steps = append(steps, server.RunnerStepSpec{
 			Slug:             step.Slug,
 			Title:            step.Title,
+			Primitive:        step.Primitive,
 			Type:             step.Type,
 			Run:              step.Run,
 			Agent:            agentStepFromDoc(step.Agent),

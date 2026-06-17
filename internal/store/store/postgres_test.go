@@ -1024,6 +1024,27 @@ func TestRunnerJobDocRoundTripsAgentStepConfig(t *testing.T) {
 	}
 }
 
+func TestRunnerJobDocRoundTripsStepPrimitive(t *testing.T) {
+	job := server.RunnerJobSpec{
+		ID:      "llm-verify",
+		Managed: true,
+		Steps: []server.RunnerStepSpec{{
+			Slug:      "finalize-verification",
+			Primitive: server.StepPrimitiveVerificationFinalize,
+			Type:      "run",
+			Run:       "finalize",
+		}},
+	}
+
+	roundTrip := jobFromDoc(runnerJobDocFromSpec(job))
+	if len(roundTrip.Steps) != 1 {
+		t.Fatalf("round trip step=%#v", roundTrip.Steps)
+	}
+	if got := roundTrip.Steps[0].Primitive; got != server.StepPrimitiveVerificationFinalize {
+		t.Fatalf("step primitive=%q, want %q", got, server.StepPrimitiveVerificationFinalize)
+	}
+}
+
 func TestRunnerJobDocRoundTripsStepGroupMetadata(t *testing.T) {
 	job := server.RunnerJobSpec{
 		ID: "verify-ui",
