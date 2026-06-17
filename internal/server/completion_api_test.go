@@ -1357,6 +1357,169 @@ func TestFinalizeRunReviewByNumberDoesNotTreatUnitTestRequirementAsArtifact(t *t
 	}
 }
 
+func TestPreviewRunReviewByNumberResolvesEvidenceWithoutSideEffects(t *testing.T) {
+	store := &fakeCompletionStore{tokenRunID: "run-1", tokenProject: "proj", tokenRef: "proj#7/runs/1"}
+	store.run = runDataForCompletion("verify")
+	store.run.Attempts = []RunAttemptData{
+		{
+			AttemptIndex: 0,
+			Phase:        "plan",
+			Completed:    true,
+			Decision:     string(decision.Advance),
+			PhaseOutputs: map[string]string{
+				"test_plan": `{"required_evidence":[{"id":"tooltip","kind":"screenshot","required":true}]}`,
+			},
+		},
+		{
+			AttemptIndex: 1,
+			Phase:        "verify",
+			Completed:    true,
+			Conclusion:   "success",
+			Decision:     string(decision.Advance),
+			Verification: &RunVerificationData{
+				Status:   "pass",
+				Evidence: []EvidenceArtifact{{Kind: "screenshot", Ref: "screenshots/tooltip.png"}},
+			},
+			PhaseOutputs: map[string]string{"branch_name": "issue-7-run-1"},
+		},
+	}
+	store.wf = prWorkflowForCompletion("verify")
+	prClient := &fakePullRequestClient{}
+	artifacts := &fakeArtifactStore{artifact: Artifact{Body: []byte("png"), ContentType: "image/png"}}
+	handler := NewWithRuntimeClients(Settings{}, store, fakeAdminAuthenticator{user: auth.User{Sub: "admin"}}, prClient, nil, artifacts)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/projects/proj/issues/7/runs/1/review/preview", nil)
+	req.Header.Set("Authorization", "Bearer admin")
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var preview ReviewEvidencePreview
+	if err := json.Unmarshal(rec.Body.Bytes(), &preview); err != nil {
+		t.Fatalf("decode preview: %v body=%s", err, rec.Body.String())
+	}
+	if !preview.Satisfied {
+		t.Fatalf("preview should be satisfied: %#v", preview)
+	}
+	if preview.RunRef != "proj#7/runs/1" {
+		t.Fatalf("run_ref=%q", preview.RunRef)
+	}
+	if len(preview.ResolvedEvidence) != 1 || preview.ResolvedEvidence[0].Kind != "screenshot" {
+		t.Fatalf("resolved evidence=%#v", preview.ResolvedEvidence)
+	}
+	if preview.ResolvedEvidence[0].URL != "/v1/artifacts/runs/proj/run-1/screenshots/tooltip.png" {
+		t.Fatalf("evidence url=%q", preview.ResolvedEvidence[0].URL)
+	}
+	if len(preview.Candidates) != 1 || !preview.Candidates[0].Accepted {
+		t.Fatalf("candidates=%#v", preview.Candidates)
+	}
+	// The preview must have NO side effects: no PR opened, no review persisted.
+	if prClient.req.Repo != "" {
+		t.Fatalf("preview must not open a PR: %#v", prClient.req)
+	}
+	if store.reviewReq != nil {
+		t.Fatalf("preview must not persist a review: %#v", store.reviewReq)
+	}
+
+	// A required screenshot with no resolvable evidence is reported as an unmet
+	// requirement (satisfied=false + problem) rather than failing the request —
+	// the operator sees the gap without a finalize.
+	store.run.Attempts[1].Verification = &RunVerificationData{Status: "pass"}
+	rec2 := httptest.NewRecorder()
+	req2 := httptest.NewRequest(http.MethodPost, "/v1/projects/proj/issues/7/runs/1/review/preview", nil)
+	req2.Header.Set("Authorization", "Bearer admin")
+	handler.ServeHTTP(rec2, req2)
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec2.Code, rec2.Body.String())
+	}
+	var preview2 ReviewEvidencePreview
+	if err := json.Unmarshal(rec2.Body.Bytes(), &preview2); err != nil {
+		t.Fatal(err)
+	}
+	if preview2.Satisfied {
+		t.Fatalf("preview should be unsatisfied: %#v", preview2)
+	}
+	if !strings.Contains(preview2.Problem, "required screenshot evidence was not recorded") {
+		t.Fatalf("problem=%q", preview2.Problem)
+	}
+}
+
+func TestReviewEvidenceRejectsForeignArtifactProvenance(t *testing.T) {
+	// The /healthz hole: a lease-scoped inspections/<lease>/... browser capture
+	// — not the run's own STS2 verification output — must NOT be acceptable as
+	// review evidence, even though the blob exists and is a valid image.
+	newStore := func() *fakeCompletionStore {
+		store := &fakeCompletionStore{tokenRunID: "run-1", tokenProject: "proj", tokenRef: "proj#7/runs/1"}
+		store.run = runDataForCompletion("verify")
+		store.run.Attempts = []RunAttemptData{
+			{
+				AttemptIndex: 0,
+				Phase:        "plan",
+				Completed:    true,
+				Decision:     string(decision.Advance),
+				PhaseOutputs: map[string]string{
+					"test_plan": `{"required_evidence":[{"id":"tooltip","kind":"screenshot","required":true}]}`,
+				},
+			},
+			{
+				AttemptIndex: 1,
+				Phase:        "verify",
+				Completed:    true,
+				Conclusion:   "success",
+				Decision:     string(decision.Advance),
+				Verification: &RunVerificationData{
+					Status:   "pass",
+					Evidence: []EvidenceArtifact{{Kind: "screenshot", Ref: "/v1/artifacts/inspections/lease-1/insp-1/screenshot.png"}},
+				},
+				PhaseOutputs: map[string]string{"branch_name": "issue-7-run-1"},
+			},
+		}
+		store.wf = prWorkflowForCompletion("verify")
+		return store
+	}
+	artifacts := &fakeArtifactStore{artifact: Artifact{Body: []byte("png"), ContentType: "image/png"}}
+
+	// Preview reports the rejection (with a reason) without failing the request.
+	previewStore := newStore()
+	previewHandler := NewWithRuntimeClients(Settings{}, previewStore, fakeAdminAuthenticator{user: auth.User{Sub: "admin"}}, &fakePullRequestClient{}, nil, artifacts)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/projects/proj/issues/7/runs/1/review/preview", nil)
+	req.Header.Set("Authorization", "Bearer admin")
+	previewHandler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("preview status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var preview ReviewEvidencePreview
+	if err := json.Unmarshal(rec.Body.Bytes(), &preview); err != nil {
+		t.Fatal(err)
+	}
+	if preview.Satisfied || len(preview.ResolvedEvidence) != 0 {
+		t.Fatalf("foreign-provenance evidence must not resolve: %#v", preview)
+	}
+	if len(preview.Candidates) != 1 || preview.Candidates[0].Accepted || !strings.Contains(preview.Candidates[0].Reason, "not this run's own") {
+		t.Fatalf("candidate diagnostics=%#v", preview.Candidates)
+	}
+
+	// Finalize fails closed — the bad evidence can never become a review/PR.
+	finalizeStore := newStore()
+	finalizeHandler := NewWithRuntimeClients(Settings{}, finalizeStore, fakeAdminAuthenticator{user: auth.User{Sub: "admin"}}, &fakePullRequestClient{}, nil, artifacts)
+	rec2 := httptest.NewRecorder()
+	req2 := httptest.NewRequest(http.MethodPost, "/v1/projects/proj/issues/7/runs/1/review/finalize", nil)
+	req2.Header.Set("Authorization", "Bearer admin")
+	finalizeHandler.ServeHTTP(rec2, req2)
+	if rec2.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("finalize status=%d body=%s, want 422", rec2.Code, rec2.Body.String())
+	}
+	if !strings.Contains(rec2.Body.String(), "not this run's own verification output") {
+		t.Fatalf("finalize body=%s", rec2.Body.String())
+	}
+	if finalizeStore.reviewReq != nil {
+		t.Fatalf("rejected evidence must not persist a review: %#v", finalizeStore.reviewReq)
+	}
+}
+
 func TestFinalizeRunReviewByNumberPersistsRequiredVideoEvidence(t *testing.T) {
 	store := &fakeCompletionStore{tokenRunID: "run-1", tokenProject: "proj", tokenRef: "proj#7/runs/1"}
 	store.run = runDataForCompletion("verify")
@@ -2166,7 +2329,13 @@ func TestCompletionPayloadFromRunnerExtractsVerificationFailure(t *testing.T) {
 	}
 }
 
-func TestCompletionPayloadFromRunnerPromotesVerificationOutput(t *testing.T) {
+func TestCompletionPayloadFromRunnerRejectsPhaseOutputVerification(t *testing.T) {
+	// Migration guard: a verify completion carrying only a `verification` phase
+	// output (the retired path) and no typed Verification must NOT be promoted
+	// into a verdict. The payload stays verdict-less so the verify contract gate
+	// (phase.Verify && attempt.Verification == nil -> verifier_contract_missing)
+	// fires directly instead of advancing on a fabricated status. Reintroducing
+	// the phase-output promotion fallback fails this test.
 	jobID := "verify"
 	payload := completionPayloadFromNative(RunnerCompletedRequest{
 		JobID:      &jobID,
@@ -2176,14 +2345,14 @@ func TestCompletionPayloadFromRunnerPromotesVerificationOutput(t *testing.T) {
 		},
 	})
 
-	if payload.VerificationStatus != "pass" {
-		t.Fatalf("verification status=%q, want pass", payload.VerificationStatus)
+	if payload.VerificationStatus != "" {
+		t.Fatalf("phase-output-only verification must not be promoted: status=%q", payload.VerificationStatus)
 	}
-	if len(payload.EvidenceRefs) != 1 || payload.EvidenceRefs[0] != "screenshots/issue148.png" {
-		t.Fatalf("evidence refs=%#v", payload.EvidenceRefs)
+	if len(payload.EvidenceRefs) != 0 {
+		t.Fatalf("phase-output-only verification must not contribute evidence refs: %#v", payload.EvidenceRefs)
 	}
-	if len(payload.VerificationReasons) != 1 || payload.VerificationReasons[0] != "tooltip showed Energy generated 1" {
-		t.Fatalf("reasons=%#v", payload.VerificationReasons)
+	if len(payload.VerificationReasons) != 0 {
+		t.Fatalf("phase-output-only verification must not contribute reasons: %#v", payload.VerificationReasons)
 	}
 }
 

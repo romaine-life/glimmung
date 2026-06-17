@@ -15,26 +15,99 @@ type reviewEvidenceCandidate struct {
 }
 
 func reviewEvidenceForRun(ctx context.Context, artifactStore ArtifactStore, run RunReplayData) ([]ReviewEvidence, error) {
-	required := requiredEvidenceForRun(run)
-	requiredCounts := requiredEvidenceCounts(required)
+	evidence, err := resolveReviewEvidence(ctx, artifactStore, run, nil)
+	if err != nil {
+		return nil, err
+	}
+	if err := checkRequiredReviewEvidence(run, evidence, artifactStore); err != nil {
+		return nil, err
+	}
+	return evidence, nil
+}
+
+// reviewEvidenceCandidateResult is the per-candidate outcome of evidence
+// resolution. The review preview (dry-run) surfaces these so an operator can
+// see exactly which refs resolved to a durable, review-eligible artifact and
+// why the rest were dropped — without finalizing a PR.
+type reviewEvidenceCandidateResult struct {
+	OriginalRef  string `json:"original_ref"`
+	Kind         string `json:"kind"`
+	SourcePhase  string `json:"source_phase"`
+	AttemptIndex int    `json:"attempt_index"`
+	Accepted     bool   `json:"accepted"`
+	BlobName     string `json:"blob_name,omitempty"`
+	URL          string `json:"url,omitempty"`
+	Reason       string `json:"reason,omitempty"`
+}
+
+// resolveReviewEvidence turns the run's evidence candidates into the durable
+// ReviewEvidence the review attaches. When diag is non-nil it also records a
+// per-candidate result (accepted or the reason it was dropped). Resolution and
+// the required-evidence check are deliberately separate so the dry-run preview
+// can report partial evidence and the unmet requirement together instead of
+// failing closed the way finalize does.
+func resolveReviewEvidence(ctx context.Context, artifactStore ArtifactStore, run RunReplayData, diag *[]reviewEvidenceCandidateResult) ([]ReviewEvidence, error) {
 	candidates := evidenceCandidatesForRun(run)
 	evidence := make([]ReviewEvidence, 0, len(candidates))
 	seen := map[string]bool{}
 	for _, candidate := range candidates {
 		artifact := candidate.Artifact
+		originalRef := firstNonEmpty(artifact.Ref, artifact.ArtifactPath, artifact.URL)
+		record := func(accepted bool, blobName, urlStr, reason string) {
+			if diag == nil {
+				return
+			}
+			*diag = append(*diag, reviewEvidenceCandidateResult{
+				OriginalRef:  originalRef,
+				Kind:         firstNonEmpty(NormalizeEvidenceKind(artifact.Kind), EvidenceKindForRef(firstNonEmpty(blobName, originalRef))),
+				SourcePhase:  firstNonEmpty(strings.TrimSpace(artifact.SourcePhase), candidate.SourcePhase),
+				AttemptIndex: candidate.AttemptIndex,
+				Accepted:     accepted,
+				BlobName:     blobName,
+				URL:          urlStr,
+				Reason:       reason,
+			})
+		}
 		blobName, ok := artifactBlobNameForEvidence(run, artifact)
-		if !ok || seen[blobName] {
+		if !ok {
+			record(false, "", "", "ref does not resolve to a serveable run artifact")
+			continue
+		}
+		if !runOwnsEvidenceArtifact(run, blobName) {
+			// Provenance guard: review evidence must be the run's OWN
+			// verification output (under runs/<project>/<run_id>/). A
+			// lease-scoped inspections/<lease>/... browser capture or any other
+			// run's artifact is not acceptable product evidence — this is what
+			// made a /healthz screenshot reviewable. Finalize fails closed;
+			// the preview records the rejection.
+			reason := "evidence artifact is not this run's own verification output (must be under runs/" + strings.Trim(strings.TrimSpace(run.Project), "/") + "/" + strings.Trim(strings.TrimSpace(run.ID), "/") + "/)"
+			if diag != nil {
+				record(false, blobName, "", reason)
+				continue
+			}
+			return nil, ValidationError{Message: reason + ": " + blobName}
+		}
+		if seen[blobName] {
+			record(false, blobName, "", "duplicate of an already-resolved artifact")
 			continue
 		}
 		seen[blobName] = true
 		artifact.Kind = firstNonEmpty(NormalizeEvidenceKind(artifact.Kind), EvidenceKindForRef(blobName))
 		if artifactStore != nil {
 			if err := validateEvidenceArtifact(ctx, artifactStore, artifact.Kind, blobName); err != nil {
+				// Finalize (diag == nil) fails closed on an unservable/invalid
+				// artifact, preserving the strict contract. The preview
+				// (diag != nil) instead records why the candidate was dropped
+				// and keeps going, so an operator sees every problem at once.
+				var validationErr ValidationError
+				if diag != nil && errors.As(err, &validationErr) {
+					record(false, blobName, "", validationErr.Message)
+					continue
+				}
 				return nil, err
 			}
 		}
 		attemptIndex := candidate.AttemptIndex
-		originalRef := firstNonEmpty(artifact.Ref, artifact.ArtifactPath, artifact.URL)
 		ref := "blob://artifacts/" + blobName
 		if strings.TrimSpace(artifact.Label) == "" {
 			artifact.Label = evidenceLabel(originalRef)
@@ -48,6 +121,7 @@ func reviewEvidenceForRun(ctx context.Context, artifactStore ArtifactStore, run 
 		if artifact.SourceAttemptIndex == nil {
 			artifact.SourceAttemptIndex = &attemptIndex
 		}
+		record(true, blobName, artifact.URL, "")
 		evidence = append(evidence, ReviewEvidence{
 			Kind:               artifact.Kind,
 			Ref:                artifact.Ref,
@@ -61,25 +135,68 @@ func reviewEvidenceForRun(ctx context.Context, artifactStore ArtifactStore, run 
 			SourceAttemptIndex: artifact.SourceAttemptIndex,
 		})
 	}
-	if len(requiredCounts) > 0 {
-		if artifactStore == nil {
-			return nil, ValidationError{Message: "artifact store not configured for required evidence validation"}
+	return evidence, nil
+}
+
+// checkRequiredReviewEvidence enforces the test plan's required-evidence
+// counts against the resolved evidence. Split out of reviewEvidenceForRun so
+// the dry-run preview can report the same verdict without failing the request.
+func checkRequiredReviewEvidence(run RunReplayData, evidence []ReviewEvidence, artifactStore ArtifactStore) error {
+	requiredCounts := requiredEvidenceCounts(requiredEvidenceForRun(run))
+	if len(requiredCounts) == 0 {
+		return nil
+	}
+	if artifactStore == nil {
+		return ValidationError{Message: "artifact store not configured for required evidence validation"}
+	}
+	actualCounts := map[string]int{}
+	for _, item := range evidence {
+		kind := firstNonEmpty(NormalizeEvidenceKind(item.Kind), EvidenceKindForRef(item.Ref))
+		actualCounts[kind]++
+	}
+	for kind, count := range requiredCounts {
+		if actualCounts[kind] == 0 {
+			return ValidationError{Message: fmt.Sprintf("required %s evidence was not recorded", kind)}
 		}
-		actualCounts := map[string]int{}
-		for _, item := range evidence {
-			kind := firstNonEmpty(NormalizeEvidenceKind(item.Kind), EvidenceKindForRef(item.Ref))
-			actualCounts[kind]++
-		}
-		for kind, count := range requiredCounts {
-			if actualCounts[kind] == 0 {
-				return nil, ValidationError{Message: fmt.Sprintf("required %s evidence was not recorded", kind)}
-			}
-			if actualCounts[kind] < count {
-				return nil, ValidationError{Message: fmt.Sprintf("required %d %s evidence artifacts but only %d were recorded", count, kind, actualCounts[kind])}
-			}
+		if actualCounts[kind] < count {
+			return ValidationError{Message: fmt.Sprintf("required %d %s evidence artifacts but only %d were recorded", count, kind, actualCounts[kind])}
 		}
 	}
-	return evidence, nil
+	return nil
+}
+
+// ReviewEvidencePreview is the no-side-effect (dry-run) result of resolving a
+// run's review evidence: exactly what the review would attach, plus a
+// per-candidate breakdown and the required-vs-resolved verdict — without
+// creating a PR or persisting a Review. It is the safe way to see review
+// evidence without re-running the full workflow.
+type ReviewEvidencePreview struct {
+	RunRef           string                          `json:"run_ref"`
+	Branch           string                          `json:"branch,omitempty"`
+	Satisfied        bool                            `json:"satisfied"`
+	Problem          string                          `json:"problem,omitempty"`
+	RequiredEvidence map[string]int                  `json:"required_evidence,omitempty"`
+	ResolvedEvidence []ReviewEvidence                `json:"resolved_evidence"`
+	Candidates       []reviewEvidenceCandidateResult `json:"candidates"`
+}
+
+func reviewEvidencePreviewForRun(ctx context.Context, artifactStore ArtifactStore, run RunReplayData) (ReviewEvidencePreview, error) {
+	var diag []reviewEvidenceCandidateResult
+	evidence, err := resolveReviewEvidence(ctx, artifactStore, run, &diag)
+	if err != nil {
+		return ReviewEvidencePreview{}, err
+	}
+	preview := ReviewEvidencePreview{
+		RequiredEvidence: requiredEvidenceCounts(requiredEvidenceForRun(run)),
+		ResolvedEvidence: evidence,
+		Candidates:       diag,
+	}
+	if reqErr := checkRequiredReviewEvidence(run, evidence, artifactStore); reqErr != nil {
+		preview.Problem = reqErr.Error()
+	} else {
+		preview.Satisfied = true
+	}
+	return preview, nil
 }
 
 func requiredEvidenceForRun(run RunReplayData) []EvidenceRequirement {
@@ -183,6 +300,21 @@ func stringSliceFromAny(raw any) []string {
 		}
 	}
 	return out
+}
+
+// runOwnsEvidenceArtifact reports whether a resolved evidence blob belongs to
+// this run's own artifact namespace (runs/<project>/<run_id>/...). Run
+// verification uploads — STS2 screenshots, recorded videos, run-scoped
+// inspections — all live there. Lease-scoped inspections/<lease>/... captures
+// and other runs' artifacts do not, and must not be accepted as this run's
+// review evidence.
+func runOwnsEvidenceArtifact(run RunReplayData, blobName string) bool {
+	project := strings.Trim(strings.TrimSpace(run.Project), "/")
+	runID := strings.Trim(strings.TrimSpace(run.ID), "/")
+	if project == "" || runID == "" {
+		return false
+	}
+	return strings.HasPrefix(blobName, "runs/"+project+"/"+runID+"/")
 }
 
 func artifactBlobNameForEvidence(run RunReplayData, artifact EvidenceArtifact) (string, bool) {
