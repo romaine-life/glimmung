@@ -511,6 +511,87 @@ func TestLaunchPhaseResolvesProviderAPIProxyForAgentJobs(t *testing.T) {
 	}
 }
 
+func TestLaunchPhaseAdoptsAttemptSecretToJob(t *testing.T) {
+	tokenPath := tempTokenFile(t)
+	var paths []string
+	var patchedSecretPath string
+	var patchedSecretBody string
+	var patchContentType string
+	launcher := &KubernetesRunLauncher{
+		Settings: Settings{
+			K8sAPIHost:            "https://kube.test",
+			K8sSATokenPath:        tokenPath,
+			RunnerNamespace:       "glimmung-runs",
+			RunnerServiceAccount:  "glimmung-runner",
+			RunnerCallbackBaseURL: "http://glimmung.glimmung.svc.cluster.local",
+			RunnerImage:           "romainecr.azurecr.io/glimmung-runner:test",
+			GitHubAppPrivateKey:   "signing-key",
+		},
+		HTTPClient: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			paths = append(paths, req.Method+" "+req.URL.Path)
+			body := `{}`
+			switch {
+			case req.Method == http.MethodGet && strings.HasPrefix(req.URL.Path, "/apis/batch/v1/namespaces/glimmung-runs/jobs/"):
+				// The Job UID is required to build the ownerReference.
+				body = `{"metadata":{"uid":"job-uid-test"}}`
+			case req.Method == http.MethodPatch && strings.Contains(req.URL.Path, "/namespaces/glimmung-runs/secrets/"):
+				raw, _ := io.ReadAll(req.Body)
+				patchedSecretPath = req.URL.Path
+				patchedSecretBody = string(raw)
+				patchContentType = req.Header.Get("Content-Type")
+			}
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader(body)),
+			}, nil
+		})},
+	}
+	req := RunLaunchRequest{
+		Lease:    Lease{Project: "ambience"},
+		Workflow: Workflow{Name: "sidecartest"},
+		Phase: PhaseSpec{
+			Name: "llm-work",
+			Jobs: []RunnerJobSpec{{
+				ID:      "w",
+				Managed: true,
+				Steps:   []RunnerStepSpec{{Slug: "go", Type: "run", Run: "echo hi"}},
+			}},
+		},
+		Run: RunReplayData{
+			ID:            "run-abc",
+			Project:       "ambience",
+			IssueNumber:   164,
+			IssueRepo:     "romaine-life/ambience",
+			CallbackToken: stringPtr("callback-token"),
+			Attempts:      []RunAttemptData{{AttemptIndex: 0, Phase: "llm-work"}},
+		},
+	}
+
+	if _, err := launcher.LaunchPhase(context.Background(), req); err != nil {
+		t.Fatalf("LaunchPhase: %v", err)
+	}
+	if patchedSecretPath == "" {
+		t.Fatalf("expected a PATCH adopting the attempt secret, paths=%#v", paths)
+	}
+	if !strings.HasSuffix(patchedSecretPath, "-token") {
+		t.Fatalf("expected PATCH against the <job>-token secret, got %s", patchedSecretPath)
+	}
+	if patchContentType != "application/merge-patch+json" {
+		t.Fatalf("expected merge-patch content type, got %q", patchContentType)
+	}
+	for _, want := range []string{
+		`"ownerReferences"`,
+		`"kind":"Job"`,
+		`"uid":"job-uid-test"`,
+		`"blockOwnerDeletion":false`,
+	} {
+		if !strings.Contains(patchedSecretBody, want) {
+			t.Fatalf("patch body missing %q: %s", want, patchedSecretBody)
+		}
+	}
+}
+
 func TestLaunchPhaseResolvesProviderAPIProxyForVerificationPhase(t *testing.T) {
 	tokenPath := tempTokenFile(t)
 	var paths []string

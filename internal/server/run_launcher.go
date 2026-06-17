@@ -253,6 +253,7 @@ func (l *KubernetesRunLauncher) LaunchPhase(ctx context.Context, req RunLaunchRe
 		if err := l.createJob(ctx, runnerJobManifest(l.Settings, req, job, jobName, secretName, attemptBase, jobProxyRuntime)); err != nil {
 			return nil, err
 		}
+		l.adoptAttemptSecret(ctx, secretName, jobName)
 		launched = append(launched, RunLaunchedJob{JobID: job.ID, K8sJobName: jobName})
 	}
 	if len(launched) == 0 {
@@ -1345,6 +1346,37 @@ func (l *KubernetesRunLauncher) ensureAttemptSecret(ctx context.Context, name, a
 	return "", err
 }
 
+// adoptAttemptSecret makes the runner Job the owner of its attempt-token
+// Secret so the Job's ttlSecondsAfterFinished cleanup cascades to the Secret
+// through Kubernetes garbage collection. Attempt Secrets are otherwise created
+// unowned and with no TTL, so without an owner they accumulate in the runner
+// namespace indefinitely. Best-effort: on any failure the Secret simply stays
+// unowned (the prior behavior), so a launch never fails on this step.
+func (l *KubernetesRunLauncher) adoptAttemptSecret(ctx context.Context, secretName, jobName string) {
+	ns := l.Settings.RunnerNamespace
+	status, job, err := l.request(ctx, http.MethodGet, "/apis/batch/v1/namespaces/"+ns+"/jobs/"+jobName, nil)
+	if err != nil || status >= 400 {
+		return
+	}
+	uid, _ := anyMap(job["metadata"])["uid"].(string)
+	if uid == "" {
+		return
+	}
+	patch := map[string]any{
+		"metadata": map[string]any{
+			"ownerReferences": []map[string]any{{
+				"apiVersion":         "batch/v1",
+				"kind":               "Job",
+				"name":               jobName,
+				"uid":                uid,
+				"controller":         false,
+				"blockOwnerDeletion": false,
+			}},
+		},
+	}
+	_, _, _ = l.requestContentType(ctx, http.MethodPatch, "/api/v1/namespaces/"+ns+"/secrets/"+secretName, patch, "application/merge-patch+json")
+}
+
 func (l *KubernetesRunLauncher) createJob(ctx context.Context, manifest map[string]any) error {
 	status, _, err := l.request(ctx, http.MethodPost, "/apis/batch/v1/namespaces/"+l.Settings.RunnerNamespace+"/jobs", manifest)
 	if err == nil || status == http.StatusConflict {
@@ -1656,6 +1688,14 @@ func (l *KubernetesRunLauncher) createServiceInNamespace(ctx context.Context, na
 }
 
 func (l *KubernetesRunLauncher) request(ctx context.Context, method, path string, body any) (int, map[string]any, error) {
+	return l.requestContentType(ctx, method, path, body, "application/json")
+}
+
+// requestContentType is request with an explicit request-body Content-Type.
+// PATCH calls against the Kubernetes API need a patch media type such as
+// application/merge-patch+json; every other caller uses application/json via
+// request.
+func (l *KubernetesRunLauncher) requestContentType(ctx context.Context, method, path string, body any, contentType string) (int, map[string]any, error) {
 	var reader io.Reader
 	if body != nil {
 		payload, err := json.Marshal(body)
@@ -1674,7 +1714,7 @@ func (l *KubernetesRunLauncher) request(ctx context.Context, method, path string
 	}
 	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(string(token)))
 	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Content-Type", contentType)
 	}
 	client := l.HTTPClient
 	if client == nil {
