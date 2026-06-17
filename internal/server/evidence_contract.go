@@ -171,14 +171,6 @@ func MergeEvidenceRequirements(groups ...[]EvidenceRequirement) []EvidenceRequir
 	return out
 }
 
-func EvidenceArtifactsFromVerificationOutput(raw string) []EvidenceArtifact {
-	payload, ok := decodeEvidenceJSONOutputObject(raw)
-	if !ok {
-		return nil
-	}
-	return EvidenceArtifactsFromVerificationPayload(payload)
-}
-
 func EvidenceArtifactsFromVerificationPayload(payload map[string]any) []EvidenceArtifact {
 	out := make([]EvidenceArtifact, 0)
 	for _, key := range []string{"evidence", "evidence_artifacts"} {
@@ -209,6 +201,14 @@ func EvidenceArtifactsFromVerificationPayload(payload map[string]any) []Evidence
 			if ref := strings.TrimSpace(stringValue(item["screenshot"])); ref != "" {
 				out = appendNormalizedEvidenceArtifact(out, EvidenceArtifact{
 					Kind:  EvidenceKindScreenshot,
+					Ref:   ref,
+					Label: strings.TrimSpace(stringValue(item["label"])),
+				})
+			}
+			kind := NormalizeEvidenceRequirementKind(stringValue(item["kind"]))
+			for _, ref := range stringSliceFromAny(item["artifact_paths"]) {
+				out = appendNormalizedEvidenceArtifact(out, EvidenceArtifact{
+					Kind:  kind,
 					Ref:   ref,
 					Label: strings.TrimSpace(stringValue(item["label"])),
 				})

@@ -5,13 +5,15 @@ import "strings"
 const (
 	EvidenceGateJobID    = "evidence-verification-gate"
 	EvidenceGateStepSlug = "evaluate-verdict"
-	PRReviewJobID    = "pr-review"
-	PRReviewStepSlug = "ensure-pr-review"
+	PRReviewJobID        = "pr-review"
+	PRReviewStepSlug     = "ensure-pr-review"
 	PRMergeJobID         = "pr-merge"
 	PRMergeStepSlug      = "merge-pull-request"
+	VerificationStepSlug = "finalize-verification"
 
-	JobPrimitivePRReview = "pr_review"
-	JobPrimitivePRMerge      = "pr_merge"
+	JobPrimitivePRReview              = "pr_review"
+	JobPrimitivePRMerge               = "pr_merge"
+	StepPrimitiveVerificationFinalize = "verification_finalize"
 )
 
 const evidenceGateRunScript = `set -Eeuo pipefail
@@ -111,6 +113,163 @@ if [ -n "${html_url}" ]; then
 fi
 `
 
+const verificationFinalizeRunScript = `set -Eeuo pipefail
+: "${GLIMMUNG_COMPLETION_FILE:?missing GLIMMUNG_COMPLETION_FILE}"
+: "${GLIMMUNG_PROJECT:?missing GLIMMUNG_PROJECT}"
+: "${GLIMMUNG_RUN_ID:?missing GLIMMUNG_RUN_ID}"
+: "${ARTIFACTS_STORAGE_ACCOUNT:?missing ARTIFACTS_STORAGE_ACCOUNT}"
+: "${ARTIFACTS_CONTAINER:?missing ARTIFACTS_CONTAINER}"
+
+working_dir="${GLIMMUNG_WORKING_DIR:-/tmp/glimmung-${GLIMMUNG_RUN_REF:-localdev}}"
+artifacts_dir="${GLIMMUNG_ARTIFACTS_DIR:-${working_dir}/artifacts}"
+verification_file="${GLIMMUNG_VERIFICATION_FILE:-${artifacts_dir}/verification.json}"
+summary_file="${GLIMMUNG_VERIFICATION_MARKDOWN_FILE:-${artifacts_dir}/verification.md}"
+screenshots_dir="${GLIMMUNG_SCREENSHOTS_DIR:-${artifacts_dir}/screenshots}"
+videos_dir="${GLIMMUNG_VIDEOS_DIR:-${artifacts_dir}/videos}"
+evidence_dir="${GLIMMUNG_EVIDENCE_DIR:-${artifacts_dir}/evidence}"
+
+if [ ! -s "${verification_file}" ]; then
+  echo "verification finalizer: ${verification_file} is missing or empty" >&2
+  exit 2
+fi
+if ! jq -e 'type == "object"' "${verification_file}" >/dev/null; then
+  echo "verification finalizer: ${verification_file} is not a JSON object" >&2
+  exit 2
+fi
+
+raw_status="$(jq -r '.status // ""' "${verification_file}")"
+abort_reason="$(jq -r '.abort_reason // ""' "${verification_file}")"
+case "${raw_status}" in
+  pass)
+    verification_status="pass"
+    ;;
+  fail|error)
+    verification_status="${raw_status}"
+    ;;
+  abort)
+    if [ -z "${abort_reason}" ]; then
+      echo "verification finalizer: status=abort requires abort_reason" >&2
+      exit 2
+    fi
+    verification_status="fail"
+    ;;
+  *)
+    echo "verification finalizer: invalid verification status '${raw_status}' (want pass, fail, error, or abort)" >&2
+    exit 2
+    ;;
+esac
+
+has_files() {
+  [ -d "$1" ] && find "$1" -type f -print -quit | grep -q .
+}
+
+finalizer_reason=""
+claimed_screenshot_pass="$(jq -r 'any(.evidence_results[]?; (((.kind // "") | ascii_downcase) == "screenshot") and (.passed == true))' "${verification_file}")"
+if [ "${verification_status}" = "pass" ] && [ "${claimed_screenshot_pass}" = "true" ] && ! has_files "${screenshots_dir}"; then
+  verification_status="fail"
+  finalizer_reason="verification claimed passed screenshot evidence, but no screenshot files were present under ${screenshots_dir}"
+fi
+
+refs_file="$(mktemp)"
+enriched_file="$(mktemp)"
+trap 'rm -f "${refs_file}" "${enriched_file}"' EXIT
+: >"${refs_file}"
+
+needs_upload=0
+for dir in "${screenshots_dir}" "${videos_dir}" "${evidence_dir}"; do
+  if has_files "${dir}"; then
+    needs_upload=1
+  fi
+done
+
+if [ "${needs_upload}" = "1" ]; then
+  : "${AZURE_CLIENT_ID:?missing AZURE_CLIENT_ID}"
+  : "${AZURE_TENANT_ID:?missing AZURE_TENANT_ID}"
+  : "${AZURE_FEDERATED_TOKEN_FILE:?missing AZURE_FEDERATED_TOKEN_FILE}"
+  az login --service-principal \
+    --username "${AZURE_CLIENT_ID}" \
+    --tenant "${AZURE_TENANT_ID}" \
+    --federated-token "$(cat "${AZURE_FEDERATED_TOKEN_FILE}")" \
+    --allow-no-subscriptions >/dev/null
+fi
+
+upload_tree() {
+  local kind="$1"
+  local source="$2"
+  if ! has_files "${source}"; then
+    return 0
+  fi
+  local prefix="runs/${GLIMMUNG_PROJECT}/${GLIMMUNG_RUN_ID}/${kind}"
+  az storage blob upload-batch \
+    --account-name "${ARTIFACTS_STORAGE_ACCOUNT}" \
+    --destination "${ARTIFACTS_CONTAINER}" \
+    --destination-path "${prefix}" \
+    --source "${source}" \
+    --auth-mode login \
+    --overwrite true >/dev/null
+  find "${source}" -type f -print | sort | while IFS= read -r file; do
+    rel="${file#"${source}"/}"
+    printf '%s/%s\n' "${prefix}" "${rel}"
+  done >>"${refs_file}"
+}
+
+upload_tree screenshots "${screenshots_dir}"
+upload_tree videos "${videos_dir}"
+upload_tree evidence "${evidence_dir}"
+
+jq -nR '[inputs | select(length > 0)] | unique' "${refs_file}" >"${refs_file}.json"
+mv "${refs_file}.json" "${refs_file}"
+
+jq \
+  --arg status "${verification_status}" \
+  --arg raw_status "${raw_status}" \
+  --arg abort_reason "${abort_reason}" \
+  --arg finalizer_reason "${finalizer_reason}" \
+  --slurpfile refs "${refs_file}" '
+  def strings_only:
+    map(select(type == "string" and length > 0));
+  def array_or_empty($value):
+    if ($value | type) == "array" then $value else [] end;
+  def kind_for($ref):
+    if ($ref | test("\\.(png|jpg|jpeg|webp|gif)$"; "i")) then "screenshot"
+    elif ($ref | test("\\.(webm|mp4|mov|m4v)$"; "i")) then "video"
+    else "artifact"
+    end;
+  .status = $status
+  | .reasons = (
+      (array_or_empty(.reasons) + [$finalizer_reason] + (if $raw_status == "abort" then ["verifier reported status=abort reason=" + $abort_reason] else [] end))
+      | strings_only
+      | unique
+    )
+  | .evidence_refs = ((array_or_empty(.evidence_refs) + $refs[0]) | strings_only | unique)
+  | .evidence = (
+      (array_or_empty(.evidence) + ($refs[0] | map({kind: kind_for(.), ref: .})))
+      | unique_by((.kind // "") + "\u0000" + (.ref // ""))
+    )
+' "${verification_file}" >"${enriched_file}"
+
+summary_markdown=""
+if [ -s "${summary_file}" ]; then
+  summary_markdown="$(cat "${summary_file}")"
+else
+  summary_markdown="$(jq -r '.notes // ""' "${verification_file}")"
+fi
+screenshots_markdown="$(jq -r '.[] | select(test("/screenshots/")) | "- [" + (split("/")[-1]) + "](blob://artifacts/" + . + ")"' "${refs_file}")"
+
+jq -n \
+  --slurpfile verification "${enriched_file}" \
+  --arg summary_markdown "${summary_markdown}" \
+  --arg screenshots_markdown "${screenshots_markdown}" '
+  {verification: $verification[0]}
+  + (if ($summary_markdown | length) > 0 then {summary_markdown: $summary_markdown} else {} end)
+  + (if ($screenshots_markdown | length) > 0 then {screenshots_markdown: $screenshots_markdown} else {} end)
+' >"${GLIMMUNG_COMPLETION_FILE}"
+
+printf 'verification finalizer: status=%s evidence_refs=%s\n' \
+  "${verification_status}" \
+  "$(jq -r 'join(",")' "${refs_file}")"
+`
+
 func CanonicalWorkflow(wf Workflow) Workflow {
 	for i := range wf.Phases {
 		wf.Phases[i] = CanonicalRunnerPhase(wf.Phases[i])
@@ -144,7 +303,19 @@ func CanonicalRunnerJob(job RunnerJobSpec) RunnerJobSpec {
 	case JobPrimitivePRMerge:
 		return canonicalPRMergeJob(&job)
 	default:
+		for i := range job.Steps {
+			job.Steps[i] = CanonicalRunnerStep(job.Steps[i])
+		}
 		return job
+	}
+}
+
+func CanonicalRunnerStep(step RunnerStepSpec) RunnerStepSpec {
+	switch strings.TrimSpace(step.Primitive) {
+	case StepPrimitiveVerificationFinalize:
+		return canonicalVerificationFinalizeStep(&step)
+	default:
+		return step
 	}
 }
 
@@ -241,5 +412,31 @@ func canonicalPRReviewJob(existing *RunnerJobSpec) RunnerJobSpec {
 			Run:   prReviewRunScript,
 			Shell: "bash",
 		}},
+	}
+}
+
+func canonicalVerificationFinalizeStep(existing *RunnerStepSpec) RunnerStepSpec {
+	slug := VerificationStepSlug
+	title := "Finalize verification evidence"
+	env := map[string]string(nil)
+	if existing != nil {
+		if value := strings.TrimSpace(existing.Slug); value != "" {
+			slug = value
+		}
+		if existing.Title != nil && strings.TrimSpace(*existing.Title) != "" {
+			title = strings.TrimSpace(*existing.Title)
+		}
+		if len(existing.Env) > 0 {
+			env = existing.Env
+		}
+	}
+	return RunnerStepSpec{
+		Slug:      slug,
+		Title:     &title,
+		Primitive: StepPrimitiveVerificationFinalize,
+		Type:      "run",
+		Run:       verificationFinalizeRunScript,
+		Shell:     "bash",
+		Env:       env,
 	}
 }

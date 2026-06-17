@@ -206,6 +206,7 @@ type RunnerJobSpec struct {
 type RunnerStepSpec struct {
 	Slug             string            `json:"slug"`
 	Title            *string           `json:"title"`
+	Primitive        string            `json:"primitive,omitempty"`
 	Type             string            `json:"type,omitempty"`
 	Run              string            `json:"run,omitempty"`
 	Agent            *AgentStepSpec    `json:"agent,omitempty"`

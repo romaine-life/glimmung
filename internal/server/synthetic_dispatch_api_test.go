@@ -150,8 +150,8 @@ func TestSyntheticDispatchCopiesSelectedPhaseOutputsFromPriorRun(t *testing.T) {
 	if verify.Phase != "verify" || verify.PhaseOutputs["verification"] != verification {
 		t.Fatalf("copied verify attempt=%#v", verify)
 	}
-	if verify.Verification == nil || verify.Verification.Status != "pass" || len(verify.Verification.EvidenceRefs) != 1 {
-		t.Fatalf("verification=%#v", verify.Verification)
+	if verify.Verification != nil {
+		t.Fatalf("verification=%#v, want nil when only phase output was copied", verify.Verification)
 	}
 	provenance, ok := store.runReq.TriggerSource["copied_phase_outputs"].([]map[string]any)
 	if !ok || len(provenance) != 1 {

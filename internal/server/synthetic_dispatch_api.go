@@ -507,7 +507,6 @@ func syntheticSuppliedAttempts(inputs []SyntheticSuppliedPhaseOutput, wf *Workfl
 			AttemptIndex: len(out),
 			Phase:        phase,
 			Conclusion:   "supplied",
-			Verification: verificationDataFromPhaseOutputs(outputs),
 			Decision:     "advance",
 			Completed:    true,
 			CarryForward: true,
@@ -515,28 +514,6 @@ func syntheticSuppliedAttempts(inputs []SyntheticSuppliedPhaseOutput, wf *Workfl
 		})
 	}
 	return out, nil
-}
-
-func verificationDataFromPhaseOutputs(outputs map[string]string) *RunVerificationData {
-	raw := strings.TrimSpace(outputs["verification"])
-	if raw == "" {
-		return nil
-	}
-	payload, ok := decodeEvidenceJSONOutputObject(raw)
-	if !ok {
-		return nil
-	}
-	verification := &RunVerificationData{
-		Status:       strings.TrimSpace(stringValue(payload["status"])),
-		Reasons:      stringSliceFromAny(payload["reasons"]),
-		EvidenceRefs: stringSliceFromAny(payload["evidence_refs"]),
-		Evidence:     EvidenceArtifactsFromVerificationPayload(payload),
-	}
-	verification.EvidenceRefs = appendMissingStrings(verification.EvidenceRefs, EvidenceRefsFromArtifacts(verification.Evidence)...)
-	if verification.Status == "" && len(verification.Reasons) == 0 && len(verification.EvidenceRefs) == 0 && len(verification.Evidence) == 0 {
-		return nil
-	}
-	return verification
 }
 
 func syntheticTriggerSource(req SyntheticDispatchRequest, copyProvenance []map[string]any) map[string]any {

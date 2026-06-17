@@ -1262,9 +1262,12 @@ func TestFinalizeRunReviewByNumberPersistsStructuredScreenshotEvidence(t *testin
 			Completed:    true,
 			Conclusion:   "success",
 			Decision:     string(decision.Advance),
+			Verification: &RunVerificationData{
+				Status:       "pass",
+				EvidenceRefs: []string{"screenshots/default.png"},
+			},
 			PhaseOutputs: map[string]string{
-				"branch_name":  "issue-7-run-1",
-				"verification": `{"status":"pass","evidence_refs":["screenshots/default.png"]}`,
+				"branch_name": "issue-7-run-1",
 			},
 		},
 	}
@@ -1435,9 +1438,12 @@ func TestFinalizeRunReviewByNumberRejectsMissingRequiredScreenshotArtifact(t *te
 			Completed:    true,
 			Conclusion:   "success",
 			Decision:     string(decision.Advance),
+			Verification: &RunVerificationData{
+				Status:       "pass",
+				EvidenceRefs: []string{"screenshots/default.png"},
+			},
 			PhaseOutputs: map[string]string{
-				"branch_name":  "issue-7-run-1",
-				"verification": `{"status":"pass","evidence_refs":["screenshots/default.png"]}`,
+				"branch_name": "issue-7-run-1",
 			},
 		},
 	}
@@ -2166,7 +2172,7 @@ func TestCompletionPayloadFromRunnerExtractsVerificationFailure(t *testing.T) {
 	}
 }
 
-func TestCompletionPayloadFromRunnerPromotesVerificationOutput(t *testing.T) {
+func TestCompletionPayloadFromRunnerDoesNotPromoteVerificationPhaseOutput(t *testing.T) {
 	jobID := "verify"
 	payload := completionPayloadFromNative(RunnerCompletedRequest{
 		JobID:      &jobID,
@@ -2176,14 +2182,17 @@ func TestCompletionPayloadFromRunnerPromotesVerificationOutput(t *testing.T) {
 		},
 	})
 
-	if payload.VerificationStatus != "pass" {
-		t.Fatalf("verification status=%q, want pass", payload.VerificationStatus)
+	if payload.VerificationStatus != "" {
+		t.Fatalf("verification status=%q, want empty", payload.VerificationStatus)
 	}
-	if len(payload.EvidenceRefs) != 1 || payload.EvidenceRefs[0] != "screenshots/issue148.png" {
+	if len(payload.EvidenceRefs) != 0 {
 		t.Fatalf("evidence refs=%#v", payload.EvidenceRefs)
 	}
-	if len(payload.VerificationReasons) != 1 || payload.VerificationReasons[0] != "tooltip showed Energy generated 1" {
+	if len(payload.VerificationReasons) != 0 {
 		t.Fatalf("reasons=%#v", payload.VerificationReasons)
+	}
+	if payload.PhaseOutputs["verification"] == "" {
+		t.Fatalf("phase output should remain recorded for diagnostics: %#v", payload.PhaseOutputs)
 	}
 }
 

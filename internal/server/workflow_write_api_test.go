@@ -74,9 +74,7 @@ func singleVerificationJobForTest() RunnerJobSpec {
 			{Slug: "prepare-agent-workspace", Run: "echo prepare-agent"},
 			{Slug: "run-verification", Run: "echo verify"},
 			{Slug: "collect", Run: "echo collect"},
-			{Slug: "finalize", Run: "echo finalize"},
-			{Slug: "upload-screenshots", Run: "echo upload"},
-			{Slug: "emit", Run: "echo emit"},
+			{Slug: VerificationStepSlug, Primitive: StepPrimitiveVerificationFinalize},
 		},
 	}
 }
@@ -338,6 +336,37 @@ func TestValidateWorkflowRegisterAcceptsSingleVerificationJobConstraint(t *testi
 	}
 }
 
+func TestValidateWorkflowRegisterRequiresSingleVerificationFinalizer(t *testing.T) {
+	req := workflowWithJobTimeout(nil)
+	req.Constraints.Verification.Shape = VerificationShapeSingleJob
+	req.Phases[1].Jobs = []RunnerJobSpec{{
+		ID:      "llm-verify",
+		Managed: true,
+		Steps: []RunnerStepSpec{
+			{Slug: "run-verification", Run: "echo verify"},
+			{Slug: "emit-verification", Run: "echo emit"},
+		},
+	}}
+
+	err := ValidateWorkflowRegister(req)
+	if err == nil || !strings.Contains(err.Error(), StepPrimitiveVerificationFinalize) {
+		t.Fatalf("ValidateWorkflowRegister err=%v, want missing finalizer rejection", err)
+	}
+}
+
+func TestValidateWorkflowRegisterRequiresSingleVerificationFinalizerLast(t *testing.T) {
+	req := workflowWithJobTimeout(nil)
+	req.Constraints.Verification.Shape = VerificationShapeSingleJob
+	job := singleVerificationJobForTest()
+	job.Steps = append(job.Steps, RunnerStepSpec{Slug: "after-finalizer", Run: "echo late"})
+	req.Phases[1].Jobs = []RunnerJobSpec{job}
+
+	err := ValidateWorkflowRegister(req)
+	if err == nil || !strings.Contains(err.Error(), "must be the final step") {
+		t.Fatalf("ValidateWorkflowRegister err=%v, want finalizer-last rejection", err)
+	}
+}
+
 func TestValidateWorkflowRegisterAcceptsBoundedCaseJobsConstraint(t *testing.T) {
 	req := workflowWithJobTimeout(nil)
 	req.Constraints.Verification.Shape = VerificationShapeBoundedCaseJobs
@@ -552,6 +581,34 @@ func TestCanonicalWorkflowCanonicalizesDeclaredPRReviewPrimitive(t *testing.T) {
 	}
 	if len(job.Steps) != 1 || job.Steps[0].Slug != PRReviewStepSlug || !strings.Contains(job.Steps[0].Run, "GLIMMUNG_PR_REVIEW_URL") {
 		t.Fatalf("pr review job=%#v", job)
+	}
+}
+
+func TestCanonicalWorkflowCanonicalizesVerificationFinalizerStep(t *testing.T) {
+	wf := Workflow{
+		Project: "spirelens",
+		Name:    "default",
+		Phases: []PhaseSpec{{
+			Name:   "llm-verify",
+			Verify: true,
+			Jobs: []RunnerJobSpec{{
+				ID:      "llm-verify",
+				Managed: true,
+				Steps: []RunnerStepSpec{
+					{Slug: "run-verification", Run: "echo verify"},
+					{Slug: "custom-finalize", Primitive: StepPrimitiveVerificationFinalize, Run: "ignored"},
+				},
+			}},
+		}},
+	}
+
+	got := CanonicalWorkflow(wf)
+	step := got.Phases[0].Jobs[0].Steps[1]
+	if step.Slug != "custom-finalize" || step.Primitive != StepPrimitiveVerificationFinalize || step.Type != "run" {
+		t.Fatalf("finalizer step=%#v", step)
+	}
+	if !strings.Contains(step.Run, "GLIMMUNG_COMPLETION_FILE") || !strings.Contains(step.Run, "ARTIFACTS_STORAGE_ACCOUNT") {
+		t.Fatalf("finalizer run script missing contract envs: %s", step.Run)
 	}
 }
 

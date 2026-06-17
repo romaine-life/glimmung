@@ -1302,7 +1302,7 @@ func TestRunReportsFromDocsBuildsPublicRefsAndAttempts(t *testing.T) {
 	}
 }
 
-func TestRunReportAttemptFallsBackToVerificationPhaseOutputEvidenceRefs(t *testing.T) {
+func TestRunReportAttemptDoesNotReadVerificationPhaseOutputEvidenceRefs(t *testing.T) {
 	completed := "2026-05-11T03:05:00Z"
 	docs := []runDoc{{
 		ID:          "run-1",
@@ -1332,7 +1332,7 @@ func TestRunReportAttemptFallsBackToVerificationPhaseOutputEvidenceRefs(t *testi
 	reports := runReportsFromDocs(docs)
 
 	refs := reports[0].Attempts[0].EvidenceRefs
-	if len(refs) != 1 || refs[0] != "screenshots/default.png" {
+	if len(refs) != 0 {
 		t.Fatalf("evidence refs=%#v", refs)
 	}
 }
@@ -1354,7 +1354,7 @@ func TestAggregateNativePhaseCompletionPreservesEvidenceRefs(t *testing.T) {
 	}
 }
 
-func TestAggregateNativePhaseCompletionPromotesVerificationOutput(t *testing.T) {
+func TestAggregateNativePhaseCompletionDoesNotPromoteVerificationPhaseOutput(t *testing.T) {
 	payload := aggregateRunnerPhaseCompletion([]string{"verify"}, map[string]runnerJobCompletionDoc{
 		"verify": {
 			JobID:      "verify",
@@ -1365,14 +1365,17 @@ func TestAggregateNativePhaseCompletionPromotesVerificationOutput(t *testing.T) 
 		},
 	})
 
-	if payload.VerificationStatus != "pass" {
-		t.Fatalf("verification status=%q, want pass", payload.VerificationStatus)
+	if payload.VerificationStatus != "" {
+		t.Fatalf("verification status=%q, want empty", payload.VerificationStatus)
 	}
-	if len(payload.EvidenceRefs) != 1 || payload.EvidenceRefs[0] != "screenshots/issue148.png" {
+	if len(payload.EvidenceRefs) != 0 {
 		t.Fatalf("evidence refs=%#v", payload.EvidenceRefs)
 	}
-	if len(payload.VerificationReasons) != 1 || payload.VerificationReasons[0] != "verify: tooltip showed Energy generated 1" {
+	if len(payload.VerificationReasons) != 0 {
 		t.Fatalf("reasons=%#v", payload.VerificationReasons)
+	}
+	if payload.PhaseOutputs["verification"] == "" {
+		t.Fatalf("phase output should remain recorded for diagnostics: %#v", payload.PhaseOutputs)
 	}
 }
 

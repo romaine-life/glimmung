@@ -124,11 +124,14 @@ after registration changes.
 - Phase advancement happens only after all registered jobs in the phase reach
   terminal callback state.
 - Verification phases preserve verification statuses, reasons, evidence refs,
-  and typed evidence artifacts in the phase completion. Glimmung synthesizes
-  the phase output `verification` so the managed evidence gate has a stable
-  JSON verdict.
-  Multi-job verification phases aggregate per-job verification data before
-  synthesizing that phase output.
+  and typed evidence artifacts in the phase completion. Single-job
+  verification phases must end with the Glimmung-owned
+  `verification_finalize` step primitive, which reads the conventional
+  artifact files, uploads evidence, and writes the typed completion payload.
+  Project scripts must not make a repo-emitted phase output named
+  `verification` the verdict source.
+  Multi-job verification phases aggregate per-job typed verification data
+  before Glimmung synthesizes a diagnostic phase output named `verification`.
 - Dynamic verification groups are runtime-expanded inside one managed job from
   bounded plan outputs (`test_cases_json` or `test_cases_count`, plus
   group-specific aliases). Expanded case steps are emitted as durable runner
