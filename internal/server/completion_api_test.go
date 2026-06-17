@@ -1302,6 +1302,61 @@ func TestFinalizeRunReviewByNumberPersistsStructuredScreenshotEvidence(t *testin
 	}
 }
 
+func TestFinalizeRunReviewByNumberDoesNotTreatUnitTestRequirementAsArtifact(t *testing.T) {
+	store := &fakeCompletionStore{tokenRunID: "run-1", tokenProject: "proj", tokenRef: "proj#7/runs/1"}
+	store.run = runDataForCompletion("verify")
+	store.run.Attempts = []RunAttemptData{
+		{
+			AttemptIndex: 0,
+			Phase:        "plan",
+			Completed:    true,
+			Decision:     string(decision.Advance),
+			PhaseOutputs: map[string]string{
+				"test_plan": `{"required_evidence":[{"id":"unit-tests","kind":"unit_test","required":true},{"id":"tooltip","kind":"screenshot","required":true}]}`,
+			},
+		},
+		{
+			AttemptIndex: 1,
+			Phase:        "verify",
+			Completed:    true,
+			Conclusion:   "success",
+			Decision:     string(decision.Advance),
+			Verification: &RunVerificationData{
+				Status: "pass",
+				Evidence: []EvidenceArtifact{{
+					Kind: "screenshot",
+					Ref:  "screenshots/tooltip.png",
+				}},
+			},
+			PhaseOutputs: map[string]string{
+				"branch_name": "issue-7-run-1",
+			},
+		},
+	}
+	store.wf = prWorkflowForCompletion("verify")
+	prClient := &fakePullRequestClient{}
+	artifacts := &fakeArtifactStore{artifact: Artifact{Body: []byte("png"), ContentType: "image/png"}}
+	handler := NewWithRuntimeClients(Settings{}, store, fakeAdminAuthenticator{user: auth.User{Sub: "admin"}}, prClient, nil, artifacts)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/projects/proj/issues/7/runs/1/review/finalize", nil)
+	req.Header.Set("Authorization", "Bearer admin")
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if store.reviewReq == nil || len(store.reviewReq.Evidence) != 1 {
+		t.Fatalf("review evidence=%#v", store.reviewReq)
+	}
+	if store.reviewReq.Evidence[0].Kind != "screenshot" {
+		t.Fatalf("review evidence=%#v", store.reviewReq.Evidence[0])
+	}
+	if len(artifacts.downloads) != 1 || artifacts.downloads[0] != "runs/proj/run-1/screenshots/tooltip.png" {
+		t.Fatalf("artifact downloads=%#v", artifacts.downloads)
+	}
+}
+
 func TestFinalizeRunReviewByNumberPersistsRequiredVideoEvidence(t *testing.T) {
 	store := &fakeCompletionStore{tokenRunID: "run-1", tokenProject: "proj", tokenRef: "proj#7/runs/1"}
 	store.run = runDataForCompletion("verify")

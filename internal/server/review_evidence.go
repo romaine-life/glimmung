@@ -109,13 +109,31 @@ func requiredEvidenceCounts(requirements []EvidenceRequirement) map[string]int {
 		if requirement.Optional {
 			continue
 		}
-		kind := NormalizeEvidenceKind(requirement.Kind)
+		kind := reviewArtifactRequirementKind(requirement.Kind)
 		if kind == "" {
 			kind = EvidenceKindVideo
+		}
+		if kind == "-" {
+			continue
 		}
 		counts[kind]++
 	}
 	return counts
+}
+
+func reviewArtifactRequirementKind(kind string) string {
+	switch strings.ToLower(strings.TrimSpace(kind)) {
+	case "":
+		return ""
+	case "screenshot", "image", "still":
+		return EvidenceKindScreenshot
+	case "video", "animation", "webm", "movie", "recording":
+		return EvidenceKindVideo
+	case "artifact", "file", "attachment":
+		return EvidenceKindArtifact
+	default:
+		return "-"
+	}
 }
 
 func evidenceCandidatesForRun(run RunReplayData) []reviewEvidenceCandidate {

@@ -50,6 +50,22 @@ func NormalizeEvidenceKind(kind string) string {
 	}
 }
 
+func NormalizeEvidenceRequirementKind(kind string) string {
+	trimmed := strings.TrimSpace(kind)
+	switch strings.ToLower(trimmed) {
+	case "screenshot", "image", "still":
+		return EvidenceKindScreenshot
+	case "video", "animation", "webm", "movie", "recording":
+		return EvidenceKindVideo
+	case "artifact", "file", "attachment":
+		return EvidenceKindArtifact
+	case "":
+		return ""
+	default:
+		return trimmed
+	}
+}
+
 func EvidenceKindForRef(ref string) string {
 	switch strings.ToLower(path.Ext(trimArtifactEvidenceSuffix(ref))) {
 	case ".png", ".jpg", ".jpeg", ".webp", ".gif":
@@ -116,7 +132,7 @@ func EvidenceRequirementsFromRaw(raw any) []EvidenceRequirement {
 		}
 		req := EvidenceRequirement{
 			ID:              strings.TrimSpace(stringValue(item["id"])),
-			Kind:            NormalizeEvidenceKind(stringValue(item["kind"])),
+			Kind:            NormalizeEvidenceRequirementKind(stringValue(item["kind"])),
 			Label:           strings.TrimSpace(stringValue(item["label"])),
 			Route:           strings.TrimSpace(stringValue(item["route"])),
 			URLPath:         strings.TrimSpace(stringValue(item["url_path"])),
@@ -137,7 +153,7 @@ func MergeEvidenceRequirements(groups ...[]EvidenceRequirement) []EvidenceRequir
 	seen := map[string]bool{}
 	for _, group := range groups {
 		for _, req := range group {
-			req.Kind = NormalizeEvidenceKind(req.Kind)
+			req.Kind = NormalizeEvidenceRequirementKind(req.Kind)
 			if req.Kind == "" {
 				continue
 			}
