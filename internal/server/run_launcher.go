@@ -2361,11 +2361,12 @@ func testSlotInstallJobManifest(settings Settings, config testSlotHelmSettings, 
 		"REPO_URL=\"https://x-access-token:${TOKEN}@github.com/" + project.GitHubRepo + ".git\"\n" +
 		"if [ -n \"$GIT_REF\" ]; then\n" +
 		// Fetch the exact ref by branch/tag name OR commit sha. deploy-image-to-slot
-		// pins GIT_REF to the verified HEAD sha so the chart and the CI image
-		// are the same commit (anti-TOCTOU); `git clone --branch <sha>` is
+		// pins GIT_REF to the verified HEAD sha so chart/template changes are
+		// rendered from the same commit as the resolved fingerprinted image
+		// (anti-TOCTOU); `git clone --branch <sha>` is
 		// invalid, but `git fetch` accepts a reachable sha (GitHub
 		// allowReachableSHA1InWant) or a ref name, so this clone serves both
-		// the branch-ref reconcile and the sha-pinned deploy.
+		// the branch-ref reconcile and the commit-pinned deploy.
 		"  cd /workspace\n" +
 		"  git init -q\n" +
 		"  git remote add origin \"$REPO_URL\"\n" +

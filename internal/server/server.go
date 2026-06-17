@@ -478,7 +478,8 @@ func newHandlerWithReconcilers(settings Settings, store ReadStore, authResolver 
 	// commit onto a slot (docs/test-slot-deploy-plan.md), the replacement for
 	// the artifact build-and-stream path. The performer wraps the launcher's
 	// DeployImageToSlot (reconcile-at-ref with the image pinned + apiserver image
-	// verify); the resolver maps git_ref to its commit SHA via the GitHub API.
+	// verify); resolvers map git_ref to its commit SHA via GitHub, then that SHA
+	// to a validated app-image CI lookup tag from GitHub Actions run metadata.
 	var deployPerformer deployImagePerformer
 	if dl, ok := runLauncher.(imageToSlotDeployer); ok {
 		deployPerformer = func(ctx context.Context, lease Lease, project Project, verifiedRef, image, imageValueKey string) error {
@@ -488,7 +489,8 @@ func newHandlerWithReconcilers(settings Settings, store ReadStore, authResolver 
 	deployRefResolver := func(ctx context.Context, slug, ref, token string) (string, error) {
 		return githubResolveSHA(ctx, nil, slug, ref, token)
 	}
-	mux.Handle("POST /v1/test-slots/deploy-image", requireAdmin(adminAuthenticator, http.HandlerFunc(deployImageToTestSlot(store, runnerTokenMinter, deployPerformer, deployRefResolver))))
+	deployImageResolver := githubActionsTestSlotImageResolver(nil, newACRImageTagValidator())
+	mux.Handle("POST /v1/test-slots/deploy-image", requireAdmin(adminAuthenticator, http.HandlerFunc(deployImageToTestSlot(store, runnerTokenMinter, deployPerformer, deployRefResolver, deployImageResolver))))
 	mux.Handle("POST /v1/projects/{project}/issues/{issue_number}/runs/{run_number}/replay", requireAdmin(adminAuthenticator, http.HandlerFunc(replayRunDecisionByNumber(store))))
 	mux.Handle("POST /v1/runs/dispatch", requireAdmin(adminAuthenticator, http.HandlerFunc(dispatchRunHandler(settings, store, runLauncher))))
 	mux.Handle("POST /v1/runs/synthetic-dispatch", requireAdmin(adminAuthenticator, http.HandlerFunc(syntheticDispatchRunHandler(settings, store, runLauncher))))

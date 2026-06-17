@@ -179,6 +179,71 @@ func TestRegisterProjectAcceptsTestSlotHelmWithoutImageTag(t *testing.T) {
 	}
 }
 
+func TestRegisterProjectRejectsMalformedTestSlotDeployCIImage(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		want string
+	}{
+		{
+			name: "retired tags_by_sha",
+			body: `{"name":"tank-operator","github_repo":"romaine-life/tank-operator","metadata":{"test_slot_deploy":{"ci_image":{"repository":"romainecr.azurecr.io/tank-operator","tags_by_sha":{"abc123":"app-fingerprint123"}}}}}`,
+			want: "tags_by_sha is retired",
+		},
+		{
+			name: "retired images_by_sha",
+			body: `{"name":"tank-operator","github_repo":"romaine-life/tank-operator","metadata":{"test_slot_deploy":{"ci_image":{"images_by_sha":{"abc123":"romainecr.azurecr.io/tank-operator:app-fingerprint123"}}}}}`,
+			want: "images_by_sha is retired",
+		},
+		{
+			name: "repository slash without registry",
+			body: `{"name":"tank-operator","github_repo":"romaine-life/tank-operator","metadata":{"test_slot_deploy":{"ci_image":{"repository":"team/tank-operator"}}}}`,
+			want: "repository must be either an ACR repository name or registry/repository",
+		},
+		{
+			name: "workflow with whitespace",
+			body: `{"name":"tank-operator","github_repo":"romaine-life/tank-operator","metadata":{"test_slot_deploy":{"ci_image":{"repository":"romainecr.azurecr.io/tank-operator","workflow":"docker build check.yaml"}}}}`,
+			want: "workflow must not contain whitespace",
+		},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			handler := NewWithDependencies(
+				Settings{},
+				&fakeProjectStore{},
+				fakeAdminAuthenticator{user: auth.User{Sub: "admin"}},
+			)
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/projects", strings.NewReader(tc.body)))
+			if rec.Code != http.StatusUnprocessableEntity {
+				t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+			}
+			if !strings.Contains(rec.Body.String(), tc.want) {
+				t.Fatalf("body=%s, want %q", rec.Body.String(), tc.want)
+			}
+		})
+	}
+}
+
+func TestRegisterProjectAcceptsTestSlotDeployCIImageWorkflowConfig(t *testing.T) {
+	store := &fakeProjectStore{project: Project{Name: "tank-operator", GitHubRepo: "romaine-life/tank-operator"}}
+	handler := NewWithDependencies(
+		Settings{},
+		store,
+		fakeAdminAuthenticator{user: auth.User{Sub: "admin"}},
+	)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/projects", strings.NewReader(`{
+		"name":"tank-operator",
+		"github_repo":"romaine-life/tank-operator",
+		"metadata":{"test_slot_deploy":{"ci_image":{"repository":"romainecr.azurecr.io/tank-operator","workflow":"docker-build-check.yaml"}}}
+	}`)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestRegisterProjectStoreErrorsReturn500(t *testing.T) {
 	handler := NewWithDependencies(
 		Settings{},

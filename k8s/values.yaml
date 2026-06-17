@@ -1,8 +1,8 @@
 image:
   repository: romainecr.azurecr.io/glimmung
-  # SHA-pinned. The build workflow rewrites this line on every push to main
-  # via a `[skip ci]` follow-up commit. Quote the value so all-digit short
-  # SHAs aren't reformatted as scientific notation by YAML.
+  # Fingerprint-pinned. The build workflow rewrites this line on every push to
+  # main via a `[skip ci]` follow-up commit. Quote the value so YAML always
+  # treats image tags as strings.
   tag: "app-c428b6f644bf7c8091466333ce34c4ded8284176c6123381842748900bce277b"
   pullPolicy: IfNotPresent
 

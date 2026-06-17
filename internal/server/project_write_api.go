@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/romaine-life/glimmung/internal/domain/agentruntime"
 )
@@ -53,6 +54,10 @@ func registerProject(store ReadStore, managedOrigins ManagedOriginReconciler) ht
 			return
 		}
 		if err := validateTestSlotHelmMetadata(req.Metadata); err != nil {
+			writeProblem(w, http.StatusUnprocessableEntity, err.Error())
+			return
+		}
+		if err := validateTestSlotDeployMetadata(req.Metadata); err != nil {
 			writeProblem(w, http.StatusUnprocessableEntity, err.Error())
 			return
 		}
@@ -152,6 +157,40 @@ func validateTestSlotHelmMetadata(metadata map[string]any) error {
 				return fmt.Errorf(retiredFieldMessage, key)
 			}
 		}
+	}
+	return nil
+}
+
+func validateTestSlotDeployMetadata(metadata map[string]any) error {
+	if metadata == nil {
+		return nil
+	}
+	deploy, ok := mapFromMap(metadata, "test_slot_deploy")
+	if !ok {
+		deploy, ok = mapFromMap(metadata, "testSlotDeploy")
+	}
+	if !ok {
+		return nil
+	}
+	ciImage, ok := mapFromMap(deploy, "ci_image")
+	if !ok {
+		ciImage, ok = mapFromMap(deploy, "ciImage")
+	}
+	if !ok {
+		return nil
+	}
+	for _, key := range []string{"images_by_sha", "imagesBySha", "tags_by_sha", "tagsBySha"} {
+		if _, has := ciImage[key]; has {
+			return fmt.Errorf("test_slot_deploy.ci_image.%s is retired; deploy-image resolves GitHub Actions CI lookup tags from workflow run metadata", key)
+		}
+	}
+	if repository := firstNonEmpty(configString(ciImage, "repository"), configString(ciImage, "image_repository", "imageRepository")); strings.TrimSpace(repository) != "" {
+		if _, _, ok := splitRegistryRepository(repository); !ok && strings.Contains(repository, "/") {
+			return fmt.Errorf("test_slot_deploy.ci_image.repository must be either an ACR repository name or registry/repository")
+		}
+	}
+	if workflow := configString(ciImage, "workflow", "workflow_file", "workflowFile"); strings.ContainsAny(workflow, " \t\n\r") {
+		return fmt.Errorf("test_slot_deploy.ci_image.workflow must not contain whitespace")
 	}
 	return nil
 }

@@ -263,6 +263,39 @@ image into the checked-out test slot with `deploy_image_to_test_slot`. The
 slot operation records durable history on the lease, and callers poll the
 neutral job-status route until the deployment is terminal.
 
+Deploy-image resolves `git_ref` to a commit SHA, then resolves that SHA to the
+fingerprinted CI image for the project. The SHA is not assumed to be the image
+tag. Glimmung finds the latest successful app-image GitHub Actions run for the
+resolved ref and deploys that run's lookup tag:
+
+```json
+{
+  "test_slot_deploy": {
+    "image_value_key": "image.tag",
+    "ci_image": {
+      "repository": "romainecr.azurecr.io/tank-operator",
+      "workflow": "docker-build-check.yaml"
+    }
+  }
+}
+```
+
+The canonical app image identity remains `app-<fingerprint>`. For every trusted
+successful app-image CI run, the workflow creates a unique ACR-side lookup alias
+pointing at that same manifest: `ci-pr-<pr>-run-<run_id>-attempt-<attempt>` for
+pull requests, or `ci-ref-<source_sha_hash>-run-<run_id>-attempt-<attempt>` for
+workflow dispatch/non-PR runs. The alias is created with `az acr import`, so it
+does not rebuild, pull, or push image bytes.
+
+Glimmung validates the resolved lookup tag in ACR before dispatching the slot
+deploy; a missing or unvalidated alias is a clean deploy-image error and does
+not mutate the slot. Hand-maintained SHA mapping metadata such as
+`ci_image.tags_by_sha` and `ci_image.images_by_sha` is retired.
+
+Glimmung-managed app images use fingerprint tags as image identity. The app
+Docker build check publishes/reuses `app-<fingerprint>` and creates only the
+run-scoped CI lookup alias for deploy-image resolution.
+
 Per-project slot shape is described by `test_slot_helm`; there is no separate
 build-stream contract, kind selector, or project-owned classifier. Glimmung
 rejects the retired build-stream metadata key on project registration so the
