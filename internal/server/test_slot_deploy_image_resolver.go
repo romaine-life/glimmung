@@ -80,6 +80,9 @@ func resolveTestSlotImageFromGitHubActions(ctx context.Context, httpClient *http
 	if strings.TrimSpace(slug) == "" {
 		return ResolvedTestSlotImage{}, fmt.Errorf("github repo slug is required")
 	}
+	if err := requireCommitContainsMain(ctx, httpClient, slug, sha, token); err != nil {
+		return ResolvedTestSlotImage{}, err
+	}
 	settings := testSlotCIImageConfig(project)
 	runs, err := listSuccessfulWorkflowRuns(ctx, httpClient, slug, settings.Workflow, sha, token)
 	if err != nil {
@@ -190,6 +193,22 @@ func listRecentSuccessfulWorkflowRuns(ctx context.Context, httpClient *http.Clie
 	values.Set("status", "success")
 	values.Set("per_page", "50")
 	return listWorkflowRuns(ctx, httpClient, slug, workflow, token, values)
+}
+
+func requireCommitContainsMain(ctx context.Context, httpClient *http.Client, slug, sha, token string) error {
+	var payload struct {
+		Status   string `json:"status"`
+		BehindBy int    `json:"behind_by"`
+	}
+	apiURL := githubAPIBase + "/repos/" + slug + "/compare/" + url.PathEscape("main") + "..." + url.PathEscape(sha)
+	if err := githubGetJSON(ctx, httpClient, apiURL, token, &payload); err != nil {
+		return fmt.Errorf("verify commit contains main: %w", err)
+	}
+	status := strings.TrimSpace(strings.ToLower(payload.Status))
+	if status == "behind" || status == "diverged" || payload.BehindBy > 0 {
+		return fmt.Errorf("commit %s does not contain current main (compare status=%s behind_by=%d); merge main before deploying to a test slot", sha, firstNonEmpty(status, "unknown"), payload.BehindBy)
+	}
+	return nil
 }
 
 func listWorkflowRuns(ctx context.Context, httpClient *http.Client, slug, workflow, token string, query url.Values) ([]githubWorkflowRun, error) {

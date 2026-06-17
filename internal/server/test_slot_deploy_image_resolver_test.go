@@ -25,6 +25,11 @@ func TestGitHubActionsTestSlotImageResolverResolvesPRLookupTagAndValidates(t *te
 	defer func() { githubAPIBase = restore }()
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/repos/romaine-life/tank-operator/compare/main...abc123def456" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = fmt.Fprint(w, `{"status":"ahead","behind_by":0}`)
+			return
+		}
 		if r.URL.Path != "/repos/romaine-life/tank-operator/actions/workflows/docker-build-check.yaml/runs" {
 			t.Fatalf("path=%s", r.URL.Path)
 		}
@@ -76,6 +81,11 @@ func TestGitHubActionsTestSlotImageResolverFallsBackToDispatchLookupTag(t *testi
 
 	requests := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/repos/romaine-life/tank-operator/compare/main...abc123def456" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = fmt.Fprint(w, `{"status":"ahead","behind_by":0}`)
+			return
+		}
 		if r.URL.Path != "/repos/romaine-life/tank-operator/actions/workflows/docker-build-check.yaml/runs" {
 			t.Fatalf("path=%s", r.URL.Path)
 		}
@@ -131,6 +141,11 @@ func TestGitHubActionsTestSlotImageResolverFailsWhenLookupTagMissing(t *testing.
 	defer func() { githubAPIBase = restore }()
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/repos/romaine-life/tank-operator/compare/main...abc123def456" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = fmt.Fprint(w, `{"status":"ahead","behind_by":0}`)
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = fmt.Fprint(w, `{"workflow_runs":[{"id":12345,"run_attempt":2,"event":"pull_request","status":"completed","conclusion":"success","pull_requests":[{"number":77}]}]}`)
 	}))
@@ -151,6 +166,45 @@ func TestGitHubActionsTestSlotImageResolverFailsWhenLookupTagMissing(t *testing.
 	_, err := githubActionsTestSlotImageResolver(srv.Client(), &recordingImageValidator{err: want})(context.Background(), project, "romaine-life/tank-operator", "abc123def456", "gh-token")
 	if !errors.Is(err, want) || !strings.Contains(err.Error(), "validate CI lookup image") {
 		t.Fatalf("err=%v, want validation context wrapping %v", err, want)
+	}
+}
+
+func TestGitHubActionsTestSlotImageResolverRejectsBehindMainBeforeCILookup(t *testing.T) {
+	restore := githubAPIBase
+	defer func() { githubAPIBase = restore }()
+
+	requests := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if r.URL.Path != "/repos/romaine-life/tank-operator/compare/main...abc123def456" {
+			t.Fatalf("unexpected path=%s; behind-main refs must fail before workflow lookup", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"status":"behind","behind_by":7}`)
+	}))
+	defer srv.Close()
+	githubAPIBase = srv.URL
+
+	project := Project{
+		Name: "tank-operator",
+		Metadata: map[string]any{
+			"test_slot_deploy": map[string]any{
+				"ci_image": map[string]any{
+					"repository": "romainecr.azurecr.io/tank-operator",
+				},
+			},
+		},
+	}
+	validator := &recordingImageValidator{}
+	_, err := githubActionsTestSlotImageResolver(srv.Client(), validator)(context.Background(), project, "romaine-life/tank-operator", "abc123def456", "gh-token")
+	if err == nil || !strings.Contains(err.Error(), "does not contain current main") {
+		t.Fatalf("err=%v, want behind-main rejection", err)
+	}
+	if requests != 1 {
+		t.Fatalf("requests=%d, want only compare request", requests)
+	}
+	if len(validator.seen) != 0 {
+		t.Fatalf("validator saw %#v; behind-main refs must not reach image validation", validator.seen)
 	}
 }
 
