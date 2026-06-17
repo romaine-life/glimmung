@@ -34,6 +34,11 @@ type deployImagePerformer func(ctx context.Context, lease Lease, project Project
 // GitHub call (githubResolveSHA); tests stub it.
 type refResolver func(ctx context.Context, slug, ref, token string) (string, error)
 
+// testSlotImageResolver resolves the verified commit SHA to the CI-built image
+// ref that the slot should run. Production uses project metadata backed by a
+// registry validation check; tests stub it so the HTTP contract stays narrow.
+type testSlotImageResolver func(ctx context.Context, project Project, sha string) (ResolvedTestSlotImage, error)
+
 // imageToSlotDeployer is the concrete-launcher capability the deploy route wires
 // its performer from. *KubernetesRunLauncher implements it; the route type-
 // asserts rather than widening TestSlotPreparer so the test fakes are untouched.
@@ -55,7 +60,7 @@ type imageToSlotDeployer interface {
 // the caller's responsibility; this endpoint only ever operates on a git ref
 // (never an agent working tree), so it cannot deploy unpushed code, and the
 // SHA→image resolution deploys exactly the image CI built for that commit.
-func deployImageToTestSlot(store ReadStore, minter RunnerGitHubTokenMinter, performer deployImagePerformer, resolveRef refResolver) http.HandlerFunc {
+func deployImageToTestSlot(store ReadStore, minter RunnerGitHubTokenMinter, performer deployImagePerformer, resolveRef refResolver, resolveImage testSlotImageResolver) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		writer, ok := store.(TestSlotOpHistoryStore)
 		stateStore, hasState := store.(StateStore)
@@ -63,7 +68,7 @@ func deployImageToTestSlot(store ReadStore, minter RunnerGitHubTokenMinter, perf
 			writeProblem(w, http.StatusServiceUnavailable, "test-slot history store not configured")
 			return
 		}
-		if performer == nil || resolveRef == nil {
+		if performer == nil || resolveRef == nil || resolveImage == nil {
 			writeProblem(w, http.StatusServiceUnavailable, "deploy-image-to-slot not configured (run launcher has no slot deployer)")
 			return
 		}
@@ -130,8 +135,10 @@ func deployImageToTestSlot(store ReadStore, minter RunnerGitHubTokenMinter, perf
 		}
 		imageValueKey := testSlotDeployImageValueKey(project)
 
-		// Resolve the ref to its commit SHA. The slot deploys the image CI built
-		// for that exact commit; tagging-by-SHA makes resolution the identity.
+		// Resolve the ref to its commit SHA, then resolve that SHA to the
+		// fingerprinted image CI built. Raw SHA tags are not a deploy contract:
+		// the image resolver must return a concrete, validated CI image before
+		// this endpoint records a running operation or mutates the slot.
 		repoToken := ""
 		if minter != nil {
 			tok, err := minter.RepositoryInstallationToken(r.Context(), slug, map[string]string{"contents": "read"})
@@ -146,7 +153,12 @@ func deployImageToTestSlot(store ReadStore, minter RunnerGitHubTokenMinter, perf
 			writeProblem(w, http.StatusUnprocessableEntity, "resolve git_ref to commit sha: "+err.Error())
 			return
 		}
-		image := sha // CI tags each image with its git SHA; the chart's image value key pins it.
+		resolvedImage, err := resolveImage(r.Context(), project, sha)
+		if err != nil {
+			writeProblem(w, http.StatusUnprocessableEntity, "resolve commit sha to CI image: "+err.Error())
+			return
+		}
+		image := resolvedImage.Image
 		// Pollable handle: both history entries carry it as the job_name, so the
 		// slot job status route serves the deploy's running to terminal transition.
 		deployJob := "deploy-" + uuid.NewString()
@@ -167,6 +179,8 @@ func deployImageToTestSlot(store ReadStore, minter RunnerGitHubTokenMinter, perf
 				"git_ref":         req.GitRef,
 				"sha":             sha,
 				"image":           image,
+				"image_tag":       resolvedImage.Tag,
+				"image_source":    resolvedImage.Source,
 				"image_value_key": imageValueKey,
 			},
 			CreatedAt: time.Now().UTC(),
@@ -179,7 +193,7 @@ func deployImageToTestSlot(store ReadStore, minter RunnerGitHubTokenMinter, perf
 		go func() {
 			derr := performer(bgCtx, deployLease, project, sha, image, imageValueKey)
 			status := "deployed"
-			diag := map[string]any{"job_name": deployJob, "slot_name": slotName, "git_ref": req.GitRef, "sha": sha, "image": image}
+			diag := map[string]any{"job_name": deployJob, "slot_name": slotName, "git_ref": req.GitRef, "sha": sha, "image": image, "image_tag": resolvedImage.Tag, "image_source": resolvedImage.Source}
 			if derr != nil {
 				status = "deploy_failed"
 				diag["error"] = derr.Error()
@@ -200,13 +214,15 @@ func deployImageToTestSlot(store ReadStore, minter RunnerGitHubTokenMinter, perf
 			"git_ref":       req.GitRef,
 			"sha":           sha,
 			"image":         image,
+			"image_tag":     resolvedImage.Tag,
+			"image_source":  resolvedImage.Source,
 			"history_entry": startEntry,
 		})
 	}
 }
 
 // testSlotDeployImageValueKey is the chart value the deploy override pins to the
-// verified commit's CI image (helm --set <key>=<sha>). It defaults to "image.tag"
+// verified commit's CI image (helm --set <key>=<resolved image>). It defaults to "image.tag"
 // — the universal convention across these charts and the exact key the
 // chart-image-tag drift fix (glimmung#622) standardized on — so the common
 // project needs no per-app config. A project whose chart names its image value

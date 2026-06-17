@@ -70,10 +70,12 @@ going-to-ship build.
    what stops broken/stale code; the ref-only input is what stops un-pushed
    code.
 3. **Resolve SHA → CI image.** Map the verified commit to the fingerprinted ACR
-   image CI built for it. The mapping already exists in build metadata
-   (`git_sha` is stamped on the deployment / image metadata) and should be
-   recorded in the same ledger the gate reads, so resolution is a durable
-   lookup, not a guess.
+   image CI built for it. The deploy path must not assume the raw commit SHA is
+   the image tag. Current Glimmung stage-2 implementation reads a durable
+   project metadata mapping under `test_slot_deploy.ci_image` and validates the
+   resolved registry tag before mutation. The longer-lived target is to project
+   the CI image mapping from build metadata into the same ledger the gate reads,
+   so resolution remains durable without per-project hand-maintained maps.
 4. **Deploy the image — two levels, both "deploy the verified image":**
    - **App-level** (backend, static, any app): repoint the slot's app
      Deployment at `app-<fingerprint>` and roll. Fast — the slot already ran the
@@ -209,6 +211,7 @@ green for every in-scope project.**
   than the app image.
 - Confirm GitHub `mergeable_state` exposes `behind` distinctly so the
   behind-main check is precise (vs. inferring from ahead/behind counts).
-- Decide where the SHA → image fingerprint mapping is recorded (extend the
-  control-action ledger vs. a glimmung-side projection) so resolution is durable
-  and auditable.
+- Replace the stage-2 `test_slot_deploy.ci_image` project metadata mapping with
+  a CI-owned ledger/projection (extend the control-action ledger vs. a
+  glimmung-side projection) so SHA → fingerprint resolution is durable,
+  auditable, and not hand-maintained per project.

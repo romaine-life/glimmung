@@ -18,8 +18,8 @@ import (
 //   - verifiedRef: the published, gate-passed commit (published + CI-green +
 //     mergeable + current-with-main). Rendered as the chart ref so the branch's
 //     own chart/template changes are exercised too.
-//   - image: the CI-built image tag/ref for that exact commit (e.g. a git-SHA
-//     tag). Resolution is the caller's job.
+//   - image: the CI-built fingerprinted image tag/ref for that exact commit.
+//     Resolution and registry validation are the caller's job.
 //   - imageValueKey: the chart's image value path the override sets
 //     (helm --set <imageValueKey>=<image>). Empty means "no override" — the
 //     chart at verifiedRef already pins the image.

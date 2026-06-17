@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/romaine-life/glimmung/internal/domain/agentruntime"
 )
@@ -53,6 +54,10 @@ func registerProject(store ReadStore, managedOrigins ManagedOriginReconciler) ht
 			return
 		}
 		if err := validateTestSlotHelmMetadata(req.Metadata); err != nil {
+			writeProblem(w, http.StatusUnprocessableEntity, err.Error())
+			return
+		}
+		if err := validateTestSlotDeployMetadata(req.Metadata); err != nil {
 			writeProblem(w, http.StatusUnprocessableEntity, err.Error())
 			return
 		}
@@ -151,6 +156,59 @@ func validateTestSlotHelmMetadata(metadata map[string]any) error {
 			if _, has := image["tag"]; has {
 				return fmt.Errorf(retiredFieldMessage, key)
 			}
+		}
+	}
+	return nil
+}
+
+func validateTestSlotDeployMetadata(metadata map[string]any) error {
+	if metadata == nil {
+		return nil
+	}
+	deploy, ok := mapFromMap(metadata, "test_slot_deploy")
+	if !ok {
+		deploy, ok = mapFromMap(metadata, "testSlotDeploy")
+	}
+	if !ok {
+		return nil
+	}
+	ciImage, ok := mapFromMap(deploy, "ci_image")
+	if !ok {
+		ciImage, ok = mapFromMap(deploy, "ciImage")
+	}
+	if !ok {
+		return nil
+	}
+	imagesBySHA := stringMapFromAnyMap(anyMap(firstAny(ciImage["images_by_sha"], ciImage["imagesBySha"])))
+	tagsBySHA := stringMapFromAnyMap(anyMap(firstAny(ciImage["tags_by_sha"], ciImage["tagsBySha"])))
+	if len(imagesBySHA) == 0 && len(tagsBySHA) == 0 {
+		return fmt.Errorf("test_slot_deploy.ci_image must declare images_by_sha or tags_by_sha")
+	}
+	for sha, image := range imagesBySHA {
+		if strings.TrimSpace(sha) == "" || strings.TrimSpace(image) == "" {
+			return fmt.Errorf("test_slot_deploy.ci_image.images_by_sha cannot contain empty sha or image values")
+		}
+		resolved, err := resolvedTestSlotImageFromRef(image, "project_metadata:test_slot_deploy.ci_image.images_by_sha")
+		if err != nil {
+			return fmt.Errorf("test_slot_deploy.ci_image.images_by_sha[%s]: %w", sha, err)
+		}
+		if tagIsRawCommitSHA(resolved.Tag, sha) {
+			return fmt.Errorf("test_slot_deploy.ci_image.images_by_sha[%s] points at raw SHA tag %q; deploy-image requires a fingerprinted CI image tag", sha, resolved.Tag)
+		}
+	}
+	if len(tagsBySHA) > 0 {
+		registry := configString(ciImage, "registry")
+		repository := firstNonEmpty(configString(ciImage, "repository"), configString(ciImage, "image_repository", "imageRepository"))
+		for sha, tag := range tagsBySHA {
+			if strings.TrimSpace(sha) == "" || strings.TrimSpace(tag) == "" {
+				return fmt.Errorf("test_slot_deploy.ci_image.tags_by_sha cannot contain empty sha or tag values")
+			}
+			if tagIsRawCommitSHA(tag, sha) {
+				return fmt.Errorf("test_slot_deploy.ci_image.tags_by_sha[%s] is a raw SHA tag; deploy-image requires a fingerprinted CI image tag", sha)
+			}
+		}
+		if _, err := resolvedTestSlotImageFromRepositoryTag(registry, repository, "validation-tag", "project_metadata:test_slot_deploy.ci_image.tags_by_sha"); err != nil {
+			return fmt.Errorf("test_slot_deploy.ci_image: %w", err)
 		}
 	}
 	return nil
