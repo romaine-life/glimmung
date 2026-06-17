@@ -1354,7 +1354,13 @@ func TestAggregateNativePhaseCompletionPreservesEvidenceRefs(t *testing.T) {
 	}
 }
 
-func TestAggregateNativePhaseCompletionPromotesVerificationOutput(t *testing.T) {
+func TestAggregateNativePhaseCompletionRejectsPhaseOutputVerification(t *testing.T) {
+	// Migration guard: a verify job that emits only a `verification` phase
+	// output (the retired path) and no typed Verification must NOT be promoted
+	// into a verdict. The aggregate stays verdict-less so the verify contract
+	// gate (phase.Verify && attempt.Verification == nil -> verifier_contract_missing)
+	// fires directly instead of advancing on a fabricated status. Reintroducing
+	// the phase-output promotion fallback fails this test.
 	payload := aggregateRunnerPhaseCompletion([]string{"verify"}, map[string]runnerJobCompletionDoc{
 		"verify": {
 			JobID:      "verify",
@@ -1365,14 +1371,14 @@ func TestAggregateNativePhaseCompletionPromotesVerificationOutput(t *testing.T) 
 		},
 	})
 
-	if payload.VerificationStatus != "pass" {
-		t.Fatalf("verification status=%q, want pass", payload.VerificationStatus)
+	if payload.VerificationStatus != "" {
+		t.Fatalf("phase-output-only verification must not be promoted: status=%q", payload.VerificationStatus)
 	}
-	if len(payload.EvidenceRefs) != 1 || payload.EvidenceRefs[0] != "screenshots/issue148.png" {
-		t.Fatalf("evidence refs=%#v", payload.EvidenceRefs)
+	if len(payload.EvidenceRefs) != 0 {
+		t.Fatalf("phase-output-only verification must not contribute evidence refs: %#v", payload.EvidenceRefs)
 	}
-	if len(payload.VerificationReasons) != 1 || payload.VerificationReasons[0] != "verify: tooltip showed Energy generated 1" {
-		t.Fatalf("reasons=%#v", payload.VerificationReasons)
+	if len(payload.VerificationReasons) != 0 {
+		t.Fatalf("phase-output-only verification must not contribute reasons: %#v", payload.VerificationReasons)
 	}
 }
 

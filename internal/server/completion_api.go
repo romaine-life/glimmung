@@ -349,9 +349,6 @@ func completionPayloadFromNative(req RunnerCompletedRequest) CompletionPayload {
 		PhaseOutputs:        req.Outputs,
 	}
 	extractVerification(req.Verification, &p)
-	if p.VerificationStatus == "" {
-		extractVerificationOutput(req.Outputs, &p)
-	}
 	p.Evidence = append(p.Evidence, req.Evidence...)
 	p.EvidenceRefs = appendMissingStrings(p.EvidenceRefs, EvidenceRefsFromArtifacts(req.Evidence)...)
 	return p
@@ -407,18 +404,6 @@ func extractVerification(raw map[string]any, p *CompletionPayload) {
 	p.EvidenceRefs = stringSliceFromVerification(raw["evidence_refs"])
 	p.Evidence = EvidenceArtifactsFromVerificationPayload(raw)
 	p.EvidenceRefs = appendMissingStrings(p.EvidenceRefs, EvidenceRefsFromArtifacts(p.Evidence)...)
-}
-
-func extractVerificationOutput(outputs map[string]string, p *CompletionPayload) {
-	raw := strings.TrimSpace(outputs["verification"])
-	if raw == "" {
-		return
-	}
-	var decoded map[string]any
-	if err := json.Unmarshal([]byte(raw), &decoded); err != nil {
-		return
-	}
-	extractVerification(decoded, p)
 }
 
 // verificationFailureFromAny parses a verification.json `failure` block.

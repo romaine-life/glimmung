@@ -215,6 +215,40 @@ func TestTerminalObservationNamesVerifierContractMissing(t *testing.T) {
 	}
 }
 
+func TestTerminalObservationVerifierContractMissingIgnoresPhaseOutputVerification(t *testing.T) {
+	// Migration guard for spirelens#148: the verify job exited success and
+	// emitted a `verification` phase output (the retired path), but produced no
+	// typed Verification. Glimmung must name this verifier_contract_missing and
+	// refuse to advance — the phase output is not a verdict. This is the
+	// visible, direct failure at the verify boundary, not a confusing downstream
+	// review error. Reintroducing any phase-output->verdict promotion (in
+	// ingestion) or teaching this function to treat a `verification` phase
+	// output as satisfying the contract fails this test.
+	abortDecision := string(decision.AbortMalformed)
+	doc := runDoc{Attempts: []attemptDoc{{
+		AttemptIndex: 0,
+		Phase:        "llm-verify",
+		Conclusion:   stringPtrValue("success"),
+		Decision:     &abortDecision,
+		Verification: nil,
+		PhaseOutputs: map[string]string{
+			"verification": `{"status":"pass","evidence_refs":["screenshots/issue148.png"],"reasons":["tooltip showed Energy generated 1"]}`,
+		},
+	}}}
+	wf := &server.Workflow{Phases: []server.PhaseSpec{{Name: "llm-verify", Verify: true}}}
+
+	got := terminalObservationForRun(doc, wf, "aborted", nil, server.TerminalObservationSourceDecisionEngine)
+	if got == nil {
+		t.Fatal("terminal observation missing")
+	}
+	if got.Class != server.TerminalObservationVerifierContractMissing {
+		t.Fatalf("phase-output-only verification must be named verifier_contract_missing, got %q (%#v)", got.Class, got)
+	}
+	if got.Phase != "llm-verify" || got.Reason != "verification_contract_missing" {
+		t.Fatalf("observation=%#v", got)
+	}
+}
+
 func TestTerminalObservationNamesDispatchFailureAsDispatchStep(t *testing.T) {
 	abortDecision := string(decision.AbortMalformed)
 	abortReason := `forward_dispatch_failed: runner lease state is "released" for ambience-slot-3, want claimed`

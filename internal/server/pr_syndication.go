@@ -79,7 +79,7 @@ type PRPrimitiveResult struct {
 	BaseRef        string `json:"base_ref,omitempty"`
 	HeadSHA        string `json:"head_sha,omitempty"`
 	HTMLURL        string `json:"html_url,omitempty"`
-	ReviewRef  string `json:"review_ref,omitempty"`
+	ReviewRef      string `json:"review_ref,omitempty"`
 	LinkedIssueRef string `json:"linked_issue_ref,omitempty"`
 	LinkedRunRef   string `json:"linked_run_ref,omitempty"`
 }
@@ -336,7 +336,7 @@ func finalizeRunReviewByNumber(store ReadStore, prClient PullRequestClient, arti
 			writeProblem(w, http.StatusBadRequest, "run_number required")
 			return
 		}
-		finalizeRunReview(w, r, store, prClient, artifactStore, runNumber)
+		finalizeRunReview(w, r, store, prClient, artifactStore, runNumber, false)
 	}
 }
 
@@ -355,17 +355,52 @@ func finalizeRunCycleReviewByNumber(store ReadStore, prClient PullRequestClient,
 		if !ok {
 			return
 		}
-		finalizeRunReview(w, r, store, prClient, artifactStore, fmt.Sprintf("%s.%d", runNumber, cycleNumber))
+		finalizeRunReview(w, r, store, prClient, artifactStore, fmt.Sprintf("%s.%d", runNumber, cycleNumber), false)
 	}
 }
 
-func finalizeRunReview(w http.ResponseWriter, r *http.Request, store ReadStore, prClient PullRequestClient, artifactStore ArtifactStore, runNumber string) {
+// previewRunReviewByNumber and previewRunCycleReviewByNumber are the
+// no-side-effect (dry-run) review handlers. They resolve and return exactly the
+// evidence the review would attach — and whether it satisfies the test plan's
+// required evidence — without opening a PR or persisting a Review. This is the
+// safe way to inspect review evidence without re-running the workflow.
+func previewRunReviewByNumber(store ReadStore, artifactStore ArtifactStore) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		runNumber := strings.TrimSpace(r.PathValue("run_number"))
+		if runNumber == "" {
+			writeProblem(w, http.StatusBadRequest, "run_number required")
+			return
+		}
+		finalizeRunReview(w, r, store, nil, artifactStore, runNumber, true)
+	}
+}
+
+func previewRunCycleReviewByNumber(store ReadStore, artifactStore ArtifactStore) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		runNumber := strings.TrimSpace(r.PathValue("run_number"))
+		if runNumber == "" {
+			writeProblem(w, http.StatusBadRequest, "run_number required")
+			return
+		}
+		if strings.Contains(runNumber, ".") {
+			writeProblem(w, http.StatusBadRequest, "run_number must be the base run number when cycle_number is present")
+			return
+		}
+		cycleNumber, ok := positivePathInt(w, r, "cycle_number")
+		if !ok {
+			return
+		}
+		finalizeRunReview(w, r, store, nil, artifactStore, fmt.Sprintf("%s.%d", runNumber, cycleNumber), true)
+	}
+}
+
+func finalizeRunReview(w http.ResponseWriter, r *http.Request, store ReadStore, prClient PullRequestClient, artifactStore ArtifactStore, runNumber string, dryRun bool) {
 	finalizeStore, ok := store.(runReviewFinalizeStore)
 	if !ok || finalizeStore == nil {
 		writeProblem(w, http.StatusServiceUnavailable, "review finalizer store not configured")
 		return
 	}
-	if prClient == nil {
+	if !dryRun && prClient == nil {
 		writeProblem(w, http.StatusServiceUnavailable, "pull request client not configured")
 		return
 	}
@@ -399,6 +434,26 @@ func finalizeRunReview(w http.ResponseWriter, r *http.Request, store ReadStore, 
 	}
 	if wf == nil {
 		writeProblem(w, http.StatusConflict, "workflow not found for run")
+		return
+	}
+	if dryRun {
+		// No-side-effect preview: resolve and report exactly the evidence the
+		// review would attach (and whether it meets the required-evidence
+		// contract) without the readiness/branch gates, without opening a PR,
+		// and without persisting a Review.
+		normalized, err := normalizeRunReviewFacts(r.Context(), finalizeStore, run)
+		if err != nil {
+			writeInternalError(w, r, err, "normalize run review facts failed")
+			return
+		}
+		preview, err := reviewEvidencePreviewForRun(r.Context(), artifactStore, normalized)
+		if err != nil {
+			writeInternalError(w, r, err, "preview review evidence failed")
+			return
+		}
+		preview.RunRef = fmt.Sprintf("%s#%d/runs/%s", project, issueNumber, runNumber)
+		preview.Branch = prBranchForRun(normalized)
+		writeJSON(w, http.StatusOK, preview)
 		return
 	}
 	if ready, reason := prPrimitiveReadyForRun(wf, run); !ready {
@@ -533,7 +588,7 @@ func materializePRPrimitive(ctx context.Context, store prPrimitiveStore, prClien
 		BaseRef:        firstNonEmpty(pr.BaseRef, "main"),
 		HeadSHA:        pr.HeadSHA,
 		HTMLURL:        pr.HTMLURL,
-		ReviewRef:  review.Ref,
+		ReviewRef:      review.Ref,
 		LinkedIssueRef: issueRef,
 		LinkedRunRef:   runRef,
 	}, nil

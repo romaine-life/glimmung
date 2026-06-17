@@ -67,6 +67,8 @@ var expectedGoRoutes = []string{
 	"POST /v1/projects/{project}/issues/{issue_number}/runs/{run_number}/abort",
 	"POST /v1/projects/{project}/issues/{issue_number}/runs/{run_number}/review/finalize",
 	"POST /v1/projects/{project}/issues/{issue_number}/runs/{run_number}/cycles/{cycle_number}/review/finalize",
+	"POST /v1/projects/{project}/issues/{issue_number}/runs/{run_number}/review/preview",
+	"POST /v1/projects/{project}/issues/{issue_number}/runs/{run_number}/cycles/{cycle_number}/review/preview",
 	"POST /v1/projects/{project}/issues/{issue_number}/runs/{run_number}/review/merge",
 	"POST /v1/projects/{project}/issues/{issue_number}/runs/{run_number}/cycles/{cycle_number}/review/merge",
 	"GET /v1/projects/{project}/issues/{issue_number}/runs/{run_number}/run/events",
