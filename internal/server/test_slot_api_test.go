@@ -38,7 +38,7 @@ type fakeTestSlotPreparer struct {
 	returnDone            chan struct{}
 }
 
-func (s *fakeLeaseStore) AppendTestSlotHotSwapHistory(_ context.Context, _ string, _ string, entry TestSlotHotSwapHistoryEntry) (Lease, error) {
+func (s *fakeLeaseStore) AppendTestSlotOpHistory(_ context.Context, _ string, _ string, entry TestSlotOpHistoryEntry) (Lease, error) {
 	if s.err != nil {
 		return Lease{}, s.err
 	}
@@ -46,7 +46,7 @@ func (s *fakeLeaseStore) AppendTestSlotHotSwapHistory(_ context.Context, _ strin
 		if s.leases[0].Metadata == nil {
 			s.leases[0].Metadata = map[string]any{}
 		}
-		s.leases[0].Metadata["last_hot_swap_status"] = entry.Status
+		s.leases[0].Metadata["last_slot_op_status"] = entry.Status
 		return s.leases[0], nil
 	}
 	return s.lease, nil
@@ -1881,41 +1881,6 @@ func TestSetLeaseSlotCleanupFinishedPreservesActivationFieldsOnError(t *testing.
 	}
 	if final.ActivationJobName == nil {
 		t.Error("ActivationJobName=nil, want preserved on error path")
-	}
-}
-
-func TestAppendTestSlotHotSwapHistoryResolvesSlotLease(t *testing.T) {
-	store := &fakeLeaseStore{
-		fakeReadStore: fakeReadStore{projects: []Project{{ID: "tank-operator", Name: "tank-operator"}}},
-		leases: []Lease{{
-			Project:     "tank-operator",
-			LeaseNumber: intPtr(2),
-			State:       "claimed",
-			Metadata: map[string]any{
-				"test_slot_checkout": true,
-				"runner_slot_index":  "1",
-				"runner_slot_name":   "tank-slot-1",
-			},
-		}},
-	}
-	handler := newHandler(Settings{}, store, fakeAdminAuthenticator{user: auth.User{Sub: "admin"}}, nil, nil)
-
-	req := httptest.NewRequest(http.MethodPost, "/v1/test-slots/hot-swap-history", strings.NewReader(`{"project":"tank-operator","slot_name":"tank-slot-1","entry":{"operation":"backend","status":"ok"}}`))
-	req.Header.Set("Authorization", "Bearer admin")
-	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
-	}
-	if !strings.Contains(rec.Body.String(), `"lease":"tank-slot-1"`) || !strings.Contains(rec.Body.String(), `"status":"ok"`) {
-		t.Fatalf("body=%s", rec.Body.String())
-	}
-	if store.updatedRef != "tank-slot-1" || store.updatedTTL != testSlotHotSwapMinTTLAfterHotSwapDefaultSeconds {
-		t.Fatalf("lease TTL update = ref %q ttl %d, want tank-slot-1 ttl %d", store.updatedRef, store.updatedTTL, testSlotHotSwapMinTTLAfterHotSwapDefaultSeconds)
-	}
-	if !strings.Contains(rec.Body.String(), `"lease_extension"`) {
-		t.Fatalf("body=%s, want lease_extension", rec.Body.String())
 	}
 }
 

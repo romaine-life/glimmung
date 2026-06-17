@@ -128,10 +128,9 @@ type ProjectRow struct {
 
 // TestLeaseDefaultsRow is the singleton row shape for global settings.
 type TestLeaseDefaultsRow struct {
-	GlobalTTLSeconds     int
-	HotSwapMinTTLSeconds int
-	CreatedAt            time.Time
-	UpdatedAt            time.Time
+	GlobalTTLSeconds int
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
 }
 
 // ProjectRegister is the narrow payload UpsertProject accepts. Matches
@@ -521,19 +520,6 @@ func (s *ProjectsStore) SetTestLeaseDefaultTTL(ctx context.Context, name string,
 	})
 }
 
-// SetTestLeaseHotSwapMinTTL updates the per-project hot-swap min TTL.
-func (s *ProjectsStore) SetTestLeaseHotSwapMinTTL(ctx context.Context, name string, ttlSeconds *int) (ProjectRecord, error) {
-	return s.mutateProject(ctx, name, func(metadata map[string]any) error {
-		delete(metadata, "testLeaseHotSwapMinTTLSeconds")
-		if ttlSeconds == nil {
-			delete(metadata, "test_lease_hot_swap_min_ttl_seconds")
-		} else {
-			metadata["test_lease_hot_swap_min_ttl_seconds"] = *ttlSeconds
-		}
-		return nil
-	})
-}
-
 // StripLegacySlotsArray removes metadata.runner_standby_dns.slots[].
 // Called by the one-shot slot-storage cleanup in internal/server/.
 // Idempotent: re-running is harmless.
@@ -646,8 +632,9 @@ func (s *ProjectsStore) ReadTestLeaseDefaults(ctx context.Context) (TestLeaseDef
 	}
 	const sql = `SELECT global_ttl_seconds, hot_swap_min_ttl_seconds, created_at, updated_at FROM test_lease_defaults WHERE id = $1`
 	var row TestLeaseDefaultsRow
+	var ignoredMinTTL int
 	if err := s.pool.QueryRow(ctx, sql, TestLeaseDefaultsSingletonID).Scan(
-		&row.GlobalTTLSeconds, &row.HotSwapMinTTLSeconds, &row.CreatedAt, &row.UpdatedAt,
+		&row.GlobalTTLSeconds, &ignoredMinTTL, &row.CreatedAt, &row.UpdatedAt,
 	); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return TestLeaseDefaultsRow{}, ErrProjectNotFound
@@ -667,16 +654,6 @@ func (s *ProjectsStore) SetGlobalTestLeaseDefaultTTL(ctx context.Context, ttlSec
 	return s.upsertGlobalDefault(ctx, "global_ttl_seconds", value)
 }
 
-// SetGlobalTestLeaseHotSwapMinTTL upserts the singleton row's
-// hot_swap_min_ttl_seconds.
-func (s *ProjectsStore) SetGlobalTestLeaseHotSwapMinTTL(ctx context.Context, ttlSeconds *int) (TestLeaseDefaultsRow, error) {
-	value := 0
-	if ttlSeconds != nil {
-		value = *ttlSeconds
-	}
-	return s.upsertGlobalDefault(ctx, "hot_swap_min_ttl_seconds", value)
-}
-
 func (s *ProjectsStore) upsertGlobalDefault(ctx context.Context, column string, value int) (TestLeaseDefaultsRow, error) {
 	if s == nil || s.pool == nil {
 		return TestLeaseDefaultsRow{}, fmt.Errorf("projects store not configured")
@@ -694,20 +671,13 @@ func (s *ProjectsStore) upsertGlobalDefault(ctx context.Context, column string, 
 			  SET global_ttl_seconds = EXCLUDED.global_ttl_seconds, updated_at = now()
 			RETURNING global_ttl_seconds, hot_swap_min_ttl_seconds, created_at, updated_at
 		`
-	case "hot_swap_min_ttl_seconds":
-		sql = `
-			INSERT INTO test_lease_defaults (id, hot_swap_min_ttl_seconds, created_at, updated_at)
-			VALUES ($1, $2, now(), now())
-			ON CONFLICT (id) DO UPDATE
-			  SET hot_swap_min_ttl_seconds = EXCLUDED.hot_swap_min_ttl_seconds, updated_at = now()
-			RETURNING global_ttl_seconds, hot_swap_min_ttl_seconds, created_at, updated_at
-		`
 	default:
 		return TestLeaseDefaultsRow{}, fmt.Errorf("projects: unknown defaults column %q", column)
 	}
 	var row TestLeaseDefaultsRow
+	var ignoredMinTTL int
 	if err := s.pool.QueryRow(ctx, sql, TestLeaseDefaultsSingletonID, value).Scan(
-		&row.GlobalTTLSeconds, &row.HotSwapMinTTLSeconds, &row.CreatedAt, &row.UpdatedAt,
+		&row.GlobalTTLSeconds, &ignoredMinTTL, &row.CreatedAt, &row.UpdatedAt,
 	); err != nil {
 		return TestLeaseDefaultsRow{}, fmt.Errorf("projects: upsert defaults: %w", err)
 	}

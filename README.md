@@ -256,65 +256,17 @@ Any implementation path that treats a Helm-rendered app/proxy/session/tool
 runtime as part of an unleased warmed slot violates the lifecycle contract and
 should be split into preliminary reconciliation and lease activation.
 
-### Runner test-slot hot swap
+### Runner test-slot image deploy
 
-Native webapp projects can also advertise `metadata.test_slot_hot_swap` for
-the no-rollout validation path. Static changes copy built assets into the
-slot's static override directory. Backend changes build the project binary,
-stream it onto the supervisor's hot-artifact file in the slot's app pod as
-`target.next`, atomically rename it to `target`, SIGHUP PID 1, then poll the
-configured health endpoint inside the pod to confirm the re-exec serves (a
-binary that never goes healthy fails the swap).
+Native webapp projects validate a pushed ref by deploying the exact CI-built
+image into the checked-out test slot with `deploy_image_to_test_slot`. The
+slot operation records durable history on the lease, and callers poll the
+neutral job-status route until the deployment is terminal.
 
-The supported path is `POST /v1/test-slots/apply-hot-swap` (MCP tool
-`apply_test_slot_hot_swap`) for every artifact kind — `static`, `backend`, and
-the session-pod runners. It takes a `git_ref`, artifact kind, and validation
-target, then dispatches a one-off Kubernetes Job (in `glimmung-runs`, carrying
-its own privilege) that clones, runs any project-owned fidelity classifier,
-builds, kubectl-streams the artifact into the target pod, restarts and
-health-gates as the kind requires, and records hot-swap history on the lease.
-Sync UX, 120s default timeout, 600s hard cap. There is no client-side CLI
-fallback: session pods run read-only and route every slot mutation through this
-gated Job. See [`docs/test-slot-hot-swap.md`](docs/test-slot-hot-swap.md) for
-the workflow contract.
-
-Glimmung validates the metadata on project registration. Glimmung's own issue
-chart supports this in test slots. When
-`renderMode=hot`, the workload runs `/app/glimmung-supervisor` as PID 1,
-mounts `/var/run/glimmung-hot`, and restarts the child process on `SIGHUP`.
-Production installs keep the normal image command and do not enable restart
-behavior.
-
-Glimmung dogfood metadata:
-
-```json
-{
-  "test_slot_hot_swap": {
-    "enabled": true,
-    "static": {
-      "enabled": true,
-      "source": "frontend/dist",
-      "target": "/var/run/glimmung-static-override"
-    },
-    "backend": {
-      "enabled": true,
-      "strategy": "supervisor",
-      "build_command": "go build -o /tmp/glimmung ./cmd/glimmung-go",
-      "artifact": "/tmp/glimmung",
-      "target": "/var/run/glimmung-hot/glimmung",
-      "health_path": "/healthz",
-      "health_port": 8000,
-      "pod_selector": "app.kubernetes.io/instance={slot_name}",
-      "container": "glimmung",
-      "builder_image": "golang:1.26-alpine"
-    },
-    "fidelity_classifier": {
-      "enabled": false,
-      "command": ""
-    }
-  }
-}
-```
+Per-project slot shape is described by `test_slot_helm`; there is no separate
+build-stream contract, kind selector, or project-owned classifier. Glimmung
+rejects the retired build-stream metadata key on project registration so the
+old validation surface cannot return silently.
 
 ### GitHub webhook
 

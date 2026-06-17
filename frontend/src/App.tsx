@@ -411,7 +411,7 @@ export function App() {
           {/* System */}
           <Route path="admin" element={<Admin />} />
 
-          {/* Deep / detail routes (project-scoped) — kept for full fidelity */}
+          {/* Deep / detail routes (project-scoped) — kept for full accuracy */}
           <Route path="dashboard" element={<Navigate to="/leases/test" replace />} />
           <Route path="graph" element={<Navigate to="/leases/test" replace />} />
           <Route path="leases/test" element={<GlobalLeaseRoute kind="test" />} />

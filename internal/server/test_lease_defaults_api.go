@@ -9,16 +9,12 @@ import (
 )
 
 const (
-	testLeaseProjectDefaultTTLSecondsKey            = "test_lease_default_ttl_seconds"
-	testLeaseProjectDefaultTTLSecondsLegacyKey      = "testLeaseDefaultTTLSeconds"
-	testLeaseProjectHotSwapMinTTLSecondsKey         = "test_lease_hot_swap_min_ttl_seconds"
-	testLeaseProjectHotSwapMinTTLSecondsLegacyKey   = "testLeaseHotSwapMinTTLSeconds"
-	testSlotHotSwapMinTTLAfterHotSwapDefaultSeconds = 1800
+	testLeaseProjectDefaultTTLSecondsKey       = "test_lease_default_ttl_seconds"
+	testLeaseProjectDefaultTTLSecondsLegacyKey = "testLeaseDefaultTTLSeconds"
 )
 
 type TestLeaseDefaults struct {
-	GlobalTTLSeconds     int `json:"global_ttl_seconds"`
-	HotSwapMinTTLSeconds int `json:"hot_swap_min_ttl_seconds"`
+	GlobalTTLSeconds int `json:"global_ttl_seconds"`
 }
 
 type TestLeaseDefaultTTLReader interface {
@@ -29,8 +25,6 @@ type TestLeaseDefaultTTLWriter interface {
 	TestLeaseDefaultTTLReader
 	SetGlobalTestLeaseDefaultTTL(ctx context.Context, ttlSeconds *int) (TestLeaseDefaults, error)
 	SetProjectTestLeaseDefaultTTL(ctx context.Context, project string, ttlSeconds *int) (Project, error)
-	SetGlobalTestLeaseHotSwapMinTTL(ctx context.Context, ttlSeconds *int) (TestLeaseDefaults, error)
-	SetProjectTestLeaseHotSwapMinTTL(ctx context.Context, project string, ttlSeconds *int) (Project, error)
 }
 
 type testLeaseDefaultTTLUpdateRequest struct {
@@ -94,56 +88,6 @@ func updateTestLeaseDefaultTTL(store ReadStore) http.HandlerFunc {
 	}
 }
 
-func updateTestLeaseHotSwapMinTTL(store ReadStore) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		writer, ok := store.(TestLeaseDefaultTTLWriter)
-		if !ok || writer == nil {
-			writeProblem(w, http.StatusServiceUnavailable, "test lease hot-swap minimum TTL store not configured")
-			return
-		}
-
-		var req testLeaseDefaultTTLUpdateRequest
-		decoder := json.NewDecoder(r.Body)
-		decoder.DisallowUnknownFields()
-		if err := decoder.Decode(&req); err != nil {
-			writeProblem(w, http.StatusBadRequest, "invalid JSON body: "+err.Error())
-			return
-		}
-
-		ttlSeconds, ok := requestedDefaultTTL(w, req)
-		if !ok {
-			return
-		}
-		project := ""
-		if req.Project != nil {
-			project = strings.TrimSpace(*req.Project)
-		}
-
-		if project == "" {
-			defaults, err := writer.SetGlobalTestLeaseHotSwapMinTTL(r.Context(), ttlSeconds)
-			if err != nil {
-				writeTestLeaseDefaultTTLError(w, r, err, "update global test lease hot-swap minimum TTL failed")
-				return
-			}
-			writeJSON(w, http.StatusOK, testLeaseDefaultTTLUpdateResult{
-				Defaults: normalizeTestLeaseDefaults(defaults),
-			})
-			return
-		}
-
-		updated, err := writer.SetProjectTestLeaseHotSwapMinTTL(r.Context(), project, ttlSeconds)
-		if err != nil {
-			writeTestLeaseDefaultTTLError(w, r, err, "update project test lease hot-swap minimum TTL failed")
-			return
-		}
-		defaults := readTestLeaseDefaultsOrFallback(r.Context(), store)
-		writeJSON(w, http.StatusOK, testLeaseDefaultTTLUpdateResult{
-			Defaults: defaults,
-			Project:  &updated,
-		})
-	}
-}
-
 func requestedDefaultTTL(w http.ResponseWriter, req testLeaseDefaultTTLUpdateRequest) (*int, bool) {
 	if req.Reset {
 		return nil, true
@@ -179,13 +123,6 @@ func defaultTTLForGeneratedTestLease(ctx context.Context, store ReadStore, proje
 	return readTestLeaseDefaultsOrFallback(ctx, store).GlobalTTLSeconds
 }
 
-func hotSwapMinTTLForTestLease(ctx context.Context, store ReadStore, project Project) int {
-	if ttl, ok := projectTestLeaseHotSwapMinTTL(project); ok {
-		return ttl
-	}
-	return readTestLeaseDefaultsOrFallback(ctx, store).HotSwapMinTTLSeconds
-}
-
 func readTestLeaseDefaultsOrFallback(ctx context.Context, store ReadStore) TestLeaseDefaults {
 	reader, ok := store.(TestLeaseDefaultTTLReader)
 	if !ok || reader == nil {
@@ -202,9 +139,6 @@ func normalizeTestLeaseDefaults(defaults TestLeaseDefaults) TestLeaseDefaults {
 	if defaults.GlobalTTLSeconds <= 0 {
 		defaults.GlobalTTLSeconds = testSlotDefaultTTLSeconds
 	}
-	if defaults.HotSwapMinTTLSeconds <= 0 {
-		defaults.HotSwapMinTTLSeconds = testSlotHotSwapMinTTLAfterHotSwapDefaultSeconds
-	}
 	return defaults
 }
 
@@ -213,16 +147,6 @@ func projectTestLeaseDefaultTTL(project Project) (int, bool) {
 		return ttl, true
 	}
 	if ttl, ok := positiveIntFromMap(project.Metadata, testLeaseProjectDefaultTTLSecondsLegacyKey); ok {
-		return ttl, true
-	}
-	return 0, false
-}
-
-func projectTestLeaseHotSwapMinTTL(project Project) (int, bool) {
-	if ttl, ok := positiveIntFromMap(project.Metadata, testLeaseProjectHotSwapMinTTLSecondsKey); ok {
-		return ttl, true
-	}
-	if ttl, ok := positiveIntFromMap(project.Metadata, testLeaseProjectHotSwapMinTTLSecondsLegacyKey); ok {
 		return ttl, true
 	}
 	return 0, false

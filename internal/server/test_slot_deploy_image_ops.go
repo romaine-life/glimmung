@@ -8,14 +8,11 @@ import (
 	"strings"
 )
 
-// DeployImageToSlot redeploys a test slot's hot runtime to a specific,
-// already-CI-built image for a verified commit. It is the replacement for the
-// artifact build-and-stream hot-swap (apply_test_slot_hot_swap): instead of
-// building artifacts in an ephemeral Job and streaming them into running pods,
-// it re-runs the slot's own helm reconcile at the verified ref with the image
-// overridden to the CI-built tag, then verifies the slot is actually running
-// that image. The slot ends up running exactly what CI built and main will
-// ship — correct by construction, no rebuild, no streamed artifact.
+// DeployImageToSlot redeploys a test slot's runtime to a specific,
+// already-CI-built image for a verified commit. It re-runs the slot's own helm
+// reconcile at the verified ref with the image overridden to the CI-built tag,
+// then verifies the slot is actually running that image. The slot ends up
+// running exactly what CI built and main will ship.
 //
 // Inputs (the caller owns the legitimacy gate and resolution):
 //   - verifiedRef: the published, gate-passed commit (published + CI-green +

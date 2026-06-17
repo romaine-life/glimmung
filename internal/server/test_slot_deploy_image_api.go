@@ -13,9 +13,9 @@ import (
 	"github.com/google/uuid"
 )
 
-// DeployImageToTestSlotRequest is the deploy-image-to-slot request body. There is no
-// artifact_kind and no validation_target: the operation deploys the whole
-// CI-built image for a verified commit, so there is nothing to select.
+// DeployImageToTestSlotRequest is the deploy-image-to-slot request body. The
+// operation deploys the whole CI-built image for a verified commit, so there is
+// no per-artifact selector.
 type DeployImageToTestSlotRequest struct {
 	Project   string  `json:"project"`
 	SlotIndex *int    `json:"slot_index,omitempty"`
@@ -41,16 +41,15 @@ type imageToSlotDeployer interface {
 	DeployImageToSlot(ctx context.Context, lease Lease, project Project, minter RunnerGitHubTokenMinter, verifiedRef, image, imageValueKey string) error
 }
 
-// deployImageToTestSlot is the deploy-image-to-slot endpoint — the replacement for
-// the artifact build-and-stream apply_test_slot_hot_swap. It deploys the exact
-// CI-built image for a verified commit onto a slot and verifies the slot runs
-// it. Async-with-poll, mirroring the apply endpoint: the POST resolves the ref
-// to a SHA, dispatches the deploy on a detached context, writes an initial
-// "running" history entry, and returns 202 with that breadcrumb; the detached
-// worker writes the terminal entry when the reconcile-and-verify completes. The
-// caller polls the existing GET /v1/test-slots/apply-hot-swap/{project}/{job}...
-// status surface via the lease history, so no HTTP request is held open for the
-// deploy and the durable outcome survives client disconnects and proxy deadlines.
+// deployImageToTestSlot is the deploy-image-to-slot endpoint. It deploys the
+// exact CI-built image for a verified commit onto a slot and verifies the slot
+// runs it. Async-with-poll: the POST resolves the ref to a SHA, dispatches the
+// deploy on a detached context, writes an initial "running" history entry, and
+// returns 202 with that breadcrumb; the detached worker writes the terminal
+// entry when the reconcile-and-verify completes. The caller polls
+// GET /v1/test-slots/jobs/{project}/{job} via the lease history, so no HTTP
+// request is held open for the deploy and the durable outcome survives client
+// disconnects and proxy deadlines.
 //
 // The legitimacy gate (published + CI-green + mergeable + current-with-main) is
 // the caller's responsibility; this endpoint only ever operates on a git ref
@@ -58,7 +57,7 @@ type imageToSlotDeployer interface {
 // SHA→image resolution deploys exactly the image CI built for that commit.
 func deployImageToTestSlot(store ReadStore, minter RunnerGitHubTokenMinter, performer deployImagePerformer, resolveRef refResolver) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		writer, ok := store.(TestSlotHotSwapHistoryStore)
+		writer, ok := store.(TestSlotOpHistoryStore)
 		stateStore, hasState := store.(StateStore)
 		if !ok || writer == nil || !hasState || stateStore == nil {
 			writeProblem(w, http.StatusServiceUnavailable, "test-slot history store not configured")
@@ -149,8 +148,7 @@ func deployImageToTestSlot(store ReadStore, minter RunnerGitHubTokenMinter, perf
 		}
 		image := sha // CI tags each image with its git SHA; the chart's image value key pins it.
 		// Pollable handle: both history entries carry it as the job_name, so the
-		// existing GET /v1/test-slots/apply-hot-swap/{project}/{job} status route
-		// serves the deploy's running → terminal transition unchanged.
+		// slot job status route serves the deploy's running to terminal transition.
 		deployJob := "deploy-" + uuid.NewString()
 
 		// Dispatch detached: a client disconnect must not abort the deploy or the
@@ -159,7 +157,7 @@ func deployImageToTestSlot(store ReadStore, minter RunnerGitHubTokenMinter, perf
 		// the goroutine (a process restart mid-deploy leaves the "running"
 		// breadcrumb, and a re-deploy is idempotent — helm upgrade --install).
 		bgCtx := context.WithoutCancel(r.Context())
-		startEntry := TestSlotHotSwapHistoryEntry{
+		startEntry := TestSlotOpHistoryEntry{
 			Operation: "image_deploy",
 			Status:    "running",
 			Summary:   fmt.Sprintf("image_deploy dispatched git_ref=%s sha=%s slot=%s status=running", req.GitRef, sha, slotName),
@@ -173,7 +171,7 @@ func deployImageToTestSlot(store ReadStore, minter RunnerGitHubTokenMinter, perf
 			},
 			CreatedAt: time.Now().UTC(),
 		}
-		if leaseWithHistory, histErr := writer.AppendTestSlotHotSwapHistory(bgCtx, req.Project, leaseRef, startEntry); histErr == nil {
+		if leaseWithHistory, histErr := writer.AppendTestSlotOpHistory(bgCtx, req.Project, leaseRef, startEntry); histErr == nil {
 			lease = leaseWithHistory
 		}
 
@@ -186,7 +184,7 @@ func deployImageToTestSlot(store ReadStore, minter RunnerGitHubTokenMinter, perf
 				status = "deploy_failed"
 				diag["error"] = derr.Error()
 			}
-			_, _ = writer.AppendTestSlotHotSwapHistory(bgCtx, req.Project, leaseRef, TestSlotHotSwapHistoryEntry{
+			_, _ = writer.AppendTestSlotOpHistory(bgCtx, req.Project, leaseRef, TestSlotOpHistoryEntry{
 				Operation:   "image_deploy",
 				Status:      status,
 				Summary:     fmt.Sprintf("image_deploy finalized git_ref=%s sha=%s slot=%s status=%s", req.GitRef, sha, slotName, status),

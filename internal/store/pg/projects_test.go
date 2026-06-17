@@ -3,12 +3,11 @@ package pg
 import "testing"
 
 // TestStripServerManagedStatusRemovesOnlyStatusKeys is the core guard: authored
-// config (including test_slot_hot_swap — the block that was silently dropped in
-// production) must survive, while reconciler-owned status keys must be removed
+// config must survive, while reconciler-owned status keys must be removed
 // so they never pollute authored config or its content hash.
 func TestStripServerManagedStatusRemovesOnlyStatusKeys(t *testing.T) {
 	in := map[string]any{
-		"test_slot_hot_swap":                      map[string]any{"enabled": true},
+		"authored_build_config":                   map[string]any{"enabled": true},
 		"test_slot_helm":                          map[string]any{"chart": "x"},
 		"runner_standby_dns":                      map[string]any{"count": 2},
 		"managed_auth_origin_status":              map[string]any{"state": "ok"},
@@ -16,7 +15,7 @@ func TestStripServerManagedStatusRemovesOnlyStatusKeys(t *testing.T) {
 	}
 	out := stripServerManagedStatus(in)
 
-	for _, k := range []string{"test_slot_hot_swap", "test_slot_helm", "runner_standby_dns"} {
+	for _, k := range []string{"authored_build_config", "test_slot_helm", "runner_standby_dns"} {
 		if _, ok := out[k]; !ok {
 			t.Errorf("authored key %q was dropped by stripServerManagedStatus", k)
 		}
@@ -35,11 +34,10 @@ func TestStripServerManagedStatusRemovesOnlyStatusKeys(t *testing.T) {
 // TestRoundTripRegisterPreservesAuthoredConfig encodes the regression directly:
 // a caller reads a project (status merged into metadata), then re-registers
 // passing that merged metadata back. The write path must keep authored config
-// intact (test_slot_hot_swap survives) and must NOT persist reconciler status
-// into authored config.
+// intact and must NOT persist reconciler status into authored config.
 func TestRoundTripRegisterPreservesAuthoredConfig(t *testing.T) {
 	authored := map[string]any{
-		"test_slot_hot_swap": map[string]any{"enabled": true},
+		"authored_build_config": map[string]any{"enabled": true},
 	}
 	status := map[string]any{
 		"managed_auth_origin_status": map[string]any{"state": "ok"},
@@ -49,14 +47,14 @@ func TestRoundTripRegisterPreservesAuthoredConfig(t *testing.T) {
 	if _, ok := merged["managed_auth_origin_status"]; !ok {
 		t.Fatal("read merge did not surface reconciler status")
 	}
-	if _, ok := merged["test_slot_hot_swap"]; !ok {
+	if _, ok := merged["authored_build_config"]; !ok {
 		t.Fatal("read merge dropped authored config")
 	}
 
 	// What the write path stores when the client round-trips that metadata.
 	stored := stripServerManagedStatus(merged)
-	if _, ok := stored["test_slot_hot_swap"]; !ok {
-		t.Error("round-trip register dropped test_slot_hot_swap")
+	if _, ok := stored["authored_build_config"]; !ok {
+		t.Error("round-trip register dropped authored_build_config")
 	}
 	if _, ok := stored["managed_auth_origin_status"]; ok {
 		t.Error("round-trip register persisted reconciler status into authored config")
@@ -101,7 +99,7 @@ func TestProjectConfigSchemaRefDeterministic(t *testing.T) {
 // is hashed identically whether or not a round-tripped status key is present,
 // because the write path strips status before hashing.
 func TestProjectConfigSchemaRefIgnoresStatusKeys(t *testing.T) {
-	authored := map[string]any{"test_slot_hot_swap": map[string]any{"enabled": true}}
+	authored := map[string]any{"authored_build_config": map[string]any{"enabled": true}}
 	withStatus := mergeStatusIntoMetadata(authored, map[string]any{"managed_auth_origin_status": "ok"})
 
 	clean := projectConfigSchemaRef("p", "o/r", stripServerManagedStatus(authored))

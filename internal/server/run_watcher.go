@@ -55,17 +55,6 @@ const (
 	// namespaces; the apiserver returns them on a cluster-wide Watch.
 	watchInnerSelector = "app.kubernetes.io/managed-by=" + watchManagedByInner
 
-	// hotSwapJobNameLabel is the app.kubernetes.io/name value
-	// renderApplyHotSwapJobSpec stamps on every apply-hot-swap Job, and the
-	// signal kind() uses to route a Job to the hot-swap finalizer.
-	hotSwapJobNameLabel = "glimmung-apply-hot-swap"
-
-	// watchHotSwapSelector scopes the apply-hot-swap finalizer's Watch to
-	// apply-hot-swap Jobs in glimmung-runs. They are not run-bound and carry
-	// no managed-by=glimmung label, so the run-job selectors above never see
-	// them; this selector is theirs alone.
-	watchHotSwapSelector = "app.kubernetes.io/name=" + hotSwapJobNameLabel
-
 	// watchInitialBackoff / watchMaxBackoff bound the reconnect cadence
 	// after a transport error or a Gone response. The first reconnect
 	// retries quickly to ride out an apiserver rolling restart; sustained
@@ -141,17 +130,6 @@ type watcherDeps struct {
 	urlBuilder      LogArchiveURLBuilder
 	namespace       string
 	logf            func(string, ...any)
-
-	// Hot-swap finalizer deps, set only by StartApplyHotSwapJobWatcher. The
-	// run-job watchers leave these nil and never reach the "hotswap" kind
-	// branch (their selectors don't match apply-hot-swap Jobs), so the two
-	// concerns share the list+watch+backoff machinery without entangling
-	// their dependencies.
-	hotSwapHistory  TestSlotHotSwapHistoryStore
-	hotSwapState    StateStore
-	hotSwapPreparer TestSlotPreparer
-	hotSwapMinter   RunnerGitHubTokenMinter
-	hotSwapK8s      k8sJobClient
 }
 
 // k8sJobWatcher is one of the two production Watch loops (one per
@@ -370,8 +348,6 @@ func (w *k8sJobWatcher) dispatchJobObject(ctx context.Context, job map[string]an
 		w.dispatchOuterTerminal(ctx, job, status, action)
 	case "inner":
 		w.dispatchInnerTerminal(ctx, job, status, action)
-	case "hotswap":
-		w.dispatchHotSwapTerminal(ctx, job, status, action)
 	}
 }
 
@@ -698,9 +674,6 @@ func captureOuterJobLogs(ctx context.Context, fetcher RunnerJobLogsFetcher, writ
 // selector means anything we receive matches one of these two values;
 // unknown returns "control" to keep metric labels bounded.
 func kind(job map[string]any) string {
-	if jobLabel(job, "app.kubernetes.io/name") == hotSwapJobNameLabel {
-		return "hotswap"
-	}
 	switch jobLabel(job, "app.kubernetes.io/managed-by") {
 	case watchManagedByOuter:
 		return "outer"

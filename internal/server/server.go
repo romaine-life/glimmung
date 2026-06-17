@@ -423,7 +423,6 @@ func newHandlerWithReconcilers(settings Settings, store ReadStore, authResolver 
 	mux.Handle("POST /v1/leases/cancel", requireAdmin(adminAuthenticator, http.HandlerFunc(cancelLeaseByRef(store))))
 	mux.Handle("PATCH /v1/leases/ttl", requireAdmin(adminAuthenticator, http.HandlerFunc(updateLeaseTTLByRef(store, testSlotPreparer, runnerTokenMinter))))
 	mux.Handle("PATCH /v1/test-slots/default-ttl", requireAdmin(adminAuthenticator, http.HandlerFunc(updateTestLeaseDefaultTTL(store))))
-	mux.Handle("PATCH /v1/test-slots/hot-swap-min-ttl", requireAdmin(adminAuthenticator, http.HandlerFunc(updateTestLeaseHotSwapMinTTL(store))))
 	mux.Handle("POST /v1/projects/{project}/issues/{issue_number}/runs/{run_number}/abort", requireAdmin(adminAuthenticator, http.HandlerFunc(abortRunByNumber(store))))
 	mux.Handle("POST /v1/projects/{project}/issues/{issue_number}/runs/{run_number}/review/finalize", requireAdmin(adminAuthenticator, http.HandlerFunc(finalizeRunReviewByNumber(store, prClient, artifactStore))))
 	mux.Handle("POST /v1/projects/{project}/issues/{issue_number}/runs/{run_number}/cycles/{cycle_number}/review/finalize", requireAdmin(adminAuthenticator, http.HandlerFunc(finalizeRunCycleReviewByNumber(store, prClient, artifactStore))))
@@ -474,32 +473,12 @@ func newHandlerWithReconcilers(settings Settings, store ReadStore, authResolver 
 	mux.Handle("POST /v1/test-slots/checkout", requireAdmin(adminAuthenticator, http.HandlerFunc(checkoutTestSlot(settings, store, testSlotPreparer, runnerTokenMinter))))
 	mux.Handle("POST /v1/test-slots/return", requireAdmin(adminAuthenticator, http.HandlerFunc(returnTestSlot(store, testSlotPreparer, runnerTokenMinter))))
 	mux.Handle("POST /v1/test-slots/extend", requireAdmin(adminAuthenticator, http.HandlerFunc(extendTestSlotLease(store, testSlotPreparer, runnerTokenMinter))))
-	mux.Handle("POST /v1/test-slots/hot-swap-history", requireAdmin(adminAuthenticator, http.HandlerFunc(appendTestSlotHotSwapHistory(store, testSlotPreparer, runnerTokenMinter))))
-	// /v1/test-slots/apply-hot-swap — developer-driven build-and-swap.
-	// Asynchronous-with-poll per docs/test-slot-hot-swap.md: the POST
-	// dispatches the build-and-swap Job and returns a "running" handle; the
-	// gated apply-hot-swap finalizer records the terminal outcome; the caller
-	// polls the status route below. The performer wraps DispatchHotSwap with a
-	// real httpK8sJobClient that talks to the k8s API directly (no kubectl
-	// shell-out — glimmung's runtime image doesn't include kubectl, matching
-	// the existing run launcher pattern of using `request()` over HTTP).
-	k8sClient := newHTTPK8sJobClient(settings)
-	applyPerformer := func(ctx context.Context, opts ApplyHotSwapOptions) (ApplyHotSwapResult, error) {
-		return DispatchHotSwap(ctx, k8sClient, opts)
-	}
-	applyDiffResolver := func(ctx context.Context, slug, baseRef, headRef, token string) (hotSwapDiff, error) {
-		return resolveHotSwapDiff(ctx, nil, slug, baseRef, headRef, token)
-	}
-	mux.Handle("POST /v1/test-slots/apply-hot-swap", requireAdmin(adminAuthenticator, http.HandlerFunc(applyTestSlotHotSwap(store, testSlotPreparer, runnerTokenMinter, applyPerformer, applyDiffResolver))))
-	// Poll surface for the non-blocking apply above: returns the durable
-	// hot-swap history entry for a dispatched job (running → terminal).
-	mux.Handle("GET /v1/test-slots/apply-hot-swap/{project}/{job}", requireAdmin(adminAuthenticator, http.HandlerFunc(getApplyHotSwapStatus(store))))
+	mux.Handle("GET /v1/test-slots/jobs/{project}/{job}", requireAdmin(adminAuthenticator, http.HandlerFunc(getTestSlotJobStatus(store))))
 	// /v1/test-slots/deploy-image — deploy the CI-built image for a verified
 	// commit onto a slot (docs/test-slot-deploy-plan.md), the replacement for
-	// the artifact build-and-stream apply above. Lands alongside it during the
-	// staged migration. The performer wraps the launcher's DeployImageToSlot
-	// (reconcile-at-ref with the image pinned + apiserver image verify); the
-	// resolver maps git_ref to its commit SHA via the GitHub API.
+	// the artifact build-and-stream path. The performer wraps the launcher's
+	// DeployImageToSlot (reconcile-at-ref with the image pinned + apiserver image
+	// verify); the resolver maps git_ref to its commit SHA via the GitHub API.
 	var deployPerformer deployImagePerformer
 	if dl, ok := runLauncher.(imageToSlotDeployer); ok {
 		deployPerformer = func(ctx context.Context, lease Lease, project Project, verifiedRef, image, imageValueKey string) error {
