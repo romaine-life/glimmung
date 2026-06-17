@@ -220,7 +220,6 @@ green for every in-scope project.**
   than the app image.
 - Confirm GitHub `mergeable_state` exposes `behind` distinctly so the
   behind-main check is precise (vs. inferring from ahead/behind counts).
-- Replace the stage-2 `test_slot_deploy.ci_image` project metadata mapping with
-  a CI-owned ledger/projection (extend the control-action ledger vs. a
-  glimmung-side projection) so SHA → fingerprint resolution is durable,
-  auditable, and not hand-maintained per project.
+- Keep the CI-run lookup tag contract uniform across every Glimmung-managed app
+  workflow so SHA → image resolution remains derivable from GitHub Actions run
+  state plus ACR, without hand-maintained per-project maps.
