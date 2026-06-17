@@ -74,13 +74,14 @@ func failingTestSlotImageResolver(err error) testSlotImageResolver {
 // TestDeployImageToTestSlotHappyPath pins the dispatch contract: lease resolved
 // by slot_name, ref resolved to a commit SHA, that SHA resolved to a validated
 // CI lookup image, the deploy performer invoked with the resolved SHA as chart
-// ref and lookup image as image, and a 202 "running" returned with both values.
+// ref and a tag-only image override for image.tag, and a 202 "running" returned
+// with both full-image and tag values.
 func TestDeployImageToTestSlotHappyPath(t *testing.T) {
 	store := newDeployImageStore(t)
-	type performerCall struct{ ref, image, key string }
+	type performerCall struct{ ref, override, key string }
 	calls := make(chan performerCall, 1)
-	performer := func(_ context.Context, _ Lease, _ Project, verifiedRef, image, imageValueKey string) error {
-		calls <- performerCall{verifiedRef, image, imageValueKey}
+	performer := func(_ context.Context, _ Lease, _ Project, verifiedRef, imageOverrideValue, imageValueKey string) error {
+		calls <- performerCall{verifiedRef, imageOverrideValue, imageValueKey}
 		return nil
 	}
 	resolveRef := func(_ context.Context, slug, ref, _ string) (string, error) {
@@ -111,6 +112,9 @@ func TestDeployImageToTestSlotHappyPath(t *testing.T) {
 	if resp["image_tag"] != "ci-pr-77-run-12345-attempt-2" {
 		t.Fatalf("resp.image_tag = %v, want ci-pr-77-run-12345-attempt-2", resp["image_tag"])
 	}
+	if resp["image_override"] != "ci-pr-77-run-12345-attempt-2" {
+		t.Fatalf("resp.image_override = %v, want ci-pr-77-run-12345-attempt-2", resp["image_override"])
+	}
 	if resp["status"] != "running" {
 		t.Fatalf("resp.status = %v, want running", resp["status"])
 	}
@@ -123,8 +127,36 @@ func TestDeployImageToTestSlotHappyPath(t *testing.T) {
 	}
 	select {
 	case c := <-calls:
-		if c.ref != "abc123def456" || c.image != "romainecr.azurecr.io/tank-operator:ci-pr-77-run-12345-attempt-2" || c.key != "image.tag" {
-			t.Fatalf("performer call = %+v, want {abc123def456 romainecr.azurecr.io/tank-operator:ci-pr-77-run-12345-attempt-2 image.tag}", c)
+		if c.ref != "abc123def456" || c.override != "ci-pr-77-run-12345-attempt-2" || c.key != "image.tag" {
+			t.Fatalf("performer call = %+v, want {abc123def456 ci-pr-77-run-12345-attempt-2 image.tag}", c)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("performer was not invoked")
+	}
+}
+
+func TestDeployImageToTestSlotUsesFullRefForNonTagImageValueKey(t *testing.T) {
+	store := newDeployImageStore(t)
+	project := &store.fakeReadStore.projects[0]
+	project.Metadata["test_slot_deploy"].(map[string]any)["image_value_key"] = "edge.image"
+	calls := make(chan string, 1)
+	performer := func(_ context.Context, _ Lease, _ Project, _, imageOverrideValue, _ string) error {
+		calls <- imageOverrideValue
+		return nil
+	}
+	resolveRef := func(context.Context, string, string, string) (string, error) { return "abc123def456", nil }
+	resolveImage := stubTestSlotImageResolver("romainecr.azurecr.io/tank-operator:ci-pr-77-run-12345-attempt-2")
+	handler := http.HandlerFunc(deployImageToTestSlot(store, nil, performer, resolveRef, resolveImage))
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, authedDeployRequest(t, `{"project":"tank-operator","slot_name":"tank-operator-slot-1","git_ref":"feat/x"}`))
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	select {
+	case got := <-calls:
+		want := "romainecr.azurecr.io/tank-operator:ci-pr-77-run-12345-attempt-2"
+		if got != want {
+			t.Fatalf("override = %q, want %q", got, want)
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("performer was not invoked")
