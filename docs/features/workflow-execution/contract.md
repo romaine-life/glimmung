@@ -13,9 +13,14 @@ after registration changes.
 
 ## Sources Of Truth
 
-- Postgres `workflows` owns logical workflow registrations and current schema
-  pointers. Its `control_pins` column is operator-owned: only the dedicated
-  pin/unpin endpoints write it, never registration.
+- Postgres `workflows` owns logical workflow registrations, current schema
+  pointers, and lifecycle flags. Deleting a workflow tombstones that row
+  (`metadata.deleted_at`, `metadata.usable=false`, `metadata.visible=false`);
+  it does not physically remove the logical registration. Normal listing and
+  dispatch hide/reject tombstoned workflows, while historical run projection,
+  signal handling, and operator repair can still resolve the workflow by
+  `(project, name)`. Its `control_pins` column is operator-owned: only the
+  dedicated pin/unpin endpoints write it, never registration.
 - Postgres `workflow_control_events` owns the append-only attribution ledger
   for control-plane writes (register, patch, pin, unpin, delete) — schema
   rows are content-addressed and cannot carry who-moved-the-pointer history.
@@ -46,6 +51,9 @@ after registration changes.
 - Do not reintroduce the retired issue-contract entry-phase mandate. The
   platform validates the generic prepare/verify/teardown skeleton only;
   project stage names and outputs inside `prepare` are project-owned.
+- Do not physically delete workflow rows. Logical deletion is a tombstone
+  lifecycle change so old runs and parked gates do not lose their workflow
+  pointer during review, replay, or repair.
 - Do not delete historical schemas still referenced by run history.
 - Do not start a workflow-execution background reconciler (run queue,
   dispatch timeout, completion sweep, runner Job inspection, etc.) outside
@@ -71,8 +79,13 @@ after registration changes.
   on the response and ledger, and a pin whose target phase is absent from the
   incoming registration rejects the registration. Patches naming a pinned
   target are rejected with the pinner, reason, and unpin remediation. No
-  write path may mutate the workflow payload without minting a schema and a
-  ledger event.
+  registration or patch path may mutate the workflow payload without minting a
+  schema and a ledger event.
+- Workflow delete is a control-plane write: it appends a delete ledger event
+  and marks the workflow hidden and unusable in the durable payload. It must
+  not mint a new schema, because the workflow shape has not changed; it must
+  not remove schemas or the logical row, because historical runs may still
+  need them.
 - A `verify=true` phase is a bounded verification phase whose concrete shape is
   selected by the persisted workflow constraint
   `constraints.verification.shape`. Supported shapes are `single_job`,
@@ -153,6 +166,9 @@ after registration changes.
   intact.
 - Service restart must preserve the ability to project active and historical
   cycles from schema refs and run ledgers.
+- Deleting a workflow must survive restarts as durable hidden/unusable state:
+  the workflow stays absent from ordinary list/dispatch surfaces but remains
+  available to backend history and repair paths.
 
 ## Observability
 
@@ -179,6 +195,10 @@ after registration changes.
 - Control-pin changes include tests for pin enforcement on re-registration,
   pinned-patch rejection, the closed pin-target grammar, and ledger/actor
   attribution on the write surface.
+- Workflow-delete changes include tests proving the row is tombstoned rather
+  than physically deleted, list surfaces hide the row, explicit dispatch
+  rejects the row, and historical run projection or repair paths can still
+  resolve the logical workflow when needed.
 - Runner launcher/callback changes include multi-job phase behavior when the
   change can affect phase completion.
 - Dispatch-input changes include tests for run persistence, runner lease/env

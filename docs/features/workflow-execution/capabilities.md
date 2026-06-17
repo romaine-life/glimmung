@@ -1,5 +1,31 @@
 # Workflow Execution Capabilities
 
+## workflow-tombstone-delete
+
+- **Status:** active
+- **Intent:** Removing a workflow from ordinary operator surfaces must not
+  strand historical runs, parked review gates, replay, or repair. Observed
+  failure this exists to prevent: `ambience#164/runs/12.1` reached
+  `review_required` on workflow `sidecartest`; after the logical workflow row
+  was physically deleted on 2026-06-15, review-gate approval/replay could no
+  longer resolve the workflow normally.
+- **Mechanism:** Workflow delete is a durable lifecycle mutation on the
+  existing `workflows` row: `metadata.deleted_at`, `metadata.deleted_by`,
+  `metadata.usable=false`, and `metadata.visible=false`. Normal list surfaces
+  hide hidden/deleted rows; new explicit dispatch rejects unusable/deleted
+  rows; backend history, signal, replay, and repair paths retain access to the
+  row and historical schemas.
+- **Affected contracts:** Workflow Execution (logical registrations, schema
+  snapshots, control ledger), Issues And Runs (historical run projection and
+  abortability), Review Surfaces (`review_required` remains non-terminal and
+  parked gates remain resolvable).
+- **Evidence:** `TestTombstoneWorkflowPayloadPreservesRowAsUnusableHiddenWorkflow`,
+  `TestWorkflowDeleteDoesNotPhysicallyDeleteWorkflowRows`,
+  `TestWorkflowHiddenFromLists`,
+  `TestDispatchRunRejectsExplicitTombstonedWorkflow`,
+  `TestWorkflowTombstoned`, and
+  `TestAdminAbortAlreadyTerminalState`.
+
 ## operator-control-pins
 
 - **Status:** active

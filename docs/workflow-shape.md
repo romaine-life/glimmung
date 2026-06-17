@@ -611,8 +611,12 @@ Workflow registrations are logical pointers. Updating a registration creates a
 new immutable workflow schema and moves the logical pointer forward. Existing
 runs and cycles keep referencing the schema they were created with. Historical
 schemas are retained; this rollout does not garbage-collect them. Deleting or
-deactivating a logical workflow must not delete schemas referenced by run
-history.
+deactivating a logical workflow is a lifecycle change on the workflow row:
+`metadata.deleted_at` records the tombstone, `metadata.usable=false` blocks new
+dispatch, and `metadata.visible=false` removes it from ordinary list surfaces.
+The logical row and schemas remain in Postgres because historical runs, parked
+review gates, replay, and operator repair may still need to resolve the
+workflow by `(project, name)` or `schema_ref`.
 
 Each cycle stores a durable execution ledger for the schema snapshot it was
 created with: phase records contain job records, and job records contain step

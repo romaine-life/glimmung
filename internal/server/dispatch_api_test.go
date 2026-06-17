@@ -303,6 +303,52 @@ func TestDispatchRunNoWorkflowRegistered(t *testing.T) {
 	}
 }
 
+func TestDispatchRunRejectsExplicitTombstonedWorkflow(t *testing.T) {
+	store := minimalDispatchStore()
+	store.wf.Metadata = map[string]any{
+		"deleted_at": "2026-06-17T00:00:00Z",
+		"usable":     false,
+		"visible":    false,
+	}
+	body, _ := json.Marshal(DispatchRunRequest{Project: "proj", IssueNumber: 1, Workflow: "main"})
+	rec := httptest.NewRecorder()
+	newDispatchTestHandler(store, nil).ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/runs/dispatch", bytes.NewReader(body)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	result := readDispatchResult(t, rec)
+	if result.State != "no_workflow" {
+		t.Fatalf("state=%q", result.State)
+	}
+	if result.Detail == nil || !strings.Contains(*result.Detail, "is deleted") {
+		t.Fatalf("detail=%v", result.Detail)
+	}
+	if store.runReq != nil || store.leaseReq != nil {
+		t.Fatalf("deleted workflow should not dispatch: run=%#v lease=%#v", store.runReq, store.leaseReq)
+	}
+}
+
+func TestWorkflowTombstoned(t *testing.T) {
+	cases := []struct {
+		name     string
+		metadata map[string]any
+		want     bool
+	}{
+		{name: "normal", metadata: map[string]any{"usable": true, "visible": true}, want: false},
+		{name: "unusable", metadata: map[string]any{"usable": false, "visible": true}, want: true},
+		{name: "hidden", metadata: map[string]any{"usable": true, "visible": false}, want: true},
+		{name: "deleted", metadata: map[string]any{"deleted_at": "2026-06-17T00:00:00Z"}, want: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := workflowTombstoned(Workflow{Metadata: tc.metadata})
+			if got != tc.want {
+				t.Fatalf("workflowTombstoned()=%t, want %t", got, tc.want)
+			}
+		})
+	}
+}
+
 // Dispatch re-validates the loaded workflow and fails before creating a run
 // or lease when the shape is invalid. (The retired issue-contract entry
 // mandate is gone; an explicit shape violation stands in for it.)

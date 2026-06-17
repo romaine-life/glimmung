@@ -2,6 +2,7 @@ package pg
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -249,10 +250,11 @@ func (s *WorkflowsStore) ListControlEvents(ctx context.Context, project, name st
 	return out, nil
 }
 
-// Delete removes a workflow row and returns its prior state, appending the
-// delete ledger event in the same transaction. The workflow_schemas rows are
-// NOT removed because run history may reference them by schema_ref; the
-// control-event ledger likewise survives so attribution outlives the row.
+// Delete tombstones a workflow row and returns its updated state, appending the
+// delete ledger event in the same transaction. The workflow row itself is not
+// physically deleted: run history and replay paths may still need to resolve it
+// by (project, name) when old runs predate schema_ref fallback or when an
+// operator is repairing a parked gate.
 func (s *WorkflowsStore) Delete(ctx context.Context, project, name string, event WorkflowControlEventRow) (WorkflowRow, error) {
 	if s == nil || s.pool == nil {
 		return WorkflowRow{}, fmt.Errorf("workflows store not configured")
@@ -263,15 +265,36 @@ func (s *WorkflowsStore) Delete(ctx context.Context, project, name string, event
 	}
 	defer tx.Rollback(ctx)
 
-	const sql = `
-		DELETE FROM workflows WHERE project = $1 AND name = $2
-		RETURNING project, name, schema_ref, payload, control_pins, created_at, updated_at
+	const selectSQL = `
+		SELECT project, name, schema_ref, payload, control_pins, created_at, updated_at
+		FROM workflows
+		WHERE project = $1 AND name = $2
+		FOR UPDATE
 	`
-	rows, err := tx.Query(ctx, sql, project, name)
+	rows, err := tx.Query(ctx, selectSQL, project, name)
 	if err != nil {
-		return WorkflowRow{}, fmt.Errorf("workflows: delete: %w", err)
+		return WorkflowRow{}, fmt.Errorf("workflows: select for delete: %w", err)
 	}
 	out, scanErr := scanWorkflowFirstRowNotFound(rows)
+	rows.Close()
+	if scanErr != nil {
+		return WorkflowRow{}, scanErr
+	}
+	updatedPayload, err := tombstoneWorkflowPayload(out.Payload, event.Actor, time.Now().UTC())
+	if err != nil {
+		return WorkflowRow{}, err
+	}
+	const updateSQL = `
+		UPDATE workflows
+		SET payload = $3, updated_at = now()
+		WHERE project = $1 AND name = $2
+		RETURNING project, name, schema_ref, payload, control_pins, created_at, updated_at
+	`
+	rows, err = tx.Query(ctx, updateSQL, project, name, updatedPayload)
+	if err != nil {
+		return WorkflowRow{}, fmt.Errorf("workflows: tombstone delete: %w", err)
+	}
+	out, scanErr = scanWorkflowFirstRow(rows)
 	rows.Close()
 	if scanErr != nil {
 		return WorkflowRow{}, scanErr
@@ -283,6 +306,29 @@ func (s *WorkflowsStore) Delete(ctx context.Context, project, name string, event
 		return WorkflowRow{}, fmt.Errorf("workflows: commit delete: %w", err)
 	}
 	return out, nil
+}
+
+func tombstoneWorkflowPayload(raw []byte, actor string, now time.Time) ([]byte, error) {
+	var payload map[string]any
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return nil, fmt.Errorf("workflows: decode delete tombstone payload: %w", err)
+	}
+	metadata, _ := payload["metadata"].(map[string]any)
+	if metadata == nil {
+		metadata = map[string]any{}
+	}
+	metadata["deleted_at"] = now.UTC().Format(time.RFC3339Nano)
+	if actor != "" {
+		metadata["deleted_by"] = actor
+	}
+	metadata["usable"] = false
+	metadata["visible"] = false
+	payload["metadata"] = metadata
+	updated, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("workflows: encode delete tombstone payload: %w", err)
+	}
+	return updated, nil
 }
 
 func insertControlEvent(ctx context.Context, tx pgx.Tx, event WorkflowControlEventRow) error {
