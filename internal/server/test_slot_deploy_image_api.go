@@ -25,10 +25,11 @@ type DeployImageToTestSlotRequest struct {
 
 // deployImagePerformer is the function seam the test harness stubs. Production
 // wires it to KubernetesRunLauncher.DeployImageToSlot. It reconciles the slot's
-// chart at the verified ref with the CI image pinned, then verifies the running
-// image — a Job-backed operation that can run minutes, so the handler runs it
-// detached and records the outcome durably rather than holding the request open.
-type deployImagePerformer func(ctx context.Context, lease Lease, project Project, verifiedRef, image, imageValueKey string) error
+// chart at the verified ref with the CI image override pinned, then verifies the
+// running image — a Job-backed operation that can run minutes, so the handler
+// runs it detached and records the outcome durably rather than holding the
+// request open.
+type deployImagePerformer func(ctx context.Context, lease Lease, project Project, verifiedRef, imageOverrideValue, imageValueKey string) error
 
 // refResolver resolves a git ref to its commit SHA. Production wires a live
 // GitHub call (githubResolveSHA); tests stub it.
@@ -160,6 +161,7 @@ func deployImageToTestSlot(store ReadStore, minter RunnerGitHubTokenMinter, perf
 			return
 		}
 		image := resolvedImage.Image
+		imageOverrideValue := testSlotDeployImageOverrideValue(resolvedImage, imageValueKey)
 		// Pollable handle: both history entries carry it as the job_name, so the
 		// slot job status route serves the deploy's running to terminal transition.
 		deployJob := "deploy-" + uuid.NewString()
@@ -181,6 +183,7 @@ func deployImageToTestSlot(store ReadStore, minter RunnerGitHubTokenMinter, perf
 				"sha":             sha,
 				"image":           image,
 				"image_tag":       resolvedImage.Tag,
+				"image_override":  imageOverrideValue,
 				"image_source":    resolvedImage.Source,
 				"image_value_key": imageValueKey,
 			},
@@ -192,9 +195,9 @@ func deployImageToTestSlot(store ReadStore, minter RunnerGitHubTokenMinter, perf
 
 		deployLease := lease
 		go func() {
-			derr := performer(bgCtx, deployLease, project, sha, image, imageValueKey)
+			derr := performer(bgCtx, deployLease, project, sha, imageOverrideValue, imageValueKey)
 			status := "deployed"
-			diag := map[string]any{"job_name": deployJob, "slot_name": slotName, "git_ref": req.GitRef, "sha": sha, "image": image, "image_tag": resolvedImage.Tag, "image_source": resolvedImage.Source}
+			diag := map[string]any{"job_name": deployJob, "slot_name": slotName, "git_ref": req.GitRef, "sha": sha, "image": image, "image_tag": resolvedImage.Tag, "image_override": imageOverrideValue, "image_source": resolvedImage.Source}
 			if derr != nil {
 				status = "deploy_failed"
 				diag["error"] = derr.Error()
@@ -209,15 +212,16 @@ func deployImageToTestSlot(store ReadStore, minter RunnerGitHubTokenMinter, perf
 		}()
 
 		writeJSON(w, http.StatusAccepted, map[string]any{
-			"lease":         leaseRef,
-			"job":           deployJob,
-			"status":        "running",
-			"git_ref":       req.GitRef,
-			"sha":           sha,
-			"image":         image,
-			"image_tag":     resolvedImage.Tag,
-			"image_source":  resolvedImage.Source,
-			"history_entry": startEntry,
+			"lease":          leaseRef,
+			"job":            deployJob,
+			"status":         "running",
+			"git_ref":        req.GitRef,
+			"sha":            sha,
+			"image":          image,
+			"image_tag":      resolvedImage.Tag,
+			"image_override": imageOverrideValue,
+			"image_source":   resolvedImage.Source,
+			"history_entry":  startEntry,
 		})
 	}
 }
@@ -242,6 +246,22 @@ func testSlotDeployImageValueKey(project Project) string {
 		}
 	}
 	return "image.tag"
+}
+
+func testSlotDeployImageOverrideValue(image ResolvedTestSlotImage, imageValueKey string) string {
+	if testSlotDeployImageValueKeyWantsTag(imageValueKey) {
+		return image.Tag
+	}
+	return image.Image
+}
+
+func testSlotDeployImageValueKeyWantsTag(imageValueKey string) bool {
+	key := strings.TrimSpace(imageValueKey)
+	if key == "" {
+		return false
+	}
+	normalized := strings.ToLower(strings.NewReplacer("_", ".", "-", ".").Replace(key))
+	return normalized == "tag" || strings.HasSuffix(normalized, ".tag") || strings.HasSuffix(normalized, "imagetag")
 }
 
 // githubResolveSHA resolves a git ref (branch, tag, or SHA) to its commit SHA via
