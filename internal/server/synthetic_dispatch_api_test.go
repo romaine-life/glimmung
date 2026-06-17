@@ -162,6 +162,147 @@ func TestSyntheticDispatchCopiesSelectedPhaseOutputsFromPriorRun(t *testing.T) {
 	}
 }
 
+func TestSyntheticDispatchSuppliesTypedVerificationEvidence(t *testing.T) {
+	store := minimalDispatchStore()
+	launcher := &fakeRunLauncher{}
+	body, _ := json.Marshal(SyntheticDispatchRequest{
+		Project:      "proj",
+		IssueNumber:  7,
+		WorkflowName: "main",
+		StartAtPhase: "review",
+		Reason:       "retry review with recovered verifier evidence",
+		SuppliedPhaseOutputs: []SyntheticSuppliedPhaseOutput{
+			{
+				Phase:        "prepare",
+				PhaseOutputs: map[string]string{"issue_contract": `{"target":"portal"}`},
+			},
+			{
+				Phase: "verify",
+				Verification: &RunVerificationData{
+					Status:       "pass",
+					Reasons:      []string{"tooltip showed Energy generated 1"},
+					EvidenceRefs: []string{"runs/proj/run-1/screenshots/happy-flower.png"},
+					Evidence: []EvidenceArtifact{{
+						Kind:  EvidenceKindScreenshot,
+						Ref:   "runs/proj/run-1/screenshots/happy-flower.png",
+						Label: "Happy Flower tooltip",
+					}},
+				},
+			},
+			{
+				Phase:        "cleanup_early",
+				PhaseOutputs: map[string]string{},
+			},
+		},
+		ExecutionContext: SyntheticExecutionContext{SlotLeaseRef: "lease-1"},
+	})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/runs/synthetic-dispatch", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer admin")
+
+	newSyntheticDispatchTestHandler(store, launcher).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if store.runReq == nil {
+		t.Fatal("CreateRun was not called")
+	}
+	if len(store.runReq.SuppliedAttempts) != 3 {
+		t.Fatalf("supplied attempts=%#v", store.runReq.SuppliedAttempts)
+	}
+	verify := store.runReq.SuppliedAttempts[1]
+	if verify.Phase != "verify" || verify.Conclusion != "success" || verify.Decision != "advance" || !verify.CarryForward {
+		t.Fatalf("verify attempt=%#v", verify)
+	}
+	if verify.Verification == nil || verify.Verification.Status != "pass" {
+		t.Fatalf("verification=%#v", verify.Verification)
+	}
+	if got := verify.Verification.EvidenceRefs; len(got) != 1 || got[0] != "runs/proj/run-1/screenshots/happy-flower.png" {
+		t.Fatalf("evidence_refs=%#v", got)
+	}
+	if got := verify.Verification.Evidence; len(got) != 1 || got[0].Kind != EvidenceKindScreenshot || got[0].Label != "Happy Flower tooltip" {
+		t.Fatalf("evidence=%#v", got)
+	}
+	launchVerify := launcher.req.Run.Attempts[1]
+	if launchVerify.Verification == nil || launchVerify.Verification.EvidenceRefs[0] != "runs/proj/run-1/screenshots/happy-flower.png" {
+		t.Fatalf("launcher attempts=%#v", launcher.req.Run.Attempts)
+	}
+}
+
+func TestSyntheticDispatchRejectsVerificationOnNonVerifyPhase(t *testing.T) {
+	store := minimalDispatchStore()
+	body, _ := json.Marshal(SyntheticDispatchRequest{
+		Project:      "proj",
+		IssueNumber:  7,
+		WorkflowName: "main",
+		StartAtPhase: "verify",
+		Reason:       "bad supplied verification",
+		SuppliedPhaseOutputs: []SyntheticSuppliedPhaseOutput{{
+			Phase:        "prepare",
+			PhaseOutputs: map[string]string{"issue_contract": `{"target":"portal"}`},
+			Verification: &RunVerificationData{Status: "pass"},
+		}},
+		ExecutionContext: SyntheticExecutionContext{SlotLeaseRef: "lease-1"},
+	})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/runs/synthetic-dispatch", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer admin")
+
+	newSyntheticDispatchTestHandler(store, &fakeRunLauncher{}).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "cannot include verification") {
+		t.Fatalf("body=%s", rec.Body.String())
+	}
+	if store.runReq != nil {
+		t.Fatalf("CreateRun should not be called: %#v", store.runReq)
+	}
+}
+
+func TestSyntheticDispatchRejectsNonPassingSuppliedVerification(t *testing.T) {
+	store := minimalDispatchStore()
+	body, _ := json.Marshal(SyntheticDispatchRequest{
+		Project:      "proj",
+		IssueNumber:  7,
+		WorkflowName: "main",
+		StartAtPhase: "review",
+		Reason:       "bad supplied verification",
+		SuppliedPhaseOutputs: []SyntheticSuppliedPhaseOutput{
+			{
+				Phase:        "prepare",
+				PhaseOutputs: map[string]string{"issue_contract": `{"target":"portal"}`},
+			},
+			{
+				Phase:        "verify",
+				Verification: &RunVerificationData{Status: "fail", Reasons: []string{"still broken"}},
+			},
+			{
+				Phase:        "cleanup_early",
+				PhaseOutputs: map[string]string{},
+			},
+		},
+		ExecutionContext: SyntheticExecutionContext{SlotLeaseRef: "lease-1"},
+	})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/runs/synthetic-dispatch", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer admin")
+
+	newSyntheticDispatchTestHandler(store, &fakeRunLauncher{}).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "verification.status must be") {
+		t.Fatalf("body=%s", rec.Body.String())
+	}
+	if store.runReq != nil {
+		t.Fatalf("CreateRun should not be called: %#v", store.runReq)
+	}
+}
+
 func TestSyntheticDispatchRejectsCopiedPhaseAtOrAfterStart(t *testing.T) {
 	base := minimalDispatchStore()
 	store := &fakeSyntheticCopyDispatchStore{

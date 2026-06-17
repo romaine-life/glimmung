@@ -10,6 +10,7 @@ import (
 
 	"github.com/romaine-life/glimmung/internal/domain/agentruntime"
 	"github.com/romaine-life/glimmung/internal/domain/budget"
+	"github.com/romaine-life/glimmung/internal/domain/decision"
 	"github.com/romaine-life/glimmung/internal/domain/publicids"
 	"github.com/romaine-life/glimmung/internal/domain/whenexpr"
 	"github.com/romaine-life/glimmung/internal/metrics"
@@ -34,8 +35,10 @@ type SyntheticCopyPhaseOutputsFrom struct {
 }
 
 type SyntheticSuppliedPhaseOutput struct {
-	Phase        string            `json:"phase"`
-	PhaseOutputs map[string]string `json:"phase_outputs"`
+	Phase        string               `json:"phase"`
+	PhaseOutputs map[string]string    `json:"phase_outputs"`
+	Verification *RunVerificationData `json:"verification,omitempty"`
+	Conclusion   string               `json:"conclusion,omitempty"`
 }
 
 type SyntheticExecutionContext struct {
@@ -445,7 +448,7 @@ func mergeSyntheticSuppliedPhaseOutputs(copied []SyntheticSuppliedPhaseOutput, s
 			outputs[key] = value
 		}
 		byPhase[phase] = len(merged)
-		merged = append(merged, SyntheticSuppliedPhaseOutput{Phase: phase, PhaseOutputs: outputs})
+		merged = append(merged, SyntheticSuppliedPhaseOutput{Phase: phase, PhaseOutputs: outputs, Verification: cloneSyntheticVerification(input.Verification), Conclusion: strings.TrimSpace(input.Conclusion)})
 	}
 	seenSupplied := map[string]bool{}
 	for _, input := range supplied {
@@ -461,10 +464,16 @@ func mergeSyntheticSuppliedPhaseOutputs(copied []SyntheticSuppliedPhaseOutput, s
 				}
 				merged[idx].PhaseOutputs[key] = value
 			}
+			if input.Verification != nil {
+				merged[idx].Verification = cloneSyntheticVerification(input.Verification)
+			}
+			if conclusion := strings.TrimSpace(input.Conclusion); conclusion != "" {
+				merged[idx].Conclusion = conclusion
+			}
 			continue
 		}
 		byPhase[phase] = len(merged)
-		merged = append(merged, input)
+		merged = append(merged, cloneSyntheticSuppliedPhaseOutput(input))
 	}
 	return merged, nil
 }
@@ -495,6 +504,7 @@ func syntheticSuppliedAttempts(inputs []SyntheticSuppliedPhaseOutput, wf *Workfl
 			return nil, &dispatchProblem{status: http.StatusUnprocessableEntity, message: fmt.Sprintf("supplied phase %q is repeated", phase)}
 		}
 		seen[phase] = true
+		phaseSpec := wf.Phases[idx]
 		outputs := map[string]string{}
 		for key, value := range input.PhaseOutputs {
 			trimmed := strings.TrimSpace(key)
@@ -503,10 +513,19 @@ func syntheticSuppliedAttempts(inputs []SyntheticSuppliedPhaseOutput, wf *Workfl
 			}
 			outputs[trimmed] = value
 		}
+		verification, problem := syntheticSuppliedVerification(input, phaseSpec)
+		if problem != nil {
+			return nil, problem
+		}
+		conclusion := syntheticSuppliedConclusion(input, verification)
+		if verification != nil && !decision.IsAdvanceConclusion(conclusion) {
+			return nil, &dispatchProblem{status: http.StatusUnprocessableEntity, message: fmt.Sprintf("supplied phase %q conclusion %q cannot carry forward a passing verification", phase, conclusion)}
+		}
 		out = append(out, RunAttemptData{
 			AttemptIndex: len(out),
 			Phase:        phase,
-			Conclusion:   "supplied",
+			Conclusion:   conclusion,
+			Verification: verification,
 			Decision:     "advance",
 			Completed:    true,
 			CarryForward: true,
@@ -514,6 +533,66 @@ func syntheticSuppliedAttempts(inputs []SyntheticSuppliedPhaseOutput, wf *Workfl
 		})
 	}
 	return out, nil
+}
+
+func syntheticSuppliedVerification(input SyntheticSuppliedPhaseOutput, phaseSpec PhaseSpec) (*RunVerificationData, *dispatchProblem) {
+	if input.Verification == nil {
+		return nil, nil
+	}
+	phase := strings.TrimSpace(input.Phase)
+	if !phaseSpec.Verify && NormalizePhasePurpose(phaseSpec) != PhasePurposeVerification {
+		return nil, &dispatchProblem{status: http.StatusUnprocessableEntity, message: fmt.Sprintf("supplied phase %q cannot include verification because it is not a verification phase", phase)}
+	}
+	verification := cloneSyntheticVerification(input.Verification)
+	verification.Status = strings.TrimSpace(verification.Status)
+	if verification.Status == "" {
+		return nil, &dispatchProblem{status: http.StatusUnprocessableEntity, message: fmt.Sprintf("supplied phase %q verification.status required", phase)}
+	}
+	if verification.Status != "pass" {
+		return nil, &dispatchProblem{status: http.StatusUnprocessableEntity, message: fmt.Sprintf("supplied phase %q verification.status must be %q for a carry-forward synthetic attempt", phase, "pass")}
+	}
+	return verification, nil
+}
+
+func syntheticSuppliedConclusion(input SyntheticSuppliedPhaseOutput, verification *RunVerificationData) string {
+	conclusion := strings.TrimSpace(input.Conclusion)
+	if conclusion != "" {
+		return conclusion
+	}
+	if verification != nil {
+		return "success"
+	}
+	return "supplied"
+}
+
+func cloneSyntheticSuppliedPhaseOutput(input SyntheticSuppliedPhaseOutput) SyntheticSuppliedPhaseOutput {
+	outputs := map[string]string{}
+	for key, value := range input.PhaseOutputs {
+		outputs[key] = value
+	}
+	return SyntheticSuppliedPhaseOutput{
+		Phase:        strings.TrimSpace(input.Phase),
+		PhaseOutputs: outputs,
+		Verification: cloneSyntheticVerification(input.Verification),
+		Conclusion:   strings.TrimSpace(input.Conclusion),
+	}
+}
+
+func cloneSyntheticVerification(input *RunVerificationData) *RunVerificationData {
+	if input == nil {
+		return nil
+	}
+	out := &RunVerificationData{
+		Status:       input.Status,
+		Reasons:      append([]string{}, input.Reasons...),
+		EvidenceRefs: append([]string{}, input.EvidenceRefs...),
+		Evidence:     append([]EvidenceArtifact{}, input.Evidence...),
+	}
+	if input.Failure != nil {
+		failure := *input.Failure
+		out.Failure = &failure
+	}
+	return out
 }
 
 func syntheticTriggerSource(req SyntheticDispatchRequest, copyProvenance []map[string]any) map[string]any {
