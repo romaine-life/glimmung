@@ -436,6 +436,82 @@ describe("IssueDetailView run execution graph", () => {
     expect(document.querySelector(".issue-hero .project-facts")).not.toBeInTheDocument();
   });
 
+  it("shows a human approval queued status without leaking the signal ref", async () => {
+    const reviewIssue = {
+      ...issueDetail,
+      last_run_state: "review_required",
+      issue_lock_held: false,
+    };
+    const reviewGraph = {
+      ...issueGraph,
+      nodes: [
+        ...issueGraph.nodes,
+        {
+          id: "pr:review-ambience-172",
+          kind: "pr" as const,
+          label: "PR #327",
+          state: "open",
+          timestamp: null,
+          metadata: {
+            repo: "romaine-life/ambience",
+            number: 327,
+            title: "Review PR",
+            html_url: "https://github.com/romaine-life/ambience/pull/327",
+          },
+        },
+      ],
+      projection: {
+        ...runProjection,
+        current_run_ref: "ambience#172/runs/7.1",
+        runs: [{
+          ...runProjection.runs[0],
+          state: "review_required",
+          current_phase: "review_gate",
+          validation_url: "https://validation.test",
+        }],
+        reviews: [{
+          ref: "review-ambience-172",
+          repo: "romaine-life/ambience",
+          pr_number: 327,
+          title: "Review PR",
+          state: "open",
+          html_url: "https://github.com/romaine-life/ambience/pull/327",
+          linked_run_ref: "ambience#172/runs/7.1",
+          validation_url: "https://validation.test",
+          evidence: [],
+        }],
+        signals: [],
+      },
+    };
+    const signalBodies: Array<Record<string, unknown>> = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url =
+        typeof input === "string"
+          ? new URL(input, "https://glimmung.test")
+          : input instanceof URL
+            ? input
+            : new URL(input.url);
+      if (url.pathname === "/v1/config") return json({ auth_url: "https://auth.test", tank_operator_base_url: "https://tank.test" });
+      if (url.pathname === "/v1/auth/me") return json({ signed_in: true, email: "admin@example.com" });
+      if (url.pathname === "/v1/issues/by-number/ambience/172") return json(reviewIssue);
+      if (url.pathname === "/v1/issues/by-number/ambience/172/graph") return json(reviewGraph);
+      if (url.pathname === "/v1/workflows") return json([agentWorkflow]);
+      if (url.pathname === "/v1/signals" && init?.method === "POST") {
+        signalBodies.push(init.body ? JSON.parse(String(init.body)) : {});
+        return json({ ref: "signal:pr-327-approval", state: "pending" });
+      }
+      throw new Error(`unhandled fetch ${url.pathname}`);
+    }));
+
+    renderIssueDetail("/projects/ambience/issues/172/review");
+
+    await userEvent.click(await screen.findByRole("button", { name: "approve" }));
+
+    expect(await screen.findByText("approval queued")).toBeInTheDocument();
+    expect(screen.queryByText(/signal:p/)).not.toBeInTheDocument();
+    expect(signalBodies[0]?.payload).toEqual({ kind: "approve" });
+  });
+
   it("renders issue descriptions and comments as markdown", async () => {
     const markdownIssue = {
       ...issueDetail,
