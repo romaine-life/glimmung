@@ -3587,34 +3587,39 @@ func (s *Store) EnsureReview(ctx context.Context, req server.ReviewCreate) (serv
 			if derr != nil {
 				return server.ReviewDetail{}, derr
 			}
-			shouldPatch := false
-			if linkedRunID != nil && (doc.LinkedRunID == nil || *doc.LinkedRunID != *linkedRunID) {
-				shouldPatch = true
-			}
-			if req.EvidenceSet && !reflect.DeepEqual(sliceOrEmpty(doc.Evidence), sliceOrEmpty(req.Evidence)) {
-				shouldPatch = true
-			}
-			if shouldPatch {
-				patched, perr := s.pgReviews.PatchPayload(ctx, doc.Project, doc.Number, func(payload map[string]any) error {
-					if linkedRunID != nil {
-						payload["linked_run_id"] = *linkedRunID
-					}
-					if req.EvidenceSet {
-						payload["evidence"] = sliceOrEmpty(req.Evidence)
-					}
-					payload["updated_at"] = time.Now().UTC().Format(time.RFC3339Nano)
-					return nil
-				})
-				if perr != nil {
-					return server.ReviewDetail{}, perr
+			if reviewDocMatchesRequestPR(doc, req) {
+				shouldPatch := false
+				if patchReviewDocPayloadNeeded(doc, req, linkedIssueID, linkedRunID) {
+					shouldPatch = true
 				}
-				updated, uerr := reviewDocFromPayload(patched.Payload)
-				if uerr != nil {
-					return server.ReviewDetail{}, uerr
+				if req.EvidenceSet && !reflect.DeepEqual(sliceOrEmpty(doc.Evidence), sliceOrEmpty(req.Evidence)) {
+					shouldPatch = true
 				}
-				doc = updated
+				if shouldPatch {
+					patched, perr := s.pgReviews.PatchPayload(ctx, doc.Project, doc.Number, func(payload map[string]any) error {
+						patchReviewDocPayload(payload, req, linkedIssueID, linkedRunID)
+						if req.EvidenceSet {
+							payload["evidence"] = sliceOrEmpty(req.Evidence)
+						}
+						payload["updated_at"] = time.Now().UTC().Format(time.RFC3339Nano)
+						return nil
+					})
+					if perr != nil {
+						return server.ReviewDetail{}, perr
+					}
+					updated, uerr := reviewDocFromPayload(patched.Payload)
+					if uerr != nil {
+						return server.ReviewDetail{}, uerr
+					}
+					doc = updated
+				}
+				return s.buildReviewDetail(ctx, doc)
 			}
-			return s.buildReviewDetail(ctx, doc)
+			// A recycled issue may materialize a new PR while an older
+			// review row still points at the same issue. Do not mutate the
+			// old PR row into the new one; the reviews table key is the PR
+			// number, so fall through to the (repo, number) path and create
+			// or update the current PR review instead.
 		}
 	}
 
@@ -3624,29 +3629,13 @@ func (s *Store) EnsureReview(ctx context.Context, req server.ReviewCreate) (serv
 		if derr != nil {
 			return server.ReviewDetail{}, derr
 		}
-		updated := false
-		if linkedIssueID != nil && doc.LinkedIssueID == nil {
-			updated = true
-		}
-		if linkedRunID != nil && (doc.LinkedRunID == nil || *doc.LinkedRunID != *linkedRunID) {
-			updated = true
-		}
+		updated := patchReviewDocPayloadNeeded(doc, req, linkedIssueID, linkedRunID)
 		if req.EvidenceSet && !reflect.DeepEqual(sliceOrEmpty(doc.Evidence), sliceOrEmpty(req.Evidence)) {
 			updated = true
 		}
 		if updated {
 			patched, perr := s.pgReviews.PatchPayload(ctx, doc.Project, doc.Number, func(payload map[string]any) error {
-				if linkedIssueID != nil {
-					if _, ok := payload["linked_issue_id"].(string); !ok || payload["linked_issue_id"] == nil {
-						payload["linked_issue_id"] = *linkedIssueID
-					}
-				}
-				if linkedRunID != nil {
-					current, _ := payload["linked_run_id"].(string)
-					if current != *linkedRunID {
-						payload["linked_run_id"] = *linkedRunID
-					}
-				}
+				patchReviewDocPayload(payload, req, linkedIssueID, linkedRunID)
 				if req.EvidenceSet {
 					payload["evidence"] = sliceOrEmpty(req.Evidence)
 				}
@@ -3697,6 +3686,47 @@ func (s *Store) EnsureReview(ctx context.Context, req server.ReviewCreate) (serv
 		return server.ReviewDetail{}, err
 	}
 	return s.buildReviewDetail(ctx, doc)
+}
+
+func reviewDocMatchesRequestPR(doc reviewDoc, req server.ReviewCreate) bool {
+	return doc.Repo == req.Repo && doc.Number == req.Number
+}
+
+func patchReviewDocPayloadNeeded(doc reviewDoc, req server.ReviewCreate, linkedIssueID, linkedRunID *string) bool {
+	if doc.Repo != req.Repo ||
+		doc.Number != req.Number ||
+		doc.Title != req.Title ||
+		doc.Body != req.Body ||
+		doc.Branch != req.Branch ||
+		doc.BaseRef != firstNonEmpty(req.BaseRef, "main") ||
+		doc.HeadSHA != req.HeadSHA ||
+		doc.HTMLURL != req.HTMLURL {
+		return true
+	}
+	if linkedIssueID != nil && (doc.LinkedIssueID == nil || *doc.LinkedIssueID != *linkedIssueID) {
+		return true
+	}
+	if linkedRunID != nil && (doc.LinkedRunID == nil || *doc.LinkedRunID != *linkedRunID) {
+		return true
+	}
+	return false
+}
+
+func patchReviewDocPayload(payload map[string]any, req server.ReviewCreate, linkedIssueID, linkedRunID *string) {
+	payload["repo"] = req.Repo
+	payload["number"] = req.Number
+	payload["title"] = req.Title
+	payload["body"] = req.Body
+	payload["branch"] = req.Branch
+	payload["base_ref"] = firstNonEmpty(req.BaseRef, "main")
+	payload["head_sha"] = req.HeadSHA
+	payload["html_url"] = req.HTMLURL
+	if linkedIssueID != nil {
+		payload["linked_issue_id"] = *linkedIssueID
+	}
+	if linkedRunID != nil {
+		payload["linked_run_id"] = *linkedRunID
+	}
 }
 
 func (s *Store) buildReviewDetail(ctx context.Context, doc reviewDoc) (server.ReviewDetail, error) {

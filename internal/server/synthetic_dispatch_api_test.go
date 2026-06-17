@@ -340,6 +340,64 @@ func TestSyntheticDispatchRejectsCopiedPhaseAtOrAfterStart(t *testing.T) {
 	}
 }
 
+func TestSyntheticDispatchRejectsStartAfterManagedPRReviewPhase(t *testing.T) {
+	store := minimalDispatchStore()
+	body, _ := json.Marshal(SyntheticDispatchRequest{
+		Project:          "proj",
+		IssueNumber:      7,
+		WorkflowName:     "main",
+		StartAtPhase:     "review_gate",
+		Reason:           "bad synthetic gate start",
+		ExecutionContext: SyntheticExecutionContext{SlotLeaseRef: "lease-1"},
+	})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/runs/synthetic-dispatch", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer admin")
+
+	newSyntheticDispatchTestHandler(store, &fakeRunLauncher{}).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "cannot start after managed PR review phase") {
+		t.Fatalf("body=%s", rec.Body.String())
+	}
+	if store.runReq != nil {
+		t.Fatalf("CreateRun should not be called: %#v", store.runReq)
+	}
+}
+
+func TestSyntheticDispatchRejectsSuppliedManagedPROutputKeys(t *testing.T) {
+	store := minimalDispatchStore()
+	body, _ := json.Marshal(SyntheticDispatchRequest{
+		Project:      "proj",
+		IssueNumber:  7,
+		WorkflowName: "main",
+		StartAtPhase: "verify",
+		Reason:       "bad synthetic verify",
+		SuppliedPhaseOutputs: []SyntheticSuppliedPhaseOutput{{
+			Phase:        "prepare",
+			PhaseOutputs: map[string]string{"pr_number": "338"},
+		}},
+		ExecutionContext: SyntheticExecutionContext{SlotLeaseRef: "lease-1"},
+	})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/runs/synthetic-dispatch", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer admin")
+
+	newSyntheticDispatchTestHandler(store, &fakeRunLauncher{}).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "cannot supply managed PR output") || !strings.Contains(rec.Body.String(), "pr_number") {
+		t.Fatalf("body=%s", rec.Body.String())
+	}
+	if store.runReq != nil {
+		t.Fatalf("CreateRun should not be called: %#v", store.runReq)
+	}
+}
+
 func TestSyntheticDispatchRejectsMissingSlotLease(t *testing.T) {
 	store := minimalDispatchStore()
 	body, _ := json.Marshal(SyntheticDispatchRequest{

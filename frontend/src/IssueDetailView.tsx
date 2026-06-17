@@ -3524,20 +3524,20 @@ function ReviewTab({
   const [reject, setReject] = useState<
     | { kind: "idle" }
     | { kind: "submitting" }
-    | { kind: "submitted"; signalId: string }
+    | { kind: "submitted" }
     | { kind: "error"; message: string }
   >({ kind: "idle" });
   const [approve, setApprove] = useState<
     | { kind: "idle" }
     | { kind: "submitting" }
-    | { kind: "submitted"; signalId: string }
+    | { kind: "submitted" }
     | { kind: "error"; message: string }
   >({ kind: "idle" });
   const [cancel, setCancel] = useState<
     | { kind: "idle" }
     | { kind: "armed" }
     | { kind: "submitting" }
-    | { kind: "submitted"; signalId: string }
+    | { kind: "submitted" }
     | { kind: "error"; message: string }
   >({ kind: "idle" });
 
@@ -3611,8 +3611,7 @@ function ReviewTab({
         }),
       });
       if (!r.ok) throw new Error(`/v1/signals -> ${r.status}: ${await r.text()}`);
-      const sig = await r.json() as { ref?: string };
-      setApprove({ kind: "submitted", signalId: sig.ref ?? "signal" });
+      setApprove({ kind: "submitted" });
       onSubmitted();
       window.setTimeout(onSubmitted, 3000);
     } catch (e) {
@@ -3636,8 +3635,7 @@ function ReviewTab({
         }),
       });
       if (!r.ok) throw new Error(`/v1/signals -> ${r.status}: ${await r.text()}`);
-      const sig = await r.json() as { ref?: string };
-      setReject({ kind: "submitted", signalId: sig.ref ?? "signal" });
+      setReject({ kind: "submitted" });
       setFeedback("");
       onSubmitted();
       window.setTimeout(onSubmitted, 3000);
@@ -3662,8 +3660,7 @@ function ReviewTab({
         }),
       });
       if (!r.ok) throw new Error(`/v1/signals -> ${r.status}: ${await r.text()}`);
-      const sig = await r.json() as { ref?: string };
-      setCancel({ kind: "submitted", signalId: sig.ref ?? "signal" });
+      setCancel({ kind: "submitted" });
       onSubmitted();
       window.setTimeout(onSubmitted, 3000);
     } catch (e) {
@@ -3775,7 +3772,7 @@ function ReviewTab({
         </button>
         {pendingSignal && <span className="dim mono">decision already queued</span>}
         {approve.kind === "submitted" && (
-          <span className="pill free">queued {approve.signalId.slice(0, 8)}</span>
+          <span className="pill free">approval queued</span>
         )}
         {approve.kind === "error" && (
           <span className="pill drain" title={approve.message}>error</span>
@@ -3803,7 +3800,7 @@ function ReviewTab({
         </button>
         {pendingSignal && <span className="dim mono">feedback already queued</span>}
         {reject.kind === "submitted" && (
-          <span className="pill free">queued {reject.signalId.slice(0, 8)}</span>
+          <span className="pill free">feedback queued</span>
         )}
         {reject.kind === "error" && (
           <span className="pill drain" title={reject.message}>error</span>
@@ -3846,7 +3843,7 @@ function ReviewTab({
         )}
         {pendingSignal && <span className="dim mono">decision already queued</span>}
         {cancel.kind === "submitted" && (
-          <span className="pill free">queued {cancel.signalId.slice(0, 8)}</span>
+          <span className="pill free">cancellation queued</span>
         )}
         {cancel.kind === "error" && (
           <span className="pill drain" title={cancel.message}>error</span>

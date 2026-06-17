@@ -85,6 +85,50 @@ func TestRunReportProjectsReviewAttribution(t *testing.T) {
 	}
 }
 
+func TestLinkedIssueReviewReuseRequiresSamePR(t *testing.T) {
+	t.Parallel()
+	doc := reviewDoc{Repo: "romaine-life/ambience", Number: 327}
+
+	if reviewDocMatchesRequestPR(doc, server.ReviewCreate{Repo: "romaine-life/ambience", Number: 338}) {
+		t.Fatal("linked-issue review for PR 327 must not be reused for PR 338")
+	}
+	if !reviewDocMatchesRequestPR(doc, server.ReviewCreate{Repo: "romaine-life/ambience", Number: 327}) {
+		t.Fatal("same repo and PR number should reuse the existing review row")
+	}
+}
+
+func TestPatchReviewDocPayloadTracksCurrentPRFacts(t *testing.T) {
+	t.Parallel()
+	linkedIssueID := "issue-165"
+	linkedRunID := "run-2"
+	req := server.ReviewCreate{
+		Repo:    "romaine-life/ambience",
+		Number:  338,
+		Title:   "Current lava lamp review",
+		Body:    "review body",
+		Branch:  "glimmung/issue-165/current",
+		BaseRef: "main",
+		HeadSHA: "abc123",
+		HTMLURL: "https://github.com/romaine-life/ambience/pull/338",
+	}
+	doc := reviewDoc{
+		Repo:        "romaine-life/ambience",
+		Number:      338,
+		Title:       "Old title",
+		Branch:      "old",
+		LinkedRunID: stringPtrValue("run-1"),
+	}
+	if !patchReviewDocPayloadNeeded(doc, req, &linkedIssueID, &linkedRunID) {
+		t.Fatal("changed PR metadata and linked run should require a patch")
+	}
+	payload := map[string]any{}
+	patchReviewDocPayload(payload, req, &linkedIssueID, &linkedRunID)
+
+	if payload["number"] != 338 || payload["html_url"] != req.HTMLURL || payload["linked_run_id"] != linkedRunID {
+		t.Fatalf("payload=%#v", payload)
+	}
+}
+
 func TestRunDocFromPGRowRequiresMatchingIssueNumber(t *testing.T) {
 	t.Parallel()
 	payload, err := json.Marshal(runDoc{

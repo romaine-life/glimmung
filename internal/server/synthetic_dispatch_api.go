@@ -157,6 +157,9 @@ func syntheticDispatchRunWithAgentRuntime(ctx context.Context, store RunDispatch
 	if startPhase == nil {
 		return PublicDispatchResult{}, &dispatchProblem{status: http.StatusUnprocessableEntity, message: fmt.Sprintf("start_at_phase %q is not registered on workflow %q", req.StartAtPhase, wf.Name)}
 	}
+	if problem := validateSyntheticStartAtPhase(wf, startIndex); problem != nil {
+		return PublicDispatchResult{}, problem
+	}
 	phaseKind := workflowPhaseKind(startPhase.Kind)
 	if err := validateRunnerWorkflowKind(phaseKind); err != nil {
 		return PublicDispatchResult{}, &dispatchProblem{status: http.StatusUnprocessableEntity, message: err.Error()}
@@ -167,6 +170,9 @@ func syntheticDispatchRunWithAgentRuntime(ctx context.Context, store RunDispatch
 	}
 	suppliedInputs, problem := mergeSyntheticSuppliedPhaseOutputs(copied, req.SuppliedPhaseOutputs)
 	if problem != nil {
+		return PublicDispatchResult{}, problem
+	}
+	if problem := validateSyntheticSuppliedPhaseOutputs(suppliedInputs, wf); problem != nil {
 		return PublicDispatchResult{}, problem
 	}
 	suppliedAttempts, problem := syntheticSuppliedAttempts(suppliedInputs, wf, startIndex)
@@ -476,6 +482,62 @@ func mergeSyntheticSuppliedPhaseOutputs(copied []SyntheticSuppliedPhaseOutput, s
 		merged = append(merged, cloneSyntheticSuppliedPhaseOutput(input))
 	}
 	return merged, nil
+}
+
+func validateSyntheticStartAtPhase(wf *Workflow, startIndex int) *dispatchProblem {
+	if wf == nil {
+		return nil
+	}
+	for i, phase := range wf.Phases {
+		if phaseHasPrimitive(phase, JobPrimitivePRReview) {
+			if startIndex > i {
+				return &dispatchProblem{
+					status:  http.StatusUnprocessableEntity,
+					message: fmt.Sprintf("synthetic dispatch cannot start after managed PR review phase %q; the %q primitive must run to seed canonical PR state", phase.Name, JobPrimitivePRReview),
+				}
+			}
+			return nil
+		}
+	}
+	return nil
+}
+
+func validateSyntheticSuppliedPhaseOutputs(inputs []SyntheticSuppliedPhaseOutput, wf *Workflow) *dispatchProblem {
+	if len(inputs) == 0 {
+		return nil
+	}
+	phaseByName := map[string]PhaseSpec{}
+	if wf != nil {
+		for _, phase := range wf.Phases {
+			phaseByName[phase.Name] = phase
+		}
+	}
+	for _, input := range inputs {
+		phaseName := strings.TrimSpace(input.Phase)
+		phase, ok := phaseByName[phaseName]
+		if !ok {
+			continue
+		}
+		for _, job := range phase.Jobs {
+			switch strings.TrimSpace(job.Primitive) {
+			case JobPrimitivePRReview, JobPrimitivePRMerge:
+				return &dispatchProblem{
+					status:  http.StatusUnprocessableEntity,
+					message: fmt.Sprintf("synthetic dispatch cannot supply outputs for managed PR primitive phase %q", phaseName),
+				}
+			}
+		}
+		for key := range input.PhaseOutputs {
+			switch strings.TrimSpace(key) {
+			case "pr_number", "pr_url", "review_ref", "merge_status", "merge_commit_sha":
+				return &dispatchProblem{
+					status:  http.StatusUnprocessableEntity,
+					message: fmt.Sprintf("synthetic dispatch cannot supply managed PR output %q for phase %q", key, phaseName),
+				}
+			}
+		}
+	}
+	return nil
 }
 
 func syntheticSuppliedAttempts(inputs []SyntheticSuppliedPhaseOutput, wf *Workflow, startIndex int) ([]RunAttemptData, *dispatchProblem) {
