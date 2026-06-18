@@ -423,6 +423,7 @@ func newHandlerWithReconcilers(settings Settings, store ReadStore, authResolver 
 	mux.Handle("POST /v1/leases/cancel", requireAdmin(adminAuthenticator, http.HandlerFunc(cancelLeaseByRef(store))))
 	mux.Handle("PATCH /v1/leases/ttl", requireAdmin(adminAuthenticator, http.HandlerFunc(updateLeaseTTLByRef(store, testSlotPreparer, runnerTokenMinter))))
 	mux.Handle("PATCH /v1/test-slots/default-ttl", requireAdmin(adminAuthenticator, http.HandlerFunc(updateTestLeaseDefaultTTL(store))))
+	mux.Handle("PATCH /v1/test-slots/hot-swap-min-ttl", requireAdmin(adminAuthenticator, http.HandlerFunc(updateTestLeaseHotSwapMinTTL(store))))
 	mux.Handle("POST /v1/projects/{project}/issues/{issue_number}/runs/{run_number}/abort", requireAdmin(adminAuthenticator, http.HandlerFunc(abortRunByNumber(store))))
 	mux.Handle("POST /v1/projects/{project}/issues/{issue_number}/runs/{run_number}/review/finalize", requireAdmin(adminAuthenticator, http.HandlerFunc(finalizeRunReviewByNumber(store, prClient, artifactStore))))
 	mux.Handle("POST /v1/projects/{project}/issues/{issue_number}/runs/{run_number}/cycles/{cycle_number}/review/finalize", requireAdmin(adminAuthenticator, http.HandlerFunc(finalizeRunCycleReviewByNumber(store, prClient, artifactStore))))
@@ -490,7 +491,7 @@ func newHandlerWithReconcilers(settings Settings, store ReadStore, authResolver 
 		return githubResolveSHA(ctx, nil, slug, ref, token)
 	}
 	deployImageResolver := githubActionsTestSlotImageResolver(nil, newACRImageTagValidator())
-	mux.Handle("POST /v1/test-slots/deploy-image", requireAdmin(adminAuthenticator, http.HandlerFunc(deployImageToTestSlot(store, runnerTokenMinter, deployPerformer, deployRefResolver, deployImageResolver))))
+	mux.Handle("POST /v1/test-slots/deploy-image", requireAdmin(adminAuthenticator, http.HandlerFunc(deployImageToTestSlot(store, testSlotPreparer, runnerTokenMinter, deployPerformer, deployRefResolver, deployImageResolver))))
 	mux.Handle("POST /v1/projects/{project}/issues/{issue_number}/runs/{run_number}/replay", requireAdmin(adminAuthenticator, http.HandlerFunc(replayRunDecisionByNumber(store))))
 	mux.Handle("POST /v1/runs/dispatch", requireAdmin(adminAuthenticator, http.HandlerFunc(dispatchRunHandler(settings, store, runLauncher))))
 	mux.Handle("POST /v1/runs/synthetic-dispatch", requireAdmin(adminAuthenticator, http.HandlerFunc(syntheticDispatchRunHandler(settings, store, runLauncher))))

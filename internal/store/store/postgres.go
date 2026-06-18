@@ -432,7 +432,8 @@ func projectFromRecord(rec pgstore.ProjectRecord) server.Project {
 // and the SetGlobal* delegations.
 func testLeaseDefaultsFromRow(row pgstore.TestLeaseDefaultsRow) server.TestLeaseDefaults {
 	return server.TestLeaseDefaults{
-		GlobalTTLSeconds: row.GlobalTTLSeconds,
+		GlobalTTLSeconds:     row.GlobalTTLSeconds,
+		HotSwapMinTTLSeconds: row.HotSwapMinTTLSeconds,
 	}
 }
 
@@ -566,6 +567,31 @@ func (s *Store) SetProjectTestLeaseDefaultTTL(ctx context.Context, project strin
 		return server.Project{}, server.ValidationError{Message: "ttl_seconds must be positive"}
 	}
 	rec, err := s.pgProjects.SetTestLeaseDefaultTTL(ctx, project, ttlSeconds)
+	if errors.Is(err, pgstore.ErrProjectNotFound) {
+		return server.Project{}, server.ErrNotFound
+	}
+	if err != nil {
+		return server.Project{}, err
+	}
+	return projectFromRecord(rec), nil
+}
+
+func (s *Store) SetGlobalTestLeaseHotSwapMinTTL(ctx context.Context, ttlSeconds *int) (server.TestLeaseDefaults, error) {
+	if ttlSeconds != nil && *ttlSeconds <= 0 {
+		return server.TestLeaseDefaults{}, server.ValidationError{Message: "ttl_seconds must be positive"}
+	}
+	row, err := s.pgProjects.SetGlobalTestLeaseHotSwapMinTTL(ctx, ttlSeconds)
+	if err != nil {
+		return server.TestLeaseDefaults{}, err
+	}
+	return testLeaseDefaultsFromRow(row), nil
+}
+
+func (s *Store) SetProjectTestLeaseHotSwapMinTTL(ctx context.Context, project string, ttlSeconds *int) (server.Project, error) {
+	if ttlSeconds != nil && *ttlSeconds <= 0 {
+		return server.Project{}, server.ValidationError{Message: "ttl_seconds must be positive"}
+	}
+	rec, err := s.pgProjects.SetTestLeaseHotSwapMinTTL(ctx, project, ttlSeconds)
 	if errors.Is(err, pgstore.ErrProjectNotFound) {
 		return server.Project{}, server.ErrNotFound
 	}

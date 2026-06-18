@@ -467,6 +467,42 @@ func (s *fakeLeaseStore) SetProjectTestLeaseDefaultTTL(_ context.Context, projec
 	return Project{}, ErrNotFound
 }
 
+func (s *fakeLeaseStore) SetGlobalTestLeaseHotSwapMinTTL(_ context.Context, ttlSeconds *int) (TestLeaseDefaults, error) {
+	if s.err != nil {
+		return TestLeaseDefaults{}, s.err
+	}
+	if ttlSeconds == nil {
+		s.defaults.HotSwapMinTTLSeconds = 0
+	} else {
+		s.defaults.HotSwapMinTTLSeconds = *ttlSeconds
+	}
+	return s.defaults, nil
+}
+
+func (s *fakeLeaseStore) SetProjectTestLeaseHotSwapMinTTL(_ context.Context, project string, ttlSeconds *int) (Project, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.err != nil {
+		return Project{}, s.err
+	}
+	for i := range s.projects {
+		if s.projects[i].Name != project && s.projects[i].ID != project {
+			continue
+		}
+		if s.projects[i].Metadata == nil {
+			s.projects[i].Metadata = map[string]any{}
+		}
+		delete(s.projects[i].Metadata, testLeaseProjectHotSwapMinTTLSecondsLegacyKey)
+		if ttlSeconds == nil {
+			delete(s.projects[i].Metadata, testLeaseProjectHotSwapMinTTLSecondsKey)
+		} else {
+			s.projects[i].Metadata[testLeaseProjectHotSwapMinTTLSecondsKey] = *ttlSeconds
+		}
+		return s.projects[i], nil
+	}
+	return Project{}, ErrNotFound
+}
+
 func (s *fakeLeaseStore) ListLeases(context.Context) ([]Lease, error) {
 	if s.err != nil {
 		return nil, s.err
