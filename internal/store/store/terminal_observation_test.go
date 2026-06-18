@@ -267,7 +267,30 @@ func TestTerminalObservationNamesDispatchFailureAsDispatchStep(t *testing.T) {
 // terminal observation that names a known non-success class, carries owner
 // identity (phase + job + step_slug where applicable), and a SPECIFIC
 // reason/message — for EVERY terminal failure class in the enum.
-func TestTerminalObservationAttributesEveryClass(t *testing.T) {
+// terminalObservationClassCase is one per-class attribution fixture, extracted
+// to package scope so both the attribution contract test and the canonical-list
+// connection test (TestTerminalObservationFixtureCoversEveryCanonicalClass) can
+// iterate the SAME fixtures without duplicating them.
+type terminalObservationClassCase struct {
+	name             string
+	doc              runDoc
+	wf               *server.Workflow
+	abortReason      *string
+	wantClass        string
+	wantPhase        string
+	wantJob          string
+	wantStep         string
+	wantReason       string
+	msgContains      []string
+	msgNotContains   []string
+	ownerlessAllowed bool // manual_abort has no phase/job owner
+}
+
+// terminalObservationClassFixtures returns the attribution fixture for every
+// terminal failure class. Each fixture drives terminalObservationForRun and
+// asserts the produced observation names a known class with owner identity and
+// a specific (non-empty) message.
+func terminalObservationClassFixtures() []terminalObservationClassCase {
 	exit1 := 1
 
 	producerAbort := string(decision.AbortMalformed)
@@ -288,20 +311,7 @@ func TestTerminalObservationAttributesEveryClass(t *testing.T) {
 		},
 	}
 
-	cases := []struct {
-		name             string
-		doc              runDoc
-		wf               *server.Workflow
-		abortReason      *string
-		wantClass        string
-		wantPhase        string
-		wantJob          string
-		wantStep         string
-		wantReason       string
-		msgContains      []string
-		msgNotContains   []string
-		ownerlessAllowed bool // manual_abort has no phase/job owner
-	}{
+	cases := []terminalObservationClassCase{
 		{
 			name: "producer_phase_failed",
 			doc: runDoc{
@@ -492,15 +502,19 @@ func TestTerminalObservationAttributesEveryClass(t *testing.T) {
 		},
 	}
 
-	knownClasses := map[string]bool{
-		server.TerminalObservationProducerPhaseFailed:     true,
-		server.TerminalObservationVerifierContractMissing: true,
-		server.TerminalObservationVerifierFailed:          true,
-		server.TerminalObservationGateFailed:              true,
-		server.TerminalObservationDispatchFailed:          true,
-		server.TerminalObservationPhaseRequestedAbort:     true,
-		server.TerminalObservationManualAbort:             true,
-		server.TerminalObservationMalformed:               true,
+	return cases
+}
+
+func TestTerminalObservationAttributesEveryClass(t *testing.T) {
+	cases := terminalObservationClassFixtures()
+
+	// knownClasses is derived from the canonical source-of-truth list rather
+	// than a hand-maintained map, so the attribution contract test and the
+	// regression guard can never disagree about the full set of terminal
+	// classes.
+	knownClasses := map[string]bool{}
+	for _, class := range server.AllTerminalObservationClasses {
+		knownClasses[class] = true
 	}
 
 	for _, tc := range cases {
@@ -547,6 +561,43 @@ func TestTerminalObservationAttributesEveryClass(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestTerminalObservationFixtureCoversEveryCanonicalClass is the regression
+// guard that CONNECTS slice 1's attribution coverage to the canonical
+// source-of-truth list. It iterates server.AllTerminalObservationClasses and
+// fails if any canonical class has no attribution fixture in
+// terminalObservationClassFixtures — so a future class added to the list but
+// left unattributed fails CI instead of being silently skipped. It also rejects
+// the reverse drift: a fixture whose wantClass is not a canonical class.
+func TestTerminalObservationFixtureCoversEveryCanonicalClass(t *testing.T) {
+	fixtures := terminalObservationClassFixtures()
+
+	fixtureClasses := map[string]int{}
+	for _, fixture := range fixtures {
+		if fixture.wantClass == "" {
+			t.Fatalf("attribution fixture %q has an empty wantClass", fixture.name)
+		}
+		fixtureClasses[fixture.wantClass]++
+	}
+
+	canonical := map[string]bool{}
+	for _, class := range server.AllTerminalObservationClasses {
+		canonical[class] = true
+		count := fixtureClasses[class]
+		if count == 0 {
+			t.Fatalf("canonical terminal class %q has NO attribution fixture — every class in AllTerminalObservationClasses must be covered by terminalObservationClassFixtures so it cannot settle unattributed", class)
+		}
+		if count > 1 {
+			t.Fatalf("canonical terminal class %q has %d attribution fixtures — expected exactly one", class, count)
+		}
+	}
+
+	for class := range fixtureClasses {
+		if !canonical[class] {
+			t.Fatalf("attribution fixture targets class %q which is not in AllTerminalObservationClasses — add it to the canonical list or remove the stale fixture", class)
+		}
 	}
 }
 

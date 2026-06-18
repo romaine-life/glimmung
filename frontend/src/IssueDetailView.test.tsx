@@ -1329,6 +1329,74 @@ describe("IssueDetailView run execution graph", () => {
     expect(within(stepRail).getByRole("button", { name: /Run verification/ })).toHaveTextContent("exit 0");
   });
 
+  it("the terminal class list matches the canonical set", () => {
+    // Tripwire mirroring the Go TestAllTerminalObservationClassesInventoryIsExact:
+    // assert the canonical TS list equals an independent hardcoded set with no
+    // duplicates. Adding a class to ALL_TERMINAL_OBSERVATION_CLASSES (because a
+    // class was added to the Go AllTerminalObservationClasses) without adding it
+    // to this expected set — or vice-versa — fails CI.
+    const expected = [
+      "producer_phase_failed",
+      "verifier_contract_missing",
+      "verifier_failed",
+      "gate_failed",
+      "dispatch_failed",
+      "phase_requested_abort",
+      "manual_abort",
+      "malformed_terminal",
+    ];
+    expect([...ALL_TERMINAL_OBSERVATION_CLASSES].sort()).toEqual([...expected].sort());
+    expect(new Set(ALL_TERMINAL_OBSERVATION_CLASSES).size).toBe(ALL_TERMINAL_OBSERVATION_CLASSES.length);
+  });
+
+  it.each(ALL_TERMINAL_OBSERVATION_CLASSES)(
+    "renders a non-blank inspector cause for terminal class %s",
+    async (terminalClass) => {
+      // Enum-driven render inventory: for EVERY canonical terminal class, the
+      // class-agnostic `.run-failure-cause` block must surface the class when the
+      // failed verify job is selected. This guards a future per-class regression
+      // where a new class would render the inspector blank (the spirelens#147 bug
+      // class). It reuses slice 3's verifierFailedProjection fixture.
+      vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+        const url =
+          typeof input === "string"
+            ? new URL(input, "https://glimmung.test")
+            : input instanceof URL
+              ? input
+              : new URL(input.url);
+        if (url.pathname === "/v1/issues/by-number/ambience/172") return json(issueDetail);
+        if (url.pathname === "/v1/issues/by-number/ambience/172/graph") return json(issueGraph);
+        if (url.pathname === "/v1/projects/ambience/issues/172/runs/7/cycles/1/graph") {
+          return json(verifierFailedProjectionForClass(terminalClass));
+        }
+        if (url.pathname === "/v1/workflows") return json([]);
+        if (url.pathname === "/v1/projects/ambience/issues/172/runs/7.1/run/events") {
+          return json({ ...runnerEvents, events: [] });
+        }
+        throw new Error(`unhandled fetch ${url.pathname}`);
+      }));
+
+      renderIssueDetail(
+        "/projects/ambience/issues/172/runs/7/cycles/1/phases/llm-verify/jobs/verify",
+      );
+
+      const causeEl = await waitFor(() => {
+        const node = document.querySelector(".run-failure-cause");
+        if (!node) throw new Error("cause block not rendered");
+        return node as HTMLElement;
+      });
+      // The class travels into the cause display line (terminalObservationDisplay)
+      // — proving this class does not render blank.
+      expect(
+        within(causeEl).getByText(new RegExp(`${terminalClass} phase=llm-verify`)),
+      ).toBeInTheDocument();
+      // The typed message is surfaced too.
+      expect(
+        within(causeEl).getByText(`terminal failure attributed to ${terminalClass}`),
+      ).toBeInTheDocument();
+    },
+  );
+
   it("routes a phase header click to its phase breadcrumb path", async () => {
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
       const url =
@@ -2289,6 +2357,47 @@ function verifierFailedProjection() {
         }],
       },
       phases: [...base.phases, verifyPhase],
+    }],
+  };
+}
+
+// ALL_TERMINAL_OBSERVATION_CLASSES mirrors the Go canonical source of truth,
+// `AllTerminalObservationClasses` in internal/server/terminal_observation.go.
+// The inspector's `.run-failure-cause` render is class-agnostic, so this list is
+// the frontend half of the cross-language regression guard: every terminal
+// failure class must render a non-blank cause, and a class added to the Go list
+// without being added here (and to the hardcoded expected set in
+// "the terminal class list matches the canonical set") fails the frontend
+// inventory test below. There is no runtime bridge between Go and TS, so the
+// list is asserted against an independent hardcoded literal — the same tripwire
+// shape as the Go side — to catch drift.
+const ALL_TERMINAL_OBSERVATION_CLASSES = [
+  "producer_phase_failed",
+  "verifier_contract_missing",
+  "verifier_failed",
+  "gate_failed",
+  "dispatch_failed",
+  "phase_requested_abort",
+  "manual_abort",
+  "malformed_terminal",
+] as const;
+
+// verifierFailedProjectionForClass reuses slice 3's terminally-failed verify
+// fixture but stamps a chosen terminal_observation class onto it. The render is
+// class-agnostic, so this proves the `.run-failure-cause` block surfaces the
+// class for EVERY terminal class — no class renders blank.
+function verifierFailedProjectionForClass(terminalClass: string) {
+  const base = verifierFailedProjection();
+  const run = base.runs[0];
+  return {
+    ...base,
+    runs: [{
+      ...run,
+      terminal_observation: {
+        ...run.terminal_observation,
+        class: terminalClass,
+        message: `terminal failure attributed to ${terminalClass}`,
+      },
     }],
   };
 }

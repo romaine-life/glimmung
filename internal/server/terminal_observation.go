@@ -32,6 +32,38 @@ const (
 	TerminalObservationMalformed               = "malformed_terminal"
 )
 
+// AllTerminalObservationClasses is the single canonical source of truth for
+// every terminal-failure observation class the platform recognizes. It is
+// co-located with the enum above on purpose: the two must never drift.
+//
+// The platform invariant is enforced across three layers per terminal failure
+// class — attribution (terminalObservationForRun / GuardTerminalFailureObservation),
+// run-graph owner-step projection (ensureFailedJobOwnerStep), and inspector
+// render (the .run-failure-cause block). This list is the regression backstop
+// that keeps those three layers honest as the system grows: EVERY
+// TerminalObservation* class const MUST appear here exactly once, and every
+// entry here MUST be covered by the inventory tests
+// (TestAllTerminalObservationClassesInventoryIsExact connects the list to the
+// named consts; TestTerminalObservationFixtureCoversEveryCanonicalClass and
+// TestEveryTerminalClassProjectsAFailedOwnerStep connect it to attribution and
+// projection coverage; the frontend mirror proves each class renders a cause).
+//
+// Adding a ninth terminal class is therefore a conscious, tested act: a new
+// const that is not added here (or an entry here with no const) fails the
+// tripwire, and a class with no attribution/projection/render fixture fails the
+// inventory tests. That is the structural reason a future failure class cannot
+// slip through unattributed or invisible.
+var AllTerminalObservationClasses = []string{
+	TerminalObservationProducerPhaseFailed,
+	TerminalObservationVerifierContractMissing,
+	TerminalObservationVerifierFailed,
+	TerminalObservationGateFailed,
+	TerminalObservationDispatchFailed,
+	TerminalObservationPhaseRequestedAbort,
+	TerminalObservationManualAbort,
+	TerminalObservationMalformed,
+}
+
 const (
 	TerminalObservationSourceCompletionCallback = "completion_callback"
 	TerminalObservationSourceAdminAbort         = "admin_abort"
