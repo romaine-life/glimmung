@@ -65,20 +65,54 @@ func (l *KubernetesRunLauncher) DeployImageToSlot(ctx context.Context, lease Lea
 		}
 		config.Values[key] = image
 	}
-	if err := l.runTestSlotHelmReconcile(ctx, lease, project, minter, config, testSlotRenderModeHot); err != nil {
-		return fmt.Errorf("deploy slot %s to %s: %w", slotName, image, err)
-	}
 
-	// Verify the slot is actually running the image we deployed — observed from
-	// the apiserver, not assumed because the reconcile returned. This is the
-	// "reached the right destination" gate: a reconcile that silently kept a
-	// stale image (helm no-op, wrong value key, image pull never rolled) fails
-	// here loudly instead of presenting a stale slot as validated.
-	if err := l.verifyTestSlotRunningImage(ctx, slotName, image); err != nil {
-		return fmt.Errorf("deploy slot %s verify: %w", slotName, err)
+	// Serialize the deploy behind activation. Checkout starts an asynchronous
+	// activation goroutine that reconciles the SAME `<slot>-hot` release with the
+	// chart-default (baseline) image; Tank's provisioning gate then deploys the
+	// CI image onto the same lease. Both fire runTestSlotHelmReconcile(hot)
+	// against the same release and the same lease+hot-keyed installer Job, so
+	// without ordering the two helm applies race and last-write-wins — a baseline
+	// apply landing after the override silently reverts the slot to old code (the
+	// observed flake: override RS up, then activation's baseline RS ~27s later
+	// clobbered it, and verify correctly failed). Await the in-flight activation
+	// (without cancelling it — we want its baseline apply to complete first) so
+	// the deploy's override is the authoritative last apply to the shared release.
+	awaitInflightActivation(ctx, testSlotActivationKey(lease))
+
+	// Reconcile the override, then verify the slot is actually running it —
+	// observed from the apiserver, not assumed because the reconcile returned.
+	// This is the "reached the right destination" gate: a reconcile that silently
+	// kept a stale image (helm no-op, wrong value key, image pull never rolled)
+	// is caught here instead of presenting a stale slot as validated.
+	//
+	// On a mismatch we RE-ASSERT rather than fail: the override is the single
+	// source of truth for `<slot>-hot`, so if a baseline reconcile still clobbered
+	// it (an activation goroutine on another replica, where awaitInflightActivation
+	// above is a no-op), we re-apply the override reconcile and re-check. The
+	// await makes same-pod deploys converge on the first pass; the bounded
+	// re-assert covers a cross-replica baseline apply that lands late. Activation
+	// fires its single baseline reconcile once, so the override deterministically
+	// wins within the attempt budget.
+	var verifyErr error
+	for attempt := 1; attempt <= deployImageReassertAttempts; attempt++ {
+		if err := l.runTestSlotHelmReconcile(ctx, lease, project, minter, config, testSlotRenderModeHot); err != nil {
+			return fmt.Errorf("deploy slot %s to %s: %w", slotName, image, err)
+		}
+		if verifyErr = l.verifyTestSlotRunningImage(ctx, slotName, image); verifyErr == nil {
+			return nil
+		}
 	}
-	return nil
+	return fmt.Errorf("deploy slot %s verify (re-asserted %d×): %w", slotName, deployImageReassertAttempts, verifyErr)
 }
+
+// deployImageReassertAttempts bounds how many times DeployImageToSlot re-applies
+// the override `<slot>-hot` reconcile when the running-image verify finds the
+// slot on a different image. One pass suffices for the same-pod ordering that
+// awaitInflightActivation already serializes; the extra budget covers a baseline
+// reconcile driven from another replica that lands after the override. Bounded
+// so a genuinely stuck deploy (wrong value key, image that never rolls) still
+// fails loudly instead of looping forever.
+const deployImageReassertAttempts = 3
 
 // verifyTestSlotRunningImage confirms at least one container in the slot's app
 // namespace is running wantImage. It reads live pod specs from the apiserver and
