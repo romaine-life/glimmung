@@ -1266,6 +1266,137 @@ describe("IssueDetailView run execution graph", () => {
     expect(await screen.findByText(/reason baselib_missing_or_unversioned/)).toBeInTheDocument();
   });
 
+  it("renders the terminal verify cause in the inspector when a failed verify job is selected", async () => {
+    // Regression for the spirelens#147 bug: selecting the failed verify job
+    // replaced the run summary (the only place the cause rendered) with the
+    // inspector, which showed only green steps and "Click a step to see its
+    // logs". The SPECIFIC cause — typed terminal_observation, abort_reason,
+    // and the deciding attempt's expected/observed verification failure — must
+    // travel into the inspector with the selection. Fails on the pre-fix code
+    // (no .run-failure-cause in the inspector); passes once the cause renders.
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url =
+        typeof input === "string"
+          ? new URL(input, "https://glimmung.test")
+          : input instanceof URL
+            ? input
+            : new URL(input.url);
+      if (url.pathname === "/v1/issues/by-number/ambience/172") return json(issueDetail);
+      if (url.pathname === "/v1/issues/by-number/ambience/172/graph") return json(issueGraph);
+      if (url.pathname === "/v1/projects/ambience/issues/172/runs/7/cycles/1/graph") {
+        return json(verifierFailedProjection());
+      }
+      if (url.pathname === "/v1/workflows") return json([]);
+      if (url.pathname === "/v1/projects/ambience/issues/172/runs/7.1/run/events") {
+        return json({ ...runnerEvents, events: [] });
+      }
+      throw new Error(`unhandled fetch ${url.pathname}`);
+    }));
+
+    renderIssueDetail(
+      "/projects/ambience/issues/172/runs/7/cycles/1/phases/llm-verify/jobs/verify",
+    );
+
+    // The terminal-failure cause traveled into the inspector (not the run
+    // summary) with the selection — rendered in the .run-failure-cause block.
+    const causeEl = await waitFor(() => {
+      const node = document.querySelector(".run-failure-cause");
+      if (!node) throw new Error("cause block not rendered");
+      return node as HTMLElement;
+    });
+    // The inspector — not the run summary — is showing the selected verify job.
+    const runPanel = document.querySelector(".run-panel") as HTMLElement;
+    expect(within(runPanel.querySelector(".run-panel-header") as HTMLElement).getByText("Verify effect"))
+      .toBeInTheDocument();
+    // Typed terminal_observation message + class.
+    expect(
+      within(causeEl).getByText(/expected "CLOAK_CLASP", observed "Cloak Clasp"/),
+    ).toBeInTheDocument();
+    expect(within(causeEl).getByText(/verifier_failed phase=llm-verify/)).toBeInTheDocument();
+    // abort_reason.
+    expect(within(causeEl).getByText("verification_failed")).toBeInTheDocument();
+    // Deciding attempt's structured failure block (reused from AttemptCard).
+    expect(within(causeEl).getByText("CLOAK_CLASP")).toBeInTheDocument();
+    expect(within(causeEl).getByText(/Cloak Clasp \[effect label\]/)).toBeInTheDocument();
+    // verification.reasons list.
+    expect(
+      within(causeEl).getByText("claimed_result_not_observed", { selector: "li" }),
+    ).toBeInTheDocument();
+
+    // The failed owner step is visible — not just green steps.
+    const stepRail = await screen.findByLabelText("runner job steps");
+    expect(within(stepRail).getByRole("button", { name: /Verdict/ })).toHaveTextContent("failed");
+    expect(within(stepRail).getByRole("button", { name: /Run verification/ })).toHaveTextContent("exit 0");
+  });
+
+  it("the terminal class list matches the canonical set", () => {
+    // Tripwire mirroring the Go TestAllTerminalObservationClassesInventoryIsExact:
+    // assert the canonical TS list equals an independent hardcoded set with no
+    // duplicates. Adding a class to ALL_TERMINAL_OBSERVATION_CLASSES (because a
+    // class was added to the Go AllTerminalObservationClasses) without adding it
+    // to this expected set — or vice-versa — fails CI.
+    const expected = [
+      "producer_phase_failed",
+      "verifier_contract_missing",
+      "verifier_failed",
+      "gate_failed",
+      "dispatch_failed",
+      "phase_requested_abort",
+      "manual_abort",
+      "malformed_terminal",
+    ];
+    expect([...ALL_TERMINAL_OBSERVATION_CLASSES].sort()).toEqual([...expected].sort());
+    expect(new Set(ALL_TERMINAL_OBSERVATION_CLASSES).size).toBe(ALL_TERMINAL_OBSERVATION_CLASSES.length);
+  });
+
+  it.each(ALL_TERMINAL_OBSERVATION_CLASSES)(
+    "renders a non-blank inspector cause for terminal class %s",
+    async (terminalClass) => {
+      // Enum-driven render inventory: for EVERY canonical terminal class, the
+      // class-agnostic `.run-failure-cause` block must surface the class when the
+      // failed verify job is selected. This guards a future per-class regression
+      // where a new class would render the inspector blank (the spirelens#147 bug
+      // class). It reuses slice 3's verifierFailedProjection fixture.
+      vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+        const url =
+          typeof input === "string"
+            ? new URL(input, "https://glimmung.test")
+            : input instanceof URL
+              ? input
+              : new URL(input.url);
+        if (url.pathname === "/v1/issues/by-number/ambience/172") return json(issueDetail);
+        if (url.pathname === "/v1/issues/by-number/ambience/172/graph") return json(issueGraph);
+        if (url.pathname === "/v1/projects/ambience/issues/172/runs/7/cycles/1/graph") {
+          return json(verifierFailedProjectionForClass(terminalClass));
+        }
+        if (url.pathname === "/v1/workflows") return json([]);
+        if (url.pathname === "/v1/projects/ambience/issues/172/runs/7.1/run/events") {
+          return json({ ...runnerEvents, events: [] });
+        }
+        throw new Error(`unhandled fetch ${url.pathname}`);
+      }));
+
+      renderIssueDetail(
+        "/projects/ambience/issues/172/runs/7/cycles/1/phases/llm-verify/jobs/verify",
+      );
+
+      const causeEl = await waitFor(() => {
+        const node = document.querySelector(".run-failure-cause");
+        if (!node) throw new Error("cause block not rendered");
+        return node as HTMLElement;
+      });
+      // The class travels into the cause display line (terminalObservationDisplay)
+      // — proving this class does not render blank.
+      expect(
+        within(causeEl).getByText(new RegExp(`${terminalClass} phase=llm-verify`)),
+      ).toBeInTheDocument();
+      // The typed message is surfaced too.
+      expect(
+        within(causeEl).getByText(`terminal failure attributed to ${terminalClass}`),
+      ).toBeInTheDocument();
+    },
+  );
+
   it("routes a phase header click to its phase breadcrumb path", async () => {
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
       const url =
@@ -2132,6 +2263,141 @@ function abortedProjection() {
           })),
         };
       }),
+    }],
+  };
+}
+
+// A terminally-failed verify run: the verify phase owns the failure, with a
+// red `verdict` owner step, a typed terminal_observation, an abort_reason, and
+// the deciding attempt's structured verification failure. This is the
+// spirelens#147-shaped run from the motivating bug — clicking the failed verify
+// job must surface the SPECIFIC cause in the inspector, not just green steps.
+function verifierFailedProjection() {
+  const base = runProjection.runs[0];
+  const verifyPhase = {
+    name: "llm-verify",
+    kind: "k8s_job",
+    state: "failed",
+    reason: "verification_failed",
+    verify: true,
+    run_on: "success",
+    purpose: "verify",
+    depends_on: ["agent-execute"],
+    jobs: [{
+      id: "verify",
+      name: "Verify effect",
+      state: "failed",
+      reason: "verification_failed",
+      k8s_job_name: "glim-ambience-172-runs-7-1-0-llm-verify",
+      started_at: "2026-05-20T17:40:00.000Z",
+      completed_at: "2026-05-20T17:42:00.000Z",
+      steps: [
+        {
+          slug: "run-verify",
+          title: "Run verification",
+          state: "succeeded",
+          exit_code: 0,
+          started_at: "2026-05-20T17:40:00.000Z",
+          completed_at: "2026-05-20T17:42:00.000Z",
+        },
+        { slug: "verdict", title: "Verdict", state: "failed", reason: "verification_failed" },
+      ],
+    }],
+    attempts: [{
+      attempt_index: 0,
+      state: "completed",
+      conclusion: "failure",
+      verification_status: "fail",
+      decision: "abort",
+      log_archive_url: null,
+      evidence_refs: [],
+      job_completions: [{
+        job_id: "verify",
+        completed_at: "2026-05-20T17:42:00.000Z",
+        conclusion: "failure",
+        verification_status: "fail",
+        verification_reasons: ["claimed_result_not_observed"],
+        verification_failure: {
+          expected: "CLOAK_CLASP",
+          observed: "Cloak Clasp",
+          where: "effect label",
+          suspected_cause: "claimed_result_not_observed",
+          cause_detail: "case/format mismatch between claimed and observed effect id",
+        },
+      }],
+    }],
+  };
+  return {
+    ...runProjection,
+    runs: [{
+      ...base,
+      state: "aborted",
+      current_phase: "llm-verify",
+      abort_reason: "verification_failed",
+      terminal_observation: {
+        class: "verifier_failed",
+        phase: "llm-verify",
+        job_id: "verify",
+        step_slug: "verdict",
+        conclusion: "failure",
+        reason: "claimed_result_not_observed",
+        source: "completion_callback",
+        message: 'claimed result not observed: expected "CLOAK_CLASP", observed "Cloak Clasp"',
+      },
+      topology: {
+        ...base.topology,
+        phases: [...base.topology.phases, {
+          name: "llm-verify",
+          kind: "k8s_job",
+          verify: true,
+          run_on: "success",
+          purpose: "verify",
+          depends_on: ["agent-execute"],
+          jobs: [{ id: "verify", name: "Verify effect" }],
+        }],
+      },
+      phases: [...base.phases, verifyPhase],
+    }],
+  };
+}
+
+// ALL_TERMINAL_OBSERVATION_CLASSES mirrors the Go canonical source of truth,
+// `AllTerminalObservationClasses` in internal/server/terminal_observation.go.
+// The inspector's `.run-failure-cause` render is class-agnostic, so this list is
+// the frontend half of the cross-language regression guard: every terminal
+// failure class must render a non-blank cause, and a class added to the Go list
+// without being added here (and to the hardcoded expected set in
+// "the terminal class list matches the canonical set") fails the frontend
+// inventory test below. There is no runtime bridge between Go and TS, so the
+// list is asserted against an independent hardcoded literal — the same tripwire
+// shape as the Go side — to catch drift.
+const ALL_TERMINAL_OBSERVATION_CLASSES = [
+  "producer_phase_failed",
+  "verifier_contract_missing",
+  "verifier_failed",
+  "gate_failed",
+  "dispatch_failed",
+  "phase_requested_abort",
+  "manual_abort",
+  "malformed_terminal",
+] as const;
+
+// verifierFailedProjectionForClass reuses slice 3's terminally-failed verify
+// fixture but stamps a chosen terminal_observation class onto it. The render is
+// class-agnostic, so this proves the `.run-failure-cause` block surfaces the
+// class for EVERY terminal class — no class renders blank.
+function verifierFailedProjectionForClass(terminalClass: string) {
+  const base = verifierFailedProjection();
+  const run = base.runs[0];
+  return {
+    ...base,
+    runs: [{
+      ...run,
+      terminal_observation: {
+        ...run.terminal_observation,
+        class: terminalClass,
+        message: `terminal failure attributed to ${terminalClass}`,
+      },
     }],
   };
 }

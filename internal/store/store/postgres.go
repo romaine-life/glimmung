@@ -6177,7 +6177,7 @@ func (s *Store) AbortRunByID(ctx context.Context, project, runID, reason string)
 		return server.AbortRunResult{}, err
 	}
 
-	terminal := adminAbortAlreadyTerminalState(doc.State)
+	terminal := isTerminalRunState(doc.State)
 
 	// Compute run_ref for the result.
 	siblings, _ := s.issueRunDocs(ctx, project, doc.IssueNumber)
@@ -6199,6 +6199,9 @@ func (s *Store) AbortRunByID(ctx context.Context, project, runID, reason string)
 	// transaction — replaces the previous ETag retry loop.
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	observation := terminalObservationForRun(doc, nil, "aborted", optionalNonEmptyStringPtr(reason), server.TerminalObservationSourceAdminAbort)
+	// Fail-closed guard: an admin abort is also a terminal-failure write, so it
+	// must never persist an unattributed observation either.
+	observation = server.GuardTerminalFailureObservation(observation, "aborted", server.TerminalObservationSourceAdminAbort, optionalNonEmptyStringPtr(reason))
 	if observation != nil && strings.TrimSpace(observation.Message) != "" {
 		reason = observation.Message
 	}
@@ -6218,6 +6221,11 @@ func (s *Store) AbortRunByID(ctx context.Context, project, runID, reason string)
 		}
 		return server.AbortRunResult{}, err
 	}
+
+	// Terminal-attribution backstop: an admin abort is a genuine terminal
+	// transition (the already-terminal case returned early above), so it
+	// increments the once-per-settle metric and logs an unattributed cause.
+	s.recordTerminalSettle(doc, runRef, "aborted", observation)
 
 	// Best-effort lock releases.
 	var issueLockReleased, prLockReleased *bool
@@ -6242,6 +6250,71 @@ func (s *Store) AbortRunByID(ctx context.Context, project, runID, reason string)
 	}, nil
 }
 
+// recordTerminalSettle is the single emission point for the run-terminal
+// observability backstop. It increments glimmung_run_terminal_total exactly
+// once for a run reaching a terminal state, labelled by the guarded
+// observation's class and the terminal state, and — when the cause is
+// unattributed (malformed_terminal / unknown) — emits a LOUD structured log
+// naming the run/cycle/phase/job/class so the alert has a drill-down.
+//
+// It is the single, structural no-double-count gate: it emits only when the
+// run's PRE-PATCH state (doc.State — the terminal-write PatchPayloads mutate the
+// raw payload map, never the doc struct) is not already terminal. So a genuine
+// non-terminal→terminal transition increments exactly once, while a
+// duplicate/replayed terminal write for an already-settled run (e.g. a repeated
+// completion callback into SetRunTerminalState) re-patches durable state
+// idempotently but does NOT re-fire the metric or the loud log.
+// RepairRunTerminalObservation re-derives an already-terminal run's observation
+// and is NOT a new transition — it deliberately does not call this at all.
+//
+// obs must be the observation AFTER GuardTerminalFailureObservation so the
+// metric and log reflect the guarded, post-attribution class.
+func (s *Store) recordTerminalSettle(doc runDoc, runRef, state string, obs *server.RunTerminalObservation) {
+	if isTerminalRunState(doc.State) {
+		// The run had already settled before this write — not a fresh terminal
+		// transition, so the backstop must not count or alarm again.
+		return
+	}
+	class := server.TerminalObservationMetricClass(obs)
+	metrics.RecordRunTerminal(class, state)
+	if !server.TerminalObservationClassUnattributed(class) {
+		return
+	}
+	// Unattributed terminal failure: the platform invariant's loud signal.
+	// Emit the structured drill-down the GlimmungRunTerminalUnattributed alert
+	// points operators at, with stable identifiers per the observability
+	// contract (project/issue/run/cycle/phase/job/step), never raw URLs.
+	phase, job, step := "", "", ""
+	if obs != nil {
+		phase, job, step = obs.Phase, obs.JobID, obs.StepSlug
+	}
+	slog.Error("run settled terminal with unattributed cause",
+		"project", doc.Project,
+		"issue", doc.IssueNumber,
+		"run", runRef,
+		"run_id", doc.ID,
+		"cycle", terminalSettleCycle(doc),
+		"phase", phase,
+		"job", job,
+		"step", step,
+		"class", class,
+		"state", state,
+	)
+}
+
+// terminalSettleCycle returns the run's verify-loop cycle number for the
+// drill-down log, preferring the durable run_cycle_number and falling back to
+// cycle_number. Zero means the run is not itself a recycle.
+func terminalSettleCycle(doc runDoc) int {
+	if doc.RunCycleNumber != nil {
+		return *doc.RunCycleNumber
+	}
+	if doc.CycleNumber != nil {
+		return *doc.CycleNumber
+	}
+	return 0
+}
+
 // terminalStateReleasesSlotLease reports whether a run reaching the given true
 // terminal state should release its slot lease. An aborted run always releases
 // (it tears everything down, matching AbortRunByID). A passed run releases
@@ -6260,7 +6333,13 @@ func terminalStateReleasesSlotLease(state string, preserveTestEnv bool) bool {
 	}
 }
 
-func adminAbortAlreadyTerminalState(state string) bool {
+// isTerminalRunState reports whether a run is already in a true terminal state.
+// It is the single shared predicate for "this run has already settled" used by
+// every terminal-write choke point: AbortRunByID skips an already-terminal run,
+// and SetRunTerminalState uses it to decide whether a state patch is a genuine
+// non-terminal→terminal transition (emit the terminal-settle metric/log) or an
+// idempotent re-patch of an already-settled run (do not re-fire the backstop).
+func isTerminalRunState(state string) bool {
 	switch state {
 	case "passed", "aborted", "recycled":
 		return true
@@ -6299,13 +6378,15 @@ func terminalObservationForRun(doc runDoc, wf *server.Workflow, state string, ab
 
 	phase := workflowPhaseByName(wf, attempt.Phase)
 	if reason := strings.TrimSpace(attempt.PhaseOutputs[decision.AbortReasonOutputKey]); reason != "" {
+		message := fmt.Sprintf("phase %s requested a fail-closed abort: %s", attempt.Phase, reason)
+		message = appendTerminalDetail(message, verificationFailureDetailLine(attemptVerificationFailure(attempt)))
 		return &server.RunTerminalObservation{
 			Class:      server.TerminalObservationPhaseRequestedAbort,
 			Phase:      attempt.Phase,
 			Conclusion: stringOrEmpty(attempt.Conclusion),
 			Reason:     reason,
 			Source:     firstNonEmpty(source, server.TerminalObservationSourceDecisionEngine),
-			Message:    fmt.Sprintf("phase %s requested a fail-closed abort: %s", attempt.Phase, reason),
+			Message:    message,
 		}
 	}
 
@@ -6320,19 +6401,29 @@ func terminalObservationForRun(doc runDoc, wf *server.Workflow, state string, ab
 				class = server.TerminalObservationVerifierFailed
 			}
 		}
+		// Promote the deciding job's SPECIFIC cause — the verifier's
+		// reason string and/or its structured failure block and/or a
+		// summary excerpt — instead of letting the bare enum
+		// ("verification_failed", "job_failed") be the only durable
+		// explanation. This is the core of the spirelens#147 bug: a
+		// verify JOB went red while every STEP exited 0 and the real
+		// reason (claimed_result_not_observed + expected/observed) lived
+		// only in the attempt's verification block, never reaching the
+		// terminal observation the operator reads.
+		cause, detail := terminalJobFailureCause(attempt, completion)
 		obs := &server.RunTerminalObservation{
 			Class:      class,
 			Phase:      attempt.Phase,
 			JobID:      completion.JobID,
 			Conclusion: completion.Conclusion,
-			Reason:     firstNonEmpty(completion.TerminalReason, executionReason(job, step), "job_failed"),
+			Reason:     firstNonEmpty(cause, completion.TerminalReason, executionReason(job, step), "job_failed"),
 			Source:     firstNonEmpty(source, server.TerminalObservationSourceCompletionCallback),
 		}
 		if step != nil {
 			obs.StepSlug = step.Slug
 			obs.ExitCode = step.ExitCode
 		}
-		obs.Message = terminalObservationMessage(obs)
+		obs.Message = appendTerminalDetail(terminalObservationMessage(obs), detail)
 		return obs
 	}
 
@@ -6353,19 +6444,30 @@ func terminalObservationForRun(doc runDoc, wf *server.Workflow, state string, ab
 		return obs
 	}
 
+	// Attribution genuinely could not be resolved: there is a deciding
+	// non-success attempt but no failed job completion, no phase abort_reason
+	// output, no dispatch failure, and no missing-verification-contract
+	// signal. Record malformed_terminal with a LOUD message naming exactly
+	// which typed signals were absent. This is the deliberate signal the
+	// Slice 4 metric/alert fires on; it must never be a silent generic.
 	reason := strings.TrimSpace(stringOrEmpty(abortReason))
-	if reason == "" {
-		reason = "aborted"
+	loud := fmt.Sprintf(
+		"MALFORMED TERMINAL: run aborted on phase %q (conclusion %q) without a resolvable typed cause — %s",
+		attempt.Phase,
+		stringOrEmpty(attempt.Conclusion),
+		malformedTerminalMissing(attempt),
+	)
+	if reason != "" {
+		loud += "; abort_reason was: " + reason
 	}
-	obs := &server.RunTerminalObservation{
+	return &server.RunTerminalObservation{
 		Class:      server.TerminalObservationMalformed,
 		Phase:      attempt.Phase,
 		Conclusion: stringOrEmpty(attempt.Conclusion),
-		Reason:     reason,
+		Reason:     firstNonEmpty(reason, "malformed_terminal"),
 		Source:     firstNonEmpty(source, server.TerminalObservationSourceDecisionEngine),
+		Message:    loud,
 	}
-	obs.Message = terminalObservationMessage(obs)
-	return obs
 }
 
 func terminalCauseAttempt(doc runDoc, wf *server.Workflow) *attemptDoc {
@@ -6592,6 +6694,164 @@ func terminalDispatchFailureMessage(obs *server.RunTerminalObservation) string {
 		return fmt.Sprintf("phase %s failed to dispatch job %s: %s", obs.Phase, obs.JobID, obs.Reason)
 	}
 	return fmt.Sprintf("phase %s failed to dispatch: %s", obs.Phase, obs.Reason)
+}
+
+// terminalJobFailureCause extracts the SPECIFIC operator-facing "why" for a
+// failed producer/verifier/gate job. It promotes, in priority order:
+//  1. the failing job's own verification verdict reason (unprefixed),
+//  2. the deciding attempt's aggregated verification reason (prefixed with the
+//     job id by aggregateRunnerPhaseCompletion — the prefix is stripped),
+//  3. the structured failure block's suspected cause,
+//  4. a bounded excerpt of the job/attempt summary markdown.
+//
+// reason is a compact cause token suitable for RunTerminalObservation.Reason;
+// detail is a one-line human elaboration (expected/observed/where/suspected
+// cause) appended to the message. Both are empty when the producer offered no
+// verification or summary context (a plain non-zero producer exit), in which
+// case the caller falls back to the step/job execution reason.
+func terminalJobFailureCause(attempt *attemptDoc, completion runnerJobCompletionDoc) (reason, detail string) {
+	var failure *verificationFailureDoc
+
+	if v := completion.Verification; v != nil {
+		reason = firstVerificationReasonToken(v.Reasons, "")
+		failure = v.Failure
+	}
+	if attempt != nil && attempt.Verification != nil {
+		if reason == "" {
+			reason = firstVerificationReasonToken(attempt.Verification.Reasons, completion.JobID+": ")
+		}
+		if failure == nil {
+			failure = attempt.Verification.Failure
+		}
+	}
+
+	detail = verificationFailureDetailLine(failure)
+
+	if reason == "" && failure != nil && strings.TrimSpace(failure.SuspectedCause) != "" {
+		reason = strings.TrimSpace(failure.SuspectedCause)
+	}
+	if reason == "" {
+		if excerpt := summaryMarkdownExcerpt(completion.SummaryMarkdown); excerpt != "" {
+			reason = excerpt
+		} else if attempt != nil {
+			reason = summaryMarkdownExcerpt(attempt.SummaryMarkdown)
+		}
+		if reason != "" && detail == "" {
+			detail = reason
+		}
+	}
+	return reason, detail
+}
+
+// firstVerificationReasonToken returns the first non-empty verification reason,
+// stripping an exact "<prefix>" (the job-id prefix aggregateRunnerPhaseCompletion
+// prepends to attempt-level reasons) when present.
+func firstVerificationReasonToken(reasons []string, prefix string) string {
+	for _, raw := range reasons {
+		r := strings.TrimSpace(raw)
+		if prefix != "" {
+			r = strings.TrimSpace(strings.TrimPrefix(r, prefix))
+		}
+		if r != "" {
+			return r
+		}
+	}
+	return ""
+}
+
+func attemptVerificationFailure(attempt *attemptDoc) *verificationFailureDoc {
+	if attempt == nil || attempt.Verification == nil {
+		return nil
+	}
+	return attempt.Verification.Failure
+}
+
+// verificationFailureDetailLine renders the structured failure block as a
+// single compact line (expected / observed [where] / suspected cause) for the
+// terminal observation message. Empty when the producer supplied no block.
+func verificationFailureDetailLine(f *verificationFailureDoc) string {
+	if f == nil {
+		return ""
+	}
+	parts := []string{}
+	if v := strings.TrimSpace(f.Expected); v != "" {
+		parts = append(parts, "expected: "+v)
+	}
+	if v := strings.TrimSpace(f.Observed); v != "" {
+		observed := "observed: " + v
+		if where := strings.TrimSpace(f.Where); where != "" {
+			observed += " [" + where + "]"
+		}
+		parts = append(parts, observed)
+	}
+	if v := strings.TrimSpace(f.SuspectedCause); v != "" {
+		cause := "suspected cause: " + v
+		if d := strings.TrimSpace(f.CauseDetail); d != "" {
+			cause += " — " + d
+		}
+		parts = append(parts, cause)
+	}
+	return strings.Join(parts, "; ")
+}
+
+// appendTerminalDetail folds a non-empty, not-already-present detail line into
+// a terminal observation message as a parenthetical.
+func appendTerminalDetail(message, detail string) string {
+	detail = strings.TrimSpace(detail)
+	if detail == "" || strings.Contains(message, detail) {
+		return message
+	}
+	if strings.TrimSpace(message) == "" {
+		return detail
+	}
+	return message + " (" + detail + ")"
+}
+
+// summaryMarkdownExcerpt returns the first meaningful line of a summary markdown
+// blob, bounded so it can serve as a compact terminal reason token. Markdown
+// heading markers and the job-section prefix runnerJobMarkdownSection adds are
+// skipped.
+func summaryMarkdownExcerpt(summary *string) string {
+	if summary == nil {
+		return ""
+	}
+	const maxLen = 200
+	for _, line := range strings.Split(*summary, "\n") {
+		line = strings.TrimSpace(strings.TrimLeft(line, "#> "))
+		if line == "" {
+			continue
+		}
+		if len([]rune(line)) > maxLen {
+			line = string([]rune(line)[:maxLen]) + "…"
+		}
+		return line
+	}
+	return ""
+}
+
+// malformedTerminalMissing names the typed attribution signals that were absent
+// for an aborted run the engine could not attribute. Used to build the loud
+// malformed_terminal message.
+func malformedTerminalMissing(attempt *attemptDoc) string {
+	if attempt == nil {
+		return "no deciding attempt was found"
+	}
+	parts := []string{}
+	if len(attempt.JobCompletions) == 0 {
+		parts = append(parts, "no job completions were recorded")
+	} else if _, ok := firstFailedJobCompletion(attempt.JobCompletions); !ok {
+		parts = append(parts, "no job completion reported a non-success conclusion")
+	}
+	if strings.TrimSpace(attempt.PhaseOutputs[decision.AbortReasonOutputKey]) == "" {
+		parts = append(parts, "no phase abort_reason output")
+	}
+	if attempt.Verification == nil {
+		parts = append(parts, "no verification verdict")
+	}
+	if len(parts) == 0 {
+		return "attribution could not be resolved from any typed signal"
+	}
+	return strings.Join(parts, ", ")
 }
 
 // ---- RunnerStore implementation ----
@@ -8638,8 +8898,18 @@ func (s *Store) SetRunTerminalState(ctx context.Context, project, runID, state s
 	}
 	wf, _ := s.workflowForRunExecution(ctx, project, doc.Workflow, doc.WorkflowSchemaRef)
 	observation := terminalObservationForRun(doc, wf, state, abortReason, server.TerminalObservationSourceCompletionCallback)
-	if observation != nil && strings.TrimSpace(observation.Message) != "" {
-		abortReason = &observation.Message
+	// Fail-closed guard at the terminal-write choke point: a run may never
+	// settle into a terminal failure state without an attributed observation.
+	observation = server.GuardTerminalFailureObservation(observation, state, server.TerminalObservationSourceCompletionCallback, abortReason)
+	// AbortReason is the human summary. Keep the rich incoming explanation
+	// (decision.AbortExplanation already folds in the verifier reasons and the
+	// structured failure detail); only fall back to the observation message
+	// when no human summary was supplied. This stops the generic observation
+	// line from clobbering the specific verify-loop narrative (spirelens#147).
+	if strings.TrimSpace(stringOrEmpty(abortReason)) == "" && observation != nil {
+		if msg := strings.TrimSpace(observation.Message); msg != "" {
+			abortReason = &observation.Message
+		}
 	}
 
 	siblings, _ := s.issueRunDocs(ctx, project, doc.IssueNumber)
@@ -8667,6 +8937,14 @@ func (s *Store) SetRunTerminalState(ctx context.Context, project, runID, state s
 		}
 		return server.AbortRunResult{}, err
 	}
+
+	// Terminal-attribution backstop. recordTerminalSettle gates on the run's
+	// pre-patch state (doc.State, which the PatchPayload above does not mutate),
+	// so this path — reached from every completion-callback site — emits the
+	// metric/log only on a genuine non-terminal→terminal transition. A
+	// duplicate/replayed callback re-patches durable state idempotently above
+	// but does not re-fire the backstop.
+	s.recordTerminalSettle(doc, runRef, state, observation)
 
 	var issueLockReleased, prLockReleased *bool
 	if doc.IssueLockHolderID != nil && *doc.IssueLockHolderID != "" && doc.IssueNumber > 0 {
@@ -8718,6 +8996,7 @@ func (s *Store) RepairRunTerminalObservation(ctx context.Context, project, runID
 	}
 	wf, _ := s.workflowForRunExecution(ctx, project, doc.Workflow, doc.WorkflowSchemaRef)
 	observation := terminalObservationForRun(doc, wf, "aborted", doc.AbortReason, server.TerminalObservationSourceDecisionEngine)
+	observation = server.GuardTerminalFailureObservation(observation, "aborted", server.TerminalObservationSourceDecisionEngine, doc.AbortReason)
 	if observation == nil {
 		return TerminalObservationRepairResult{Previous: doc.TerminalObservation, AbortReason: doc.AbortReason}, nil
 	}
