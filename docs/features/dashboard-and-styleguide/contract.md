@@ -58,10 +58,15 @@ agent pipeline.
   leaving a stale admin panel.
 - A route refresh on a detail page should land back on the same durable entity
   or show an explicit not-found/error state.
-- Run detail graphs must show a failed owner node for terminal failures. When
-  dispatch fails before a runner job exists, the visible job inspector should
-  show `dispatch` as the failed step rather than leaving every workflow step
-  succeeded, skipped, or not-started.
+- Run detail graphs must show a failed owner node for terminal failures, and a
+  failed job must always own a failed step, so clicking a failed job never
+  yields all-green steps with no reason. For any terminal failure class, the
+  run-graph inspector must render the specific cause in place — the typed
+  `terminal_observation`, the `abort_reason`, and the deciding verification's
+  expected/observed/reasons — rather than leaving every workflow step
+  succeeded, skipped, or not-started. Dispatch failure is one example: when
+  dispatch fails before a runner job exists, the visible job inspector shows
+  `dispatch` as the failed step.
 
 ## Observability
 
