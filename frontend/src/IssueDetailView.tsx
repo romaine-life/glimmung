@@ -151,6 +151,21 @@ type RunProjectionRun = {
   evidence: RunProjectionEvidence[];
 };
 
+// VerificationFailureFields mirrors server.VerificationFailure — the
+// structured "why" a verify phase returned a non-pass verdict. The producer
+// emits expected/observed[/where] plus a suspected cause so a failed attempt
+// reads as expected-vs-observed instead of a bare enum. Carried on each
+// attempt's job_completions in the run projection (see graph_api.go) and on
+// the issue-graph attempt node metadata, so both surfaces render the same
+// failure block via VerificationFailureDetail.
+export type VerificationFailureFields = {
+  expected?: string | null;
+  observed?: string | null;
+  where?: string | null;
+  suspected_cause?: string | null;
+  cause_detail?: string | null;
+};
+
 type RunTerminalObservation = {
   class: string;
   phase?: string;
@@ -213,6 +228,7 @@ type RunProjectionPhase = {
       conclusion: string;
       verification_status?: string | null;
       verification_reasons?: string[];
+      verification_failure?: VerificationFailureFields | null;
       cost_usd?: number;
       phase_outputs?: Record<string, string>;
     }>;
@@ -2470,6 +2486,23 @@ function ProjectionInspector({
     : null;
   const selectedEvidence = projectionEvidenceForSelection(run.evidence ?? [], phase, latestAttempt, step);
   const collectedEvidence = step ? [] : projectionEvidenceForJob(run.evidence ?? [], phase, latestAttempt);
+  // Terminal-failure cause: the motivating bug was that clicking a failed
+  // job replaced the run summary (the only place abort_reason /
+  // terminal_observation rendered) with this inspector, which showed only
+  // green steps and no reason. The cause must travel into the inspector with
+  // the selection. Show it when this selection is the run's terminal-failure
+  // owner: the terminal_observation names this phase, or the selected
+  // phase/job is itself in a failed/aborted state. Pull the SPECIFIC cause
+  // from the typed observation (slice 1) and the deciding attempt's
+  // verification block — never the synthesized owner step's bare enum.
+  const terminalObs = run.terminal_observation ?? null;
+  const ownerPhaseMatch = terminalObs?.phase ? terminalObs.phase === phase.name : false;
+  const selectionFailed =
+    isTerminalFailureState(phase.state) || isTerminalFailureState(selectedJob?.state ?? null);
+  const decidingVerification = projectionDecidingVerification(phase, selectedJob?.id ?? null);
+  const hasTerminalCause = Boolean(terminalObs || run.abort_reason || decidingVerification);
+  const showTerminalCause = (ownerPhaseMatch || selectionFailed) && hasTerminalCause;
+  const terminalCauseLabel = terminalObs ? formatGraphState(terminalObs.class) : "terminal failure";
   return (
     <div className="run-panel">
       <div className="run-panel-header">
@@ -2550,6 +2583,31 @@ function ProjectionInspector({
         <div className="run-failure-detail" role="alert">
           <span className="pill drain">dispatch failed</span>
           <span className="mono">{dispatchFailureDetail}</span>
+        </div>
+      )}
+      {showTerminalCause && (
+        <div className="run-failure-detail" role="alert">
+          <span className="pill drain">{terminalCauseLabel}</span>
+          <div className="run-failure-cause">
+            {terminalObs?.message && <div className="mono">{terminalObs.message}</div>}
+            {terminalObs && (
+              <div>
+                <span className="key">cause</span>{" "}
+                <span className="mono">{terminalObservationDisplay(terminalObs)}</span>
+              </div>
+            )}
+            {run.abort_reason && (
+              <div>
+                <span className="key">abort</span> <span className="mono">{run.abort_reason}</span>
+              </div>
+            )}
+            {decidingVerification && (
+              <VerificationFailureDetail
+                failure={decidingVerification.failure}
+                reasons={decidingVerification.reasons}
+              />
+            )}
+          </div>
         </div>
       )}
       {selectedJob && runnerJob ? (
@@ -4052,6 +4110,100 @@ function prNumberFromNode(node: GraphNode | null): number | null {
   return match ? parseInt(match[1], 10) : null;
 }
 
+// VerificationFailureDetail renders the structured failure block (expected /
+// observed [where] / suspected cause / cause detail) above the raw
+// verification reasons list. It is the single renderer for that "why" so the
+// attempt card (issue graph) and the run-graph inspector show an identical
+// block without duplicating JSX. Renders nothing when there is neither a
+// structured failure nor any reasons. Exported so /_styleguide renders the
+// real component (the dashboard contract requires new reusable components to
+// appear in the styleguide).
+export function VerificationFailureDetail({
+  failure,
+  reasons,
+}: {
+  failure: VerificationFailureFields | null | undefined;
+  reasons: string[];
+}) {
+  const expected = stringOrNull(failure?.expected ?? null);
+  const observed = stringOrNull(failure?.observed ?? null);
+  const where = stringOrNull(failure?.where ?? null);
+  const suspectedCause = stringOrNull(failure?.suspected_cause ?? null);
+  const causeDetail = stringOrNull(failure?.cause_detail ?? null);
+  const hasFailureBlock = Boolean(expected || observed || suspectedCause);
+  if (!hasFailureBlock && reasons.length === 0) return null;
+  return (
+    <>
+      {hasFailureBlock && (
+        <div className="attempt-card-failure">
+          {expected && (
+            <div>
+              <span className="key">expected</span> <span className="mono">{expected}</span>
+            </div>
+          )}
+          {observed && (
+            <div>
+              <span className="key">observed</span>{" "}
+              <span className="mono">
+                {observed}
+                {where ? ` [${where}]` : ""}
+              </span>
+            </div>
+          )}
+          {suspectedCause && (
+            <div>
+              <span className="key">suspected cause</span> <span className="mono">{suspectedCause}</span>
+              {causeDetail ? <span className="dim"> — {causeDetail}</span> : null}
+            </div>
+          )}
+        </div>
+      )}
+      {reasons.length > 0 && (
+        <ul className="attempt-card-reasons">
+          {reasons.map((r, i) => (
+            <li key={i} className="mono dim">
+              {r}
+            </li>
+          ))}
+        </ul>
+      )}
+    </>
+  );
+}
+
+function isTerminalFailureState(state: string | null | undefined): boolean {
+  return state === "failed" || state === "aborted";
+}
+
+// projectionDecidingVerification finds the verification verdict that decided a
+// failed phase: the latest attempt's failed job completion (preferring the
+// selected job), returning its structured failure block plus reasons. This is
+// the SPECIFIC cause the inspector must render — the synthesized owner step's
+// bare `reason` enum (verification_failed) is not enough.
+function projectionDecidingVerification(
+  phase: RunProjectionPhase,
+  jobId: string | null,
+): { failure: VerificationFailureFields | null; reasons: string[] } | null {
+  for (let i = phase.attempts.length - 1; i >= 0; i--) {
+    const completions = phase.attempts[i].job_completions ?? [];
+    if (completions.length === 0) continue;
+    const preferred = jobId ? completions.filter((c) => c.job_id === jobId) : [];
+    const pool = preferred.length > 0 ? preferred : completions;
+    for (const completion of pool) {
+      const status = completion.verification_status?.trim().toLowerCase();
+      const reasons = (completion.verification_reasons ?? []).filter(
+        (r): r is string => typeof r === "string" && r.length > 0,
+      );
+      const failure = completion.verification_failure ?? null;
+      const failed = status === "fail" || status === "error";
+      if (failed || failure || reasons.length > 0) {
+        return { failure, reasons };
+      }
+    }
+  }
+  return null;
+}
+
 function AttemptCard({
   attempt,
   project,
@@ -4186,41 +4338,16 @@ function AttemptCard({
           </div>
         )}
       </div>
-      {(failureExpected || failureObserved || failureCause) && (
-        <div className="attempt-card-failure">
-          {failureExpected && (
-            <div>
-              <span className="key">expected</span>{" "}
-              <span className="mono">{failureExpected}</span>
-            </div>
-          )}
-          {failureObserved && (
-            <div>
-              <span className="key">observed</span>{" "}
-              <span className="mono">
-                {failureObserved}
-                {failureWhere ? ` [${failureWhere}]` : ""}
-              </span>
-            </div>
-          )}
-          {failureCause && (
-            <div>
-              <span className="key">suspected cause</span>{" "}
-              <span className="mono">{failureCause}</span>
-              {failureCauseDetail ? <span className="dim"> — {failureCauseDetail}</span> : null}
-            </div>
-          )}
-        </div>
-      )}
-      {verificationReasons.length > 0 && (
-        <ul className="attempt-card-reasons">
-          {verificationReasons.map((r, i) => (
-            <li key={i} className="mono dim">
-              {r}
-            </li>
-          ))}
-        </ul>
-      )}
+      <VerificationFailureDetail
+        failure={{
+          expected: failureExpected,
+          observed: failureObserved,
+          where: failureWhere,
+          suspected_cause: failureCause,
+          cause_detail: failureCauseDetail,
+        }}
+        reasons={verificationReasons}
+      />
       {phaseKind === "k8s_job" && runIdFromAttempt && attemptIndex !== null && (
         <RunnerJobInspector
           project={project}
