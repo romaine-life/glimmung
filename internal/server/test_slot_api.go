@@ -902,6 +902,39 @@ func cancelInflightActivation(waitCtx context.Context, key, cause string) bool {
 	return true
 }
 
+// awaitInflightActivation blocks until the in-flight activation goroutine for
+// the given lease key has finished (its done channel closes) or ctx is done.
+// Returns true if there was an activation to await.
+//
+// Unlike cancelInflightActivation it does NOT cancel the activation: the deploy
+// path WANTS activation's baseline `<slot>-hot` reconcile to land first so the
+// deploy's override reconcile is the authoritative last apply to that shared
+// release. Checkout starts activation asynchronously and Tank then deploys the
+// CI image onto the same lease; both call runTestSlotHelmReconcile(hot) against
+// the same release and the same lease+hot-keyed installer Job. Awaiting here
+// serializes the two applies so they cannot race (last-write-wins reverting the
+// slot to the chart-default baseline image). Same-pod only — the activation
+// registry is per-process; cross-replica ordering is covered by the deploy's
+// re-assert loop in DeployImageToSlot.
+func awaitInflightActivation(ctx context.Context, key string) bool {
+	if key == "" {
+		return false
+	}
+	raw, ok := testSlotActivations.Load(key)
+	if !ok {
+		return false
+	}
+	token, ok := raw.(*testSlotActivation)
+	if !ok || token == nil {
+		return false
+	}
+	select {
+	case <-token.done:
+	case <-ctx.Done():
+	}
+	return true
+}
+
 // Activation-cancel cause labels. Closed enum so the
 // glimmung_test_slot_activation_cancelled_total{cause} cardinality is bounded.
 const (
