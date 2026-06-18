@@ -58,10 +58,15 @@ type imageToSlotDeployer interface {
 // request is held open for the deploy and the durable outcome survives client
 // disconnects and proxy deadlines.
 //
-// The legitimacy gate (published + CI-green + mergeable + current-with-main) is
-// the caller's responsibility; this endpoint only ever operates on a git ref
-// (never an agent working tree), so it cannot deploy unpushed code, and the
-// SHA→image resolution deploys exactly the image CI built for that commit.
+// Legitimacy — published + CI-green + mergeable + current-with-main — is
+// enforced upstream by Tank's deterministic readiness gate, not here: the sole
+// caller is Tank's server-side test-slot provisioning gate
+// (provisionTestSlotForSession), which validates readiness through its CI-watch
+// readiness reducer before it ever calls this endpoint. This endpoint stays a
+// pure provisioner: it only ever operates on a git ref (never an agent working
+// tree), so it cannot deploy unpushed code, and the SHA→image resolution deploys
+// exactly the image CI built for that commit. It deliberately does not re-derive
+// or own the legitimacy gate.
 func deployImageToTestSlot(store ReadStore, preparer TestSlotPreparer, minter RunnerGitHubTokenMinter, performer deployImagePerformer, resolveRef refResolver, resolveImage testSlotImageResolver) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		writer, ok := store.(TestSlotOpHistoryStore)

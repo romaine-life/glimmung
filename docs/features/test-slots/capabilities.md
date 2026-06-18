@@ -77,6 +77,12 @@ Affected contracts:
 - Test Slots (primary — deploy image + job history)
 
 Contract impact:
+- Legitimacy (published + CI-green + mergeable + current-with-main) is enforced
+  upstream by Tank's deterministic readiness gate — the sole caller,
+  `provisionTestSlotForSession`, validates readiness before calling this
+  endpoint. Glimmung's deploy is a pure provisioner over a verified `git_ref`; it
+  does not re-derive or own that gate. (This corrects the older "the caller's
+  responsibility" framing, which predated Tank's server-side gate.)
 - The deploy input is only project, slot, and `git_ref`.
 - Durable job history is keyed by the deploy operation and projected through
   `GET /v1/test-slots/jobs/{project}/{job}`.
