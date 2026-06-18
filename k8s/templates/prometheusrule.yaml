@@ -1,0 +1,51 @@
+{{- /*
+  PrometheusRule for the run-terminal-attribution backstop. Gated on
+  .Values.observability.prometheusRule.enabled — default off, so a cluster
+  without the monitoring.coreos.com/v1 CRD can still helm install this chart,
+  mirroring the ServiceMonitor gating.
+
+  This rule is the runtime backstop for the platform invariant: no run may
+  settle terminal-failed with an unattributed cause. It pages when
+  glimmung_run_terminal_total carries class=malformed_terminal or class=unknown
+  (count/rate > 0 over the window). The structured "run settled terminal with
+  unattributed cause" log carries the run/cycle/phase/job drill-down.
+
+  NOTE: whether the central Prometheus actually evaluates this rule depends on
+  that Prometheus CR's ruleSelector / ruleNamespaceSelector (owned by the
+  cluster monitoring stack, not this chart). Set
+  .Values.observability.prometheusRule.labels to match that selector. See
+  docs/observability.md.
+*/ -}}
+{{- if .Values.observability.prometheusRule.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: glimmung-run-terminal-attribution
+  namespace: {{ .Values.observability.prometheusRule.namespace | default .Values.namespace }}
+  labels:
+    app: glimmung
+    {{- with .Values.observability.prometheusRule.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  groups:
+    - name: glimmung-run-terminal-attribution
+      rules:
+        - alert: GlimmungRunTerminalUnattributed
+          expr: sum(increase(glimmung_run_terminal_total{class=~"malformed_terminal|unknown"}[{{ .Values.observability.prometheusRule.window }}])) > 0
+          for: 0m
+          labels:
+            severity: {{ .Values.observability.prometheusRule.severity | quote }}
+            service: glimmung
+          annotations:
+            summary: "glimmung run settled terminal with an unattributed cause"
+            description: >-
+              One or more glimmung runs reached a terminal failure state without
+              an attributed cause (class=malformed_terminal or class=unknown) in
+              the last {{ .Values.observability.prometheusRule.window }}. This is
+              a platform-invariant violation: an operator would otherwise be left
+              staring at a blank failed run. Drill down with the structured log
+              "run settled terminal with unattributed cause" (fields:
+              project/issue/run/run_id/cycle/phase/job/step/class/state).
+            runbook_url: "https://github.com/romaine-life/glimmung/blob/main/docs/observability.md#run-terminal-attribution-backstop"
+{{- end }}

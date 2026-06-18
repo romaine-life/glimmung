@@ -5,6 +5,7 @@
 import { useState } from "react";
 import { PhaseGraph } from "./PhaseGraph";
 import { RunCancelAction, RUN_CANCEL_IDLE_STATE } from "./RunCancelAction";
+import { VerificationFailureDetail } from "./IssueDetailView";
 import "./index.css";
 
 type ReviewState = "unset" | "reviewed" | "needs-review";
@@ -158,6 +159,62 @@ const DESIGN_SYSTEM_ITEMS: PortfolioItem[] = [
             <span className="pill drain">dispatch failed</span>
             <span className="dispatch-error-message">runner dispatch failed: kube unavailable</span>
           </span>
+        </div>
+      </Specimen>
+    ),
+  },
+  {
+    id: "failed-verify-inspector",
+    title: "Failed Verify Inspector",
+    caption: "Terminal-failure cause rendered in place when an operator clicks a failed verify job",
+    render: () => (
+      <Specimen title="run inspector - failed verify cause">
+        <div className="run-panel">
+          <div className="run-panel-header">
+            <div>
+              <strong>Verify effect</strong>
+              <span className="pill drain" style={{ marginLeft: "0.5rem" }}>failed</span>
+              <span className="dim mono" style={{ marginLeft: "0.5rem" }}>verification_failed</span>
+            </div>
+            <button type="button" className="link">close</button>
+          </div>
+          <div className="run-panel-meta">
+            <div><span className="key">phase</span> <span className="mono">llm-verify</span></div>
+            <div><span className="key">job</span> <span className="mono">verify</span></div>
+          </div>
+          <div className="run-failure-detail" role="alert">
+            <span className="pill drain">verifier failed</span>
+            <div className="run-failure-cause">
+              <div className="mono">claimed result not observed: expected "CLOAK_CLASP", observed "Cloak Clasp"</div>
+              <div>
+                <span className="key">cause</span>{" "}
+                <span className="mono">verifier_failed phase=llm-verify job=verify step=verdict</span>
+              </div>
+              <div><span className="key">abort</span> <span className="mono">verification_failed</span></div>
+              <VerificationFailureDetail
+                failure={{
+                  expected: "CLOAK_CLASP",
+                  observed: "Cloak Clasp",
+                  where: "effect label",
+                  suspected_cause: "claimed_result_not_observed",
+                  cause_detail: "case/format mismatch between claimed and observed effect id",
+                }}
+                reasons={["claimed_result_not_observed"]}
+              />
+            </div>
+          </div>
+          <aside className="step-list" aria-label="runner job steps">
+            <button type="button" className="step-row done">
+              <span>✓</span>
+              <strong>Run verification</strong>
+              <small>exit 0</small>
+            </button>
+            <button type="button" className="step-row failed selected">
+              <span>!</span>
+              <strong>Verdict</strong>
+              <small>failed</small>
+            </button>
+          </aside>
         </div>
       </Specimen>
     ),
