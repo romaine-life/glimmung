@@ -6222,6 +6222,11 @@ func (s *Store) AbortRunByID(ctx context.Context, project, runID, reason string)
 		return server.AbortRunResult{}, err
 	}
 
+	// Terminal-attribution backstop: an admin abort is a genuine terminal
+	// transition (the already-terminal case returned early above), so it
+	// increments the once-per-settle metric and logs an unattributed cause.
+	s.recordTerminalSettle(doc, runRef, "aborted", observation)
+
 	// Best-effort lock releases.
 	var issueLockReleased, prLockReleased *bool
 	if doc.IssueLockHolderID != nil && *doc.IssueLockHolderID != "" && doc.IssueNumber > 0 {
@@ -6243,6 +6248,63 @@ func (s *Store) AbortRunByID(ctx context.Context, project, runID, reason string)
 		PRLockReleased:    prLockReleased,
 		SlotLeaseReleased: slotLeaseReleased,
 	}, nil
+}
+
+// recordTerminalSettle is the single emission point for the run-terminal
+// observability backstop. It increments glimmung_run_terminal_total exactly
+// once for a run reaching a terminal state, labelled by the guarded
+// observation's class and the terminal state, and — when the cause is
+// unattributed (malformed_terminal / unknown) — emits a LOUD structured log
+// naming the run/cycle/phase/job/class so the alert has a drill-down.
+//
+// It is called only from genuine terminal transitions (SetRunTerminalState and
+// the admin AbortRunByID path), each of which the run passes through exactly
+// once, so a run that settles terminal once increments exactly once.
+// RepairRunTerminalObservation re-derives an already-terminal run's observation
+// and is NOT a new transition — it deliberately does not call this, to avoid
+// double-counting a run that already settled.
+//
+// obs must be the observation AFTER GuardTerminalFailureObservation so the
+// metric and log reflect the guarded, post-attribution class.
+func (s *Store) recordTerminalSettle(doc runDoc, runRef, state string, obs *server.RunTerminalObservation) {
+	class := server.TerminalObservationMetricClass(obs)
+	metrics.RecordRunTerminal(class, state)
+	if !server.TerminalObservationClassUnattributed(class) {
+		return
+	}
+	// Unattributed terminal failure: the platform invariant's loud signal.
+	// Emit the structured drill-down the GlimmungRunTerminalUnattributed alert
+	// points operators at, with stable identifiers per the observability
+	// contract (project/issue/run/cycle/phase/job/step), never raw URLs.
+	phase, job, step := "", "", ""
+	if obs != nil {
+		phase, job, step = obs.Phase, obs.JobID, obs.StepSlug
+	}
+	slog.Error("run settled terminal with unattributed cause",
+		"project", doc.Project,
+		"issue", doc.IssueNumber,
+		"run", runRef,
+		"run_id", doc.ID,
+		"cycle", terminalSettleCycle(doc),
+		"phase", phase,
+		"job", job,
+		"step", step,
+		"class", class,
+		"state", state,
+	)
+}
+
+// terminalSettleCycle returns the run's verify-loop cycle number for the
+// drill-down log, preferring the durable run_cycle_number and falling back to
+// cycle_number. Zero means the run is not itself a recycle.
+func terminalSettleCycle(doc runDoc) int {
+	if doc.RunCycleNumber != nil {
+		return *doc.RunCycleNumber
+	}
+	if doc.CycleNumber != nil {
+		return *doc.CycleNumber
+	}
+	return 0
 }
 
 // terminalStateReleasesSlotLease reports whether a run reaching the given true
@@ -8861,6 +8923,11 @@ func (s *Store) SetRunTerminalState(ctx context.Context, project, runID, state s
 		}
 		return server.AbortRunResult{}, err
 	}
+
+	// Terminal-attribution backstop: the run has now durably settled terminal.
+	// Emit the once-per-settle metric (labelled by the guarded class + state)
+	// plus the loud drill-down log for an unattributed cause.
+	s.recordTerminalSettle(doc, runRef, state, observation)
 
 	var issueLockReleased, prLockReleased *bool
 	if doc.IssueLockHolderID != nil && *doc.IssueLockHolderID != "" && doc.IssueNumber > 0 {

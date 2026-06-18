@@ -27,6 +27,7 @@ var expectedMetrics = []string{
 	"glimmung_pg_queries_total",
 	"glimmung_pg_query_duration_seconds",
 	"glimmung_unavailable_total",
+	"glimmung_run_terminal_total",
 }
 
 func TestHandlerServesAllRegisteredMetrics(t *testing.T) {
@@ -43,6 +44,8 @@ func TestHandlerServesAllRegisteredMetrics(t *testing.T) {
 	RecordPostgresQuery("select_reports", "ok", 5*time.Millisecond)
 	RecordPostgresQuery("insert_runs", "error", 25*time.Millisecond)
 	RecordUnavailable("POST /v1/test-slots/checkout", "no_prepared_test_slot")
+	RecordRunTerminal("malformed_terminal", "aborted")
+	RecordRunTerminal("none", "passed")
 	// HTTP layer needs a request through the middleware.
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /probe-coverage", func(w http.ResponseWriter, _ *http.Request) {
@@ -127,6 +130,43 @@ func TestRecordUnavailableIncrementsCounter(t *testing.T) {
 	after := testutil.ToFloat64(unavailableTotal.WithLabelValues(route, reason))
 	if after-before != 2 {
 		t.Errorf("unavailable_total delta = %v, want 2", after-before)
+	}
+}
+
+// RecordRunTerminal feeds the run-terminal backstop counter that the
+// GlimmungRunTerminalUnattributed alert pages on. The test pins the label
+// contract (class + state), proves the unattributed malformed_terminal class
+// and a normal verifier_failed class both land on the right row, that a passed
+// run uses the "none" sentinel rather than a blank label, and that one call is
+// exactly one increment (no double count).
+func TestRecordRunTerminalLabelsAndSingleIncrement(t *testing.T) {
+	cases := []struct {
+		class string
+		state string
+	}{
+		{"malformed_terminal", "aborted"},
+		{"verifier_failed", "aborted"},
+		{"none", "passed"},
+	}
+	for _, c := range cases {
+		before := testutil.ToFloat64(runTerminalTotal.WithLabelValues(c.class, c.state))
+		RecordRunTerminal(c.class, c.state)
+		after := testutil.ToFloat64(runTerminalTotal.WithLabelValues(c.class, c.state))
+		if after-before != 1 {
+			t.Errorf("run_terminal_total{class=%s,state=%s}: expected +1, got +%v", c.class, c.state, after-before)
+		}
+	}
+}
+
+// An empty class must not win a blank label row — safeLabel coerces it to the
+// "unknown" sentinel, which is itself an unattributed-failure signal the alert
+// catches.
+func TestRecordRunTerminalEmptyClassCoercesToUnknown(t *testing.T) {
+	before := testutil.ToFloat64(runTerminalTotal.WithLabelValues("unknown", "aborted"))
+	RecordRunTerminal("", "aborted")
+	after := testutil.ToFloat64(runTerminalTotal.WithLabelValues("unknown", "aborted"))
+	if after-before != 1 {
+		t.Errorf("run_terminal_total{class=unknown,state=aborted}: expected +1 from empty class, got +%v", after-before)
 	}
 }
 

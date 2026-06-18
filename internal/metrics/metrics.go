@@ -582,6 +582,56 @@ func RecordRunPhaseJobTerminal(conclusion, reason string) {
 	runPhaseJobTerminalTotal.WithLabelValues(safeLabel(conclusion), safeLabel(reason)).Inc()
 }
 
+// --- Run terminal settle (platform invariant backstop) ----------------------
+//
+// glimmung_run_terminal_total is the runtime backstop for the terminal-
+// attribution invariant: no run may settle terminal-failed without an
+// attributed cause. It increments exactly once per run reaching a terminal
+// state, at the same terminal-write choke points where
+// server.GuardTerminalFailureObservation runs (SetRunTerminalState and the
+// admin AbortRunByID path). RepairRunTerminalObservation re-derives an
+// already-terminal run's observation and is NOT a new transition, so it does
+// not increment — that would double-count a run that settled once.
+//
+// Label cardinality (bounded by construction):
+//   - class: the guarded terminal observation's class — the closed
+//     RunTerminalObservation enum {producer_phase_failed |
+//     verifier_contract_missing | verifier_failed | gate_failed |
+//     dispatch_failed | phase_requested_abort | manual_abort |
+//     malformed_terminal}, plus "none" (passed run, no failure cause) and
+//     "unknown" (empty-class sentinel). Callers feed
+//     server.TerminalObservationMetricClass so an absent/empty class collapses
+//     to a sentinel rather than expanding the label set or leaving it blank.
+//   - state: the terminal run state — {passed | aborted} today; "failed" is
+//     reserved by the same enum the guard already tolerates.
+//
+// `phase` is deliberately NOT a label: phase names are workflow-author-defined,
+// not a closed enum, so they are an unbounded-cardinality risk. Phase (and the
+// job/step owner identity) live in the structured drill-down log at the choke
+// point instead, per the observability contract.
+//
+// Failure mode: class="malformed_terminal" or class="unknown" on a terminal
+// failure means a run settled without a resolvable cause — the
+// GlimmungRunTerminalUnattributed alert pages on count/rate > 0, and the
+// co-located structured log carries the run/cycle/phase/job drill-down.
+
+var runTerminalTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "glimmung_run_terminal_total",
+		Help: "Runs that reached a terminal state, incremented once per run at the guarded terminal-write choke point. class is the guarded RunTerminalObservation class (producer_phase_failed | verifier_contract_missing | verifier_failed | gate_failed | dispatch_failed | phase_requested_abort | manual_abort | malformed_terminal | none for passed | unknown sentinel); state is the terminal run state (passed | aborted | failed). class=malformed_terminal|unknown is the unattributed-failure signal the GlimmungRunTerminalUnattributed alert pages on.",
+	},
+	[]string{"class", "state"},
+)
+
+// RecordRunTerminal counts one run reaching a terminal state. class must
+// already be derived through server.TerminalObservationMetricClass (so it is a
+// closed-enum class or a bounded sentinel) and state is the terminal run state.
+// Call exactly once per genuine terminal transition; never from the
+// re-derivation/repair path.
+func RecordRunTerminal(class, state string) {
+	runTerminalTotal.WithLabelValues(safeLabel(class), safeLabel(state)).Inc()
+}
+
 // --- Runner job watcher (primary detection) ---------------------------------
 //
 // glimmung's terminal-Job detection moved from a 30s polling
@@ -663,6 +713,7 @@ func init() {
 		inspectionsSweptTotal,
 		runInnerJobsRegisteredTotal,
 		runPhaseJobTerminalTotal,
+		runTerminalTotal,
 		runWatchEventsTotal,
 		runWatchDisconnectedSeconds,
 		runReconcilerCaughtTotal,
