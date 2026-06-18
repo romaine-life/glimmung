@@ -3,7 +3,7 @@ image:
   # Fingerprint-pinned. The build workflow rewrites this line on every push to
   # main via a `[skip ci]` follow-up commit. Quote the value so YAML always
   # treats image tags as strings.
-  tag: "app-01bd210bd90fdf4984dd238a356593988544b14c61be7de43dcb679b4db22747"
+  tag: "app-63643070a04f4c5d9172e49d61b73b80217f11e9ba5eb238ffaf5efd2e9f4ca8"
   pullPolicy: IfNotPresent
 
 namespace: glimmung
