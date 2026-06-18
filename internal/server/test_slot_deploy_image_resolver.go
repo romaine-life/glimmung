@@ -87,7 +87,11 @@ func resolveTestSlotImageFromGitHubActions(ctx context.Context, httpClient *http
 	}
 	if len(runs) > 0 {
 		run := runs[0]
-		resolved, err := resolvedTestSlotImageForWorkflowRun(settings, run, sha)
+		prNumber, err := prNumberForWorkflowRun(ctx, httpClient, slug, run, token)
+		if err != nil {
+			return ResolvedTestSlotImage{}, err
+		}
+		resolved, err := resolvedTestSlotImageForWorkflowRun(settings, run, sha, prNumber)
 		if err != nil {
 			return ResolvedTestSlotImage{}, err
 		}
@@ -111,7 +115,9 @@ func resolveTestSlotImageFromGitHubActions(ctx context.Context, httpClient *http
 		if run.Event == "pull_request" {
 			continue
 		}
-		resolved, err := resolvedTestSlotImageForWorkflowRun(settings, run, sha)
+		// Recent-runs fallback only considers non-PR runs (PR runs are skipped
+		// above), so they always use the ci-ref hash tag; no PR number applies.
+		resolved, err := resolvedTestSlotImageForWorkflowRun(settings, run, sha, 0)
 		if err != nil {
 			continue
 		}
@@ -218,15 +224,15 @@ func listWorkflowRuns(ctx context.Context, httpClient *http.Client, slug, workfl
 	return out, nil
 }
 
-func resolvedTestSlotImageForWorkflowRun(settings testSlotCIImageSettings, run githubWorkflowRun, sha string) (ResolvedTestSlotImage, error) {
-	tag, err := ciLookupTagForWorkflowRun(run, sha)
+func resolvedTestSlotImageForWorkflowRun(settings testSlotCIImageSettings, run githubWorkflowRun, sha string, prNumber int) (ResolvedTestSlotImage, error) {
+	tag, err := ciLookupTagForWorkflowRun(run, sha, prNumber)
 	if err != nil {
 		return ResolvedTestSlotImage{}, err
 	}
 	return resolvedTestSlotImageFromRepositoryTag(settings.Registry, settings.Repository, tag, fmt.Sprintf("github_actions:%s:run:%d:attempt:%d", settings.Workflow, run.ID, run.RunAttempt))
 }
 
-func ciLookupTagForWorkflowRun(run githubWorkflowRun, sha string) (string, error) {
+func ciLookupTagForWorkflowRun(run githubWorkflowRun, sha string, prNumber int) (string, error) {
 	if run.ID <= 0 {
 		return "", fmt.Errorf("workflow run id is required")
 	}
@@ -234,14 +240,66 @@ func ciLookupTagForWorkflowRun(run githubWorkflowRun, sha string) (string, error
 	if attempt <= 0 {
 		attempt = 1
 	}
-	if run.Event == "pull_request" && len(run.PullRequests) > 0 && run.PullRequests[0].Number > 0 {
-		return fmt.Sprintf("ci-pr-%d-run-%d-attempt-%d", run.PullRequests[0].Number, run.ID, attempt), nil
+	// docker-build-check tags pull_request builds ci-pr-<number>-... and only
+	// non-PR builds ci-ref-<hash>-.... A pull_request run therefore MUST resolve
+	// to a PR number; falling back to the ci-ref hash would look up a tag CI
+	// never pushes for PR builds (the 2026-06-18 deploy-image regression, where
+	// GitHub returned an empty pull_requests array on the run).
+	if run.Event == "pull_request" {
+		if prNumber <= 0 {
+			return "", fmt.Errorf("pull_request workflow run %d has no resolvable PR number for the ci-pr lookup tag", run.ID)
+		}
+		return fmt.Sprintf("ci-pr-%d-run-%d-attempt-%d", prNumber, run.ID, attempt), nil
 	}
 	sha = strings.TrimSpace(sha)
 	if sha == "" {
 		return "", fmt.Errorf("source sha is required for non-PR CI lookup tag")
 	}
 	return fmt.Sprintf("ci-ref-%s-run-%d-attempt-%d", shortRefHash(sha), run.ID, attempt), nil
+}
+
+// prNumberForWorkflowRun resolves the PR number for a workflow run. GitHub's
+// workflow_runs API frequently returns an empty pull_requests array even for
+// same-repo pull_request runs, so when the run omits it we resolve the number
+// from the head commit. Without this, a pull_request run falls through to the
+// ci-ref-<hash> lookup tag that docker-build-check never pushes for PRs.
+func prNumberForWorkflowRun(ctx context.Context, httpClient *http.Client, slug string, run githubWorkflowRun, token string) (int, error) {
+	if n := firstWorkflowRunPRNumber(run); n > 0 {
+		return n, nil
+	}
+	if run.Event != "pull_request" {
+		return 0, nil
+	}
+	head := strings.TrimSpace(run.HeadSHA)
+	if head == "" {
+		return 0, fmt.Errorf("pull_request workflow run %d has no head_sha to resolve a PR number", run.ID)
+	}
+	return lookupPRNumberForCommit(ctx, httpClient, slug, head, token)
+}
+
+func firstWorkflowRunPRNumber(run githubWorkflowRun) int {
+	for _, pr := range run.PullRequests {
+		if pr.Number > 0 {
+			return pr.Number
+		}
+	}
+	return 0
+}
+
+func lookupPRNumberForCommit(ctx context.Context, httpClient *http.Client, slug, sha, token string) (int, error) {
+	var prs []struct {
+		Number int `json:"number"`
+	}
+	apiURL := githubAPIBase + "/repos/" + slug + "/commits/" + url.PathEscape(sha) + "/pulls"
+	if err := githubGetJSON(ctx, httpClient, apiURL, token, &prs); err != nil {
+		return 0, fmt.Errorf("resolve PR number for commit %s: %w", sha, err)
+	}
+	for _, pr := range prs {
+		if pr.Number > 0 {
+			return pr.Number, nil
+		}
+	}
+	return 0, fmt.Errorf("no pull request found for commit %s", sha)
 }
 
 func shortRefHash(value string) string {
