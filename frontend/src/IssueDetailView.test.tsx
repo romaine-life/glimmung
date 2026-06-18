@@ -1266,6 +1266,69 @@ describe("IssueDetailView run execution graph", () => {
     expect(await screen.findByText(/reason baselib_missing_or_unversioned/)).toBeInTheDocument();
   });
 
+  it("renders the terminal verify cause in the inspector when a failed verify job is selected", async () => {
+    // Regression for the spirelens#147 bug: selecting the failed verify job
+    // replaced the run summary (the only place the cause rendered) with the
+    // inspector, which showed only green steps and "Click a step to see its
+    // logs". The SPECIFIC cause — typed terminal_observation, abort_reason,
+    // and the deciding attempt's expected/observed verification failure — must
+    // travel into the inspector with the selection. Fails on the pre-fix code
+    // (no .run-failure-cause in the inspector); passes once the cause renders.
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url =
+        typeof input === "string"
+          ? new URL(input, "https://glimmung.test")
+          : input instanceof URL
+            ? input
+            : new URL(input.url);
+      if (url.pathname === "/v1/issues/by-number/ambience/172") return json(issueDetail);
+      if (url.pathname === "/v1/issues/by-number/ambience/172/graph") return json(issueGraph);
+      if (url.pathname === "/v1/projects/ambience/issues/172/runs/7/cycles/1/graph") {
+        return json(verifierFailedProjection());
+      }
+      if (url.pathname === "/v1/workflows") return json([]);
+      if (url.pathname === "/v1/projects/ambience/issues/172/runs/7.1/run/events") {
+        return json({ ...runnerEvents, events: [] });
+      }
+      throw new Error(`unhandled fetch ${url.pathname}`);
+    }));
+
+    renderIssueDetail(
+      "/projects/ambience/issues/172/runs/7/cycles/1/phases/llm-verify/jobs/verify",
+    );
+
+    // The terminal-failure cause traveled into the inspector (not the run
+    // summary) with the selection — rendered in the .run-failure-cause block.
+    const causeEl = await waitFor(() => {
+      const node = document.querySelector(".run-failure-cause");
+      if (!node) throw new Error("cause block not rendered");
+      return node as HTMLElement;
+    });
+    // The inspector — not the run summary — is showing the selected verify job.
+    const runPanel = document.querySelector(".run-panel") as HTMLElement;
+    expect(within(runPanel.querySelector(".run-panel-header") as HTMLElement).getByText("Verify effect"))
+      .toBeInTheDocument();
+    // Typed terminal_observation message + class.
+    expect(
+      within(causeEl).getByText(/expected "CLOAK_CLASP", observed "Cloak Clasp"/),
+    ).toBeInTheDocument();
+    expect(within(causeEl).getByText(/verifier_failed phase=llm-verify/)).toBeInTheDocument();
+    // abort_reason.
+    expect(within(causeEl).getByText("verification_failed")).toBeInTheDocument();
+    // Deciding attempt's structured failure block (reused from AttemptCard).
+    expect(within(causeEl).getByText("CLOAK_CLASP")).toBeInTheDocument();
+    expect(within(causeEl).getByText(/Cloak Clasp \[effect label\]/)).toBeInTheDocument();
+    // verification.reasons list.
+    expect(
+      within(causeEl).getByText("claimed_result_not_observed", { selector: "li" }),
+    ).toBeInTheDocument();
+
+    // The failed owner step is visible — not just green steps.
+    const stepRail = await screen.findByLabelText("runner job steps");
+    expect(within(stepRail).getByRole("button", { name: /Verdict/ })).toHaveTextContent("failed");
+    expect(within(stepRail).getByRole("button", { name: /Run verification/ })).toHaveTextContent("exit 0");
+  });
+
   it("routes a phase header click to its phase breadcrumb path", async () => {
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
       const url =
@@ -2132,6 +2195,100 @@ function abortedProjection() {
           })),
         };
       }),
+    }],
+  };
+}
+
+// A terminally-failed verify run: the verify phase owns the failure, with a
+// red `verdict` owner step, a typed terminal_observation, an abort_reason, and
+// the deciding attempt's structured verification failure. This is the
+// spirelens#147-shaped run from the motivating bug — clicking the failed verify
+// job must surface the SPECIFIC cause in the inspector, not just green steps.
+function verifierFailedProjection() {
+  const base = runProjection.runs[0];
+  const verifyPhase = {
+    name: "llm-verify",
+    kind: "k8s_job",
+    state: "failed",
+    reason: "verification_failed",
+    verify: true,
+    run_on: "success",
+    purpose: "verify",
+    depends_on: ["agent-execute"],
+    jobs: [{
+      id: "verify",
+      name: "Verify effect",
+      state: "failed",
+      reason: "verification_failed",
+      k8s_job_name: "glim-ambience-172-runs-7-1-0-llm-verify",
+      started_at: "2026-05-20T17:40:00.000Z",
+      completed_at: "2026-05-20T17:42:00.000Z",
+      steps: [
+        {
+          slug: "run-verify",
+          title: "Run verification",
+          state: "succeeded",
+          exit_code: 0,
+          started_at: "2026-05-20T17:40:00.000Z",
+          completed_at: "2026-05-20T17:42:00.000Z",
+        },
+        { slug: "verdict", title: "Verdict", state: "failed", reason: "verification_failed" },
+      ],
+    }],
+    attempts: [{
+      attempt_index: 0,
+      state: "completed",
+      conclusion: "failure",
+      verification_status: "fail",
+      decision: "abort",
+      log_archive_url: null,
+      evidence_refs: [],
+      job_completions: [{
+        job_id: "verify",
+        completed_at: "2026-05-20T17:42:00.000Z",
+        conclusion: "failure",
+        verification_status: "fail",
+        verification_reasons: ["claimed_result_not_observed"],
+        verification_failure: {
+          expected: "CLOAK_CLASP",
+          observed: "Cloak Clasp",
+          where: "effect label",
+          suspected_cause: "claimed_result_not_observed",
+          cause_detail: "case/format mismatch between claimed and observed effect id",
+        },
+      }],
+    }],
+  };
+  return {
+    ...runProjection,
+    runs: [{
+      ...base,
+      state: "aborted",
+      current_phase: "llm-verify",
+      abort_reason: "verification_failed",
+      terminal_observation: {
+        class: "verifier_failed",
+        phase: "llm-verify",
+        job_id: "verify",
+        step_slug: "verdict",
+        conclusion: "failure",
+        reason: "claimed_result_not_observed",
+        source: "completion_callback",
+        message: 'claimed result not observed: expected "CLOAK_CLASP", observed "Cloak Clasp"',
+      },
+      topology: {
+        ...base.topology,
+        phases: [...base.topology.phases, {
+          name: "llm-verify",
+          kind: "k8s_job",
+          verify: true,
+          run_on: "success",
+          purpose: "verify",
+          depends_on: ["agent-execute"],
+          jobs: [{ id: "verify", name: "Verify effect" }],
+        }],
+      },
+      phases: [...base.phases, verifyPhase],
     }],
   };
 }

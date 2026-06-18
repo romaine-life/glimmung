@@ -2828,6 +2828,27 @@ h2 .inline-action,
 .run-failure-detail .pill {
   flex: 0 0 auto;
 }
+/* Terminal-failure cause column inside the run-graph inspector: the typed
+   terminal observation, abort reason, and the deciding attempt's structured
+   verification failure (rendered by VerificationFailureDetail). Lays the
+   detail lines in a column beside the state pill. */
+.run-failure-cause {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.run-failure-cause .key {
+  color: #888;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 0.7rem;
+  margin-right: 4px;
+}
+.run-failure-cause .attempt-card-failure,
+.run-failure-cause .attempt-card-reasons {
+  margin-top: 2px;
+}
 .live-dot {
   display: inline-block;
   width: 8px;
