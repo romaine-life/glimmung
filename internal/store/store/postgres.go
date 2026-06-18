@@ -6177,7 +6177,7 @@ func (s *Store) AbortRunByID(ctx context.Context, project, runID, reason string)
 		return server.AbortRunResult{}, err
 	}
 
-	terminal := adminAbortAlreadyTerminalState(doc.State)
+	terminal := isTerminalRunState(doc.State)
 
 	// Compute run_ref for the result.
 	siblings, _ := s.issueRunDocs(ctx, project, doc.IssueNumber)
@@ -6257,16 +6257,24 @@ func (s *Store) AbortRunByID(ctx context.Context, project, runID, reason string)
 // unattributed (malformed_terminal / unknown) — emits a LOUD structured log
 // naming the run/cycle/phase/job/class so the alert has a drill-down.
 //
-// It is called only from genuine terminal transitions (SetRunTerminalState and
-// the admin AbortRunByID path), each of which the run passes through exactly
-// once, so a run that settles terminal once increments exactly once.
+// It is the single, structural no-double-count gate: it emits only when the
+// run's PRE-PATCH state (doc.State — the terminal-write PatchPayloads mutate the
+// raw payload map, never the doc struct) is not already terminal. So a genuine
+// non-terminal→terminal transition increments exactly once, while a
+// duplicate/replayed terminal write for an already-settled run (e.g. a repeated
+// completion callback into SetRunTerminalState) re-patches durable state
+// idempotently but does NOT re-fire the metric or the loud log.
 // RepairRunTerminalObservation re-derives an already-terminal run's observation
-// and is NOT a new transition — it deliberately does not call this, to avoid
-// double-counting a run that already settled.
+// and is NOT a new transition — it deliberately does not call this at all.
 //
 // obs must be the observation AFTER GuardTerminalFailureObservation so the
 // metric and log reflect the guarded, post-attribution class.
 func (s *Store) recordTerminalSettle(doc runDoc, runRef, state string, obs *server.RunTerminalObservation) {
+	if isTerminalRunState(doc.State) {
+		// The run had already settled before this write — not a fresh terminal
+		// transition, so the backstop must not count or alarm again.
+		return
+	}
 	class := server.TerminalObservationMetricClass(obs)
 	metrics.RecordRunTerminal(class, state)
 	if !server.TerminalObservationClassUnattributed(class) {
@@ -6325,7 +6333,13 @@ func terminalStateReleasesSlotLease(state string, preserveTestEnv bool) bool {
 	}
 }
 
-func adminAbortAlreadyTerminalState(state string) bool {
+// isTerminalRunState reports whether a run is already in a true terminal state.
+// It is the single shared predicate for "this run has already settled" used by
+// every terminal-write choke point: AbortRunByID skips an already-terminal run,
+// and SetRunTerminalState uses it to decide whether a state patch is a genuine
+// non-terminal→terminal transition (emit the terminal-settle metric/log) or an
+// idempotent re-patch of an already-settled run (do not re-fire the backstop).
+func isTerminalRunState(state string) bool {
 	switch state {
 	case "passed", "aborted", "recycled":
 		return true
@@ -8924,9 +8938,12 @@ func (s *Store) SetRunTerminalState(ctx context.Context, project, runID, state s
 		return server.AbortRunResult{}, err
 	}
 
-	// Terminal-attribution backstop: the run has now durably settled terminal.
-	// Emit the once-per-settle metric (labelled by the guarded class + state)
-	// plus the loud drill-down log for an unattributed cause.
+	// Terminal-attribution backstop. recordTerminalSettle gates on the run's
+	// pre-patch state (doc.State, which the PatchPayload above does not mutate),
+	// so this path — reached from every completion-callback site — emits the
+	// metric/log only on a genuine non-terminal→terminal transition. A
+	// duplicate/replayed callback re-patches durable state idempotently above
+	// but does not re-fire the backstop.
 	s.recordTerminalSettle(doc, runRef, state, observation)
 
 	var issueLockReleased, prLockReleased *bool
