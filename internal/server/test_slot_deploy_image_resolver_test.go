@@ -70,6 +70,50 @@ func TestGitHubActionsTestSlotImageResolverResolvesPRLookupTagAndValidates(t *te
 	}
 }
 
+func TestGitHubActionsTestSlotImageResolverResolvesPRNumberFromCommitWhenRunOmitsIt(t *testing.T) {
+	// GitHub's workflow_runs API frequently returns an empty pull_requests array
+	// for same-repo PR runs (verified against tank-operator #1295). The resolver
+	// must recover the PR number from the head commit and build the ci-pr tag CI
+	// actually pushed -- not fall back to ci-ref-<hash>, which is the 2026-06-18
+	// deploy-image regression.
+	restore := githubAPIBase
+	defer func() { githubAPIBase = restore }()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/repos/romaine-life/tank-operator/actions/workflows/docker-build-check.yaml/runs":
+			_, _ = fmt.Fprint(w, `{"workflow_runs":[{"id":12345,"run_attempt":1,"event":"pull_request","status":"completed","conclusion":"success","head_sha":"abc123def456","pull_requests":[]}]}`)
+		case "/repos/romaine-life/tank-operator/commits/abc123def456/pulls":
+			_, _ = fmt.Fprint(w, `[{"number":1295,"state":"open"}]`)
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+	githubAPIBase = srv.URL
+
+	project := Project{
+		Name: "tank-operator",
+		Metadata: map[string]any{
+			"test_slot_deploy": map[string]any{
+				"ci_image": map[string]any{
+					"repository": "romainecr.azurecr.io/tank-operator",
+				},
+			},
+		},
+	}
+	validator := &recordingImageValidator{}
+	resolved, err := githubActionsTestSlotImageResolver(srv.Client(), validator)(context.Background(), project, "romaine-life/tank-operator", "abc123def456", "gh-token")
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	want := "romainecr.azurecr.io/tank-operator:ci-pr-1295-run-12345-attempt-1"
+	if resolved.Image != want {
+		t.Fatalf("image=%q, want %q (must resolve PR number from commit, not ci-ref)", resolved.Image, want)
+	}
+}
+
 func TestGitHubActionsTestSlotImageResolverFallsBackToDispatchLookupTag(t *testing.T) {
 	restore := githubAPIBase
 	defer func() { githubAPIBase = restore }()
@@ -172,7 +216,7 @@ func TestTestSlotCIImageConfigParsesFullRepository(t *testing.T) {
 }
 
 func TestCILookupTagForWorkflowRunRejectsMissingRunID(t *testing.T) {
-	_, err := ciLookupTagForWorkflowRun(githubWorkflowRun{Event: "workflow_dispatch"}, "abc123")
+	_, err := ciLookupTagForWorkflowRun(githubWorkflowRun{Event: "workflow_dispatch"}, "abc123", 0)
 	if err == nil || !strings.Contains(err.Error(), "workflow run id is required") {
 		t.Fatalf("err=%v, want missing run id", err)
 	}
