@@ -225,7 +225,7 @@ func TestTerminalStateReleasesSlotLease(t *testing.T) {
 	}
 }
 
-func TestAdminAbortAlreadyTerminalState(t *testing.T) {
+func TestIsTerminalRunState(t *testing.T) {
 	cases := []struct {
 		state string
 		want  bool
@@ -240,8 +240,8 @@ func TestAdminAbortAlreadyTerminalState(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.state, func(t *testing.T) {
-			if got := adminAbortAlreadyTerminalState(tc.state); got != tc.want {
-				t.Fatalf("adminAbortAlreadyTerminalState(%q)=%t, want %t", tc.state, got, tc.want)
+			if got := isTerminalRunState(tc.state); got != tc.want {
+				t.Fatalf("isTerminalRunState(%q)=%t, want %t", tc.state, got, tc.want)
 			}
 		})
 	}
