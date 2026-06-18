@@ -1223,6 +1223,377 @@ func TestRunCycleGraphProjectionPromotesSkippedRowsForDispatchFailureOwnership(t
 	}
 }
 
+// assertFailedJobsOwnAFailedStep is the general run-graph owner-step
+// completeness invariant: no job projected in a failed/aborted state may render
+// with every step succeeded, skipped, or not_started — at least one `failed`
+// owner step must carry the failure.
+func assertFailedJobsOwnAFailedStep(t *testing.T, run RunProjectionRun) {
+	t.Helper()
+	for _, phase := range run.Phases {
+		for _, job := range phase.Jobs {
+			if job.State != "failed" && job.State != "aborted" {
+				continue
+			}
+			ownerFailed := false
+			for _, step := range job.Steps {
+				if step.State == "failed" {
+					ownerFailed = true
+					break
+				}
+			}
+			if !ownerFailed {
+				encoded, _ := json.MarshalIndent(job, "", "  ")
+				t.Fatalf("failed job %q/%q projected with no failed owner step: %s", phase.Name, job.ID, encoded)
+			}
+		}
+	}
+}
+
+func TestEnsureFailedJobOwnerStepShapes(t *testing.T) {
+	verificationFailed := "verification_failed"
+	dispatchFailed := "dispatch_failed"
+	jobFailed := "job_failed"
+	exitNonzero := "exit_nonzero"
+	exitCode := 1
+	greenSteps := func() []RunProjectionStep {
+		return []RunProjectionStep{
+			{Slug: "build-and-deploy", State: "succeeded"},
+			{Slug: "prepare-scenario", State: "succeeded"},
+			{Slug: "run-verification", State: "succeeded"},
+			{Slug: "collect-evidence", State: "succeeded"},
+			{Slug: "finalize-verification", State: "succeeded"},
+		}
+	}
+
+	t.Run("verdict failure appends a failed owner step and keeps real steps", func(t *testing.T) {
+		out := ensureFailedJobOwnerStep("failed", &verificationFailed, greenSteps(), false)
+		if len(out) != 6 {
+			t.Fatalf("expected the five real steps plus a verdict owner, got %#v", out)
+		}
+		for _, step := range out[:5] {
+			if step.State != "succeeded" {
+				t.Fatalf("real step demoted by verdict synthesis: %#v", step)
+			}
+		}
+		owner := out[5]
+		if owner.Slug != "verdict" || owner.State != "failed" || owner.Reason == nil || *owner.Reason != "verification_failed" {
+			t.Fatalf("verdict owner step=%#v", owner)
+		}
+	})
+
+	t.Run("producer job_failed verdict still gets a reason-carrying owner", func(t *testing.T) {
+		out := ensureFailedJobOwnerStep("failed", &jobFailed, []RunProjectionStep{{Slug: "produce", State: "succeeded"}}, false)
+		owner := out[len(out)-1]
+		if owner.Slug != "verdict" || owner.State != "failed" || owner.Reason == nil || *owner.Reason != "job_failed" {
+			t.Fatalf("producer verdict owner=%#v", owner)
+		}
+	})
+
+	t.Run("never-ran dispatch synthesizes dispatch and demotes unstarted steps", func(t *testing.T) {
+		steps := []RunProjectionStep{
+			{Slug: "clone", State: "skipped"},
+			{Slug: "run-verification", State: "skipped"},
+		}
+		out := ensureFailedJobOwnerStep("failed", &dispatchFailed, steps, true)
+		if len(out) != 3 || out[0].Slug != "dispatch" || out[0].State != "failed" || out[0].Reason == nil || *out[0].Reason != "dispatch_failed" {
+			t.Fatalf("dispatch owner steps=%#v", out)
+		}
+		for _, step := range out[1:] {
+			if step.State != "not_started" || step.Reason != nil || step.ExitCode != nil {
+				t.Fatalf("never-ran step should be demoted to not_started: %#v", step)
+			}
+		}
+	})
+
+	t.Run("dispatch reason but completion present is a verdict, not a demotion", func(t *testing.T) {
+		// neverRan=false: the steps ran, so we must not demote them even though
+		// the reason looks dispatch-shaped.
+		out := ensureFailedJobOwnerStep("failed", &dispatchFailed, greenSteps(), false)
+		if out[len(out)-1].Slug != "verdict" {
+			t.Fatalf("expected verdict owner when steps ran: %#v", out)
+		}
+		for _, step := range out[:5] {
+			if step.State != "succeeded" {
+				t.Fatalf("ran step demoted: %#v", step)
+			}
+		}
+	})
+
+	t.Run("dynamic_step_group failing case is already owned and left untouched", func(t *testing.T) {
+		steps := []RunProjectionStep{
+			{Slug: "gather-evidence-case-01", State: "succeeded"},
+			{Slug: "judge-evidence-case-01", State: "failed", Reason: &exitNonzero, ExitCode: &exitCode},
+			{Slug: "aggregate-verification", State: "not_started"},
+		}
+		out := ensureFailedJobOwnerStep("failed", &verificationFailed, steps, false)
+		if len(out) != 3 {
+			t.Fatalf("already-owned job must not be double-synthesized: %#v", out)
+		}
+		if out[1].Slug != "judge-evidence-case-01" || out[1].State != "failed" {
+			t.Fatalf("real failed case step mutated: %#v", out[1])
+		}
+	})
+
+	t.Run("aborted job is also covered", func(t *testing.T) {
+		out := ensureFailedJobOwnerStep("aborted", &verificationFailed, greenSteps(), false)
+		if out[len(out)-1].State != "failed" {
+			t.Fatalf("aborted job should own a failed step: %#v", out)
+		}
+	})
+
+	t.Run("non-terminal job is never given a synthetic failure", func(t *testing.T) {
+		for _, state := range []string{"succeeded", "active", "skipped", "not_started"} {
+			out := ensureFailedJobOwnerStep(state, &verificationFailed, greenSteps(), false)
+			if len(out) != 5 {
+				t.Fatalf("state %q should be untouched: %#v", state, out)
+			}
+		}
+	})
+}
+
+func TestRunCycleGraphProjectionOwnsVerifierVerdictFailure(t *testing.T) {
+	// spirelens#147 1.1: the verify job projected failed (verification_failed)
+	// but every step projected succeeded. The failed job must carry a `failed`
+	// owner step with the reason, and the real (succeeded) steps must NOT be
+	// demoted to not_started — they genuinely ran.
+	issueNumber := 147
+	runNumber := 1
+	cycleNumber := 1
+	runCycle := 1
+	runDisplay := "1.1"
+	now := time.Date(2026, 6, 14, 9, 30, 0, 0, time.UTC)
+	verificationFailed := "fail"
+	store := fakeGraphStore{
+		fakeReadStore: fakeReadStore{workflows: []Workflow{{
+			Project: "spirelens",
+			Name:    "default",
+			Phases: []PhaseSpec{
+				{Name: "prepare", Kind: "k8s_job", Jobs: []RunnerJobSpec{{ID: "env-prep"}}},
+				{
+					Name:      "testing",
+					Kind:      "k8s_job",
+					DependsOn: []string{"prepare"},
+					Verify:    true,
+					Jobs: []RunnerJobSpec{{
+						ID: "verify",
+						Steps: []RunnerStepSpec{
+							{Slug: "build-and-deploy", Title: stringPtr("Build and deploy")},
+							{Slug: "prepare-scenario", Title: stringPtr("Prepare scenario")},
+							{Slug: "run-verification", Title: stringPtr("Run verification")},
+							{Slug: "collect-evidence", Title: stringPtr("Collect evidence")},
+							{Slug: "finalize-verification", Title: stringPtr("Finalize verification")},
+						},
+					}},
+				},
+			},
+		}}},
+		issue: IssueDetail{
+			Ref:     "spirelens#147",
+			Project: "spirelens",
+			Number:  &issueNumber,
+			Title:   "Verify run",
+			State:   "open",
+		},
+		runs: []RunReport{{
+			ID:               "run-147",
+			Project:          "spirelens",
+			RunRef:           "spirelens#147/runs/1.1",
+			RunNumber:        &runNumber,
+			CycleNumber:      &cycleNumber,
+			RunCycleNumber:   &runCycle,
+			RunDisplayNumber: &runDisplay,
+			Workflow:         "default",
+			IssueRef:         "spirelens#147",
+			IssueNumber:      issueNumber,
+			State:            "aborted",
+			CurrentPhase:     stringPtr("testing"),
+			StartedAt:        now.Add(-30 * time.Minute),
+			UpdatedAt:        now,
+			PhaseExecutions: []RunPhaseExecution{{
+				Name:      "testing",
+				Kind:      "k8s_job",
+				State:     "failed",
+				Reason:    stringPtr("verification_failed"),
+				CreatedAt: now.Add(-30 * time.Minute).Format(time.RFC3339Nano),
+				Jobs: []RunJobExecution{{
+					ID:        "verify",
+					Name:      stringPtr("Verify"),
+					State:     "failed",
+					Reason:    stringPtr("verification_failed"),
+					CreatedAt: now.Add(-30 * time.Minute).Format(time.RFC3339Nano),
+					Steps: []RunStepExecution{
+						{Slug: "build-and-deploy", State: "succeeded"},
+						{Slug: "prepare-scenario", State: "succeeded"},
+						{Slug: "run-verification", State: "succeeded"},
+						{Slug: "collect-evidence", State: "succeeded"},
+						{Slug: "finalize-verification", State: "succeeded"},
+					},
+				}},
+			}},
+			Attempts: []RunReportAttempt{{
+				AttemptIndex:       0,
+				Phase:              "testing",
+				PhaseKind:          "k8s_job",
+				WorkflowFilename:   "k8s_job:testing",
+				DispatchedAt:       now.Add(-30 * time.Minute),
+				CompletedAt:        &now,
+				Conclusion:         stringPtr("failure"),
+				VerificationStatus: &verificationFailed,
+				JobCompletions: []RunAttemptJobCompletion{{
+					JobID:              "verify",
+					Conclusion:         "failure",
+					VerificationStatus: &verificationFailed,
+					CompletedAt:        &now,
+				}},
+			}},
+		}},
+	}
+	handler := NewWithStore(Settings{}, store)
+
+	var projection RunGraphProjection
+	getJSON(t, handler, "/v1/projects/spirelens/issues/147/runs/1/cycles/1/graph", &projection)
+
+	assertFailedJobsOwnAFailedStep(t, projection.Runs[0])
+
+	testingPhase := assertProjectionPhase(t, projection.Runs[0], "testing")
+	if testingPhase.State != "failed" {
+		t.Fatalf("testing phase=%#v", testingPhase)
+	}
+	job := testingPhase.Jobs[0]
+	if job.State != "failed" || job.Reason == nil || *job.Reason != "verification_failed" {
+		t.Fatalf("verify job=%#v", job)
+	}
+	realSlugs := map[string]bool{
+		"build-and-deploy": true, "prepare-scenario": true, "run-verification": true,
+		"collect-evidence": true, "finalize-verification": true,
+	}
+	var verdictSteps int
+	for _, step := range job.Steps {
+		if realSlugs[step.Slug] {
+			if step.State != "succeeded" {
+				t.Fatalf("real verify step was demoted, that would be a new lie: %#v", step)
+			}
+			continue
+		}
+		if step.State == "failed" {
+			verdictSteps++
+			if step.Reason == nil || *step.Reason != "verification_failed" {
+				t.Fatalf("verdict owner step must carry the reason: %#v", step)
+			}
+		}
+	}
+	if verdictSteps != 1 {
+		t.Fatalf("expected exactly one synthetic verdict owner step, got %d in %#v", verdictSteps, job.Steps)
+	}
+}
+
+func TestApplyNativeEventsOwnsGreenedVerifierVerdictFailure(t *testing.T) {
+	// The runner-event overlay greens steps from step_completed events. A
+	// verdict-failed verify job (no step_failed event) would otherwise end up a
+	// failed job with every step succeeded. Post-overlay enforcement must add a
+	// verdict owner without demoting the greened steps.
+	verificationFailed := "verification_failed"
+	exit0 := 0
+	run := RunProjectionRun{
+		Phases: []RunProjectionPhase{{
+			Name:   "testing",
+			Kind:   "k8s_job",
+			State:  "failed",
+			Reason: &verificationFailed,
+			Attempts: []RunProjectionAttempt{{
+				AttemptIndex: 0,
+				Phase:        "testing",
+				PhaseKind:    "k8s_job",
+			}},
+			Jobs: []RunProjectionJob{{
+				ID:     "verify",
+				State:  "failed",
+				Reason: &verificationFailed,
+				Steps: []RunProjectionStep{
+					{Slug: "run-verification", State: "failed"},
+					{Slug: "finalize-verification", State: "failed"},
+				},
+			}},
+		}},
+	}
+	events := []RunnerLogEvent{
+		{AttemptIndex: 0, Phase: "testing", JobID: "verify", Seq: 1, Event: "step_completed", StepSlug: "run-verification", ExitCode: &exit0},
+		{AttemptIndex: 0, Phase: "testing", JobID: "verify", Seq: 2, Event: "step_completed", StepSlug: "finalize-verification", ExitCode: &exit0},
+	}
+
+	applyRunnerEventsToProjectionRun(&run, events)
+
+	assertFailedJobsOwnAFailedStep(t, run)
+
+	steps := run.Phases[0].Jobs[0].Steps
+	if len(steps) != 3 {
+		t.Fatalf("expected greened steps plus a verdict owner, got %#v", steps)
+	}
+	if steps[0].State != "succeeded" || steps[1].State != "succeeded" {
+		t.Fatalf("greened steps should remain succeeded: %#v", steps[:2])
+	}
+	verdict := steps[2]
+	if verdict.Slug != "verdict" || verdict.State != "failed" || verdict.Reason == nil || *verdict.Reason != "verification_failed" {
+		t.Fatalf("verdict owner step=%#v", verdict)
+	}
+}
+
+func TestApplyNativeEventsLeavesDynamicFailedCaseSingleOwner(t *testing.T) {
+	// dynamic_step_group: the runner marks the failing case step failed itself.
+	// The invariant is already satisfied; enforcement must not double-synthesize
+	// a verdict owner.
+	verificationFailed := "verification_failed"
+	exit0 := 0
+	exit1 := 1
+	run := RunProjectionRun{
+		Phases: []RunProjectionPhase{{
+			Name:   "testing",
+			Kind:   "k8s_job",
+			State:  "failed",
+			Reason: &verificationFailed,
+			Attempts: []RunProjectionAttempt{{
+				AttemptIndex: 0,
+				Phase:        "testing",
+				PhaseKind:    "k8s_job",
+			}},
+			Jobs: []RunProjectionJob{{
+				ID:     "verify",
+				State:  "failed",
+				Reason: &verificationFailed,
+				Steps: []RunProjectionStep{
+					{Slug: "gather-evidence-case-01", State: "not_started"},
+					{Slug: "judge-evidence-case-01", State: "not_started"},
+				},
+			}},
+		}},
+	}
+	events := []RunnerLogEvent{
+		{AttemptIndex: 0, Phase: "testing", JobID: "verify", Seq: 1, Event: "step_completed", StepSlug: "gather-evidence-case-01", ExitCode: &exit0},
+		{AttemptIndex: 0, Phase: "testing", JobID: "verify", Seq: 2, Event: "step_failed", StepSlug: "judge-evidence-case-01", ExitCode: &exit1},
+	}
+
+	applyRunnerEventsToProjectionRun(&run, events)
+
+	assertFailedJobsOwnAFailedStep(t, run)
+
+	steps := run.Phases[0].Jobs[0].Steps
+	if len(steps) != 2 {
+		t.Fatalf("dynamic failing case must not be double-synthesized: %#v", steps)
+	}
+	failedCount := 0
+	for _, step := range steps {
+		if step.Slug == "verdict" {
+			t.Fatalf("synthetic verdict added despite a real failed case step: %#v", steps)
+		}
+		if step.State == "failed" {
+			failedCount++
+		}
+	}
+	if failedCount != 1 || steps[1].Slug != "judge-evidence-case-01" || steps[1].State != "failed" {
+		t.Fatalf("expected the real failing case to own the failure: %#v", steps)
+	}
+}
+
 func TestSystemGraphUsesProjectFilter(t *testing.T) {
 	number := 17
 	now := time.Date(2026, 5, 12, 18, 0, 0, 0, time.UTC)
