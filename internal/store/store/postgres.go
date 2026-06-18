@@ -3560,12 +3560,12 @@ func (s *Store) ListReviews(ctx context.Context, filter server.ReviewListFilter)
 	}
 
 	issueRefByID, issueNumberByID := buildIssueIndexes(issueDocs)
-	runRefByID, runByLinkedIssueID, runByRepoPR := buildRunIndexes(runDocs)
+	runRefByID, runByID, runByLinkedIssueID, runByRepoPR := buildRunIndexes(runDocs)
 
 	now := time.Now().UTC()
 	out := make([]server.ReviewRow, 0, len(reviewDocs))
 	for _, doc := range reviewDocs {
-		row := reviewRowFromDoc(doc, issueRefByID, issueNumberByID, runRefByID, runByLinkedIssueID, runByRepoPR, prLockByKey, now)
+		row := reviewRowFromDoc(doc, issueRefByID, issueNumberByID, runRefByID, runByID, runByLinkedIssueID, runByRepoPR, prLockByKey, now)
 		out = append(out, row)
 	}
 	if filter.Limit != nil && *filter.Limit < len(out) {
@@ -3951,12 +3951,16 @@ func buildIssueIndexes(docs []issueDoc) (map[string]string, map[string]int) {
 }
 
 // buildRunIndexes builds maps: run ID â†’ ref, linked_issue_id â†’ run, (repo,pr) â†’ run.
-func buildRunIndexes(docs []runDoc) (map[string]string, map[string]*runDoc, map[string]*runDoc) {
+func buildRunIndexes(docs []runDoc) (map[string]string, map[string]*runDoc, map[string]*runDoc, map[string]*runDoc) {
 	refByID := runRefMapFromDocs(docs)
+	byID := make(map[string]*runDoc)
 	byLinkedIssue := make(map[string]*runDoc)
 	byRepoPR := make(map[string]*runDoc)
 	for i := range docs {
 		d := &docs[i]
+		if d.ID != "" {
+			byID[d.ID] = d
+		}
 		if d.IssueID != "" {
 			cur := byLinkedIssue[d.IssueID]
 			if cur == nil || d.CreatedAt > cur.CreatedAt {
@@ -3971,7 +3975,7 @@ func buildRunIndexes(docs []runDoc) (map[string]string, map[string]*runDoc, map[
 			}
 		}
 	}
-	return refByID, byLinkedIssue, byRepoPR
+	return refByID, byID, byLinkedIssue, byRepoPR
 }
 
 func reviewRowFromDoc(
@@ -3979,6 +3983,7 @@ func reviewRowFromDoc(
 	issueRefByID map[string]string,
 	issueNumByID map[string]int,
 	runRefByID map[string]string,
+	runByID map[string]*runDoc,
 	runByLinkedIssue map[string]*runDoc,
 	runByRepoPR map[string]*runDoc,
 	prLockByKey map[string]bool,
@@ -4010,9 +4015,17 @@ func reviewRowFromDoc(
 		}
 	}
 
-	// Find associated run.
+	// Find associated run. Prefer the review's own linked run so an issue with
+	// multiple runs/PRs keeps each review bound to the run that actually
+	// produced it; only then fall back to the issue's latest run, then to the
+	// run that opened this PR number. Resolving by issue alone mis-binds every
+	// review on a recycled issue to the latest run, which defeats the
+	// dashboard's per-run review-decision scoping.
 	var run *runDoc
-	if doc.LinkedIssueID != nil && *doc.LinkedIssueID != "" {
+	if doc.LinkedRunID != nil && *doc.LinkedRunID != "" {
+		run = runByID[*doc.LinkedRunID]
+	}
+	if run == nil && doc.LinkedIssueID != nil && *doc.LinkedIssueID != "" {
 		run = runByLinkedIssue[*doc.LinkedIssueID]
 	}
 	if run == nil {
