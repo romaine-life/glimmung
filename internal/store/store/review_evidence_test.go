@@ -32,7 +32,7 @@ func TestReviewDocPreservesStructuredEvidence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	row := reviewRowFromDoc(decoded, nil, nil, nil, nil, nil, nil, time.Now().UTC())
+	row := reviewRowFromDoc(decoded, nil, nil, nil, nil, nil, nil, nil, time.Now().UTC())
 	if len(row.Evidence) != 1 {
 		t.Fatalf("row evidence=%#v", row.Evidence)
 	}
