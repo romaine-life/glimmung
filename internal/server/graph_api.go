@@ -1418,9 +1418,11 @@ func runProjectionJobsForExecution(
 	phaseReason *string,
 	attempts []RunReportAttempt,
 ) []RunProjectionJob {
-	executionJobs := runProjectionJobsFromExecutions(execution.Jobs, latestJobCompletionsByJob(attempts))
+	completions := latestJobCompletionsByJob(attempts)
+	executionJobs := runProjectionJobsFromExecutions(execution.Jobs, completions)
 	executionJobs = applyUndispatchedPhaseReason(executionJobs, phaseReason, len(attempts) == 0)
-	executionJobs = applyDispatchFailureOwnership(executionJobs, phaseState, phaseReason, latestJobCompletionsByJob(attempts))
+	executionJobs = applyDispatchFailureOwnership(executionJobs, phaseState, phaseReason, completions)
+	executionJobs = enforceFailedOwnerSteps(executionJobs, completions)
 	if len(spec.Jobs) == 0 {
 		return executionJobs
 	}
@@ -1532,7 +1534,6 @@ func applyDispatchFailureOwnership(jobs []RunProjectionJob, phaseState string, p
 		}
 		out[i].State = "failed"
 		out[i].Reason = phaseReason
-		out[i].Steps = dispatchFailureOwnedSteps(out[i].Steps, phaseReason)
 	}
 	return out
 }
@@ -1709,9 +1710,7 @@ func runProjectionJobs(phase PhaseSpec, phaseState string, phaseReason *string, 
 			Title: stringPointerOrNil("Workflow run"),
 			State: projectionStepStateForJob(state, reason, jobCompletions[jobID]),
 		}}
-		if isDispatchFailureProjectionReason(reason) && jobCompletions[jobID].JobID == "" {
-			steps = dispatchFailureOwnedSteps(steps, reason)
-		}
+		steps = ensureFailedJobOwnerStep(state, reason, steps, jobCompletions[jobID].JobID == "")
 		return []RunProjectionJob{{
 			ID:          jobID,
 			Name:        stringPointerOrNil(jobID),
@@ -1748,9 +1747,7 @@ func runProjectionJobs(phase PhaseSpec, phaseState string, phaseReason *string, 
 				State: stepState,
 			})
 		}
-		if isDispatchFailureProjectionReason(reason) && jobCompletions[jobID].JobID == "" {
-			steps = dispatchFailureOwnedSteps(steps, reason)
-		}
+		steps = ensureFailedJobOwnerStep(state, reason, steps, jobCompletions[jobID].JobID == "")
 		jobs = append(jobs, RunProjectionJob{
 			ID:          jobID,
 			Name:        job.Name,
@@ -1777,16 +1774,76 @@ func isDispatchFailureProjectionReason(reason *string) bool {
 	}
 }
 
-func dispatchFailureOwnedSteps(steps []RunProjectionStep, reason *string) []RunProjectionStep {
+const (
+	projectionDispatchStepSlug = "dispatch"
+	projectionVerdictStepSlug  = "verdict"
+)
+
+// ensureFailedJobOwnerStep enforces run-graph owner-step completeness: a job
+// projected in a terminal failed/aborted state must carry at least one `failed`
+// owner step naming the failure reason, so no failed job can ever render with
+// every step succeeded, skipped, or not_started. This is the single general
+// helper for that invariant — the dispatch never-ran case is folded in as one
+// branch, not kept as a parallel path (migration-policy: no parallel old path).
+//
+// The three honest shapes:
+//
+//   - already-owned: a genuine `failed` step already exists (the
+//     dynamic_step_group failing case the runner marks itself, or a `step_failed`
+//     exit_nonzero). The invariant already holds; leave the steps untouched so we
+//     do not double-synthesize.
+//   - never-ran dispatch: no job completion and a dispatch reason. The steps
+//     never executed, so synthesize the `dispatch` owner and demote the unstarted
+//     steps to not_started — the graph must not imply work ran.
+//   - ran-but-verdict-failed: the steps genuinely ran and honestly report their
+//     own success, but the job carries a verdict failure (verification_failed /
+//     verification_error, or a producer job_failed with no failed step). Append a
+//     synthetic `verdict` owner step carrying the reason and leave the real steps
+//     untouched. Demoting steps that actually ran would be a new lie.
+func ensureFailedJobOwnerStep(state string, reason *string, steps []RunProjectionStep, neverRan bool) []RunProjectionStep {
+	if state != "failed" && state != "aborted" {
+		return steps
+	}
+	for _, step := range steps {
+		if step.State == "failed" {
+			return steps
+		}
+	}
+	if neverRan && isDispatchFailureProjectionReason(reason) {
+		return dispatchOwnedSteps(steps, reason)
+	}
+	return append(steps, RunProjectionStep{
+		Slug:   projectionVerdictStepSlug,
+		Title:  stringPointerOrNil("Verdict"),
+		State:  "failed",
+		Reason: failureOwnerStepReason(reason),
+	})
+}
+
+// enforceFailedOwnerSteps applies ensureFailedJobOwnerStep to every projected
+// job in a phase. It is the single owner-step authority for the execution-ledger
+// projection path, where step states come straight from the durable ledger and a
+// verdict-failed verify job otherwise projects with every step succeeded.
+func enforceFailedOwnerSteps(jobs []RunProjectionJob, completions map[string]RunAttemptJobCompletion) []RunProjectionJob {
+	for i := range jobs {
+		_, ran := completions[jobs[i].ID]
+		jobs[i].Steps = ensureFailedJobOwnerStep(jobs[i].State, jobs[i].Reason, jobs[i].Steps, !ran)
+	}
+	return jobs
+}
+
+// dispatchOwnedSteps synthesizes the `dispatch` owner step for a never-ran
+// dispatch failure and demotes the steps that never executed to not_started.
+func dispatchOwnedSteps(steps []RunProjectionStep, reason *string) []RunProjectionStep {
 	out := make([]RunProjectionStep, 0, len(steps)+1)
 	out = append(out, RunProjectionStep{
-		Slug:   "dispatch",
+		Slug:   projectionDispatchStepSlug,
 		Title:  stringPointerOrNil("Dispatch job"),
 		State:  "failed",
-		Reason: reason,
+		Reason: failureOwnerStepReason(reason),
 	})
 	for _, step := range steps {
-		if step.Slug == "dispatch" {
+		if step.Slug == projectionDispatchStepSlug {
 			continue
 		}
 		if step.State == "skipped" || step.State == "failed" || step.State == "aborted" {
@@ -1797,6 +1854,20 @@ func dispatchFailureOwnedSteps(steps []RunProjectionStep, reason *string) []RunP
 		out = append(out, step)
 	}
 	return out
+}
+
+func failureOwnerStepReason(reason *string) *string {
+	if reason != nil && strings.TrimSpace(*reason) != "" {
+		return reason
+	}
+	return stringPointerOrNil("job_failed")
+}
+
+// isSynthesizedOwnerStepSlug reports whether a step slug is one of the owner
+// steps ensureFailedJobOwnerStep synthesizes. The runner-event overlay must not
+// reset these as if they were unobserved real steps.
+func isSynthesizedOwnerStepSlug(slug string) bool {
+	return slug == projectionDispatchStepSlug || slug == projectionVerdictStepSlug
 }
 
 func completionCostPtr(completion RunAttemptJobCompletion) *float64 {
@@ -2190,6 +2261,16 @@ func applyRunnerEventsToProjectionRun(run *RunProjectionRun, events []RunnerLogE
 		case phase.State == "dispatching" && phaseActive:
 			phase.State = "active"
 		}
+		// Re-establish owner-step completeness after the overlay. The overlay
+		// greens steps from step_completed events; a verdict-failed verify job
+		// (no step_failed event) would otherwise project as a failed job with
+		// every step succeeded. neverRan is false here: jobs reaching the overlay
+		// ran, and never-ran dispatch jobs keep the dispatch owner from the base
+		// projection (a failed step), so they no-op.
+		for jobIndex := range phase.Jobs {
+			job := &phase.Jobs[jobIndex]
+			job.Steps = ensureFailedJobOwnerStep(job.State, job.Reason, job.Steps, false)
+		}
 	}
 }
 
@@ -2279,6 +2360,12 @@ func resetUnobservedFailedSteps(job *RunProjectionJob, observedStepSlug map[stri
 	for stepIndex := range job.Steps {
 		step := &job.Steps[stepIndex]
 		if observedStepSlug[step.Slug] {
+			continue
+		}
+		if isSynthesizedOwnerStepSlug(step.Slug) {
+			// Deliberately synthesized failure owner (dispatch / verdict). It has
+			// no runner event by design; do not treat it as an unobserved real
+			// step and reset it.
 			continue
 		}
 		if step.State != "failed" {
