@@ -720,7 +720,7 @@ func (r *runner) runStep(ctx context.Context, step stepSpec) error {
 		_ = r.postEvent(ctx, "step_failed", &slug, msg, &exit, stepEventMetadata(step))
 		return errors.New(msg)
 	}
-	if status, reason, failed := r.dynamicCaseFailureForStep(step); failed {
+	if status, reason, failure, failed := r.dynamicCaseFailureForStep(step); failed {
 		exit := 1
 		msg := fmt.Sprintf("verification case %s reported status=%s", dynamicCaseStepLabel(step), status)
 		if strings.TrimSpace(reason) != "" {
@@ -730,6 +730,12 @@ func (r *runner) runStep(ctx context.Context, step stepSpec) error {
 		metadata["verification_status"] = status
 		if strings.TrimSpace(reason) != "" {
 			metadata["verification_reason"] = strings.TrimSpace(reason)
+		}
+		// Ride the structured failure block (expected/observed/where/
+		// suspected_cause/cause_detail) on the event so the hot stream is
+		// self-describing even when the verifier emitted no reasons[].
+		for key, value := range failure {
+			metadata["verification_"+key] = value
 		}
 		_ = r.postEvent(ctx, "step_failed", &slug, msg, &exit, metadata)
 		return dynamicVerificationFailure{Status: status, Reason: reason}
@@ -1687,21 +1693,21 @@ func (r *runner) collectCompletionMetadata(path string, step stepSpec) error {
 }
 
 func (r *runner) dynamicCaseFailed(index int) bool {
-	_, _, failed := r.dynamicCaseFailure(index)
+	_, _, _, failed := r.dynamicCaseFailure(index)
 	return failed
 }
 
-func (r *runner) dynamicCaseFailureForStep(step stepSpec) (string, string, bool) {
+func (r *runner) dynamicCaseFailureForStep(step stepSpec) (string, string, map[string]string, bool) {
 	index, err := strconv.Atoi(strings.TrimSpace(step.Env["GLIMMUNG_DYNAMIC_CASE_INDEX"]))
 	if err != nil || index <= 0 {
-		return "", "", false
+		return "", "", nil, false
 	}
 	return r.dynamicCaseFailure(index)
 }
 
-func (r *runner) dynamicCaseFailure(index int) (string, string, bool) {
+func (r *runner) dynamicCaseFailure(index int) (string, string, map[string]string, bool) {
 	if index <= 0 {
-		return "", "", false
+		return "", "", nil, false
 	}
 	for i := len(r.caseCompletions) - 1; i >= 0; i-- {
 		tc := r.caseCompletions[i]
@@ -1710,19 +1716,63 @@ func (r *runner) dynamicCaseFailure(index int) (string, string, bool) {
 		}
 		status := strings.TrimSpace(fmt.Sprint(tc.Verification["status"]))
 		if status != "fail" && status != "error" {
-			return status, "", false
+			return status, "", nil, false
 		}
-		reasons := stringSliceFromAny(tc.Verification["reasons"])
-		reason := ""
-		for _, candidate := range reasons {
-			if strings.TrimSpace(candidate) != "" {
-				reason = strings.TrimSpace(candidate)
-				break
-			}
-		}
-		return status, reason, true
+		failure := failureFieldsFromVerification(tc.Verification)
+		return status, firstDynamicCaseReason(tc.Verification, failure), failure, true
 	}
-	return "", "", false
+	return "", "", nil, false
+}
+
+// failureFieldsFromVerification normalizes the verification.json `failure`
+// block into trimmed string fields (expected / observed / where /
+// suspected_cause / cause_detail). Returns nil when the verifier emitted no
+// structured failure, so callers can range over it unconditionally.
+func failureFieldsFromVerification(verification map[string]any) map[string]string {
+	raw, ok := verification["failure"].(map[string]any)
+	if !ok || len(raw) == 0 {
+		return nil
+	}
+	out := map[string]string{}
+	for _, key := range []string{"expected", "observed", "where", "suspected_cause", "cause_detail"} {
+		value, present := raw[key]
+		if !present || value == nil {
+			continue
+		}
+		if s := strings.TrimSpace(fmt.Sprint(value)); s != "" {
+			out[key] = s
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// firstDynamicCaseReason picks the most human single-line "why" for a failed
+// case: an explicit verifier reason if present, else the structured failure
+// block's literal observation (with where), then its cause detail or suspected
+// cause. This rides the step_failed event message and the propagated abort
+// reason, so a failed case is never reported as a content-free status=fail.
+func firstDynamicCaseReason(verification map[string]any, failure map[string]string) string {
+	for _, candidate := range stringSliceFromAny(verification["reasons"]) {
+		if trimmed := strings.TrimSpace(candidate); trimmed != "" {
+			return trimmed
+		}
+	}
+	if observed := failure["observed"]; observed != "" {
+		if where := failure["where"]; where != "" {
+			return observed + " [" + where + "]"
+		}
+		return observed
+	}
+	if detail := failure["cause_detail"]; detail != "" {
+		return detail
+	}
+	if cause := failure["suspected_cause"]; cause != "" {
+		return "suspected cause: " + cause
+	}
+	return ""
 }
 
 func dynamicCaseStepLabel(step stepSpec) string {
