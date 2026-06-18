@@ -72,11 +72,29 @@ half-updated dashboard.
 - Failure classes should distinguish auth, validation, no capacity, callback,
   Kubernetes, Postgres, GitHub, and renderer failures when the feature crosses
   those boundaries.
-- Terminal run observations should distinguish producer phase failure,
-  verifier contract absence, verifier failure, evidence-gate failure, and
-  dispatch failure, and phase-requested abort with stable phase/job/step
-  identifiers when observed. Dispatch failure observations use
-  `step_slug=dispatch` because no workload step has started yet.
+- Terminal run observations must distinguish every canonical terminal class —
+  producer phase failure, verifier contract absence, verifier failure,
+  evidence-gate failure, dispatch failure, phase-requested abort, manual abort,
+  and the loud `malformed_terminal` signal — with stable phase/job/step
+  identifiers when observed and a specific, non-generic reason. Dispatch
+  failure observations use `step_slug=dispatch` because no workload step has
+  started yet. No run may settle into a terminal failure state without an
+  attributed cause: the fail-closed guard at the terminal-write choke point
+  rejects an absent observation, an empty/`unknown` class, or an empty message,
+  rewriting it into a `malformed_terminal` observation whose message names what
+  was missing — it never emits a silent generic.
+- The `glimmung_run_terminal_total{class,state}` counter is a required
+  invariant: it is incremented exactly once per terminal settle at the same
+  guarded choke point, with bounded closed-enum labels only (`class` is the
+  guarded terminal-observation class plus the `none`/`unknown` sentinels;
+  `state` is the terminal run state). Phase, job, and step owner identity stay
+  in the co-located structured drill-down log, never as labels. The counter
+  must not double-count a re-derivation/repair pass over an already-terminal
+  run.
+- The `GlimmungRunTerminalUnattributed` alert is a required invariant: it fires
+  whenever `glimmung_run_terminal_total` records a terminal settle with
+  `class=malformed_terminal` or `class=unknown`, so an unattributed terminal
+  failure pages an operator instead of passing silently.
 - Operator dashboards or API responses should expose stale lock, stale run,
   and missing evidence conditions when those states affect user trust.
 

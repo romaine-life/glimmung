@@ -4,6 +4,92 @@ This ledger names user-facing behavior under the observability and evidence
 contract. It is not a backlog. Entries land here when the behavior needs a
 stable handle for planning, review, tests, incident follow-up, or retirement.
 
+## no-invisible-terminal-failure
+
+Status: shipped
+
+Intent:
+No run may reach a terminal failed/aborted state that is invisible or
+unattributed. Observed failure class this exists to prevent (spirelens#147): a
+terminal failure could leave the run-graph inspector showing every workflow
+step as succeeded, skipped, or not-started, with no failed owner step and no
+specific cause — the run "failed" but every visible signal said it had not.
+The invariant generalizes the original dispatch-only guarantee to a total one:
+for EVERY terminal failure class, the run must carry (1) a typed terminal
+observation naming a known class with owner identity and a SPECIFIC cause,
+(2) a failed owner step in the run-graph projection, and (3) an inspector that
+renders that cause in place — backed by a runtime metric/alert and an
+enum-driven regression guard so a future class cannot regress into silence.
+
+Mechanism:
+- A single canonical class set, `server.AllTerminalObservationClasses`
+  (`producer_phase_failed`, `verifier_contract_missing`, `verifier_failed`,
+  `gate_failed`, `dispatch_failed`, `phase_requested_abort`, `manual_abort`,
+  `malformed_terminal`), is the one source of truth tying attribution,
+  projection, render, metric, and guard together.
+- Fail-closed attribution at the terminal-write choke point:
+  `server.GuardTerminalFailureObservation` rejects an absent observation, an
+  empty/`unknown` class, or an empty message and rewrites it into a loud
+  `malformed_terminal` observation naming what was missing — never a silent
+  generic.
+- Run-graph owner-step projection: `server.ensureFailedJobOwnerStep` guarantees
+  a failed job always owns a failed step, so a failed job never renders
+  all-green.
+- Inspector render: the class-agnostic `.run-failure-cause` block in
+  `IssueDetailView.tsx` (`VerificationFailureDetail`) renders the typed
+  `terminal_observation`, `abort_reason`, and the deciding verification's
+  expected/observed/reasons for any class.
+- Runtime backstop: `metrics.RecordRunTerminal` increments
+  `glimmung_run_terminal_total{class,state}` once per terminal settle at the
+  guarded choke point (bounded labels, no double-count), and the
+  `GlimmungRunTerminalUnattributed` Prometheus alert pages when
+  `class=malformed_terminal|unknown`.
+
+Affected contracts:
+- Issues And Runs (terminal failure is a typed owned failure across all classes;
+  run history exposes the failed phase/job, owner step, and typed cause).
+- Dashboard And Styleguide (run-graph inspector renders the specific cause and a
+  failed job always owns a failed step).
+- Observability And Evidence (primary — typed terminal observations MUST
+  distinguish every class; the metric and alert are required invariants with the
+  fail-closed no-unattributed guard and no double-count).
+- Workflow Execution (terminal failure classes originate from workflow phase /
+  verify / gate / dispatch outcomes; the canonical class set bounds them).
+
+Evidence:
+- Canonical class set + enum-driven regression guard:
+  `internal/server/terminal_observation.go::AllTerminalObservationClasses`,
+  `internal/server/terminal_observation_inventory_test.go::TestAllTerminalObservationClassesInventoryIsExact`
+  and `::TestEveryTerminalClassProjectsAFailedOwnerStep`.
+- Fail-closed attribution: `server.GuardTerminalFailureObservation` with
+  `internal/server/terminal_observation_test.go` (guard cases) and store-side
+  `internal/store/store/terminal_observation_test.go::TestTerminalObservationAttributesEveryClass`,
+  `::TestTerminalObservationFixtureCoversEveryCanonicalClass`,
+  `::TestTerminalObservationMalformedIsLoud`,
+  `::TestTerminalObservationNamesDispatchFailureAsDispatchStep`.
+- Run-graph owner-step projection: `server.ensureFailedJobOwnerStep` with
+  `internal/server/graph_api_test.go::assertFailedJobsOwnAFailedStep`,
+  `::TestEnsureFailedJobOwnerStepShapes`,
+  `::TestRunCycleGraphProjectionOwnsVerifierVerdictFailure`,
+  `::TestRunCycleGraphProjectionShowsForwardDispatchFailureWithDispatchStepOwnership`.
+- Inspector render: `frontend/src/IssueDetailView.tsx` `VerificationFailureDetail`
+  with `frontend/src/IssueDetailView.test.tsx` "renders the terminal verify
+  cause in the inspector when a failed verify job is selected", the per-class
+  inventory test "renders a non-blank inspector cause for terminal class %s"
+  over `ALL_TERMINAL_OBSERVATION_CLASSES`, and "the terminal class list matches
+  the canonical set".
+- Metric backstop: `metrics.RecordRunTerminal` →
+  `glimmung_run_terminal_total{class,state}` with
+  `internal/metrics/metrics_test.go::TestRecordRunTerminalLabelsAndSingleIncrement`,
+  `::TestRecordRunTerminalEmptyClassCoercesToUnknown`, and store-side
+  no-double-count `internal/store/store/terminal_settle_metric_test.go::TestRecordTerminalSettleDoesNotDoubleCount`,
+  `::TestSetRunTerminalSettleDoesNotRecountAlreadyTerminalRun`;
+  class derivation `internal/server/terminal_observation_metric_test.go::TestTerminalObservationMetricClass`,
+  `::TestTerminalObservationClassUnattributed`.
+- Alert backstop: `GlimmungRunTerminalUnattributed` in
+  `k8s/templates/prometheusrule.yaml` (fires on
+  `class=~"malformed_terminal|unknown"`).
+
 ## durable-inspections
 
 Status: active

@@ -59,10 +59,17 @@ browser memory.
   state for queued runs.
 - Job completion callbacks include `job_id`; phase completion waits for every
   registered job in the phase.
-- A phase dispatch failure is a terminal workflow-owned failure, not an absence
-  of evidence. Run history must expose the failed phase/job and a failed
-  `dispatch` step so no aborted run can show every workflow step as succeeded,
-  skipped, or not-started.
+- Any terminal failure of any class is a typed, owned failure, not an absence
+  of evidence. When a run settles into a terminal failure state — for any class
+  in the canonical set (`producer_phase_failed`, `verifier_contract_missing`,
+  `verifier_failed`, `gate_failed`, `dispatch_failed`, `phase_requested_abort`,
+  `manual_abort`, `malformed_terminal`) — run history must expose the failed
+  phase/job, a failed owner step, and a specific typed `terminal_observation`
+  cause, so no aborted run can show every workflow step as succeeded, skipped,
+  or not-started. A phase dispatch failure is one example: it owns a failed
+  `dispatch` step because no workload step has started yet. The canonical class
+  list is the single source of truth, so a future failure class cannot ship
+  without an owned, attributed terminal projection.
 - Recycle policy creates a new Cycle under the same Run. Manual rerun after a
   terminal state creates a new Run.
 - Run display numbering remains stable across reloads and schema changes.
@@ -82,9 +89,14 @@ browser memory.
 - Run state, current phase, attempts/cycles, abort reason, cost, validation
   URL, typed terminal observation, and callback status must be inspectable
   through API/UI surfaces.
-- Typed terminal observations for dispatch failures must include stable phase
-  identity, job identity when known, `step_slug=dispatch`, and the normalized
-  reason (`dispatch_failed` or `dispatch_timeout`).
+- Typed terminal observations for any terminal failure must carry owner
+  identity — phase identity, job identity when known, and `step_slug` where
+  determinable — plus a specific, non-generic reason naming the actual cause.
+  A dispatch failure is one example: it carries `step_slug=dispatch` with a
+  normalized reason (`dispatch_failed` or `dispatch_timeout`) because no
+  workload step has started yet. When attribution cannot be resolved, the run
+  must settle as the loud `malformed_terminal` signal that names what was
+  missing — never a silent generic or an empty/`unknown` class.
 - Runner event inspection should let an operator map hot job events back to
   run, cycle, phase, job, and step.
 - Lock contention and duplicate dispatch attempts should be logged or surfaced
