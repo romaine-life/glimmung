@@ -3,6 +3,13 @@ kind: Service
 metadata:
   name: glimmung
   namespace: {{ .Values.namespace }}
+  labels:
+    # The ServiceMonitor (templates/servicemonitor.yaml) selects this Service by
+    # label, so the label has to live here on the Service metadata — Prometheus
+    # Operator matches ServiceMonitor.spec.selector against Service labels, not
+    # against the Service's pod selector. Without it an enabled ServiceMonitor
+    # selects zero Services and nothing is scraped.
+    app: glimmung
 spec:
   selector:
     app: glimmung

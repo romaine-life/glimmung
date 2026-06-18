@@ -202,6 +202,22 @@ observability:
     severity: critical           # Alertmanager routing label
 ```
 
+The ServiceMonitor selects the `glimmung` Service by its `app: glimmung`
+**label** (Prometheus Operator matches `ServiceMonitor.spec.selector` against
+Service `metadata.labels`, not the Service's pod selector), so that label lives
+on the Service in `templates/service.yaml`. The endpoint scrapes the Service's
+`http` port (port 80 → `targetPort: http` → the app container's `:8000`, where
+`/metrics` is always served), path `/metrics`.
+
+In **this** cluster the prod `k8s/values.yaml` enables both
+`serviceMonitor` and `prometheusRule` and sets **no** `labels`: the cluster
+Prometheus (`monitoring/monitoring-kube-prometheus-prometheus`) ships empty
+match-all `serviceMonitorSelector`, `serviceMonitorNamespaceSelector`,
+`ruleSelector`, and `ruleNamespaceSelector`, so both resources are discovered
+in glimmung's namespace without a `release:` selector label. The `labels`
+override above is only needed on a cluster whose Prometheus CR uses a
+non-empty selector.
+
 The per-issue chart at [`k8s/issue/`](../../k8s/issue/) ships the
 `scrapeAnnotations` toggle but no ServiceMonitor — per-issue releases are
 ephemeral and not normally scraped by central Prometheus. The `/metrics`

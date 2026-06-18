@@ -236,7 +236,14 @@ observability:
   # ServiceMonitor (monitoring.coreos.com/v1) for Prometheus Operator. Requires
   # the CRD; chart render fails if the CRD is absent and this is enabled.
   serviceMonitor:
-    enabled: false
+    # Enabled for the prod glimmung deploy: the Prometheus Operator CRDs exist
+    # in this cluster and the cluster Prometheus
+    # (monitoring/monitoring-kube-prometheus-prometheus) has empty match-all
+    # serviceMonitorSelector + serviceMonitorNamespaceSelector, so this
+    # ServiceMonitor is picked up with no extra release label. This turns on
+    # scraping of glimmung's always-on /metrics endpoint (was previously
+    # emitted but never scraped).
+    enabled: true
     interval: 30s
     scrapeTimeout: 10s
     # Namespace the ServiceMonitor lands in. Empty = chart namespace.
@@ -253,7 +260,12 @@ observability:
   # central Prometheus evaluates this rule depends on that Prometheus CR's
   # ruleSelector/ruleNamespaceSelector — set `labels` to match it.
   prometheusRule:
-    enabled: false
+    # Enabled for the prod glimmung deploy: the cluster Prometheus has empty
+    # match-all ruleSelector + ruleNamespaceSelector, so shipping the
+    # GlimmungRunTerminalUnattributed rule in glimmung's namespace is enough for
+    # it to be evaluated — no extra release label required. This makes the
+    # run-terminal-attribution alert from #846 actually fire.
+    enabled: true
     # Namespace the PrometheusRule lands in. Empty = chart namespace.
     namespace: ""
     # Extra labels so the cluster Prometheus' ruleSelector picks the rule up
