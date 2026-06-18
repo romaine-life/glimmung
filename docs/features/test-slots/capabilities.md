@@ -68,7 +68,10 @@ Intent:
 `deploy_image_to_test_slot` resolves a verified pushed ref to the CI-built
 image, dispatches the slot deploy, records durable job history, and polls the
 neutral job-status route until terminal. The slot runs the same image that PR
-CI proved and main will promote.
+CI proved and main will promote. Dispatch also refreshes a short active lease
+to the configured hot-swap minimum remaining TTL before slow ref/image
+resolution and Kubernetes deploy work begin, so active validation does not race
+the original checkout deadline.
 
 Affected contracts:
 - Test Slots (primary — deploy image + job history)
@@ -77,5 +80,14 @@ Contract impact:
 - The deploy input is only project, slot, and `git_ref`.
 - Durable job history is keyed by the deploy operation and projected through
   `GET /v1/test-slots/jobs/{project}/{job}`.
+- A deploy against an expired or cleanup-started lease fails instead of
+  resurrecting the slot.
 - Build-stream project metadata and kind selection are retired and rejected on
   project registration.
+
+Evidence:
+- `internal/server/test_slot_deploy_image_api_test.go` —
+  `TestDeployImageToTestSlotExtendsShortLeaseToHotSwapMinimum` and
+  `TestDeployImageToTestSlotDoesNotShortenSufficientLease`.
+- `internal/server/test_lease_defaults_api_test.go` —
+  hot-swap minimum TTL route coverage for global and project settings.

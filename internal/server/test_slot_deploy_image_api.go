@@ -62,12 +62,13 @@ type imageToSlotDeployer interface {
 // the caller's responsibility; this endpoint only ever operates on a git ref
 // (never an agent working tree), so it cannot deploy unpushed code, and the
 // SHA→image resolution deploys exactly the image CI built for that commit.
-func deployImageToTestSlot(store ReadStore, minter RunnerGitHubTokenMinter, performer deployImagePerformer, resolveRef refResolver, resolveImage testSlotImageResolver) http.HandlerFunc {
+func deployImageToTestSlot(store ReadStore, preparer TestSlotPreparer, minter RunnerGitHubTokenMinter, performer deployImagePerformer, resolveRef refResolver, resolveImage testSlotImageResolver) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		writer, ok := store.(TestSlotOpHistoryStore)
 		stateStore, hasState := store.(StateStore)
-		if !ok || writer == nil || !hasState || stateStore == nil {
-			writeProblem(w, http.StatusServiceUnavailable, "test-slot history store not configured")
+		updater, hasTTLUpdater := store.(LeaseTTLUpdater)
+		if !ok || writer == nil || !hasState || stateStore == nil || !hasTTLUpdater || updater == nil {
+			writeProblem(w, http.StatusServiceUnavailable, "test-slot history or TTL store not configured")
 			return
 		}
 		if performer == nil || resolveRef == nil || resolveImage == nil {
@@ -136,6 +137,23 @@ func deployImageToTestSlot(store ReadStore, minter RunnerGitHubTokenMinter, perf
 			return
 		}
 		imageValueKey := testSlotDeployImageValueKey(project)
+		leaseExtendedBy, err := ensureTestSlotHotSwapLeaseTTL(r.Context(), store, preparer, minter, project, lease)
+		switch {
+		case errors.Is(err, ErrNotFound):
+			writeProblem(w, http.StatusNotFound, "test slot lease not found")
+			return
+		case errors.Is(err, ErrConflict):
+			writeProblem(w, http.StatusConflict, "test slot lease cannot be refreshed")
+			return
+		case err != nil:
+			writeInternalError(w, r, err, "refresh test-slot lease before deploy failed")
+			return
+		}
+		if leaseExtendedBy > 0 {
+			if current, ok, err := currentTestSlotLease(r.Context(), store, lease); err == nil && ok {
+				lease = current
+			}
+		}
 
 		// Resolve the ref to its commit SHA, then resolve that SHA to the
 		// fingerprinted image CI built. Raw SHA tags are not a deploy contract:
@@ -177,15 +195,17 @@ func deployImageToTestSlot(store ReadStore, minter RunnerGitHubTokenMinter, perf
 			Status:    "running",
 			Summary:   fmt.Sprintf("image_deploy dispatched git_ref=%s sha=%s slot=%s status=running", req.GitRef, sha, slotName),
 			Diagnostics: map[string]any{
-				"job_name":        deployJob,
-				"slot_name":       slotName,
-				"git_ref":         req.GitRef,
-				"sha":             sha,
-				"image":           image,
-				"image_tag":       resolvedImage.Tag,
-				"image_override":  imageOverrideValue,
-				"image_source":    resolvedImage.Source,
-				"image_value_key": imageValueKey,
+				"job_name":                  deployJob,
+				"slot_name":                 slotName,
+				"git_ref":                   req.GitRef,
+				"sha":                       sha,
+				"image":                     image,
+				"image_tag":                 resolvedImage.Tag,
+				"image_override":            imageOverrideValue,
+				"image_source":              resolvedImage.Source,
+				"image_value_key":           imageValueKey,
+				"lease_ttl_seconds":         lease.TTLSeconds,
+				"lease_extended_by_seconds": leaseExtendedBy,
 			},
 			CreatedAt: time.Now().UTC(),
 		}
@@ -197,7 +217,7 @@ func deployImageToTestSlot(store ReadStore, minter RunnerGitHubTokenMinter, perf
 		go func() {
 			derr := performer(bgCtx, deployLease, project, sha, imageOverrideValue, imageValueKey)
 			status := "deployed"
-			diag := map[string]any{"job_name": deployJob, "slot_name": slotName, "git_ref": req.GitRef, "sha": sha, "image": image, "image_tag": resolvedImage.Tag, "image_override": imageOverrideValue, "image_source": resolvedImage.Source}
+			diag := map[string]any{"job_name": deployJob, "slot_name": slotName, "git_ref": req.GitRef, "sha": sha, "image": image, "image_tag": resolvedImage.Tag, "image_override": imageOverrideValue, "image_source": resolvedImage.Source, "lease_ttl_seconds": deployLease.TTLSeconds, "lease_extended_by_seconds": leaseExtendedBy}
 			if derr != nil {
 				status = "deploy_failed"
 				diag["error"] = derr.Error()
@@ -212,18 +232,70 @@ func deployImageToTestSlot(store ReadStore, minter RunnerGitHubTokenMinter, perf
 		}()
 
 		writeJSON(w, http.StatusAccepted, map[string]any{
-			"lease":          leaseRef,
-			"job":            deployJob,
-			"status":         "running",
-			"git_ref":        req.GitRef,
-			"sha":            sha,
-			"image":          image,
-			"image_tag":      resolvedImage.Tag,
-			"image_override": imageOverrideValue,
-			"image_source":   resolvedImage.Source,
-			"history_entry":  startEntry,
+			"lease":                     leaseRef,
+			"job":                       deployJob,
+			"status":                    "running",
+			"git_ref":                   req.GitRef,
+			"sha":                       sha,
+			"image":                     image,
+			"image_tag":                 resolvedImage.Tag,
+			"image_override":            imageOverrideValue,
+			"image_source":              resolvedImage.Source,
+			"lease_ttl_seconds":         lease.TTLSeconds,
+			"lease_extended_by_seconds": leaseExtendedBy,
+			"history_entry":             startEntry,
 		})
 	}
+}
+
+func ensureTestSlotHotSwapLeaseTTL(ctx context.Context, store ReadStore, preparer TestSlotPreparer, minter RunnerGitHubTokenMinter, project Project, lease Lease) (int, error) {
+	updater, ok := store.(LeaseTTLUpdater)
+	if !ok || updater == nil {
+		return 0, errors.New("test-slot lease TTL updater not configured")
+	}
+	if lease.State != "claimed" {
+		return 0, ErrConflict
+	}
+	if slotState, hasSlotState := currentTestSlotState(ctx, store, lease); hasSlotState && slotState == SlotStateCleaning {
+		return 0, ErrConflict
+	}
+	expiresAt := testSlotLeaseExpiresAt(lease)
+	if expiresAt == nil {
+		return 0, nil
+	}
+	now := time.Now().UTC()
+	if !expiresAt.After(now) {
+		return 0, ErrConflict
+	}
+	minRemainingSeconds := hotSwapMinTTLForTestLease(ctx, store, project)
+	if minRemainingSeconds <= 0 {
+		return 0, nil
+	}
+	targetExpiresAt := now.Add(time.Duration(minRemainingSeconds) * time.Second)
+	if !targetExpiresAt.After(*expiresAt) {
+		return 0, nil
+	}
+	started := lease.RequestedAt
+	if lease.AssignedAt != nil {
+		started = *lease.AssignedAt
+	}
+	if started.IsZero() {
+		return 0, ErrConflict
+	}
+	newTTLSeconds := int(targetExpiresAt.Sub(started) / time.Second)
+	if started.Add(time.Duration(newTTLSeconds) * time.Second).Before(targetExpiresAt) {
+		newTTLSeconds++
+	}
+	if newTTLSeconds <= lease.TTLSeconds {
+		return 0, nil
+	}
+	ref := LeasePublicRefFromLease(lease)
+	updated, err := updater.UpdateLeaseTTLByRef(ctx, lease.Project, ref, newTTLSeconds)
+	if err != nil {
+		return 0, err
+	}
+	rearmUpdatedLeaseTimer(ctx, store, preparer, minter, updated)
+	return updated.TTLSeconds - lease.TTLSeconds, nil
 }
 
 // testSlotDeployImageValueKey is the chart value the deploy override pins to the

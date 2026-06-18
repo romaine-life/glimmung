@@ -91,7 +91,7 @@ func TestDeployImageToTestSlotHappyPath(t *testing.T) {
 		return "abc123def456", nil
 	}
 	resolveImage := stubTestSlotImageResolver("romainecr.azurecr.io/tank-operator:ci-pr-77-run-12345-attempt-2")
-	handler := http.HandlerFunc(deployImageToTestSlot(store, nil, performer, resolveRef, resolveImage))
+	handler := http.HandlerFunc(deployImageToTestSlot(store, nil, nil, performer, resolveRef, resolveImage))
 	body := `{"project":"tank-operator","slot_name":"tank-operator-slot-1","git_ref":"feat/x"}`
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, authedDeployRequest(t, body))
@@ -135,6 +135,106 @@ func TestDeployImageToTestSlotHappyPath(t *testing.T) {
 	}
 }
 
+func TestDeployImageToTestSlotExtendsShortLeaseToHotSwapMinimum(t *testing.T) {
+	store := newDeployImageStore(t)
+	assignedAt := time.Now().UTC().Add(-55 * time.Minute)
+	store.leases[0].RequestedAt = assignedAt
+	store.leases[0].AssignedAt = &assignedAt
+	store.leases[0].TTLSeconds = 3600
+	store.fakeReadStore.projects[0].Metadata[testLeaseProjectHotSwapMinTTLSecondsKey] = 3600
+	performer := func(context.Context, Lease, Project, string, string, string) error { return nil }
+	resolveRef := func(context.Context, string, string, string) (string, error) { return "abc123def456", nil }
+	resolveImage := stubTestSlotImageResolver("romainecr.azurecr.io/tank-operator:ci-pr-77-run-12345-attempt-2")
+	handler := http.HandlerFunc(deployImageToTestSlot(store, nil, nil, performer, resolveRef, resolveImage))
+
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, authedDeployRequest(t, `{"project":"tank-operator","slot_name":"tank-operator-slot-1","git_ref":"feat/x"}`))
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	if store.updatedRef != "tank-operator-slot-1" {
+		t.Fatalf("updatedRef=%q, want tank-operator-slot-1", store.updatedRef)
+	}
+	expiresAt := assignedAt.Add(time.Duration(store.updatedTTL) * time.Second)
+	if remaining := time.Until(expiresAt); remaining < 3590*time.Second {
+		t.Fatalf("remaining TTL after deploy refresh=%s, want at least project hot-swap minimum", remaining)
+	}
+	if !strings.Contains(rec.Body.String(), `"lease_extended_by_seconds":`) {
+		t.Fatalf("response=%s, want lease extension detail", rec.Body.String())
+	}
+}
+
+func TestDeployImageToTestSlotDoesNotShortenSufficientLease(t *testing.T) {
+	store := newDeployImageStore(t)
+	assignedAt := time.Now().UTC().Add(-5 * time.Minute)
+	store.leases[0].RequestedAt = assignedAt
+	store.leases[0].AssignedAt = &assignedAt
+	store.leases[0].TTLSeconds = 7200
+	performer := func(context.Context, Lease, Project, string, string, string) error { return nil }
+	resolveRef := func(context.Context, string, string, string) (string, error) { return "abc123def456", nil }
+	resolveImage := stubTestSlotImageResolver("romainecr.azurecr.io/tank-operator:ci-pr-77-run-12345-attempt-2")
+	handler := http.HandlerFunc(deployImageToTestSlot(store, nil, nil, performer, resolveRef, resolveImage))
+
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, authedDeployRequest(t, `{"project":"tank-operator","slot_name":"tank-operator-slot-1","git_ref":"feat/x"}`))
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	if store.updatedTTL != 0 {
+		t.Fatalf("updatedTTL=%d, want no TTL write", store.updatedTTL)
+	}
+	if !strings.Contains(rec.Body.String(), `"lease_extended_by_seconds":0`) {
+		t.Fatalf("response=%s, want zero lease extension detail", rec.Body.String())
+	}
+}
+
+func TestDeployImageToTestSlotRejectsCleanupStartedLease(t *testing.T) {
+	store := newDeployImageStore(t)
+	now := time.Now().UTC()
+	store.leases[0].RequestedAt = now
+	store.leases[0].AssignedAt = &now
+	store.leases[0].TTLSeconds = 3600
+	ref := "tank-operator-slot-1"
+	if _, err := store.CreateSlot(context.Background(), Slot{
+		Project:        "tank-operator",
+		SlotIndex:      1,
+		SlotName:       "tank-operator-slot-1",
+		State:          SlotStateCleaning,
+		UpdatedAt:      now,
+		ActiveLeaseRef: &ref,
+	}); err != nil {
+		t.Fatalf("seed slot: %v", err)
+	}
+	calls := make(chan struct{}, 1)
+	performer := func(context.Context, Lease, Project, string, string, string) error {
+		calls <- struct{}{}
+		return nil
+	}
+	resolveRef := func(context.Context, string, string, string) (string, error) {
+		calls <- struct{}{}
+		return "abc123def456", nil
+	}
+	resolveImage := stubTestSlotImageResolver("romainecr.azurecr.io/tank-operator:ci-pr-77-run-12345-attempt-2")
+	handler := http.HandlerFunc(deployImageToTestSlot(store, nil, nil, performer, resolveRef, resolveImage))
+
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, authedDeployRequest(t, `{"project":"tank-operator","slot_name":"tank-operator-slot-1","git_ref":"feat/x"}`))
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	if store.updatedTTL != 0 {
+		t.Fatalf("updatedTTL=%d, want no TTL write", store.updatedTTL)
+	}
+	select {
+	case <-calls:
+		t.Fatal("deploy should not resolve or perform after cleanup starts")
+	default:
+	}
+}
+
 func TestDeployImageToTestSlotUsesFullRefForNonTagImageValueKey(t *testing.T) {
 	store := newDeployImageStore(t)
 	project := &store.fakeReadStore.projects[0]
@@ -146,7 +246,7 @@ func TestDeployImageToTestSlotUsesFullRefForNonTagImageValueKey(t *testing.T) {
 	}
 	resolveRef := func(context.Context, string, string, string) (string, error) { return "abc123def456", nil }
 	resolveImage := stubTestSlotImageResolver("romainecr.azurecr.io/tank-operator:ci-pr-77-run-12345-attempt-2")
-	handler := http.HandlerFunc(deployImageToTestSlot(store, nil, performer, resolveRef, resolveImage))
+	handler := http.HandlerFunc(deployImageToTestSlot(store, nil, nil, performer, resolveRef, resolveImage))
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, authedDeployRequest(t, `{"project":"tank-operator","slot_name":"tank-operator-slot-1","git_ref":"feat/x"}`))
 	if rec.Code != http.StatusAccepted {
@@ -167,7 +267,7 @@ func TestDeployImageToTestSlotRequiresGitRef(t *testing.T) {
 	store := newDeployImageStore(t)
 	performer := func(context.Context, Lease, Project, string, string, string) error { return nil }
 	resolveRef := func(context.Context, string, string, string) (string, error) { return "sha", nil }
-	handler := http.HandlerFunc(deployImageToTestSlot(store, nil, performer, resolveRef, stubTestSlotImageResolver("romainecr.azurecr.io/tank-operator:app-test")))
+	handler := http.HandlerFunc(deployImageToTestSlot(store, nil, nil, performer, resolveRef, stubTestSlotImageResolver("romainecr.azurecr.io/tank-operator:app-test")))
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, authedDeployRequest(t, `{"project":"tank-operator","slot_name":"tank-operator-slot-1"}`))
 	if rec.Code != http.StatusBadRequest {
@@ -179,7 +279,7 @@ func TestDeployImageToTestSlotNoLease(t *testing.T) {
 	store := newDeployImageStore(t)
 	performer := func(context.Context, Lease, Project, string, string, string) error { return nil }
 	resolveRef := func(context.Context, string, string, string) (string, error) { return "sha", nil }
-	handler := http.HandlerFunc(deployImageToTestSlot(store, nil, performer, resolveRef, stubTestSlotImageResolver("romainecr.azurecr.io/tank-operator:app-test")))
+	handler := http.HandlerFunc(deployImageToTestSlot(store, nil, nil, performer, resolveRef, stubTestSlotImageResolver("romainecr.azurecr.io/tank-operator:app-test")))
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, authedDeployRequest(t, `{"project":"tank-operator","slot_name":"tank-operator-slot-9","git_ref":"feat/x"}`))
 	if rec.Code != http.StatusNotFound {
@@ -192,7 +292,7 @@ func TestDeployImageToTestSlotNoLease(t *testing.T) {
 func TestDeployImageToTestSlotNotConfigured(t *testing.T) {
 	store := newDeployImageStore(t)
 	resolveRef := func(context.Context, string, string, string) (string, error) { return "sha", nil }
-	handler := http.HandlerFunc(deployImageToTestSlot(store, nil, nil, resolveRef, stubTestSlotImageResolver("romainecr.azurecr.io/tank-operator:app-test")))
+	handler := http.HandlerFunc(deployImageToTestSlot(store, nil, nil, nil, resolveRef, stubTestSlotImageResolver("romainecr.azurecr.io/tank-operator:app-test")))
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, authedDeployRequest(t, `{"project":"tank-operator","slot_name":"tank-operator-slot-1","git_ref":"feat/x"}`))
 	if rec.Code != http.StatusServiceUnavailable {
@@ -223,7 +323,7 @@ func TestDeployImageToTestSlotRequiresHelmConfig(t *testing.T) {
 	store.projects[0].Metadata = map[string]any{}
 	performer := func(context.Context, Lease, Project, string, string, string) error { return nil }
 	resolveRef := func(context.Context, string, string, string) (string, error) { return "sha", nil }
-	handler := http.HandlerFunc(deployImageToTestSlot(store, nil, performer, resolveRef, stubTestSlotImageResolver("romainecr.azurecr.io/tank-operator:app-test")))
+	handler := http.HandlerFunc(deployImageToTestSlot(store, nil, nil, performer, resolveRef, stubTestSlotImageResolver("romainecr.azurecr.io/tank-operator:app-test")))
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, authedDeployRequest(t, `{"project":"tank-operator","slot_name":"tank-operator-slot-1","git_ref":"feat/x"}`))
 	if rec.Code != http.StatusUnprocessableEntity {
@@ -240,7 +340,7 @@ func TestDeployImageToTestSlotRequiresResolvedValidatedFingerprintImage(t *testi
 	}
 	resolveRef := func(context.Context, string, string, string) (string, error) { return "unmappedsha", nil }
 	resolveImage := failingTestSlotImageResolver(fmt.Errorf("no successful app-image workflow run with a CI lookup tag for commit unmappedsha"))
-	handler := http.HandlerFunc(deployImageToTestSlot(store, nil, performer, resolveRef, resolveImage))
+	handler := http.HandlerFunc(deployImageToTestSlot(store, nil, nil, performer, resolveRef, resolveImage))
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, authedDeployRequest(t, `{"project":"tank-operator","slot_name":"tank-operator-slot-1","git_ref":"feat/x"}`))
 	if rec.Code != http.StatusUnprocessableEntity {
