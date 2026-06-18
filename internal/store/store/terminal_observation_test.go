@@ -262,6 +262,380 @@ func TestTerminalObservationNamesDispatchFailureAsDispatchStep(t *testing.T) {
 	}
 }
 
+// TestTerminalObservationAttributesEveryClass is the contract test for the
+// platform invariant: no run reaches a terminal failure state without a typed
+// terminal observation that names a known non-success class, carries owner
+// identity (phase + job + step_slug where applicable), and a SPECIFIC
+// reason/message — for EVERY terminal failure class in the enum.
+func TestTerminalObservationAttributesEveryClass(t *testing.T) {
+	exit1 := 1
+
+	producerAbort := string(decision.AbortMalformed)
+	verifyAbort := string(decision.AbortBudgetAttempts)
+	gateAbort := string(decision.AbortMalformed)
+	requestedAbort := string(decision.AbortRequested)
+	malformedAbort := string(decision.AbortMalformed)
+
+	verifierVerification := &verificationDoc{
+		Status:  "fail",
+		Reasons: []string{"claimed_result_not_observed"},
+		Failure: &verificationFailureDoc{
+			Expected:       `on-screen text "CLOAK_CLASP"`,
+			Observed:       `display name "Cloak Clasp"`,
+			Where:          "decoded frame",
+			SuspectedCause: "test_expectation_mismatch",
+			CauseDetail:    "the game UI renders the display name, not the literal token",
+		},
+	}
+
+	cases := []struct {
+		name             string
+		doc              runDoc
+		wf               *server.Workflow
+		abortReason      *string
+		wantClass        string
+		wantPhase        string
+		wantJob          string
+		wantStep         string
+		wantReason       string
+		msgContains      []string
+		msgNotContains   []string
+		ownerlessAllowed bool // manual_abort has no phase/job owner
+	}{
+		{
+			name: "producer_phase_failed",
+			doc: runDoc{
+				Attempts: []attemptDoc{{
+					AttemptIndex: 0,
+					Phase:        "llm-work",
+					Conclusion:   stringPtrValue("failure"),
+					Decision:     &producerAbort,
+					JobCompletions: map[string]runnerJobCompletionDoc{
+						"llm-implement": {JobID: "llm-implement", Conclusion: "failure", TerminalReason: "job_failed"},
+					},
+				}},
+				PhaseExecutions: []phaseExecutionDoc{{
+					Name: "llm-work",
+					Jobs: []jobExecutionDoc{{
+						ID:     "llm-implement",
+						State:  "failed",
+						Reason: stringPtrValue("step_failed"),
+						Steps: []stepExecutionDoc{{
+							Slug:     "push-branch",
+							State:    "failed",
+							Reason:   stringPtrValue("exit_nonzero"),
+							ExitCode: &exit1,
+						}},
+					}},
+				}},
+			},
+			wf:          &server.Workflow{Phases: []server.PhaseSpec{{Name: "llm-work"}}},
+			wantClass:   server.TerminalObservationProducerPhaseFailed,
+			wantPhase:   "llm-work",
+			wantJob:     "llm-implement",
+			wantStep:    "push-branch",
+			msgContains: []string{"producer phase llm-work", "push-branch", "exit code 1"},
+		},
+		{
+			name: "verifier_failed",
+			doc: runDoc{
+				Attempts: []attemptDoc{{
+					AttemptIndex: 0,
+					Phase:        "llm-verify",
+					Conclusion:   stringPtrValue("failure"),
+					Decision:     &verifyAbort,
+					Verification: verifierVerification,
+					JobCompletions: map[string]runnerJobCompletionDoc{
+						"llm-verify": {
+							JobID:          "llm-verify",
+							Conclusion:     "failure",
+							TerminalReason: "verification_failed",
+							Verification:   verifierVerification,
+						},
+					},
+				}},
+				PhaseExecutions: []phaseExecutionDoc{{
+					Name:  "llm-verify",
+					State: "failed",
+					Jobs: []jobExecutionDoc{{
+						ID:    "llm-verify",
+						State: "failed",
+						// Every step exited 0 — the spirelens#147 shape.
+						Steps: []stepExecutionDoc{{Slug: "judge-evidence", State: "succeeded"}},
+					}},
+				}},
+			},
+			wf:             &server.Workflow{Phases: []server.PhaseSpec{{Name: "llm-verify", Verify: true}}},
+			wantClass:      server.TerminalObservationVerifierFailed,
+			wantPhase:      "llm-verify",
+			wantJob:        "llm-verify",
+			wantReason:     "claimed_result_not_observed",
+			msgContains:    []string{"claimed_result_not_observed", "expected:", "observed:", "decoded frame", "test_expectation_mismatch"},
+			msgNotContains: []string{": verification_failed"},
+		},
+		{
+			name: "gate_failed",
+			doc: runDoc{
+				Attempts: []attemptDoc{{
+					AttemptIndex: 0,
+					Phase:        "evidence-gate",
+					Conclusion:   stringPtrValue("failure"),
+					Decision:     &gateAbort,
+					JobCompletions: map[string]runnerJobCompletionDoc{
+						"evidence-gate": {
+							JobID:        "evidence-gate",
+							Conclusion:   "failure",
+							Verification: &verificationDoc{Status: "fail", Reasons: []string{"required_evidence_absent"}},
+						},
+					},
+				}},
+				PhaseExecutions: []phaseExecutionDoc{{
+					Name:  "evidence-gate",
+					State: "failed",
+					Jobs:  []jobExecutionDoc{{ID: "evidence-gate", State: "failed"}},
+				}},
+			},
+			wf:          &server.Workflow{Phases: []server.PhaseSpec{{Name: "evidence-gate", EvidenceVerificationGate: true}}},
+			wantClass:   server.TerminalObservationGateFailed,
+			wantPhase:   "evidence-gate",
+			wantJob:     "evidence-gate",
+			wantReason:  "required_evidence_absent",
+			msgContains: []string{"evidence gate", "required_evidence_absent"},
+		},
+		{
+			name: "verifier_contract_missing",
+			doc: runDoc{Attempts: []attemptDoc{{
+				AttemptIndex: 0,
+				Phase:        "llm-verify",
+				Conclusion:   stringPtrValue("failure"),
+				Decision:     &malformedAbort,
+			}}},
+			wf:          &server.Workflow{Phases: []server.PhaseSpec{{Name: "llm-verify", Verify: true}}},
+			wantClass:   server.TerminalObservationVerifierContractMissing,
+			wantPhase:   "llm-verify",
+			msgContains: []string{"verification phase llm-verify"},
+		},
+		{
+			name: "dispatch_failed",
+			doc: runDoc{
+				Attempts: []attemptDoc{{
+					AttemptIndex: 1,
+					Phase:        "llm-work",
+					Conclusion:   stringPtrValue("success"),
+					Decision:     &malformedAbort,
+				}},
+				PhaseExecutions: []phaseExecutionDoc{
+					{Name: "llm-work", State: "succeeded"},
+					{
+						Name:   "llm-verify",
+						State:  "failed",
+						Reason: stringPtrValue("dispatch_failed"),
+						Jobs: []jobExecutionDoc{{
+							ID:     "llm-verify",
+							State:  "failed",
+							Reason: stringPtrValue("dispatch_failed"),
+							Steps:  []stepExecutionDoc{{Slug: "dispatch", State: "failed", Reason: stringPtrValue("dispatch_failed")}},
+						}},
+					},
+				},
+			},
+			wf:          &server.Workflow{Phases: []server.PhaseSpec{{Name: "llm-work"}, {Name: "llm-verify", Verify: true}}},
+			abortReason: stringPtrValue(`forward_dispatch_failed: runner lease state is "released" for ambience-slot-3`),
+			wantClass:   server.TerminalObservationDispatchFailed,
+			wantPhase:   "llm-verify",
+			wantJob:     "llm-verify",
+			wantStep:    "dispatch",
+			wantReason:  "dispatch_failed",
+			msgContains: []string{"phase llm-verify failed to dispatch job llm-verify"},
+		},
+		{
+			name: "phase_requested_abort",
+			doc: runDoc{Attempts: []attemptDoc{{
+				AttemptIndex: 0,
+				Phase:        "llm-work",
+				Conclusion:   stringPtrValue("aborted"),
+				Decision:     &requestedAbort,
+				PhaseOutputs: map[string]string{decision.AbortReasonOutputKey: "unexpected_mod:godotexplorer"},
+			}}},
+			wf:          &server.Workflow{Phases: []server.PhaseSpec{{Name: "llm-work"}}},
+			wantClass:   server.TerminalObservationPhaseRequestedAbort,
+			wantPhase:   "llm-work",
+			wantReason:  "unexpected_mod:godotexplorer",
+			msgContains: []string{"requested a fail-closed abort", "unexpected_mod:godotexplorer"},
+		},
+		{
+			name:             "manual_abort",
+			doc:              runDoc{},
+			wf:               nil,
+			abortReason:      stringPtrValue("operator stopped the run"),
+			wantClass:        server.TerminalObservationManualAbort,
+			wantReason:       "operator stopped the run",
+			msgContains:      []string{"operator stopped the run"},
+			ownerlessAllowed: true,
+		},
+		{
+			name: "malformed_terminal",
+			doc: runDoc{
+				Attempts: []attemptDoc{{
+					AttemptIndex: 0,
+					Phase:        "llm-work",
+					Conclusion:   stringPtrValue("failure"),
+					Decision:     &malformedAbort,
+					// No failed job completion, no abort_reason output, no
+					// verification, no dispatch failure: unattributable.
+				}},
+			},
+			wf:          &server.Workflow{Phases: []server.PhaseSpec{{Name: "llm-work"}}},
+			wantClass:   server.TerminalObservationMalformed,
+			wantPhase:   "llm-work",
+			msgContains: []string{"MALFORMED TERMINAL", "llm-work", "no job completions"},
+		},
+	}
+
+	knownClasses := map[string]bool{
+		server.TerminalObservationProducerPhaseFailed:     true,
+		server.TerminalObservationVerifierContractMissing: true,
+		server.TerminalObservationVerifierFailed:          true,
+		server.TerminalObservationGateFailed:              true,
+		server.TerminalObservationDispatchFailed:          true,
+		server.TerminalObservationPhaseRequestedAbort:     true,
+		server.TerminalObservationManualAbort:             true,
+		server.TerminalObservationMalformed:               true,
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := terminalObservationForRun(tc.doc, tc.wf, "aborted", tc.abortReason, server.TerminalObservationSourceCompletionCallback)
+			if got == nil {
+				t.Fatal("terminal observation missing — a terminal failure must always be attributed")
+			}
+			// Known, non-empty class.
+			if got.Class == "" || got.Class == "unknown" || !knownClasses[got.Class] {
+				t.Fatalf("class %q is not a known non-success class: %#v", got.Class, got)
+			}
+			if got.Class != tc.wantClass {
+				t.Fatalf("class=%q want %q (%#v)", got.Class, tc.wantClass, got)
+			}
+			// Non-empty, specific message.
+			if strings.TrimSpace(got.Message) == "" {
+				t.Fatalf("message is empty: %#v", got)
+			}
+			// Owner identity where applicable.
+			if !tc.ownerlessAllowed && got.Phase == "" {
+				t.Fatalf("phase identity missing: %#v", got)
+			}
+			if tc.wantPhase != "" && got.Phase != tc.wantPhase {
+				t.Fatalf("phase=%q want %q", got.Phase, tc.wantPhase)
+			}
+			if tc.wantJob != "" && got.JobID != tc.wantJob {
+				t.Fatalf("job=%q want %q", got.JobID, tc.wantJob)
+			}
+			if tc.wantStep != "" && got.StepSlug != tc.wantStep {
+				t.Fatalf("step_slug=%q want %q", got.StepSlug, tc.wantStep)
+			}
+			if tc.wantReason != "" && got.Reason != tc.wantReason {
+				t.Fatalf("reason=%q want %q (%#v)", got.Reason, tc.wantReason, got)
+			}
+			for _, want := range tc.msgContains {
+				if !strings.Contains(got.Message, want) {
+					t.Fatalf("message %q missing %q", got.Message, want)
+				}
+			}
+			for _, notWant := range tc.msgNotContains {
+				if strings.Contains(got.Message, notWant) {
+					t.Fatalf("message %q must not contain %q", got.Message, notWant)
+				}
+			}
+		})
+	}
+}
+
+// TestTerminalObservationVerifierCarriesReasonNotEnum is the focused regression
+// for spirelens#147 run 1.1: the verify JOB went red while every STEP exited 0,
+// and the specific reason lived only in the attempt verification. The terminal
+// observation must carry the verifier's reason string, never the bare
+// "verification_failed" enum.
+func TestTerminalObservationVerifierCarriesReasonNotEnum(t *testing.T) {
+	verifyAbort := string(decision.AbortBudgetAttempts)
+	verification := &verificationDoc{
+		Status:  "fail",
+		Reasons: []string{"claimed_result_not_observed"},
+		Failure: &verificationFailureDoc{
+			Expected:       `on-screen text "CLOAK_CLASP"`,
+			Observed:       `display name "Cloak Clasp"`,
+			Where:          "decoded frame",
+			SuspectedCause: "test_expectation_mismatch",
+		},
+	}
+	doc := runDoc{
+		Attempts: []attemptDoc{{
+			AttemptIndex: 0,
+			Phase:        "llm-verify",
+			Conclusion:   stringPtrValue("failure"),
+			Decision:     &verifyAbort,
+			Verification: verification,
+			JobCompletions: map[string]runnerJobCompletionDoc{
+				"llm-verify": {JobID: "llm-verify", Conclusion: "failure", TerminalReason: "verification_failed", Verification: verification},
+			},
+		}},
+		PhaseExecutions: []phaseExecutionDoc{{
+			Name:  "llm-verify",
+			State: "failed",
+			Jobs:  []jobExecutionDoc{{ID: "llm-verify", State: "failed", Steps: []stepExecutionDoc{{Slug: "judge-evidence", State: "succeeded"}}}},
+		}},
+	}
+	wf := &server.Workflow{Phases: []server.PhaseSpec{{Name: "llm-verify", Verify: true}}}
+
+	got := terminalObservationForRun(doc, wf, "aborted", nil, server.TerminalObservationSourceCompletionCallback)
+	if got == nil {
+		t.Fatal("terminal observation missing")
+	}
+	if got.Class != server.TerminalObservationVerifierFailed {
+		t.Fatalf("class=%q want verifier_failed", got.Class)
+	}
+	if got.Reason != "claimed_result_not_observed" {
+		t.Fatalf("reason=%q want the verifier reason, not the bare enum", got.Reason)
+	}
+	if !strings.Contains(got.Message, "claimed_result_not_observed") {
+		t.Fatalf("message %q must carry the verifier reason", got.Message)
+	}
+	if strings.Contains(got.Message, ": verification_failed") {
+		t.Fatalf("message %q must not fall back to the bare enum", got.Message)
+	}
+	for _, want := range []string{"expected:", "observed:", "decoded frame", "test_expectation_mismatch"} {
+		if !strings.Contains(got.Message, want) {
+			t.Fatalf("message %q missing structured failure detail %q", got.Message, want)
+		}
+	}
+}
+
+// TestTerminalObservationMalformedIsLoud proves the unresolvable-attribution
+// path records class malformed_terminal with a LOUD, non-empty message naming
+// what was missing — the deliberate signal a Slice 4 metric/alert fires on.
+func TestTerminalObservationMalformedIsLoud(t *testing.T) {
+	abort := string(decision.AbortMalformed)
+	doc := runDoc{Attempts: []attemptDoc{{
+		AttemptIndex: 0,
+		Phase:        "llm-work",
+		Conclusion:   stringPtrValue("failure"),
+		Decision:     &abort,
+	}}}
+	wf := &server.Workflow{Phases: []server.PhaseSpec{{Name: "llm-work"}}}
+
+	got := terminalObservationForRun(doc, wf, "aborted", nil, server.TerminalObservationSourceDecisionEngine)
+	if got == nil || got.Class != server.TerminalObservationMalformed {
+		t.Fatalf("want malformed_terminal, got %#v", got)
+	}
+	if strings.TrimSpace(got.Message) == "" {
+		t.Fatal("malformed_terminal message must not be empty")
+	}
+	for _, want := range []string{"MALFORMED TERMINAL", "llm-work", "no job completions", "no verification verdict"} {
+		if !strings.Contains(got.Message, want) {
+			t.Fatalf("message %q missing %q", got.Message, want)
+		}
+	}
+}
+
 func TestCanonicalExecutionFailureReasonRoundTripsDispatchReason(t *testing.T) {
 	for _, reason := range []string{"dispatch_failed", "dispatch_timeout"} {
 		if got := canonicalExecutionFailureReason(reason); got != reason {
