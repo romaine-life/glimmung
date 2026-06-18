@@ -247,3 +247,20 @@ observability:
   # the Operator. Independent of serviceMonitor — turn either or both on.
   scrapeAnnotations:
     enabled: false
+  # PrometheusRule (monitoring.coreos.com/v1) for the run-terminal-attribution
+  # backstop alert. Requires the CRD; chart render fails if the CRD is absent
+  # and this is enabled. Default off, mirroring serviceMonitor. Whether the
+  # central Prometheus evaluates this rule depends on that Prometheus CR's
+  # ruleSelector/ruleNamespaceSelector — set `labels` to match it.
+  prometheusRule:
+    enabled: false
+    # Namespace the PrometheusRule lands in. Empty = chart namespace.
+    namespace: ""
+    # Extra labels so the cluster Prometheus' ruleSelector picks the rule up
+    # (e.g. release: kube-prometheus).
+    labels: {}
+    # Rolling window the GlimmungRunTerminalUnattributed alert evaluates.
+    window: 15m
+    # Alertmanager severity label used for routing. Unattributed terminal
+    # failures page operators, so this defaults to critical.
+    severity: critical
