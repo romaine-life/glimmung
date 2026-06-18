@@ -14,12 +14,17 @@ import (
 // then verifies the slot is actually running that image. The slot ends up
 // running exactly what CI built and main will ship.
 //
-// Inputs (the caller owns the legitimacy gate and resolution):
-//   - verifiedRef: the published, gate-passed commit (published + CI-green +
-//     mergeable + current-with-main). Rendered as the chart ref so the branch's
-//     own chart/template changes are exercised too.
+// Legitimacy (published + CI-green + mergeable + current-with-main) is enforced
+// upstream by Tank's deterministic readiness gate (provisionTestSlotForSession),
+// the sole caller of the deploy endpoint: it validates readiness through its
+// CI-watch readiness reducer before the endpoint resolves the ref/image and
+// reaches this launcher method. This method is a pure provisioner — it does not
+// re-derive or own that gate. Ref→SHA→image resolution and registry validation
+// are performed by the deploy endpoint (deployImageToTestSlot) before calling in;
+// the inputs it hands down are:
+//   - verifiedRef: the published, gate-passed commit. Rendered as the chart ref
+//     so the branch's own chart/template changes are exercised too.
 //   - image: the CI-built fingerprinted image tag/ref for that exact commit.
-//     Resolution and registry validation are the caller's job.
 //   - imageValueKey: the chart's image value path the override sets
 //     (helm --set <imageValueKey>=<image>). Empty means "no override" — the
 //     chart at verifiedRef already pins the image.
