@@ -42,6 +42,7 @@ import { PhaseGraph, type PhaseGraphPhase } from "./PhaseGraph";
 import { issueRunSelectionPath } from "./routes";
 import { RunCancelAction, runStateCanCancel, type AbortState } from "./RunCancelAction";
 import { useHorizontalDragScroll } from "./useHorizontalDragScroll";
+import { VerificationVerdict, hasVerdict, type VerificationFailure, type VerificationVerdictData } from "./VerificationVerdict";
 import {
   runTopologyToPhaseGraphModel,
   type RunProjectionTopologySource,
@@ -213,6 +214,13 @@ type RunProjectionPhase = {
       conclusion: string;
       verification_status?: string | null;
       verification_reasons?: string[];
+      // The structured verdict why (expected/observed/where/suspected_cause/
+      // cause_detail). Already serialized by the graph projection via
+      // runProjectionAttempts -> sliceOrEmpty(attempt.JobCompletions); the
+      // dashboard surfaces it through <VerificationVerdict/>.
+      verification_failure?: VerificationFailure | null;
+      evidence?: RunProjectionEvidence[];
+      evidence_refs?: string[];
       cost_usd?: number;
       phase_outputs?: Record<string, string>;
     }>;
@@ -2438,6 +2446,33 @@ function projectionPhaseForSelection(run: RunProjectionRun, phaseName: string): 
   };
 }
 
+// projectionJobVerdict resolves the verification verdict for the selected job
+// out of the latest phase attempt. The verdict is job-level: it lives on the
+// job_completion (with the structured failure block) and, for single-job verify
+// phases, falls back to the attempt-level status. Returns null when there is no
+// verdict to show (every non-verify job), so the panel only appears where a
+// verification actually ran. Pure + exported for unit coverage.
+export function projectionJobVerdict(
+  attempt: RunProjectionPhase["attempts"][number] | null,
+  job: RunProjectionPhase["jobs"][number] | null,
+): VerificationVerdictData | null {
+  if (!attempt) return null;
+  const completion = job ? (attempt.job_completions ?? []).find((jc) => jc.job_id === job.id) ?? null : null;
+  if (completion) {
+    const verdict: VerificationVerdictData = {
+      status: completion.verification_status ?? null,
+      failure: completion.verification_failure ?? null,
+      reasons: completion.verification_reasons ?? [],
+    };
+    return hasVerdict(verdict) ? verdict : null;
+  }
+  if (attempt.verification_status) {
+    const verdict: VerificationVerdictData = { status: attempt.verification_status, failure: null, reasons: [] };
+    return hasVerdict(verdict) ? verdict : null;
+  }
+  return null;
+}
+
 function ProjectionInspector({
   run,
   phase,
@@ -2470,6 +2505,12 @@ function ProjectionInspector({
     : null;
   const selectedEvidence = projectionEvidenceForSelection(run.evidence ?? [], phase, latestAttempt, step);
   const collectedEvidence = step ? [] : projectionEvidenceForJob(run.evidence ?? [], phase, latestAttempt);
+  // The verification verdict (the "why" behind a fail) is job-level, so it
+  // renders for any step selected within a verify job — including the terse
+  // finalize-* gate step whose runner events are only "emitted verdict
+  // status=fail". Without this, landing on that step shows an exit code and
+  // nothing else.
+  const verdict = projectionJobVerdict(latestAttempt, selectedJob);
   return (
     <div className="run-panel">
       <div className="run-panel-header">
@@ -2552,6 +2593,7 @@ function ProjectionInspector({
           <span className="mono">{dispatchFailureDetail}</span>
         </div>
       )}
+      {verdict && <VerificationVerdict verdict={verdict} />}
       {selectedJob && runnerJob ? (
         latestAttempt && issueNumber !== null && runNumber ? (
           <>

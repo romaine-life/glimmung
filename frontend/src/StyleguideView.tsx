@@ -5,6 +5,7 @@
 import { useState } from "react";
 import { PhaseGraph } from "./PhaseGraph";
 import { RunCancelAction, RUN_CANCEL_IDLE_STATE } from "./RunCancelAction";
+import { VerificationVerdict } from "./VerificationVerdict";
 import "./index.css";
 
 type ReviewState = "unset" | "reviewed" | "needs-review";
@@ -159,6 +160,39 @@ const DESIGN_SYSTEM_ITEMS: PortfolioItem[] = [
             <span className="dispatch-error-message">runner dispatch failed: kube unavailable</span>
           </span>
         </div>
+      </Specimen>
+    ),
+  },
+  {
+    id: "verification-verdict",
+    title: "Verification Verdict",
+    caption: "The structured why behind a verify job's pass/fail, surfaced in the run panel",
+    render: () => (
+      <Specimen title="verification verdict">
+        <VerificationVerdict
+          verdict={{
+            status: "fail",
+            failure: {
+              expected:
+                "The standing capture should read as constellations forming: star points connected by drawn lines into a visible figure over a quiet sky.",
+              observed:
+                "The captured view shows a sparse star field and dev controls, but no visible connected constellation figure or line-drawing in the inspected still.",
+              where: "standing case at /dev/constellations",
+              suspected_cause: "code_bug",
+              cause_detail:
+                "The default standing state renders the background star field without scheduling a visible constellation line draw during the capture window.",
+            },
+            reasons: [],
+          }}
+        />
+        <VerificationVerdict
+          verdict={{
+            status: "fail",
+            failure: null,
+            reasons: ["menu route /dev/constellations returned 404", "no canvas element rendered after selecting the effect"],
+          }}
+        />
+        <VerificationVerdict verdict={{ status: "pass", failure: null, reasons: [] }} />
       </Specimen>
     ),
   },

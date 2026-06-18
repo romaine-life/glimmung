@@ -2828,6 +2828,52 @@ h2 .inline-action,
 .run-failure-detail .pill {
   flex: 0 0 auto;
 }
+/* Verification verdict — the structured "why" behind a verify job's pass/fail,
+   surfaced in the run panel so a failed verification reads as a diagnosis
+   (expected vs observed + suspected cause) instead of a bare status=fail exit
+   in the runner event stream. Job-level: renders for any step selected within
+   a verify job. Mirrors the .attempt-card-failure rail vocabulary. See
+   VerificationVerdict.tsx. */
+.run-verdict {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border: 1px solid var(--border);
+  border-left: 2px solid var(--state-danger-fg);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  padding: 8px 10px;
+  margin: -4px 0 12px;
+  font-size: 0.82rem;
+}
+.run-verdict.pass {
+  border-left-color: var(--state-success-fg);
+}
+.run-verdict-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.run-verdict .key {
+  color: var(--fg-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 0.7rem;
+  margin-right: 4px;
+}
+.run-verdict-failure {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.run-verdict-reasons {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 0.8rem;
+}
+.run-verdict-reasons li {
+  margin-bottom: 2px;
+}
 .live-dot {
   display: inline-block;
   width: 8px;
