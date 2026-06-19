@@ -70,6 +70,9 @@ func TestK8sRequireAdminRejectsDisallowedServiceAccount(t *testing.T) {
 	authenticator := newTestAuthenticator(t, tokenReview.URL, "ns/sa")
 	_, err := authenticator.RequireAdmin(context.Background(), "caller-token")
 	assertAuthStatus(t, err, http.StatusForbidden, "not allowed")
+	assertAuthStatus(t, err, http.StatusForbidden, "/api/auth/exchange/k8s")
+	assertAuthStatus(t, err, http.StatusForbidden, "/var/run/secrets/auth.romaine.life/token")
+	assertAuthStatus(t, err, http.StatusForbidden, "Authorization: Bearer $AUTH_JWT")
 }
 
 func TestK8sVerifyTokenHandlesTokenReviewFailures(t *testing.T) {

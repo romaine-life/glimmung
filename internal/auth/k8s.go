@@ -155,9 +155,16 @@ func (a *K8sAuthenticator) RequireAdmin(ctx context.Context, token string) (User
 		return User{}, err
 	}
 	if _, ok := a.allowed[username]; !ok {
-		return User{}, AuthError{Status: http.StatusForbidden, Message: "service account not allowed: " + username}
+		return User{}, AuthError{Status: http.StatusForbidden, Message: serviceAccountNotAllowedMessage(username)}
 	}
 	return User{Sub: username, Email: username, Name: username}, nil
+}
+
+func serviceAccountNotAllowedMessage(username string) string {
+	return "service account not allowed: " + username +
+		". If this is a Tank session or other auth.romaine.life-capable pod, do not present the projected Kubernetes service-account token directly to Glimmung. " +
+		"Exchange it first: AUTH_JWT=$(curl -fsS -X POST https://auth.romaine.life/api/auth/exchange/k8s -H \"Authorization: Bearer $(cat /var/run/secrets/auth.romaine.life/token)\" -H \"Content-Type: application/json\" -d '{}' | jq -r .token); " +
+		"then call Glimmung with Authorization: Bearer $AUTH_JWT."
 }
 
 func (a *K8sAuthenticator) Resolve(ctx context.Context, token string) (User, bool, error) {
