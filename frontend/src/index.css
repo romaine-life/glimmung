@@ -2849,6 +2849,32 @@ h2 .inline-action,
 .run-failure-cause .attempt-card-reasons {
   margin-top: 2px;
 }
+/* Verdict step pane (VerdictStepDetail): the structured failure a human sees
+   when clicking the synthesized `verdict` owner step — the deciding reason,
+   the VerificationFailureDetail block, and the verifier summary. It replaced
+   the "No hot runner events recorded" dead-end, so it renders as a readable
+   content pane (inheriting fg) rather than the dark raw-terminal pre. */
+.runner-verdict-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px 20px;
+  overflow: auto;
+  min-height: 100%;
+  font-size: 0.85rem;
+  line-height: 1.55;
+}
+.runner-verdict-head {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+.runner-verdict-message {
+  overflow-wrap: anywhere;
+}
+.runner-verdict-summary {
+  margin-top: 2px;
+}
 .live-dot {
   display: inline-block;
   width: 8px;

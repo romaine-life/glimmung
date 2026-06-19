@@ -206,6 +206,9 @@ type RunProjectionPhase = {
       title?: string | null;
       state: string;
       reason?: string | null;
+      // message: the synthesized owner step's human-readable failure detail
+      // (server.RunProjectionStep.Message). Real runner steps leave it empty.
+      message?: string | null;
       exit_code?: number | null;
       group?: string | null;
       group_title?: string | null;
@@ -222,6 +225,9 @@ type RunProjectionPhase = {
     decision?: string | null;
     log_archive_url?: string | null;
     evidence_refs: string[];
+    // summary_markdown: the deciding attempt's verifier prose, surfaced on the
+    // verdict view (server.RunProjectionAttempt.SummaryMarkdown).
+    summary_markdown?: string | null;
     job_completions?: Array<{
       job_id: string;
       completed_at?: string | null;
@@ -2626,6 +2632,7 @@ function ProjectionInspector({
               selectedStepSlug={step?.slug ?? null}
               selectedEvidence={selectedEvidence}
               collectedEvidence={collectedEvidence}
+              verdictDetail={decidingVerification}
               onSelectStep={onSelectStep}
             />
           </>
@@ -2934,6 +2941,7 @@ function projectionJobToRunnerJob(job: RunProjectionPhase["jobs"][number]): Runn
       title: step.title,
       state: step.state,
       reason: step.reason ?? null,
+      message: step.message ?? null,
       exit_code: step.exit_code ?? null,
       started_at: step.started_at ?? null,
       completed_at: step.completed_at ?? null,
@@ -4183,7 +4191,7 @@ function isTerminalFailureState(state: string | null | undefined): boolean {
 function projectionDecidingVerification(
   phase: RunProjectionPhase,
   jobId: string | null,
-): { failure: VerificationFailureFields | null; reasons: string[] } | null {
+): { failure: VerificationFailureFields | null; reasons: string[]; summary: string | null } | null {
   for (let i = phase.attempts.length - 1; i >= 0; i--) {
     const completions = phase.attempts[i].job_completions ?? [];
     if (completions.length === 0) continue;
@@ -4197,11 +4205,28 @@ function projectionDecidingVerification(
       const failure = completion.verification_failure ?? null;
       const failed = status === "fail" || status === "error";
       if (failed || failure || reasons.length > 0) {
-        return { failure, reasons };
+        // summary is the deciding attempt's verifier prose — the richest "why"
+        // (e.g. "the stat row is absent from the tooltip screenshot"). It lives
+        // on the attempt, not the completion, so it is read here once the
+        // deciding completion is found.
+        const summary = stringOrNull(phase.attempts[i].summary_markdown ?? null);
+        return { failure, reasons, summary };
       }
     }
   }
   return null;
+}
+
+// SYNTHESIZED_OWNER_STEP_SLUGS mirrors the Go isSynthesizedOwnerStepSlug:
+// owner steps the server appends to a failed job so it always has a step
+// naming the failure. These steps have no hot runner events by construction
+// (they did not run), so "no events" on one is expected, never a missing-data
+// signal — the verdict pane renders their failure detail instead of the
+// "no events" dead-end.
+const SYNTHESIZED_OWNER_STEP_SLUGS = new Set<string>(["verdict", "dispatch"]);
+
+function isSynthesizedOwnerStepSlug(slug: string): boolean {
+  return SYNTHESIZED_OWNER_STEP_SLUGS.has(slug);
 }
 
 function AttemptCard({
@@ -4362,6 +4387,55 @@ function AttemptCard({
   );
 }
 
+type VerdictDetail = {
+  failure: VerificationFailureFields | null;
+  reasons: string[];
+  summary: string | null;
+};
+
+// VerdictStepDetail renders a synthesized owner step's failure in the step
+// pane — the step a human clicks to ask "why did it fail". It shows the
+// structured verification failure + reasons (the same block the cause banner
+// uses) and the deciding attempt's summary prose. This is the surface that
+// replaced the "No hot runner events recorded for this selection." dead-end:
+// a synthesized owner step has no hot events by construction, so the failure
+// detail IS the content. Falls back to the step's own message/reason when no
+// verification detail is available (e.g. a dispatch owner step). Exported so
+// /_styleguide catalogs it (dashboard contract: new reusable components appear
+// in the styleguide).
+export function VerdictStepDetail({
+  step,
+  detail,
+}: {
+  job: RunnerAttemptJob;
+  step: RunnerAttemptStep;
+  detail: VerdictDetail | null;
+}) {
+  const message = stringOrNull(step.message ?? null);
+  const reason = stringOrNull(step.reason ?? null);
+  const failure = detail?.failure ?? null;
+  const reasons = detail?.reasons ?? [];
+  const summary = stringOrNull(detail?.summary ?? null);
+  const hasVerification = Boolean(failure) || reasons.length > 0;
+  return (
+    <div className="runner-verdict-detail" aria-label="verdict detail">
+      <div className="runner-verdict-head mono">
+        <span className="key">{step.title || step.slug}</span>
+        {reason && <span className="dim"> · {reason}</span>}
+      </div>
+      {/* message duplicates the reasons list when verification detail is
+          present (both are the verifier reasons), so only show the raw message
+          as the body when there is no structured verification to render. */}
+      {message && !hasVerification && <div className="mono runner-verdict-message">{message}</div>}
+      {hasVerification && <VerificationFailureDetail failure={failure} reasons={reasons} />}
+      {summary && <MarkdownBody className="runner-verdict-summary">{summary}</MarkdownBody>}
+      {!message && !hasVerification && !summary && (
+        <div className="mono dim">This step records the job's failure verdict; see the run cause for detail.</div>
+      )}
+    </div>
+  );
+}
+
 function RunnerJobInspector({
   project,
   runId,
@@ -4375,6 +4449,7 @@ function RunnerJobInspector({
   selectedStepSlug = null,
   selectedEvidence = [],
   collectedEvidence = [],
+  verdictDetail = null,
   onSelectStep,
 }: {
   project: string;
@@ -4389,6 +4464,10 @@ function RunnerJobInspector({
   selectedStepSlug?: string | null;
   selectedEvidence?: RunProjectionEvidence[];
   collectedEvidence?: RunProjectionEvidence[];
+  // verdictDetail carries the deciding verification's why (reasons + structured
+  // failure + summary prose) so a synthesized owner step renders the real
+  // failure instead of an empty runner-event pane. Null for non-failed jobs.
+  verdictDetail?: VerdictDetail | null;
   onSelectStep?: (jobId: string, stepSlug: string) => void;
 }) {
   const [logs, setLogs] = useState<RunnerEventsResponse | null>(null);
@@ -4736,7 +4815,9 @@ function RunnerJobInspector({
           ) : (
             <>
               {selectedStepEvidence.length > 0 && <RunnerStepEvidenceStrip evidence={selectedStepEvidence} label="Step evidence:" />}
-              {activeViewMode === "transcript" ? (
+              {isSynthesizedOwnerStepSlug(selected.step.slug) ? (
+            <VerdictStepDetail job={selected.job} step={selected.step} detail={verdictDetail} />
+              ) : activeViewMode === "transcript" ? (
             <AgentTranscriptView
               entries={visibleTranscriptEntries}
               emptyLabel={transcriptFilter === "assistant" ? "No assistant text in this batch." : "No transcript rows in this batch."}
@@ -5072,7 +5153,7 @@ function runnerStepGlyph(state: string): string {
   return "·";
 }
 
-function runnerTerminalText(
+export function runnerTerminalText(
   job: RunnerAttemptJob | null,
   step: RunnerAttemptStep | null,
   events: RunnerEvent[],
@@ -5087,10 +5168,18 @@ function runnerTerminalText(
     ...(step?.message ? [`# ${step.message}`] : []),
     ...(step?.reason ? [`# reason ${step.reason}`] : []),
   ];
+  // A synthesized owner step (verdict / dispatch) has no hot runner events by
+  // construction — it never ran. Printing "No hot runner events recorded" on
+  // one reads as missing data when the failure detail (message / reason above)
+  // IS the content. Suppress the dead-end line for those steps; the structured
+  // VerdictStepDetail render is the primary surface, this is the raw fallback.
+  const ownerStep = Boolean(step && isSynthesizedOwnerStepSlug(step.slug));
   const lines = events.length > 0
     ? events.map(runnerEventLine)
-    : ["No hot runner events recorded for this selection."];
-  return [...heading, ...stepMessage, "", ...lines].join("\n");
+    : ownerStep
+      ? []
+      : ["No hot runner events recorded for this selection."];
+  return [...heading, ...stepMessage, "", ...lines].join("\n").trimEnd();
 }
 
 function runnerEventLine(event: RunnerEvent): string {

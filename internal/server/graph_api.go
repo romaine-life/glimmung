@@ -193,10 +193,17 @@ type RunProjectionJob struct {
 }
 
 type RunProjectionStep struct {
-	Slug         string            `json:"slug"`
-	Title        *string           `json:"title,omitempty"`
-	State        string            `json:"state"`
-	Reason       *string           `json:"reason,omitempty"`
+	Slug   string  `json:"slug"`
+	Title  *string `json:"title,omitempty"`
+	State  string  `json:"state"`
+	Reason *string `json:"reason,omitempty"`
+	// Message is the human-readable "why" for a step. Synthesized owner
+	// steps (verdict / dispatch) carry the deciding failure detail here so
+	// they are self-describing wherever they are consumed — the dashboard
+	// step pane and the MCP step view — and never render as a bare reason
+	// enum next to "no events". Real runner steps leave it empty; their
+	// detail lives in the hot runner event stream.
+	Message      *string           `json:"message,omitempty"`
 	ExitCode     *int              `json:"exit_code,omitempty"`
 	Group        string            `json:"group,omitempty"`
 	GroupTitle   *string           `json:"group_title,omitempty"`
@@ -219,8 +226,15 @@ type RunProjectionAttempt struct {
 	CostUSD            *float64                  `json:"cost_usd,omitempty"`
 	LogArchiveURL      *string                   `json:"log_archive_url,omitempty"`
 	EvidenceRefs       []string                  `json:"evidence_refs"`
-	PhaseOutputs       map[string]string         `json:"phase_outputs"`
-	JobCompletions     []RunAttemptJobCompletion `json:"job_completions"`
+	// SummaryMarkdown is the deciding attempt's human-readable summary (the
+	// verifier's prose: "the stat row 'additional cards drawn: 2' is absent
+	// from the tooltip screenshot ..."). Carried into the projection so the
+	// verdict view can surface the rich why, not just the reason enum. The
+	// RunReport already had it; dropping it here is why no frontend-only fix
+	// could ever show it.
+	SummaryMarkdown *string                   `json:"summary_markdown,omitempty"`
+	PhaseOutputs    map[string]string         `json:"phase_outputs"`
+	JobCompletions  []RunAttemptJobCompletion `json:"job_completions"`
 }
 
 type RunProjectionEvidence struct {
@@ -1710,7 +1724,7 @@ func runProjectionJobs(phase PhaseSpec, phaseState string, phaseReason *string, 
 			Title: stringPointerOrNil("Workflow run"),
 			State: projectionStepStateForJob(state, reason, jobCompletions[jobID]),
 		}}
-		steps = ensureFailedJobOwnerStep(state, reason, steps, jobCompletions[jobID].JobID == "")
+		steps = ensureFailedJobOwnerStep(state, reason, ownerStepFailureDetail(jobCompletions[jobID]), steps, jobCompletions[jobID].JobID == "")
 		return []RunProjectionJob{{
 			ID:          jobID,
 			Name:        stringPointerOrNil(jobID),
@@ -1747,7 +1761,7 @@ func runProjectionJobs(phase PhaseSpec, phaseState string, phaseReason *string, 
 				State: stepState,
 			})
 		}
-		steps = ensureFailedJobOwnerStep(state, reason, steps, jobCompletions[jobID].JobID == "")
+		steps = ensureFailedJobOwnerStep(state, reason, ownerStepFailureDetail(jobCompletions[jobID]), steps, jobCompletions[jobID].JobID == "")
 		jobs = append(jobs, RunProjectionJob{
 			ID:          jobID,
 			Name:        job.Name,
@@ -1800,7 +1814,7 @@ const (
 //     verification_error, or a producer job_failed with no failed step). Append a
 //     synthetic `verdict` owner step carrying the reason and leave the real steps
 //     untouched. Demoting steps that actually ran would be a new lie.
-func ensureFailedJobOwnerStep(state string, reason *string, steps []RunProjectionStep, neverRan bool) []RunProjectionStep {
+func ensureFailedJobOwnerStep(state string, reason *string, detail *string, steps []RunProjectionStep, neverRan bool) []RunProjectionStep {
 	if state != "failed" && state != "aborted" {
 		return steps
 	}
@@ -1810,14 +1824,60 @@ func ensureFailedJobOwnerStep(state string, reason *string, steps []RunProjectio
 		}
 	}
 	if neverRan && isDispatchFailureProjectionReason(reason) {
-		return dispatchOwnedSteps(steps, reason)
+		return dispatchOwnedSteps(steps, reason, detail)
 	}
 	return append(steps, RunProjectionStep{
-		Slug:   projectionVerdictStepSlug,
-		Title:  stringPointerOrNil("Verdict"),
-		State:  "failed",
-		Reason: failureOwnerStepReason(reason),
+		Slug:    projectionVerdictStepSlug,
+		Title:   stringPointerOrNil("Verdict"),
+		State:   "failed",
+		Reason:  failureOwnerStepReason(reason),
+		Message: detail,
 	})
+}
+
+// ownerStepFailureDetail renders the human-readable "why" for a synthesized
+// owner step from its deciding job completion: the verifier's reasons joined,
+// else the structured verification failure rendered compactly. Empty when the
+// completion carries neither (the step then keeps its bare reason enum) — but a
+// verify/gate failure always has reasons, so the synthesized verdict step is
+// self-describing wherever it is consumed instead of pointing at an empty
+// runner-event stream.
+func ownerStepFailureDetail(completion RunAttemptJobCompletion) *string {
+	reasons := make([]string, 0, len(completion.VerificationReasons))
+	for _, r := range completion.VerificationReasons {
+		if trimmed := strings.TrimSpace(r); trimmed != "" {
+			reasons = append(reasons, trimmed)
+		}
+	}
+	if len(reasons) > 0 {
+		return stringPointerOrNil(strings.Join(reasons, "; "))
+	}
+	if completion.VerificationFailure != nil {
+		if line := verificationFailureLine(*completion.VerificationFailure); line != "" {
+			return stringPointerOrNil(line)
+		}
+	}
+	return nil
+}
+
+// verificationFailureLine compacts a structured VerificationFailure into a
+// single owner-step message ("expected X, observed Y [where], cause Z").
+func verificationFailureLine(failure VerificationFailure) string {
+	parts := make([]string, 0, 3)
+	if expected := strings.TrimSpace(failure.Expected); expected != "" {
+		parts = append(parts, "expected "+expected)
+	}
+	if observed := strings.TrimSpace(failure.Observed); observed != "" {
+		segment := "observed " + observed
+		if where := strings.TrimSpace(failure.Where); where != "" {
+			segment += " [" + where + "]"
+		}
+		parts = append(parts, segment)
+	}
+	if cause := strings.TrimSpace(failure.SuspectedCause); cause != "" {
+		parts = append(parts, "cause "+cause)
+	}
+	return strings.Join(parts, ", ")
 }
 
 // enforceFailedOwnerSteps applies ensureFailedJobOwnerStep to every projected
@@ -1826,21 +1886,23 @@ func ensureFailedJobOwnerStep(state string, reason *string, steps []RunProjectio
 // verdict-failed verify job otherwise projects with every step succeeded.
 func enforceFailedOwnerSteps(jobs []RunProjectionJob, completions map[string]RunAttemptJobCompletion) []RunProjectionJob {
 	for i := range jobs {
-		_, ran := completions[jobs[i].ID]
-		jobs[i].Steps = ensureFailedJobOwnerStep(jobs[i].State, jobs[i].Reason, jobs[i].Steps, !ran)
+		completion, ran := completions[jobs[i].ID]
+		detail := ownerStepFailureDetail(completion)
+		jobs[i].Steps = ensureFailedJobOwnerStep(jobs[i].State, jobs[i].Reason, detail, jobs[i].Steps, !ran)
 	}
 	return jobs
 }
 
 // dispatchOwnedSteps synthesizes the `dispatch` owner step for a never-ran
 // dispatch failure and demotes the steps that never executed to not_started.
-func dispatchOwnedSteps(steps []RunProjectionStep, reason *string) []RunProjectionStep {
+func dispatchOwnedSteps(steps []RunProjectionStep, reason *string, detail *string) []RunProjectionStep {
 	out := make([]RunProjectionStep, 0, len(steps)+1)
 	out = append(out, RunProjectionStep{
-		Slug:   projectionDispatchStepSlug,
-		Title:  stringPointerOrNil("Dispatch job"),
-		State:  "failed",
-		Reason: failureOwnerStepReason(reason),
+		Slug:    projectionDispatchStepSlug,
+		Title:   stringPointerOrNil("Dispatch job"),
+		State:   "failed",
+		Reason:  failureOwnerStepReason(reason),
+		Message: detail,
 	})
 	for _, step := range steps {
 		if step.Slug == projectionDispatchStepSlug {
@@ -2009,6 +2071,7 @@ func runProjectionAttempts(attempts []RunReportAttempt) []RunProjectionAttempt {
 			CostUSD:            attempt.CostUSD,
 			LogArchiveURL:      attempt.LogArchiveURL,
 			EvidenceRefs:       sliceOrEmpty(attempt.EvidenceRefs),
+			SummaryMarkdown:    attempt.SummaryMarkdown,
 			PhaseOutputs:       mapStringOrEmpty(attempt.PhaseOutputs),
 			JobCompletions:     sliceOrEmpty(attempt.JobCompletions),
 		})
@@ -2269,7 +2332,13 @@ func applyRunnerEventsToProjectionRun(run *RunProjectionRun, events []RunnerLogE
 		// projection (a failed step), so they no-op.
 		for jobIndex := range phase.Jobs {
 			job := &phase.Jobs[jobIndex]
-			job.Steps = ensureFailedJobOwnerStep(job.State, job.Reason, job.Steps, false)
+			// nil detail: the base projection already synthesized any verdict
+			// owner step (with its failure message) before this overlay ran, and
+			// ensureFailedJobOwnerStep early-returns on that existing failed step,
+			// preserving the message. The completion is not in scope here, so a
+			// fresh synthesis (only when no failed step exists at all) keeps the
+			// reason enum — there is no richer detail to attach at this layer.
+			job.Steps = ensureFailedJobOwnerStep(job.State, job.Reason, nil, job.Steps, false)
 		}
 	}
 }

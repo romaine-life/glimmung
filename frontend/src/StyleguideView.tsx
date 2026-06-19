@@ -5,7 +5,7 @@
 import { useState } from "react";
 import { PhaseGraph } from "./PhaseGraph";
 import { RunCancelAction, RUN_CANCEL_IDLE_STATE } from "./RunCancelAction";
-import { VerificationFailureDetail } from "./IssueDetailView";
+import { VerificationFailureDetail, VerdictStepDetail } from "./IssueDetailView";
 import "./index.css";
 
 type ReviewState = "unset" | "reviewed" | "needs-review";
@@ -215,6 +215,32 @@ const DESIGN_SYSTEM_ITEMS: PortfolioItem[] = [
               <small>failed</small>
             </button>
           </aside>
+        </div>
+      </Specimen>
+    ),
+  },
+  {
+    id: "verdict-step-detail",
+    title: "Verdict Step Detail",
+    caption: "What a synthesized verdict owner step renders when clicked — the deciding reason, structured failure, and verifier summary instead of a no-events dead-end",
+    render: () => (
+      <Specimen title="runner inspector - verdict step pane">
+        <div className="runner-log-content">
+          <VerdictStepDetail
+            job={{ job_id: "verify", name: "Verify effect", state: "failed", steps: [] }}
+            step={{ slug: "verdict", title: "Verdict", state: "failed", reason: "verification_failed", message: "claimed_result_not_observed" }}
+            detail={{
+              failure: {
+                expected: "CLOAK_CLASP",
+                observed: "Cloak Clasp",
+                where: "effect label",
+                suspected_cause: "claimed_result_not_observed",
+                cause_detail: "case/format mismatch between claimed and observed effect id",
+              },
+              reasons: ["claimed_result_not_observed"],
+              summary: "The Cloak Clasp effect label reads \"Cloak Clasp\" but the verifier expected id CLOAK_CLASP; the stat row was not observed in the tooltip.",
+            }}
+          />
         </div>
       </Specimen>
     ),
