@@ -424,6 +424,198 @@ func TestSyntheticDispatchRejectsMissingSlotLease(t *testing.T) {
 	}
 }
 
+// TestSyntheticDispatchForwardsCallerGitRef is the core capability: a synthetic
+// dispatch that supplies inputs={git_ref: X} resolves the run's git_ref input to
+// X and renders every `${{ inputs.git_ref }}` phase checkout ref to X at launch
+// time. That is the mechanism for testing a harness branch via a cheap synthetic
+// run without paying for the LLM phases. The assertion runs the exact production
+// rendering the launcher runs (derivePrimaryCheckoutRepo + resolveRunnerCheckout-
+// RunInputs over launchRunInputs) so it proves the wire-up end to end.
+func TestSyntheticDispatchForwardsCallerGitRef(t *testing.T) {
+	store := minimalDispatchStore()
+	store.wf.DispatchInputs = []DispatchInputSpec{{Name: "git_ref", Required: true, Default: "main"}}
+	store.wf.Phases[0].Jobs[0].Checkout = &RunnerCheckoutSpec{Ref: CanonicalGitRefTemplate}
+	launcher := &fakeRunLauncher{}
+	body, _ := json.Marshal(SyntheticDispatchRequest{
+		Project:          "proj",
+		IssueNumber:      7,
+		WorkflowName:     "main",
+		StartAtPhase:     "prepare",
+		Reason:           "test harness branch via cheap synthetic run",
+		Inputs:           map[string]string{"git_ref": "codex/harness-branch"},
+		ExecutionContext: SyntheticExecutionContext{SlotLeaseRef: "lease-1"},
+	})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/runs/synthetic-dispatch", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer admin")
+
+	newSyntheticDispatchTestHandler(store, launcher).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if store.runReq == nil {
+		t.Fatal("CreateRun was not called")
+	}
+	if got, want := store.runReq.RunInputs["git_ref"], "codex/harness-branch"; got != want {
+		t.Fatalf("run input git_ref=%q, want %q", got, want)
+	}
+	if got, want := launcher.req.Run.RunInputs["git_ref"], "codex/harness-branch"; got != want {
+		t.Fatalf("launch run input git_ref=%q, want %q", got, want)
+	}
+	// Render the launched start phase exactly as the Kubernetes launcher does and
+	// confirm the `${{ inputs.git_ref }}` checkout ref resolves to the branch.
+	rendered, err := derivePrimaryCheckoutRepo(launcher.req.Phase, launcher.req.Run.IssueRepo)
+	if err != nil {
+		t.Fatalf("derivePrimaryCheckoutRepo: %v", err)
+	}
+	rendered, err = resolveRunnerCheckoutRunInputs(rendered, launchRunInputs(launcher.req))
+	if err != nil {
+		t.Fatalf("resolveRunnerCheckoutRunInputs: %v", err)
+	}
+	if rendered.Jobs[0].Checkout == nil {
+		t.Fatalf("rendered job has no checkout: %#v", rendered.Jobs[0])
+	}
+	if got, want := rendered.Jobs[0].Checkout.Ref, "codex/harness-branch"; got != want {
+		t.Fatalf("rendered checkout.ref=%q, want %q", got, want)
+	}
+}
+
+// TestSyntheticDispatchOmittedInputsDefaultToMain locks in that an existing
+// synthetic dispatch (no inputs) is unchanged: declared defaults still apply, so
+// git_ref resolves to main on the run and on the launcher payload.
+func TestSyntheticDispatchOmittedInputsDefaultToMain(t *testing.T) {
+	store := minimalDispatchStore()
+	store.wf.DispatchInputs = []DispatchInputSpec{{Name: "git_ref", Required: true, Default: "main"}}
+	store.wf.Phases[0].Jobs[0].Checkout = &RunnerCheckoutSpec{Ref: CanonicalGitRefTemplate}
+	launcher := &fakeRunLauncher{}
+	body, _ := json.Marshal(SyntheticDispatchRequest{
+		Project:          "proj",
+		IssueNumber:      7,
+		WorkflowName:     "main",
+		StartAtPhase:     "prepare",
+		Reason:           "existing synthetic dispatch with no inputs",
+		ExecutionContext: SyntheticExecutionContext{SlotLeaseRef: "lease-1"},
+	})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/runs/synthetic-dispatch", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer admin")
+
+	newSyntheticDispatchTestHandler(store, launcher).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if store.runReq == nil {
+		t.Fatal("CreateRun was not called")
+	}
+	if got, want := store.runReq.RunInputs["git_ref"], "main"; got != want {
+		t.Fatalf("run input git_ref=%q, want default %q", got, want)
+	}
+	if got, want := launcher.req.Run.RunInputs["git_ref"], "main"; got != want {
+		t.Fatalf("launch run input git_ref=%q, want default %q", got, want)
+	}
+	rendered, err := resolveRunnerCheckoutRunInputs(launcher.req.Phase, launchRunInputs(launcher.req))
+	if err != nil {
+		t.Fatalf("resolveRunnerCheckoutRunInputs: %v", err)
+	}
+	if got, want := rendered.Jobs[0].Checkout.Ref, "main"; got != want {
+		t.Fatalf("rendered checkout.ref=%q, want default %q", got, want)
+	}
+}
+
+// TestSyntheticDispatchRejectsUndeclaredInput mirrors the ordinary dispatch path:
+// the synthetic boundary rejects an input the workflow's dispatch_inputs does not
+// declare with the same 422 + "not declared" shape — no second, divergent
+// validation path, no silent flow into Run.RunInputs.
+func TestSyntheticDispatchRejectsUndeclaredInput(t *testing.T) {
+	store := minimalDispatchStore()
+	// minimalDispatchStore declares no dispatch_inputs.
+	body, _ := json.Marshal(SyntheticDispatchRequest{
+		Project:          "proj",
+		IssueNumber:      7,
+		WorkflowName:     "main",
+		StartAtPhase:     "prepare",
+		Reason:           "undeclared input",
+		Inputs:           map[string]string{"git_ref": "feature/branch"},
+		ExecutionContext: SyntheticExecutionContext{SlotLeaseRef: "lease-1"},
+	})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/runs/synthetic-dispatch", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer admin")
+
+	newSyntheticDispatchTestHandler(store, &fakeRunLauncher{}).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "git_ref") || !strings.Contains(rec.Body.String(), "not declared") {
+		t.Fatalf("body=%s, want git_ref + not declared message", rec.Body.String())
+	}
+	if store.runReq != nil {
+		t.Fatalf("undeclared input should fail before creating run: %#v", store.runReq)
+	}
+}
+
+// TestSyntheticDispatchRejectsInvalidRunInputs locks in that a structurally
+// invalid input key is a 400 at the boundary, before any project/workflow read or
+// run creation — symmetrical with the ordinary dispatch path.
+func TestSyntheticDispatchRejectsInvalidRunInputs(t *testing.T) {
+	store := minimalDispatchStore()
+	body, _ := json.Marshal(SyntheticDispatchRequest{
+		Project:          "proj",
+		IssueNumber:      7,
+		WorkflowName:     "main",
+		StartAtPhase:     "prepare",
+		Reason:           "invalid input key",
+		Inputs:           map[string]string{"bad key": "main"},
+		ExecutionContext: SyntheticExecutionContext{SlotLeaseRef: "lease-1"},
+	})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/runs/synthetic-dispatch", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer admin")
+
+	newSyntheticDispatchTestHandler(store, &fakeRunLauncher{}).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if store.runReq != nil {
+		t.Fatalf("invalid input should fail before creating run: %#v", store.runReq)
+	}
+}
+
+// TestSyntheticDispatchRejectsMissingRequiredInput locks in the migration-policy
+// "no fallback defaults" rule for the synthetic boundary: a required input with
+// no declared default and no caller value is a 422, not a server-side guess.
+func TestSyntheticDispatchRejectsMissingRequiredInput(t *testing.T) {
+	store := minimalDispatchStore()
+	store.wf.DispatchInputs = []DispatchInputSpec{{Name: "git_ref", Required: true}}
+	body, _ := json.Marshal(SyntheticDispatchRequest{
+		Project:          "proj",
+		IssueNumber:      7,
+		WorkflowName:     "main",
+		StartAtPhase:     "prepare",
+		Reason:           "missing required input",
+		ExecutionContext: SyntheticExecutionContext{SlotLeaseRef: "lease-1"},
+	})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/runs/synthetic-dispatch", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer admin")
+
+	newSyntheticDispatchTestHandler(store, &fakeRunLauncher{}).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "git_ref") || !strings.Contains(rec.Body.String(), "required") {
+		t.Fatalf("body=%s, want git_ref + required message", rec.Body.String())
+	}
+	if store.runReq != nil {
+		t.Fatalf("missing required input should fail before creating run: %#v", store.runReq)
+	}
+}
+
 func TestSyntheticDispatchRejectsUnsatisfiedStartInputs(t *testing.T) {
 	store := minimalDispatchStore()
 	store.wf.Phases[1].Inputs = map[string]string{
