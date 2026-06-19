@@ -748,6 +748,34 @@ PR/review output keys such as `pr_number`, `pr_url`, `review_ref`,
 `merge_status`, or `merge_commit_sha`; those are canonical side effects of the
 `pr_review` / `pr_merge` primitives.
 
+### Cheap validation: slotless and step-skipped replay
+
+Synthetic dispatch is the cheap-validation path for verify/review/contract and
+harness changes — replay recorded evidence through the evaluate/review path
+without re-running the expensive produce, and without modifying any harness
+shell.
+
+- **Slotless.** A synthetic run whose entire `start_at_phase`→terminal span is
+  `review` / `review_gate` / teardown touches no test environment, so it
+  dispatches with **no claimed `slot_lease_ref`** (omit it); the result reports
+  `lease=none`. `syntheticRunRequiresSlot` gates the lease on whether any
+  executed phase is primary (work / verification, via `phaseIsPrimary`). Starting
+  at an environment phase without a lease stays a 422.
+- **Step-skip.** `skip_steps` names step slugs of the start phase to omit: the
+  launcher drops them from the runner job spec (the pod never runs them) and the
+  dispatch synthesizes their `step_skipped` execution records, while the caller
+  supplies what they would have produced via `supplied_phase_outputs` / `inputs`.
+  This re-runs a single harness step (e.g. the evidence guard, or
+  collect-evidence) against recorded inputs in seconds, skipping the multi-minute
+  produce step it depends on. A skipped slug must be a declared step of the start
+  phase, must not be a managed primitive step (`verification_finalize` /
+  `pr_review` / `pr_merge`), and at least one step of its job must remain (skip
+  the whole job via its `when` condition instead).
+
+The fix for a flaky harness step lives here, in the engine — skip what you are
+not testing, provide what it would have produced — not in per-step replay modes
+baked into the harness `.sh`/`.ps1`.
+
 Never store paths as canonical identifiers — compute at render
 time from the entity's slug + parent context. This avoids
 renumbering churn when phases are added/removed and naturally
