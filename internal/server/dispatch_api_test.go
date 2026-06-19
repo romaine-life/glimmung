@@ -27,6 +27,7 @@ var testAgentPricing = agentcost.Rate{
 type fakeDispatchStore struct {
 	skippedJobsPhase string
 	skippedJobs      map[string]string
+	skippedSteps     []string
 	fakeReadStore
 
 	githubRepo    string
@@ -164,6 +165,11 @@ func (s *fakeDispatchStore) CreateRun(_ context.Context, req CreateRunRequest) (
 		return *s.run, nil
 	}
 	return CreatedRun{ID: "run-1", RunNumber: 1, CycleNumber: 1, RunCycle: 1, RunDisplay: "1.1", CallbackToken: "tok"}, nil
+}
+
+func (s *fakeDispatchStore) RecordRunnerStepsSkipped(_ context.Context, _, _, _ string, slugs []string, _ string) error {
+	s.skippedSteps = append(s.skippedSteps, slugs...)
+	return nil
 }
 
 func (s *fakeDispatchStore) RecordRunnerJobsSkipped(_ context.Context, _, _, phase string, skipped map[string]string) error {

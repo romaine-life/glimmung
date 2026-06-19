@@ -276,6 +276,10 @@ func (s *fakePlayableStore) RecordRunnerJobsSkipped(_ context.Context, _, _, _ s
 	return nil
 }
 
+func (s *fakePlayableStore) RecordRunnerStepsSkipped(_ context.Context, _, _, _ string, _ []string, _ string) error {
+	return nil
+}
+
 func (s *fakePlayableStore) StartRunCycle(context.Context, StartRunCycleRequest) (int, error) {
 	return 0, nil
 }

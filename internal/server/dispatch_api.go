@@ -126,6 +126,7 @@ type RunDispatchStore interface {
 	CreateRun(ctx context.Context, req CreateRunRequest) (CreatedRun, error)
 	StartRunCycle(ctx context.Context, req StartRunCycleRequest) (int, error)
 	RecordRunnerJobsSkipped(ctx context.Context, project, runID, phase string, skipped map[string]string) error
+	RecordRunnerStepsSkipped(ctx context.Context, project, runID, phase string, slugs []string, reason string) error
 	AcquireLease(ctx context.Context, req LeaseAcquireRequest) (Lease, error)
 	ReadLeaseByRef(ctx context.Context, project, ref string) (Lease, error)
 	CancelLeaseByRef(ctx context.Context, project, ref string) (CancelLeaseResult, error)
