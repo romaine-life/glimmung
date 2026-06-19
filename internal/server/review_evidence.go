@@ -14,9 +14,20 @@ type reviewEvidenceCandidate struct {
 	AttemptIndex int
 }
 
+// reviewEvidenceForRun normalizes the run's recorded verification evidence into
+// review evidence and validates that every referenced artifact is durably
+// present and well-typed in the artifact store.
+//
+// It is deliberately NOT a second evaluation of the evidence contract. The
+// verification phase is the authority: it binds every required-evidence item by
+// id to its observed evidence and renders the verdict (the spirelens guard
+// EvidenceContract.ps1, ambience's verifier, etc.). A run only reaches review on
+// an advancing pass verdict. The review gate's sole job is durability — not
+// re-deriving a per-kind distinct-file count, which is a divergent, weaker
+// invariant that the contract never specified and that falsely rejected a single
+// artifact legitimately satisfying multiple same-kind requirements (one
+// screenshot proving two on-screen facts, e.g. spirelens#147).
 func reviewEvidenceForRun(ctx context.Context, artifactStore ArtifactStore, run RunReplayData) ([]ReviewEvidence, error) {
-	required := requiredEvidenceForRun(run)
-	requiredCounts := requiredEvidenceCounts(required)
 	candidates := evidenceCandidatesForRun(run)
 	evidence := make([]ReviewEvidence, 0, len(candidates))
 	seen := map[string]bool{}
@@ -61,79 +72,7 @@ func reviewEvidenceForRun(ctx context.Context, artifactStore ArtifactStore, run 
 			SourceAttemptIndex: artifact.SourceAttemptIndex,
 		})
 	}
-	if len(requiredCounts) > 0 {
-		if artifactStore == nil {
-			return nil, ValidationError{Message: "artifact store not configured for required evidence validation"}
-		}
-		actualCounts := map[string]int{}
-		for _, item := range evidence {
-			kind := firstNonEmpty(NormalizeEvidenceKind(item.Kind), EvidenceKindForRef(item.Ref))
-			actualCounts[kind]++
-		}
-		for kind, count := range requiredCounts {
-			if actualCounts[kind] == 0 {
-				return nil, ValidationError{Message: fmt.Sprintf("required %s evidence was not recorded", kind)}
-			}
-			if actualCounts[kind] < count {
-				return nil, ValidationError{Message: fmt.Sprintf("required %d %s evidence artifacts but only %d were recorded", count, kind, actualCounts[kind])}
-			}
-		}
-	}
 	return evidence, nil
-}
-
-func requiredEvidenceForRun(run RunReplayData) []EvidenceRequirement {
-	if len(run.EvidenceRequirements) > 0 {
-		return run.EvidenceRequirements
-	}
-	for i := len(run.Attempts) - 1; i >= 0; i-- {
-		raw := strings.TrimSpace(run.Attempts[i].PhaseOutputs["test_plan"])
-		if raw == "" {
-			continue
-		}
-		payload, ok := decodeEvidenceJSONOutputObject(raw)
-		if !ok {
-			continue
-		}
-		return MergeEvidenceRequirements(
-			EvidenceRequirementsFromRaw(payload["required_evidence"]),
-			EvidenceRequirementsFromRaw(payload["evidence_requirements"]),
-		)
-	}
-	return nil
-}
-
-func requiredEvidenceCounts(requirements []EvidenceRequirement) map[string]int {
-	counts := map[string]int{}
-	for _, requirement := range requirements {
-		if requirement.Optional {
-			continue
-		}
-		kind := reviewArtifactRequirementKind(requirement.Kind)
-		if kind == "" {
-			kind = EvidenceKindVideo
-		}
-		if kind == "-" {
-			continue
-		}
-		counts[kind]++
-	}
-	return counts
-}
-
-func reviewArtifactRequirementKind(kind string) string {
-	switch strings.ToLower(strings.TrimSpace(kind)) {
-	case "":
-		return ""
-	case "screenshot", "image", "still":
-		return EvidenceKindScreenshot
-	case "video", "animation", "webm", "movie", "recording":
-		return EvidenceKindVideo
-	case "artifact", "file", "attachment":
-		return EvidenceKindArtifact
-	default:
-		return "-"
-	}
 }
 
 func evidenceCandidatesForRun(run RunReplayData) []reviewEvidenceCandidate {
