@@ -26,7 +26,14 @@ type SyntheticDispatchRequest struct {
 	SuppliedPhaseOutputs []SyntheticSuppliedPhaseOutput `json:"supplied_phase_outputs"`
 	ExecutionContext     SyntheticExecutionContext      `json:"execution_context"`
 	Reason               string                         `json:"reason"`
-	TriggerSource        map[string]any                 `json:"trigger_source"`
+	// Inputs are caller-supplied workflow dispatch inputs (e.g. git_ref),
+	// resolved against the workflow's declared dispatch_inputs exactly as the
+	// ordinary dispatch path resolves DispatchRunRequest.Inputs. Omitted or
+	// empty resolves every declared input to its declared default (git_ref ->
+	// main), so a synthetic run can cheaply point harness checkouts at an
+	// arbitrary branch without rerunning the expensive LLM phases.
+	Inputs        map[string]string `json:"inputs"`
+	TriggerSource map[string]any    `json:"trigger_source"`
 }
 
 type SyntheticCopyPhaseOutputsFrom struct {
@@ -105,6 +112,14 @@ func syntheticDispatchRunWithAgentRuntime(ctx context.Context, store RunDispatch
 	if runLauncher == nil {
 		return PublicDispatchResult{}, &dispatchProblem{status: http.StatusServiceUnavailable, message: "run launcher not configured"}
 	}
+	// Normalize caller-supplied inputs at the API boundary exactly as the
+	// ordinary dispatch path does, before any project/issue/workflow read or
+	// lock. Structural problems (bad keys, oversized values) are a 400 here, not
+	// a late 422 against the workflow contract.
+	runInputs, err := normalizeRunInputs(req.Inputs)
+	if err != nil {
+		return PublicDispatchResult{}, &dispatchProblem{status: http.StatusBadRequest, message: err.Error()}
+	}
 
 	project, err := store.ReadProjectForDispatch(ctx, req.Project)
 	if errors.Is(err, ErrNotFound) {
@@ -143,13 +158,15 @@ func syntheticDispatchRunWithAgentRuntime(ctx context.Context, store RunDispatch
 		return PublicDispatchResult{}, &dispatchProblem{status: http.StatusUnprocessableEntity, message: err.Error()}
 	}
 	// Resolve dispatch inputs exactly as the ordinary dispatch path does: apply
-	// the workflow's declared defaults (e.g. git_ref -> main) and reject a
-	// genuinely-missing required input here, before any run row or lease/lock is
-	// created. Synthetic dispatch carries no caller-supplied inputs today, so
-	// this resolves to the declared defaults; running it still matters so the
-	// run's RunInputs satisfy every `${{ inputs.X }}` phase template (e.g. a
-	// phase checkout.ref of `${{ inputs.git_ref }}`) at render time.
-	resolvedInputs, inputErr := resolveDispatchRunInputs(wf.DispatchInputs, nil)
+	// the workflow's declared defaults (e.g. git_ref -> main) for anything the
+	// caller omits, reject an undeclared input, and reject a genuinely-missing
+	// required input here, before any run row or lease/lock is created. The
+	// caller's inputs flow through unchanged when omitted (git_ref -> main), so
+	// existing synthetic dispatches are unaffected. When the caller supplies
+	// git_ref, the resolved RunInputs make every `${{ inputs.git_ref }}` phase
+	// template (e.g. a checkout.ref) render to that branch at launch time — the
+	// mechanism for testing a harness branch via a cheap synthetic run.
+	resolvedInputs, inputErr := resolveDispatchRunInputs(wf.DispatchInputs, runInputs)
 	if inputErr != nil {
 		return PublicDispatchResult{}, &dispatchProblem{status: http.StatusUnprocessableEntity, message: inputErr.Error()}
 	}
