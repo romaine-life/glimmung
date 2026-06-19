@@ -106,9 +106,6 @@ func syntheticDispatchRunWithAgentRuntime(ctx context.Context, store RunDispatch
 	if req.Reason == "" {
 		return PublicDispatchResult{}, &dispatchProblem{status: http.StatusBadRequest, message: "reason required"}
 	}
-	if req.ExecutionContext.SlotLeaseRef == "" {
-		return PublicDispatchResult{}, &dispatchProblem{status: http.StatusUnprocessableEntity, message: "execution_context.slot_lease_ref required for synthetic runner dispatch"}
-	}
 	if runLauncher == nil {
 		return PublicDispatchResult{}, &dispatchProblem{status: http.StatusServiceUnavailable, message: "run launcher not configured"}
 	}
@@ -177,6 +174,15 @@ func syntheticDispatchRunWithAgentRuntime(ctx context.Context, store RunDispatch
 	if problem := validateSyntheticStartAtPhase(wf, startIndex); problem != nil {
 		return PublicDispatchResult{}, problem
 	}
+	// A synthetic run needs a claimed test-slot lease only if it will execute an
+	// environment phase (work / verification — the primary phases that run on or
+	// against the per-issue test slot). A run whose entire start->terminal span is
+	// review / review_gate / teardown touches no test environment, so it dispatches
+	// slotlessly: the basis for a host-free, produce-free evidence/review replay.
+	requiresSlot := syntheticRunRequiresSlot(wf, startIndex)
+	if requiresSlot && req.ExecutionContext.SlotLeaseRef == "" {
+		return PublicDispatchResult{}, &dispatchProblem{status: http.StatusUnprocessableEntity, message: fmt.Sprintf("execution_context.slot_lease_ref required for synthetic runner dispatch starting at environment phase %q", startPhase.Name)}
+	}
 	phaseKind := workflowPhaseKind(startPhase.Kind)
 	if err := validateRunnerWorkflowKind(phaseKind); err != nil {
 		return PublicDispatchResult{}, &dispatchProblem{status: http.StatusUnprocessableEntity, message: err.Error()}
@@ -200,15 +206,18 @@ func syntheticDispatchRunWithAgentRuntime(ctx context.Context, store RunDispatch
 	if err != nil {
 		return PublicDispatchResult{}, &dispatchProblem{status: http.StatusUnprocessableEntity, message: "start_at_phase inputs are not satisfied by supplied_phase_outputs: " + err.Error()}
 	}
-	lease, err := store.ReadLeaseByRef(ctx, req.Project, req.ExecutionContext.SlotLeaseRef)
-	if err != nil {
-		if errors.Is(err, ErrNotFound) {
-			return PublicDispatchResult{}, &dispatchProblem{status: http.StatusUnprocessableEntity, message: "execution_context.slot_lease_ref does not identify a claimed lease"}
+	var lease Lease
+	if req.ExecutionContext.SlotLeaseRef != "" {
+		lease, err = store.ReadLeaseByRef(ctx, req.Project, req.ExecutionContext.SlotLeaseRef)
+		if err != nil {
+			if errors.Is(err, ErrNotFound) {
+				return PublicDispatchResult{}, &dispatchProblem{status: http.StatusUnprocessableEntity, message: "execution_context.slot_lease_ref does not identify a claimed lease"}
+			}
+			return PublicDispatchResult{}, &dispatchProblem{status: http.StatusInternalServerError, message: "read slot lease failed"}
 		}
-		return PublicDispatchResult{}, &dispatchProblem{status: http.StatusInternalServerError, message: "read slot lease failed"}
-	}
-	if lease.State != "claimed" {
-		return PublicDispatchResult{}, &dispatchProblem{status: http.StatusUnprocessableEntity, message: "execution_context.slot_lease_ref is not claimed"}
+		if lease.State != "claimed" {
+			return PublicDispatchResult{}, &dispatchProblem{status: http.StatusUnprocessableEntity, message: "execution_context.slot_lease_ref is not claimed"}
+		}
 	}
 
 	projectRuntime, projectHasRuntime, err := agentruntime.ConfigFromMetadata(project.Metadata)
@@ -287,18 +296,23 @@ func syntheticDispatchRunWithAgentRuntime(ctx context.Context, store RunDispatch
 		PreserveTestEnv:      issue.PreserveTestEnv,
 		Attempts:             append(append([]RunAttemptData{}, suppliedAttempts...), RunAttemptData{AttemptIndex: len(suppliedAttempts), Phase: startPhase.Name}),
 	}
-	metadata := runCycleLeaseMetadata(runData, issue, issueRepo, startPhase.Name, len(suppliedAttempts), phaseInputs)
-	if req.ExecutionContext.Namespace != "" {
-		metadata["synthetic_namespace"] = req.ExecutionContext.Namespace
-	}
-	merged := mapOrEmpty(lease.Metadata)
-	for key, value := range metadata {
-		merged[key] = value
-	}
-	lease.Metadata = merged
-	if err := persistLeaseMetadata(ctx, store, lease, merged); err != nil {
-		_, _ = store.AbortRunByID(ctx, req.Project, run.ID, "synthetic_lease_metadata_failed: "+err.Error())
-		return PublicDispatchResult{}, &dispatchProblem{status: http.StatusInternalServerError, message: "persist lease metadata failed"}
+	// Run-cycle context is attached to the test-slot lease for the slot's runtime
+	// to read. A slotless run has no lease to carry it; its phase Jobs (review /
+	// review_gate / teardown) take their context from the run record at launch.
+	if req.ExecutionContext.SlotLeaseRef != "" {
+		metadata := runCycleLeaseMetadata(runData, issue, issueRepo, startPhase.Name, len(suppliedAttempts), phaseInputs)
+		if req.ExecutionContext.Namespace != "" {
+			metadata["synthetic_namespace"] = req.ExecutionContext.Namespace
+		}
+		merged := mapOrEmpty(lease.Metadata)
+		for key, value := range metadata {
+			merged[key] = value
+		}
+		lease.Metadata = merged
+		if err := persistLeaseMetadata(ctx, store, lease, merged); err != nil {
+			_, _ = store.AbortRunByID(ctx, req.Project, run.ID, "synthetic_lease_metadata_failed: "+err.Error())
+			return PublicDispatchResult{}, &dispatchProblem{status: http.StatusInternalServerError, message: "persist lease metadata failed"}
+		}
 	}
 	attemptIdx, err := store.StartRunCycle(ctx, StartRunCycleRequest{
 		Project:          req.Project,
@@ -336,6 +350,10 @@ func syntheticDispatchRunWithAgentRuntime(ctx context.Context, store RunDispatch
 		return PublicDispatchResult{State: "dispatch_failed", RunNumber: &run.RunNumber, CycleNumber: &run.CycleNumber, RunCycle: &run.RunCycle, RunID: &run.ID, RunRef: stringPtr(publicids.RunRef(req.Project, req.IssueNumber, run.RunDisplay)), Workflow: &wf.Name, Detail: stringPtr("runner dispatch failed: " + err.Error())}, nil
 	}
 	_ = recordLaunchedRunnerJobs(ctx, store, runData, *startPhase, launched)
+	leaseState := "claimed"
+	if req.ExecutionContext.SlotLeaseRef == "" {
+		leaseState = "none"
+	}
 	runRef := publicids.RunRef(req.Project, req.IssueNumber, run.RunDisplay)
 	return PublicDispatchResult{
 		State:       "dispatched",
@@ -347,7 +365,7 @@ func syntheticDispatchRunWithAgentRuntime(ctx context.Context, store RunDispatch
 		RunID:       &run.ID,
 		RunRef:      &runRef,
 		Workflow:    &wf.Name,
-		Lease:       "claimed",
+		Lease:       leaseState,
 		Host:        lease.Host,
 	}, nil
 }
@@ -499,6 +517,24 @@ func mergeSyntheticSuppliedPhaseOutputs(copied []SyntheticSuppliedPhaseOutput, s
 		merged = append(merged, cloneSyntheticSuppliedPhaseOutput(input))
 	}
 	return merged, nil
+}
+
+// syntheticRunRequiresSlot reports whether a synthetic run that starts at
+// startIndex will execute any phase that uses the per-issue test environment.
+// Primary phases (work, verification) run on/against the test slot; review,
+// review_gate, and teardown phases are GitHub-API + cleanup only. A run whose
+// entire start->terminal span is non-primary needs no claimed lease, so it can
+// dispatch slotlessly (a host-free, produce-free evidence/review replay).
+func syntheticRunRequiresSlot(wf *Workflow, startIndex int) bool {
+	if wf == nil || startIndex < 0 {
+		return true
+	}
+	for i := startIndex; i < len(wf.Phases); i++ {
+		if phaseIsPrimary(wf.Phases[i]) {
+			return true
+		}
+	}
+	return false
 }
 
 func validateSyntheticStartAtPhase(wf *Workflow, startIndex int) *dispatchProblem {
