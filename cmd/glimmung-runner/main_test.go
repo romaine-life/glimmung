@@ -502,6 +502,94 @@ func TestNativeRunnerStopsDynamicGroupAfterCaseFailure(t *testing.T) {
 	}
 }
 
+func TestNativeRunnerDynamicCaseFailureSurfacesFailureBlock(t *testing.T) {
+	var events []runnerEventRequest
+	var mu sync.Mutex
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/events":
+			var event runnerEventRequest
+			_ = json.NewDecoder(r.Body).Decode(&event)
+			mu.Lock()
+			events = append(events, event)
+			mu.Unlock()
+			_ = json.NewEncoder(w).Encode(map[string]any{"accepted": true})
+		case "/completed":
+			_ = json.NewEncoder(w).Encode(map[string]any{"decision": "done"})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	workspace := t.TempDir()
+	// The verifier emits an EMPTY reasons[] but a populated failure block — the
+	// exact shape that used to surface as a content-free status=fail in the
+	// runner event stream (the failure detail was dropped on the floor).
+	emitFailure := `printf '{"verification":{"status":"fail","reasons":[],"failure":{"observed":"sparse starfield, no constellation lines","where":"/dev/constellations","suspected_cause":"code_bug","cause_detail":"no line draw scheduled"}}}' > "$GLIMMUNG_COMPLETION_FILE"`
+	r := &runner{
+		cfg: runnerConfig{
+			JobID:        "verify",
+			EventsURL:    server.URL + "/events",
+			CompletedURL: server.URL + "/completed",
+			Workspace:    workspace,
+			Job: jobSpec{
+				WorkingDirectory: workspace,
+				Shell:            "sh",
+				Steps: []stepSpec{
+					{
+						Slug: "author-test-plan",
+						Type: "run",
+						Run:  `printf 'test_cases_json=[{"id":"standing"}]\n' >> "$GLIMMUNG_OUTPUT_FILE"`,
+					},
+					{
+						Slug:         "finalize",
+						Type:         "run",
+						Run:          emitFailure,
+						Group:        "test-cases",
+						GroupTitle:   "Verification cases",
+						DynamicGroup: &dynamicGroupSpec{MaxItems: 10, ItemLabel: "case"},
+					},
+				},
+			},
+		},
+		client:  server.Client(),
+		outputs: map[string]string{},
+	}
+
+	err := r.run(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "sparse starfield, no constellation lines") {
+		t.Fatalf("run err=%v, want the propagated failure to carry the observed text", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	var failed runnerEventRequest
+	for _, event := range events {
+		if event.Event == "step_failed" && event.StepSlug != nil && strings.HasPrefix(*event.StepSlug, "finalize") {
+			failed = event
+		}
+	}
+	if failed.Message == nil {
+		t.Fatalf("no step_failed event for the dynamic case: %#v", events)
+	}
+	if !strings.Contains(*failed.Message, "sparse starfield, no constellation lines") {
+		t.Fatalf("step_failed message=%q, want the observed reason inline", *failed.Message)
+	}
+	if got, _ := failed.Metadata["verification_observed"].(string); got != "sparse starfield, no constellation lines" {
+		t.Fatalf("verification_observed=%q, want the observed text", got)
+	}
+	if got, _ := failed.Metadata["verification_suspected_cause"].(string); got != "code_bug" {
+		t.Fatalf("verification_suspected_cause=%q, want code_bug", got)
+	}
+	if got, _ := failed.Metadata["verification_where"].(string); got != "/dev/constellations" {
+		t.Fatalf("verification_where=%q, want the route", got)
+	}
+	if got, _ := failed.Metadata["verification_reason"].(string); !strings.Contains(got, "sparse starfield") {
+		t.Fatalf("verification_reason=%q, want observed-derived reason", got)
+	}
+}
+
 func sawEvent(events []runnerEventRequest, event string) bool {
 	for _, candidate := range events {
 		if candidate.Event == event {
