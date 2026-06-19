@@ -48,4 +48,76 @@ spec:
               "run settled terminal with unattributed cause" (fields:
               project/issue/run/run_id/cycle/phase/job/step/class/state).
             runbook_url: "https://github.com/romaine-life/glimmung/blob/main/docs/observability.md#run-terminal-attribution-backstop"
+    {{- with .Values.observability.prometheusRule.readStore }}
+    {{- if .enabled }}
+    - name: glimmung-read-store
+      rules:
+        # The read-path failure mode behind the saturation incident: /readyz is
+        # serving 503 because the background StoreHealthMonitor marked the read
+        # store unhealthy, so replicas drop out of the Service. Pages.
+        - alert: GlimmungReadStoreNotReady
+          # max across replicas of each pod's 1m-max readiness: 0 only when NO
+          # replica's read store has been ready at any point in the last minute
+          # — a site-wide read-store outage, not a single-pod blip (which the
+          # kubelet probe + latency/pool warnings already cover).
+          expr: max(max_over_time(glimmung_read_store_ready[1m])) == 0
+          for: {{ .notReadyFor }}
+          labels:
+            severity: {{ $.Values.observability.prometheusRule.severity | quote }}
+            service: glimmung
+          annotations:
+            summary: "glimmung read store is not ready"
+            description: >-
+              glimmung_read_store_ready has been 0 for {{ .notReadyFor }}: the
+              Postgres read store failed its background health probe, /readyz is
+              serving 503, and replicas are dropping out of the Service. This is
+              the read-store saturation failure mode. Check
+              glimmung_pg_query_duration_seconds, glimmung_pg_pool_conns, and the
+              glimmung-pg server (B1ms CPU-credit balance).
+            runbook_url: "https://github.com/romaine-life/glimmung/blob/main/docs/serving-path-and-availability.md"
+        # Early warning: p95 query latency climbing is the leading indicator the
+        # incident showed (latency rose ~10x before readiness flapped).
+        - alert: GlimmungReadStoreQueryLatencyHigh
+          expr: histogram_quantile(0.95, sum by (le) (rate(glimmung_pg_query_duration_seconds_bucket[5m]))) > {{ .latencyP95Seconds }}
+          for: {{ .latencyFor }}
+          labels:
+            severity: warning
+            service: glimmung
+          annotations:
+            summary: "glimmung Postgres p95 query latency is high"
+            description: >-
+              p95 Postgres query latency > {{ .latencyP95Seconds }}s for
+              {{ .latencyFor }}. The read path is saturating the tier; /readyz
+              flaps are the next symptom. Reduce graph read fan-out or upsize
+              glimmung-pg.
+        - alert: GlimmungReadStoreQueryErrors
+          expr: sum(rate(glimmung_pg_queries_total{outcome="error"}[5m])) > {{ .errorRatePerSecond }}
+          for: {{ .errorsFor }}
+          labels:
+            severity: warning
+            service: glimmung
+          annotations:
+            summary: "glimmung Postgres query error rate elevated"
+            description: >-
+              Postgres query error rate > {{ .errorRatePerSecond }}/s for
+              {{ .errorsFor }} (includes context cancellations from client
+              timeouts under load).
+        - alert: GlimmungPgPoolSaturated
+          expr: >-
+            sum(glimmung_pg_pool_conns{state="acquired"})
+            / clamp_min(sum(glimmung_pg_pool_conns{state="max"}), 1)
+            > {{ .poolSaturationRatio }}
+          for: {{ .poolFor }}
+          labels:
+            severity: warning
+            service: glimmung
+          annotations:
+            summary: "glimmung Postgres connection pool near saturation"
+            description: >-
+              Acquired/max pgxpool connections > {{ .poolSaturationRatio }} for
+              {{ .poolFor }}. Requests are queueing on connection acquisition;
+              raise pgxpool MaxConns within the tier's max_connections budget or
+              reduce per-request query fan-out.
+    {{- end }}
+    {{- end }}
 {{- end }}

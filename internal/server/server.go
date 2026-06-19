@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/romaine-life/glimmung/internal/domain/agentruntime"
 	"github.com/romaine-life/glimmung/internal/metrics"
@@ -259,19 +258,19 @@ func NewWithGitHubClient(settings Settings, store ReadStore, authResolver AuthRe
 }
 
 func NewWithRuntimeClients(settings Settings, store ReadStore, authResolver AuthResolver, ghClient any, runLauncher RunLauncher, artifactStores ...ArtifactStore) http.Handler {
-	return newHandlerWithReconcilers(settings, store, authResolver, ghClient, nil, nil, runLauncher, artifactStores...)
+	return newHandlerWithReconcilers(settings, store, authResolver, ghClient, nil, nil, runLauncher, nil, artifactStores...)
 }
 
 func NewWithRuntimeReconcilers(settings Settings, store ReadStore, authResolver AuthResolver, ghClient any, workloadIdentities RunnerWorkloadIdentityReconciler, runLauncher RunLauncher, artifactStores ...ArtifactStore) http.Handler {
-	return newHandlerWithReconcilers(settings, store, authResolver, ghClient, workloadIdentities, nil, runLauncher, artifactStores...)
+	return newHandlerWithReconcilers(settings, store, authResolver, ghClient, workloadIdentities, nil, runLauncher, nil, artifactStores...)
 }
 
 // NewWithReconcilers extends NewWithRuntimeReconcilers with the
 // managed-auth-origins reconciler (glimmung#142 stage 2). Existing callers
 // keep working through NewWithRuntimeReconcilers (which passes nil for the
 // origins reconciler); new wiring in cmd/glimmung-go uses this.
-func NewWithReconcilers(settings Settings, store ReadStore, authResolver AuthResolver, ghClient any, workloadIdentities RunnerWorkloadIdentityReconciler, managedOrigins ManagedOriginReconciler, runLauncher RunLauncher, artifactStores ...ArtifactStore) http.Handler {
-	return newHandlerWithReconcilers(settings, store, authResolver, ghClient, workloadIdentities, managedOrigins, runLauncher, artifactStores...)
+func NewWithReconcilers(settings Settings, store ReadStore, authResolver AuthResolver, ghClient any, workloadIdentities RunnerWorkloadIdentityReconciler, managedOrigins ManagedOriginReconciler, runLauncher RunLauncher, readiness ReadinessReporter, artifactStores ...ArtifactStore) http.Handler {
+	return newHandlerWithReconcilers(settings, store, authResolver, ghClient, workloadIdentities, managedOrigins, runLauncher, readiness, artifactStores...)
 }
 
 func NewWithDependencies(settings Settings, store ReadStore, authResolver AuthResolver, artifactStores ...ArtifactStore) http.Handler {
@@ -279,10 +278,10 @@ func NewWithDependencies(settings Settings, store ReadStore, authResolver AuthRe
 }
 
 func newHandler(settings Settings, store ReadStore, authResolver AuthResolver, ghClient any, runLauncher RunLauncher, artifactStores ...ArtifactStore) http.Handler {
-	return newHandlerWithReconcilers(settings, store, authResolver, ghClient, nil, nil, runLauncher, artifactStores...)
+	return newHandlerWithReconcilers(settings, store, authResolver, ghClient, nil, nil, runLauncher, nil, artifactStores...)
 }
 
-func newHandlerWithReconcilers(settings Settings, store ReadStore, authResolver AuthResolver, ghClient any, workloadIdentities RunnerWorkloadIdentityReconciler, managedOrigins ManagedOriginReconciler, runLauncher RunLauncher, artifactStores ...ArtifactStore) http.Handler {
+func newHandlerWithReconcilers(settings Settings, store ReadStore, authResolver AuthResolver, ghClient any, workloadIdentities RunnerWorkloadIdentityReconciler, managedOrigins ManagedOriginReconciler, runLauncher RunLauncher, readiness ReadinessReporter, artifactStores ...ArtifactStore) http.Handler {
 	var artifactStore ArtifactStore
 	if len(artifactStores) > 0 {
 		artifactStore = artifactStores[0]
@@ -334,9 +333,17 @@ func newHandlerWithReconcilers(settings Settings, store ReadStore, authResolver 
 		!errors.Is(tailscaleErr, errAuthRomaineLifeUnconfigured) {
 		log.Printf("remote-host: tailscale auth-key minter disabled: %v", tailscaleErr)
 	}
+	// Production wires a StoreHealthMonitor (readiness != nil). Test/partial
+	// wiring without one falls back to static readiness: a configured store
+	// reports ready, and a nil store leaves the reporter nil so /readyz reports
+	// "not configured". No synchronous per-request DB probe.
+	readinessReporter := readiness
+	if readinessReporter == nil && store != nil {
+		readinessReporter = staticReadiness{ready: true}
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", healthz)
-	mux.HandleFunc("GET /readyz", readyz(store))
+	mux.HandleFunc("GET /readyz", readyz(readinessReporter))
 	mux.Handle("GET /metrics", metrics.Handler())
 	mux.HandleFunc("GET /v1/config", publicConfig(settings))
 	mux.HandleFunc("GET /v1/auth/me", authMe(authResolver))
@@ -522,30 +529,24 @@ func healthz(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
-func readyz(store ReadStore) http.HandlerFunc {
+// readyz serves the cached read-store readiness published by the background
+// StoreHealthMonitor (see read_store_health.go). This handler does no database
+// I/O, so a slow or saturated read store degrades individual requests instead
+// of timing out the kubelet's probe and yanking the pod out of the Service —
+// the failure chain in the read-store saturation incident. A nil reporter means
+// no read store is configured.
+func readyz(reporter ReadinessReporter) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if store == nil {
+		if reporter == nil {
 			writeProblem(w, http.StatusServiceUnavailable, "read store not configured")
 			return
 		}
-		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
-		defer cancel()
-		if !readStoreReady(ctx, store) {
+		if !reporter.Ready() {
 			writeUnavailable(w, r, "read store not ready", "read_store_not_ready")
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	}
-}
-
-func readStoreReady(ctx context.Context, store ReadStore) (ready bool) {
-	defer func() {
-		if recover() != nil {
-			ready = false
-		}
-	}()
-	_, err := store.ListProjects(ctx)
-	return err == nil
 }
 
 // publicConfig serves /v1/config — read by the frontend on boot to discover

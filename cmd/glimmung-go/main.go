@@ -249,11 +249,49 @@ func main() {
 			go server.RecoverInFlightTestSlots(context.Background(), rt, runLauncher, ghClient, log.Printf)
 		}
 	}
+	// Read-store health monitor: a single background goroutine probes Postgres
+	// on its own schedule with a bounded context and publishes a cached
+	// readiness gauge that /readyz reads. It runs for every store-backed
+	// process (prod and slots) regardless of CONTROL_PLANE_LOOPS_ENABLED —
+	// readiness is a serving concern, not a control-plane one. Decoupling
+	// /readyz from a synchronous per-request SELECT is what stops a brief read
+	// store slowdown from flipping the only replica out of the Service.
+	var healthMonitor *server.StoreHealthMonitor
+	if rt != nil {
+		healthMonitor = server.NewStoreHealthMonitor(
+			func(ctx context.Context) error {
+				_, err := rt.ListProjects(ctx)
+				return err
+			},
+			server.StoreHealthOptions{},
+		)
+		go healthMonitor.Start(context.Background())
+	}
+	// Publish pgxpool saturation so connection back-pressure (acquired/max,
+	// empty/canceled acquires) is observable — the B1ms tier makes it
+	// load-bearing.
+	if pgPool != nil {
+		metrics.RegisterPoolStatsSource(func() metrics.PoolStats {
+			s := pgPool.Stat()
+			return metrics.PoolStats{
+				AcquiredConns:        s.AcquiredConns(),
+				IdleConns:            s.IdleConns(),
+				ConstructingConns:    s.ConstructingConns(),
+				TotalConns:           s.TotalConns(),
+				MaxConns:             s.MaxConns(),
+				AcquireCount:         s.AcquireCount(),
+				EmptyAcquireCount:    s.EmptyAcquireCount(),
+				CanceledAcquireCount: s.CanceledAcquireCount(),
+				NewConnsCount:        s.NewConnsCount(),
+			}
+		})
+	}
+
 	addr := ":" + settings.Port
 
 	srv := &http.Server{
 		Addr:              addr,
-		Handler:           server.NewWithReconcilers(settings, rt, authenticator, ghClient, workloadIdentities, managedOrigins, runLauncher, artifacts),
+		Handler:           server.NewWithReconcilers(settings, rt, authenticator, ghClient, workloadIdentities, managedOrigins, runLauncher, healthMonitor, artifacts),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 

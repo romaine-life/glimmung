@@ -4,14 +4,14 @@ metadata:
   name: glimmung
   namespace: {{ .Values.namespace }}
 spec:
-  # Explicitly allow eviction of our single pod. AKS node upgrades and
-  # voluntary disruptions (drain, cordon) will not be blocked by this PDB.
-  # The graceful-shutdown path in cmd/glimmung-go/main.go + the cross-
-  # replica safety in test_slot_timers.go / test_slot_api.go (etag CAS,
-  # recovery minAge gate, TTL timer re-arm on boot) cover the correctness
-  # story; this PDB documents intent — "single replica, always evictable"
-  # rather than relying on the absence of a PDB to mean the same thing.
-  maxUnavailable: 1
+  # With a multi-replica serving tier, keep at most one pod unavailable during
+  # voluntary disruptions (node drains, AKS upgrades) so the Service stays up
+  # through a rolling drain instead of going dark. The graceful-shutdown path in
+  # cmd/glimmung-go/main.go drains in-flight HTTP + test-slot work before exit;
+  # cross-replica safety in test_slot_timers.go / test_slot_api.go (etag CAS,
+  # recovery minAge gate, TTL timer re-arm on boot) makes concurrent replicas
+  # correct. At replicas=1 this still permits eviction.
+  maxUnavailable: {{ .Values.pdb.maxUnavailable }}
   selector:
     matchLabels:
       app: glimmung

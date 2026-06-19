@@ -312,6 +312,114 @@ func RecordPostgresQuery(operation string, outcome string, duration time.Duratio
 	postgresQueryDurationSeconds.WithLabelValues(op).Observe(duration.Seconds())
 }
 
+// --- Read-store readiness & connection pool ----------------------------------
+//
+// /readyz no longer probes Postgres synchronously on every request. A
+// background server.StoreHealthMonitor probes the read store on its own
+// schedule, applies hysteresis, and publishes the result here; /readyz reads
+// the cached value. These metrics make that cached readiness and the pool
+// back-pressure observable — the signals that turn the read-store saturation
+// failure mode into a page instead of a user-reported 504.
+
+var (
+	readStoreReady = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "glimmung_read_store_ready",
+		Help: "Cached read-store readiness served by /readyz (1=ready, 0=not ready). Driven by the background StoreHealthMonitor with hysteresis, not a per-request probe.",
+	})
+	readStoreProbeTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "glimmung_read_store_probe_total",
+			Help: "Background read-store readiness probes by outcome (ok|error). The error rate is visible before hysteresis flips readiness.",
+		},
+		[]string{"outcome"},
+	)
+)
+
+// SetReadStoreReady publishes the cached read-store readiness state.
+func SetReadStoreReady(ready bool) {
+	if ready {
+		readStoreReady.Set(1)
+		return
+	}
+	readStoreReady.Set(0)
+}
+
+// RecordReadStoreProbe counts one background readiness probe by outcome.
+func RecordReadStoreProbe(outcome string) {
+	readStoreProbeTotal.WithLabelValues(safeLabel(outcome)).Inc()
+}
+
+// PoolStats is a metrics-package-local snapshot of pgxpool.Stat so this package
+// does not import pgx. cmd/glimmung-go adapts the live pgxpool.Stat into it.
+type PoolStats struct {
+	AcquiredConns        int32
+	IdleConns            int32
+	ConstructingConns    int32
+	TotalConns           int32
+	MaxConns             int32
+	AcquireCount         int64
+	EmptyAcquireCount    int64
+	CanceledAcquireCount int64
+	NewConnsCount        int64
+}
+
+// RegisterPoolStatsSource registers a collector that reports pgxpool saturation
+// on every scrape by calling get(). Call once at startup with the live pool; a
+// nil get is ignored. Saturation (acquired/max) and empty/canceled acquires are
+// the connection back-pressure signals the B1ms tier makes load-bearing.
+func RegisterPoolStatsSource(get func() PoolStats) {
+	if get == nil {
+		return
+	}
+	registry.MustRegister(newPoolStatsCollector(get))
+}
+
+type poolStatsCollector struct {
+	get        func() PoolStats
+	conns      *prometheus.Desc
+	acquireOps *prometheus.Desc
+}
+
+func newPoolStatsCollector(get func() PoolStats) *poolStatsCollector {
+	return &poolStatsCollector{
+		get: get,
+		conns: prometheus.NewDesc(
+			"glimmung_pg_pool_conns",
+			"pgxpool connection counts by state (acquired|idle|constructing|total|max).",
+			[]string{"state"}, nil,
+		),
+		acquireOps: prometheus.NewDesc(
+			"glimmung_pg_pool_acquire_total",
+			"Cumulative pgxpool acquire outcomes (total|empty|canceled) and new connections opened (new_conns).",
+			[]string{"kind"}, nil,
+		),
+	}
+}
+
+func (c *poolStatsCollector) Describe(ch chan<- *prometheus.Desc) {
+	ch <- c.conns
+	ch <- c.acquireOps
+}
+
+func (c *poolStatsCollector) Collect(ch chan<- prometheus.Metric) {
+	s := c.get()
+	gauge := func(state string, v float64) {
+		ch <- prometheus.MustNewConstMetric(c.conns, prometheus.GaugeValue, v, state)
+	}
+	gauge("acquired", float64(s.AcquiredConns))
+	gauge("idle", float64(s.IdleConns))
+	gauge("constructing", float64(s.ConstructingConns))
+	gauge("total", float64(s.TotalConns))
+	gauge("max", float64(s.MaxConns))
+	counter := func(kind string, v float64) {
+		ch <- prometheus.MustNewConstMetric(c.acquireOps, prometheus.CounterValue, v, kind)
+	}
+	counter("total", float64(s.AcquireCount))
+	counter("empty", float64(s.EmptyAcquireCount))
+	counter("canceled", float64(s.CanceledAcquireCount))
+	counter("new_conns", float64(s.NewConnsCount))
+}
+
 // --- Test slot lifecycle -----------------------------------------------------
 //
 // The activation_cancelled counter exists because the activation/cleanup race
@@ -703,6 +811,8 @@ func init() {
 		leaseAcquireWaitSeconds,
 		postgresQueriesTotal,
 		postgresQueryDurationSeconds,
+		readStoreReady,
+		readStoreProbeTotal,
 		unavailableTotal,
 		projectConfigWritesTotal,
 		authRomaineLifeRequestsTotal,
