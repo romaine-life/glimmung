@@ -164,6 +164,12 @@ type RunLaunchRequest struct {
 	// their synthesized skipped records. Keyed by ID (not position) because
 	// the launcher re-canonicalizes the phase from the workflow schema.
 	SkipJobIDs map[string]string
+	// SkipStepSlugs names step slugs within this phase's job(s) that a synthetic
+	// dispatch elected to skip (e.g. the expensive produce step when replaying
+	// recorded evidence). The launcher omits them from the runner job spec so the
+	// pod never runs them; the dispatch layer writes their synthesized skipped
+	// step records. Keyed by slug (unique within a phase).
+	SkipStepSlugs map[string]bool
 }
 
 // RunLaunchedJob pairs a launched job's schema ID with the concrete
@@ -2068,7 +2074,7 @@ func runnerJobEnv(settings Settings, req RunLaunchRequest, job RunnerJobSpec, se
 	// endpoint via runnerMCPSidecarEnv; TestRunnerJobEnvOmitsBrowserEndpoint
 	// fails if it is reintroduced into the agent env.
 	if job.Managed {
-		env = appendLiteralEnv(env, seen, "GLIMMUNG_RUNNER_JOB_SPEC", runnerJobSpecJSON(job))
+		env = appendLiteralEnv(env, seen, "GLIMMUNG_RUNNER_JOB_SPEC", runnerJobSpecJSON(jobSpecForRunner(req, job)))
 	}
 	jobEnvNames := make([]string, 0, len(job.Env))
 	for name := range job.Env {
@@ -2128,6 +2134,24 @@ func runnerPolicyRefSegment(value string) string {
 
 func runnerEntrypoint(settings Settings) string {
 	return firstNonEmpty(settings.RunnerEntrypoint, "/app/glimmung-runner")
+}
+
+// jobSpecForRunner returns the job the runner should execute, with any
+// synthetic-dispatch-skipped step slugs removed so the pod never runs them.
+// The dispatch layer has written the synthesized skipped step records.
+func jobSpecForRunner(req RunLaunchRequest, job RunnerJobSpec) RunnerJobSpec {
+	if len(req.SkipStepSlugs) == 0 {
+		return job
+	}
+	steps := make([]RunnerStepSpec, 0, len(job.Steps))
+	for _, step := range job.Steps {
+		if req.SkipStepSlugs[step.Slug] {
+			continue
+		}
+		steps = append(steps, step)
+	}
+	job.Steps = steps
+	return job
 }
 
 func runnerJobSpecJSON(job RunnerJobSpec) string {

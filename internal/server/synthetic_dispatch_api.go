@@ -34,6 +34,14 @@ type SyntheticDispatchRequest struct {
 	// arbitrary branch without rerunning the expensive LLM phases.
 	Inputs        map[string]string `json:"inputs"`
 	TriggerSource map[string]any    `json:"trigger_source"`
+	// SkipSteps names step slugs within the start_at_phase's job(s) to skip: the
+	// launcher omits them from the runner job spec (the pod never runs the
+	// expensive/flaky step) and their synthesized skipped records are written
+	// before launch. Combined with supplied evidence this replays a harness step
+	// against recorded inputs without re-running the produce it depends on. A
+	// skipped slug must exist in the start phase, must not be a managed primitive
+	// step, and at least one step in its job must remain.
+	SkipSteps []string `json:"skip_steps"`
 }
 
 type SyntheticCopyPhaseOutputsFrom struct {
@@ -182,6 +190,14 @@ func syntheticDispatchRunWithAgentRuntime(ctx context.Context, store RunDispatch
 	requiresSlot := syntheticRunRequiresSlot(wf, startIndex)
 	if requiresSlot && req.ExecutionContext.SlotLeaseRef == "" {
 		return PublicDispatchResult{}, &dispatchProblem{status: http.StatusUnprocessableEntity, message: fmt.Sprintf("execution_context.slot_lease_ref required for synthetic runner dispatch starting at environment phase %q", startPhase.Name)}
+	}
+	// Step-level skip: omit named steps of the start phase (e.g. the expensive
+	// produce step) from the runner job spec and synthesize their skipped
+	// records, so a harness step can be replayed against supplied evidence
+	// without re-running the produce it depends on.
+	skipStepSet, problem := validateSyntheticSkipSteps(req.SkipSteps, *startPhase)
+	if problem != nil {
+		return PublicDispatchResult{}, problem
 	}
 	phaseKind := workflowPhaseKind(startPhase.Kind)
 	if err := validateRunnerWorkflowKind(phaseKind); err != nil {
@@ -344,7 +360,13 @@ func syntheticDispatchRunWithAgentRuntime(ctx context.Context, store RunDispatch
 			return PublicDispatchResult{State: "dispatch_failed", RunNumber: &run.RunNumber, CycleNumber: &run.CycleNumber, RunCycle: &run.RunCycle, RunID: &run.ID, RunRef: stringPtr(publicids.RunRef(req.Project, req.IssueNumber, run.RunDisplay)), Workflow: &wf.Name, Detail: stringPtr("runner dispatch failed: " + err.Error())}, nil
 		}
 	}
-	launched, err := launchCommittedPhase(ctx, runLauncher, RunLaunchRequest{Lease: lease, Workflow: *wf, Phase: *startPhase, Run: runData, SkipJobIDs: skippedJobs})
+	if len(skipStepSet) > 0 {
+		if err := store.RecordRunnerStepsSkipped(ctx, req.Project, run.ID, startPhase.Name, req.SkipSteps, "synthetic_step_skip"); err != nil {
+			_, _ = store.AbortRunByID(ctx, req.Project, run.ID, "synthetic_step_skip_failed: "+err.Error())
+			return PublicDispatchResult{State: "dispatch_failed", RunNumber: &run.RunNumber, CycleNumber: &run.CycleNumber, RunCycle: &run.RunCycle, RunID: &run.ID, RunRef: stringPtr(publicids.RunRef(req.Project, req.IssueNumber, run.RunDisplay)), Workflow: &wf.Name, Detail: stringPtr("record skipped steps failed: " + err.Error())}, nil
+		}
+	}
+	launched, err := launchCommittedPhase(ctx, runLauncher, RunLaunchRequest{Lease: lease, Workflow: *wf, Phase: *startPhase, Run: runData, SkipJobIDs: skippedJobs, SkipStepSlugs: skipStepSet})
 	if err != nil {
 		_, _ = store.AbortRunByID(ctx, req.Project, run.ID, "runner_dispatch_failed: "+err.Error())
 		return PublicDispatchResult{State: "dispatch_failed", RunNumber: &run.RunNumber, CycleNumber: &run.CycleNumber, RunCycle: &run.RunCycle, RunID: &run.ID, RunRef: stringPtr(publicids.RunRef(req.Project, req.IssueNumber, run.RunDisplay)), Workflow: &wf.Name, Detail: stringPtr("runner dispatch failed: " + err.Error())}, nil
@@ -525,6 +547,55 @@ func mergeSyntheticSuppliedPhaseOutputs(copied []SyntheticSuppliedPhaseOutput, s
 // review_gate, and teardown phases are GitHub-API + cleanup only. A run whose
 // entire start->terminal span is non-primary needs no claimed lease, so it can
 // dispatch slotlessly (a host-free, produce-free evidence/review replay).
+// validateSyntheticSkipSteps validates caller-requested step skips against the
+// start phase and returns the slug set the launcher should omit. A skipped slug
+// must be a declared step of the start phase, must not be a managed primitive
+// step (the verdict/gate steps own canonical side effects), and at least one
+// step of its job must remain (skip the whole job via its when condition
+// instead).
+func validateSyntheticSkipSteps(slugs []string, phase PhaseSpec) (map[string]bool, *dispatchProblem) {
+	if len(slugs) == 0 {
+		return nil, nil
+	}
+	type stepInfo struct {
+		jobID     string
+		primitive bool
+	}
+	declared := map[string]stepInfo{}
+	jobStepCount := map[string]int{}
+	for _, job := range phase.Jobs {
+		for _, step := range job.Steps {
+			declared[step.Slug] = stepInfo{jobID: job.ID, primitive: strings.TrimSpace(step.Primitive) != ""}
+			jobStepCount[job.ID]++
+		}
+	}
+	skip := make(map[string]bool, len(slugs))
+	skipPerJob := map[string]int{}
+	for _, raw := range slugs {
+		slug := strings.TrimSpace(raw)
+		if slug == "" {
+			return nil, &dispatchProblem{status: http.StatusBadRequest, message: "skip_steps contains an empty step slug"}
+		}
+		info, ok := declared[slug]
+		if !ok {
+			return nil, &dispatchProblem{status: http.StatusUnprocessableEntity, message: fmt.Sprintf("skip_steps step %q is not a step of start_at_phase %q", slug, phase.Name)}
+		}
+		if info.primitive {
+			return nil, &dispatchProblem{status: http.StatusUnprocessableEntity, message: fmt.Sprintf("skip_steps cannot skip managed primitive step %q", slug)}
+		}
+		if !skip[slug] {
+			skip[slug] = true
+			skipPerJob[info.jobID]++
+		}
+	}
+	for jobID, n := range skipPerJob {
+		if n >= jobStepCount[jobID] {
+			return nil, &dispatchProblem{status: http.StatusUnprocessableEntity, message: fmt.Sprintf("skip_steps would skip every step of job %q; skip the whole job via its when condition instead", jobID)}
+		}
+	}
+	return skip, nil
+}
+
 func syntheticRunRequiresSlot(wf *Workflow, startIndex int) bool {
 	if wf == nil || startIndex < 0 {
 		return true

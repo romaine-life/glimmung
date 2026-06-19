@@ -424,6 +424,82 @@ func TestSyntheticDispatchRejectsCopiedPhaseAtOrAfterStart(t *testing.T) {
 	}
 }
 
+func TestSyntheticDispatchSkipsNamedSteps(t *testing.T) {
+	// Replay a harness step against supplied evidence by skipping the expensive
+	// produce step: the launcher must receive the skip set (so the runner job
+	// spec omits it) and the dispatch must synthesize its skipped record. No
+	// harness shell change — the engine skips the step and uses what was supplied.
+	store := minimalDispatchStore()
+	store.wf.Constraints.Verification.Shape = VerificationShapeSingleJob
+	store.wf.Phases[1].Jobs = []RunnerJobSpec{singleVerificationJobForTest()}
+	launcher := &fakeRunLauncher{}
+	body, _ := json.Marshal(SyntheticDispatchRequest{
+		Project:      "proj",
+		IssueNumber:  7,
+		WorkflowName: "main",
+		StartAtPhase: "verify",
+		Reason:       "replay collect step without re-running produce",
+		SkipSteps:    []string{"run-verification"},
+		SuppliedPhaseOutputs: []SyntheticSuppliedPhaseOutput{{
+			Phase:        "prepare",
+			PhaseOutputs: map[string]string{},
+		}},
+		ExecutionContext: SyntheticExecutionContext{SlotLeaseRef: "lease-1"},
+	})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/runs/synthetic-dispatch", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer admin")
+
+	newSyntheticDispatchTestHandler(store, launcher).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if !launcher.called || !launcher.req.SkipStepSlugs["run-verification"] {
+		t.Fatalf("launcher did not receive the skipped step: %#v", launcher.req.SkipStepSlugs)
+	}
+	if len(store.skippedSteps) != 1 || store.skippedSteps[0] != "run-verification" {
+		t.Fatalf("dispatch did not synthesize the skipped step record: %#v", store.skippedSteps)
+	}
+}
+
+func TestSyntheticDispatchRejectsInvalidSkipSteps(t *testing.T) {
+	store := minimalDispatchStore()
+	store.wf.Constraints.Verification.Shape = VerificationShapeSingleJob
+	store.wf.Phases[1].Jobs = []RunnerJobSpec{singleVerificationJobForTest()}
+	launcher := &fakeRunLauncher{}
+	for _, tc := range []struct {
+		name string
+		slug string
+		want string
+	}{
+		{"unknown", "does-not-exist", "is not a step of start_at_phase"},
+		{"primitive", VerificationStepSlug, "cannot skip managed primitive step"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			body, _ := json.Marshal(SyntheticDispatchRequest{
+				Project: "proj", IssueNumber: 7, WorkflowName: "main",
+				StartAtPhase: "verify", Reason: "skip validation",
+				SkipSteps:        []string{tc.slug},
+				ExecutionContext: SyntheticExecutionContext{SlotLeaseRef: "lease-1"},
+			})
+			rec := httptest.NewRecorder()
+			r := httptest.NewRequest(http.MethodPost, "/v1/runs/synthetic-dispatch", bytes.NewReader(body))
+			r.Header.Set("Authorization", "Bearer admin")
+			newSyntheticDispatchTestHandler(store, launcher).ServeHTTP(rec, r)
+			if rec.Code != http.StatusUnprocessableEntity {
+				t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+			}
+			if !strings.Contains(rec.Body.String(), tc.want) {
+				t.Fatalf("body=%s want contains %q", rec.Body.String(), tc.want)
+			}
+			if launcher.called {
+				t.Fatal("invalid skip_steps must not launch")
+			}
+		})
+	}
+}
+
 func TestSyntheticDispatchRejectsStartAfterManagedPRReviewPhase(t *testing.T) {
 	store := minimalDispatchStore()
 	body, _ := json.Marshal(SyntheticDispatchRequest{

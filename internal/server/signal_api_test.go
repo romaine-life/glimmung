@@ -127,6 +127,10 @@ func (s *fakeSignalDrainStore) RecordRunnerJobsSkipped(_ context.Context, _, _, 
 	return nil
 }
 
+func (s *fakeSignalDrainStore) RecordRunnerStepsSkipped(_ context.Context, _, _, _ string, _ []string, _ string) error {
+	return nil
+}
+
 func (s *fakeSignalDrainStore) ListPendingSignals(context.Context, int) ([]QueuedSignal, error) {
 	return s.pending, nil
 }

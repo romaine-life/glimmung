@@ -9102,6 +9102,72 @@ func (s *Store) StampLatestAttemptSkipped(ctx context.Context, project, runID, r
 	return err
 }
 
+// RecordRunnerStepsSkipped marks named step slugs within a phase's job(s) as
+// "skipped" on the run's latest attempt execution ledger. Synthetic dispatch
+// uses it when the caller elected to skip steps (e.g. the expensive produce
+// step) and supply their evidence instead: the launcher omits those steps from
+// the runner job spec, and this synthesizes their skipped records so the
+// execution projection shows them skipped rather than stuck not_started. The
+// job itself still runs its remaining steps and completes normally; written
+// before launch so a fast real callback can never observe a half-stamped step.
+func (s *Store) RecordRunnerStepsSkipped(ctx context.Context, project, runID, phase string, slugs []string, reason string) error {
+	if len(slugs) == 0 {
+		return nil
+	}
+	skip := make(map[string]bool, len(slugs))
+	for _, slug := range slugs {
+		if trimmed := strings.TrimSpace(slug); trimmed != "" {
+			skip[trimmed] = true
+		}
+	}
+	if len(skip) == 0 {
+		return nil
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	return s.mutateRunRaw(ctx, project, runID, func(_ runDoc, raw map[string]any) (bool, error) {
+		phases, ok := raw["phase_executions"].([]any)
+		if !ok {
+			return false, nil
+		}
+		changed := false
+		for i, value := range phases {
+			ph, ok := value.(map[string]any)
+			if !ok || stringValue(ph["name"]) != phase {
+				continue
+			}
+			jobs, _ := ph["jobs"].([]any)
+			for j, jobValue := range jobs {
+				job, ok := jobValue.(map[string]any)
+				if !ok {
+					continue
+				}
+				steps, _ := job["steps"].([]any)
+				for k, stepValue := range steps {
+					step, ok := stepValue.(map[string]any)
+					if !ok || !skip[stringValue(step["slug"])] {
+						continue
+					}
+					step["state"] = "skipped"
+					step["reason"] = firstNonEmpty(reason, "synthetic_step_skip")
+					step["completed_at"] = now
+					steps[k] = step
+					changed = true
+				}
+				job["steps"] = steps
+				jobs[j] = job
+			}
+			ph["jobs"] = jobs
+			phases[i] = ph
+		}
+		if !changed {
+			return false, nil
+		}
+		raw["phase_executions"] = phases
+		raw["updated_at"] = now
+		return true, nil
+	})
+}
+
 // RecordRunnerJobsSkipped writes synthesized "skipped" job completions for
 // jobs whose `when` condition evaluated false at dispatch, on the run's
 // latest attempt. No Kubernetes Job ever exists for these jobs: the
