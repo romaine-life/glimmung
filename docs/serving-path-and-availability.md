@@ -34,8 +34,9 @@ No alert fired; it surfaced as a user-reported `504`.
 ## Principles (the lens)
 
 - **Durable state is the source of truth.** Postgres stays canonical. This plan
-  does not introduce a second datastore or revisit the Cosmos→Postgres
-  migration; it makes the *read/serving path* worthy of that durable core.
+  does not introduce a second datastore or reopen the completed Postgres
+  migration ([`postgres-migration.md`](postgres-migration.md)); it makes the
+  *read/serving path* worthy of that durable core.
 - **Live transport wakes clients; it does not own product state.** Reconnect
   resumes from a durable cursor; an unknown cursor forces an explicit resync.
   Full-graph polling violates this and is a deletion target (Stage 3).
