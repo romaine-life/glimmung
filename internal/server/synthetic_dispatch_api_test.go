@@ -95,6 +95,90 @@ func TestSyntheticDispatchStartsAtRequestedPhaseWithSuppliedOutputs(t *testing.T
 	}
 }
 
+func TestSyntheticDispatchStartsAtReviewSlotlessWithoutLease(t *testing.T) {
+	// A synthetic run whose start->terminal span is review/review_gate/teardown
+	// touches no test environment, so it dispatches with NO claimed lease: the
+	// host-free, produce-free evidence/review replay. Supply the verify verdict +
+	// recorded evidence so review replays exactly what a prior run produced.
+	store := minimalDispatchStore()
+	launcher := &fakeRunLauncher{}
+	body, _ := json.Marshal(SyntheticDispatchRequest{
+		Project:      "proj",
+		IssueNumber:  7,
+		WorkflowName: "main",
+		StartAtPhase: "review",
+		Reason:       "slotless evidence replay into review",
+		SuppliedPhaseOutputs: []SyntheticSuppliedPhaseOutput{
+			{
+				Phase: "verify",
+				Verification: &RunVerificationData{
+					Status:       "pass",
+					EvidenceRefs: []string{"runs/proj/run-1/screenshots/tooltip.png"},
+				},
+			},
+			{Phase: "cleanup_early", PhaseOutputs: map[string]string{}},
+		},
+		// No SlotLeaseRef: review/review_gate/cleanup need no test slot.
+		ExecutionContext: SyntheticExecutionContext{},
+	})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/runs/synthetic-dispatch", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer admin")
+
+	newSyntheticDispatchTestHandler(store, launcher).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if store.runReq == nil || store.runReq.EntrypointPhase != "review" {
+		t.Fatalf("run req=%#v", store.runReq)
+	}
+	if store.runReq.SlotLeaseRef != "" {
+		t.Fatalf("slotless run must carry no slot lease ref, got %q", store.runReq.SlotLeaseRef)
+	}
+	if store.startReq == nil || store.startReq.SlotLeaseRef != "" {
+		t.Fatalf("start req must be slotless, got %#v", store.startReq)
+	}
+	if !launcher.called || launcher.req.Phase.Name != "review" {
+		t.Fatalf("launcher req=%#v", launcher.req)
+	}
+	// The phase Job launches with a zero-value lease; its context comes from the run record.
+	if launcher.req.Lease.State != "" {
+		t.Fatalf("slotless launch must use a zero-value lease, got state=%q", launcher.req.Lease.State)
+	}
+}
+
+func TestSyntheticDispatchRequiresLeaseForEnvironmentPhaseStart(t *testing.T) {
+	// Starting at an environment phase (verify) without a claimed lease is a 422:
+	// the run will execute on the test slot, so a lease is mandatory. The check
+	// fires before any launch.
+	store := minimalDispatchStore()
+	launcher := &fakeRunLauncher{}
+	body, _ := json.Marshal(SyntheticDispatchRequest{
+		Project:          "proj",
+		IssueNumber:      7,
+		WorkflowName:     "main",
+		StartAtPhase:     "verify",
+		Reason:           "verify needs the slot",
+		ExecutionContext: SyntheticExecutionContext{}, // no lease
+	})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/runs/synthetic-dispatch", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer admin")
+
+	newSyntheticDispatchTestHandler(store, launcher).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "slot_lease_ref required") {
+		t.Fatalf("body=%s", rec.Body.String())
+	}
+	if launcher.called {
+		t.Fatal("environment-phase start without a lease must not launch")
+	}
+}
+
 func TestSyntheticDispatchCopiesSelectedPhaseOutputsFromPriorRun(t *testing.T) {
 	base := minimalDispatchStore()
 	verification := `{"status":"pass","evidence_refs":["/v1/artifacts/runs/proj/run-17/videos/portal.webm"]}`
