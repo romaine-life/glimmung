@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter, Outlet, Route, Routes, useLocation } from "react-router-dom";
 
-import { IssueDetailView, pickDecisionReview, agentTranscriptEntries, type RunnerEvent } from "./IssueDetailView";
+import { IssueDetailView, pickDecisionReview, agentTranscriptEntries, runnerTerminalText, type RunnerEvent } from "./IssueDetailView";
 import { ISSUE_DETAIL_CHILD_ROUTES } from "./routes";
 
 describe("pickDecisionReview", () => {
@@ -1329,6 +1329,49 @@ describe("IssueDetailView run execution graph", () => {
     expect(within(stepRail).getByRole("button", { name: /Run verification/ })).toHaveTextContent("exit 0");
   });
 
+  it("selecting the synthesized verdict step surfaces the failure, not the no-events dead-end", async () => {
+    // The exact spirelens#146 bug the user hit: clicking the `verdict` owner
+    // step — which has no hot runner events by construction — rendered
+    // "No hot runner events recorded for this selection." with only the bare
+    // `verification_failed` enum. The pane must instead surface the deciding
+    // verifier reason, the structured failure, and the attempt's summary prose.
+    // Fails on pre-fix code (dead-end string + dropped message/summary).
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url =
+        typeof input === "string"
+          ? new URL(input, "https://glimmung.test")
+          : input instanceof URL
+            ? input
+            : new URL(input.url);
+      if (url.pathname === "/v1/issues/by-number/ambience/172") return json(issueDetail);
+      if (url.pathname === "/v1/issues/by-number/ambience/172/graph") return json(issueGraph);
+      if (url.pathname === "/v1/projects/ambience/issues/172/runs/7/cycles/1/graph") {
+        return json(verifierFailedProjection());
+      }
+      if (url.pathname === "/v1/workflows") return json([]);
+      if (url.pathname === "/v1/projects/ambience/issues/172/runs/7.1/run/events") {
+        // No hot events for the verdict selection — the dead-end trigger.
+        return json({ ...runnerEvents, events: [] });
+      }
+      throw new Error(`unhandled fetch ${url.pathname}`);
+    }));
+
+    renderIssueDetail(
+      "/projects/ambience/issues/172/runs/7/cycles/1/phases/llm-verify/jobs/verify/steps/verdict",
+    );
+
+    // The verdict step pane rendered the structured failure detail.
+    const verdictPane = await screen.findByLabelText("verdict detail");
+    // The dead-end string is gone from the entire view for this selection.
+    expect(screen.queryByText(/No hot runner events recorded/)).toBeNull();
+    // The deciding verifier reason + structured failure are in the pane.
+    expect(within(verdictPane).getByText("claimed_result_not_observed", { selector: "li" })).toBeInTheDocument();
+    expect(within(verdictPane).getByText("CLOAK_CLASP")).toBeInTheDocument();
+    // The rich summary prose — present ONLY on the verdict view, never in the
+    // cause banner — proves the dropped summary_markdown now reaches the pane.
+    expect(within(verdictPane).getByText(/the stat was not observed/)).toBeInTheDocument();
+  });
+
   it("the terminal class list matches the canonical set", () => {
     // Tripwire mirroring the Go TestAllTerminalObservationClassesInventoryIsExact:
     // assert the canonical TS list equals an independent hardcoded set with no
@@ -1376,8 +1419,11 @@ describe("IssueDetailView run execution graph", () => {
         throw new Error(`unhandled fetch ${url.pathname}`);
       }));
 
+      // Deep-link to the synthesized verdict step: this guards BOTH the cause
+      // banner AND the step pane a human clicks. The pane must never be the
+      // "no events" dead-end for any terminal class.
       renderIssueDetail(
-        "/projects/ambience/issues/172/runs/7/cycles/1/phases/llm-verify/jobs/verify",
+        "/projects/ambience/issues/172/runs/7/cycles/1/phases/llm-verify/jobs/verify/steps/verdict",
       );
 
       const causeEl = await waitFor(() => {
@@ -1394,6 +1440,11 @@ describe("IssueDetailView run execution graph", () => {
       expect(
         within(causeEl).getByText(`terminal failure attributed to ${terminalClass}`),
       ).toBeInTheDocument();
+      // The verdict step pane is rendered and is NEVER the no-events dead-end —
+      // the frontend half of the no-dead-end invariant, enforced per class.
+      const verdictPane = await screen.findByLabelText("verdict detail");
+      expect(within(verdictPane).getByText("claimed_result_not_observed", { selector: "li" })).toBeInTheDocument();
+      expect(screen.queryByText(/No hot runner events recorded/)).toBeNull();
     },
   );
 
@@ -2300,7 +2351,10 @@ function verifierFailedProjection() {
           started_at: "2026-05-20T17:40:00.000Z",
           completed_at: "2026-05-20T17:42:00.000Z",
         },
-        { slug: "verdict", title: "Verdict", state: "failed", reason: "verification_failed" },
+        // The synthesized verdict owner step now carries the deciding verifier
+        // reason as its message (server.RunProjectionStep.Message) — the step
+        // pane renders this instead of "No hot runner events recorded".
+        { slug: "verdict", title: "Verdict", state: "failed", reason: "verification_failed", message: "claimed_result_not_observed" },
       ],
     }],
     attempts: [{
@@ -2311,6 +2365,9 @@ function verifierFailedProjection() {
       decision: "abort",
       log_archive_url: null,
       evidence_refs: [],
+      // The deciding attempt's verifier prose, now carried into the projection
+      // so the verdict view surfaces the rich "why".
+      summary_markdown: "The Cloak Clasp effect label reads \"Cloak Clasp\" but the verifier expected id CLOAK_CLASP; the stat was not observed.",
       job_completions: [{
         job_id: "verify",
         completed_at: "2026-05-20T17:42:00.000Z",
@@ -2428,6 +2485,37 @@ function json(body: unknown): Response {
     headers: { "Content-Type": "application/json" },
   });
 }
+
+describe("runnerTerminalText synthesized owner step", () => {
+  it("never renders the no-events dead-end for a verdict owner step", () => {
+    // The pure-function belt under the structured VerdictStepDetail render: a
+    // synthesized owner step has no hot events by construction, so the dead-end
+    // string is a lie. It must carry the failure detail instead.
+    const verdictStep = {
+      slug: "verdict",
+      title: "Verdict",
+      state: "failed",
+      reason: "verification_failed",
+      message: "verifier reported status=abort reason=claimed_result_not_observed",
+    };
+    const job = { job_id: "verify", name: "Verify effect", state: "failed", steps: [verdictStep] };
+
+    const out = runnerTerminalText(job, verdictStep, []);
+    expect(out).not.toContain("No hot runner events recorded");
+    expect(out).toContain("verifier reported status=abort reason=claimed_result_not_observed");
+    expect(out).toContain("# reason verification_failed");
+  });
+
+  it("still reports no events for a real runner step with an empty stream", () => {
+    // Guard the inverse: a real step that genuinely recorded nothing keeps the
+    // honest "no events" message — the belt is owner-step-scoped, not blanket.
+    const realStep = { slug: "run-verification", title: "Run verification", state: "succeeded" };
+    const job = { job_id: "verify", name: "Verify effect", state: "failed", steps: [realStep] };
+
+    const out = runnerTerminalText(job, realStep, []);
+    expect(out).toContain("No hot runner events recorded for this selection.");
+  });
+});
 
 describe("agentTranscriptEntries codex projection", () => {
   const mkEvent = (seq: number, message: string): RunnerEvent => ({

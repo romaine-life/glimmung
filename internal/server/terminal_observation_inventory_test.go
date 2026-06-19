@@ -110,6 +110,17 @@ func terminalClassProjectionFixtures() map[string]terminalClassProjectionFixture
 	}
 }
 
+// findSynthesizedOwnerStep returns the verdict / dispatch owner step that
+// ensureFailedJobOwnerStep appends, or nil if none is present.
+func findSynthesizedOwnerStep(steps []RunProjectionStep) *RunProjectionStep {
+	for i := range steps {
+		if isSynthesizedOwnerStepSlug(steps[i].Slug) {
+			return &steps[i]
+		}
+	}
+	return nil
+}
+
 // TestEveryTerminalClassProjectsAFailedOwnerStep is the enum-driven PROJECTION
 // inventory: for EVERY class in the canonical list, a job projected in that
 // class's terminal-failure shape must own a `failed` step. It reuses slice 2's
@@ -151,7 +162,15 @@ func TestEveryTerminalClassProjectsAFailedOwnerStep(t *testing.T) {
 				t.Fatalf("terminal class %q has no projection fixture — every canonical class MUST be covered so it can never render as a failed job with no failed owner step", class)
 			}
 			reason := fixture.reason
-			steps := ensureFailedJobOwnerStep(fixture.jobState, &reason, greenSteps(), fixture.neverRan)
+			// Every terminal class carries a deciding detail in practice (the
+			// verifier reasons, the gate's missing-evidence list, the dispatch
+			// error). Model that here and assert the synthesized owner step
+			// CARRIES it as its message — so the step a human clicks is never a
+			// bare reason enum next to an empty event pane. This is the backend
+			// half of the no-dead-end invariant; the frontend half asserts the
+			// rendered verdict pane is non-blank for the same class set.
+			detail := "deciding detail: " + reason
+			steps := ensureFailedJobOwnerStep(fixture.jobState, &reason, &detail, greenSteps(), fixture.neverRan)
 
 			run := RunProjectionRun{
 				Phases: []RunProjectionPhase{{
@@ -171,6 +190,16 @@ func TestEveryTerminalClassProjectsAFailedOwnerStep(t *testing.T) {
 			// Slice 2's invariant assertion: no failed/aborted job may render
 			// with every step succeeded/skipped/not_started.
 			assertFailedJobsOwnAFailedStep(t, run)
+
+			// The synthesized owner step (verdict / dispatch) must carry the
+			// deciding detail as its message — not just the reason enum.
+			owner := findSynthesizedOwnerStep(steps)
+			if owner == nil {
+				t.Fatalf("class %q: no synthesized owner step among %#v", class, steps)
+			}
+			if owner.Message == nil || *owner.Message != detail {
+				t.Fatalf("class %q: owner step must carry the deciding detail message, got %#v", class, owner)
+			}
 		})
 	}
 }

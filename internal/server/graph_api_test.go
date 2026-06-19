@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 )
@@ -1266,7 +1267,8 @@ func TestEnsureFailedJobOwnerStepShapes(t *testing.T) {
 	}
 
 	t.Run("verdict failure appends a failed owner step and keeps real steps", func(t *testing.T) {
-		out := ensureFailedJobOwnerStep("failed", &verificationFailed, greenSteps(), false)
+		detail := "verifier reported status=abort reason=claimed_result_not_observed"
+		out := ensureFailedJobOwnerStep("failed", &verificationFailed, &detail, greenSteps(), false)
 		if len(out) != 6 {
 			t.Fatalf("expected the five real steps plus a verdict owner, got %#v", out)
 		}
@@ -1279,13 +1281,25 @@ func TestEnsureFailedJobOwnerStepShapes(t *testing.T) {
 		if owner.Slug != "verdict" || owner.State != "failed" || owner.Reason == nil || *owner.Reason != "verification_failed" {
 			t.Fatalf("verdict owner step=%#v", owner)
 		}
+		// The synthesized verdict step must carry the deciding failure detail as
+		// its message, not just the bare reason enum — this is what stops the
+		// step pane from rendering "No hot runner events recorded".
+		if owner.Message == nil || *owner.Message != detail {
+			t.Fatalf("verdict owner step must carry the failure detail message: %#v", owner)
+		}
 	})
 
 	t.Run("producer job_failed verdict still gets a reason-carrying owner", func(t *testing.T) {
-		out := ensureFailedJobOwnerStep("failed", &jobFailed, []RunProjectionStep{{Slug: "produce", State: "succeeded"}}, false)
+		out := ensureFailedJobOwnerStep("failed", &jobFailed, nil, []RunProjectionStep{{Slug: "produce", State: "succeeded"}}, false)
 		owner := out[len(out)-1]
 		if owner.Slug != "verdict" || owner.State != "failed" || owner.Reason == nil || *owner.Reason != "job_failed" {
 			t.Fatalf("producer verdict owner=%#v", owner)
+		}
+		// No completion detail available (producer job_failed with no reasons):
+		// the owner keeps its reason enum and carries no message rather than
+		// inventing one.
+		if owner.Message != nil {
+			t.Fatalf("owner with no detail must not fabricate a message: %#v", owner)
 		}
 	})
 
@@ -1294,7 +1308,7 @@ func TestEnsureFailedJobOwnerStepShapes(t *testing.T) {
 			{Slug: "clone", State: "skipped"},
 			{Slug: "run-verification", State: "skipped"},
 		}
-		out := ensureFailedJobOwnerStep("failed", &dispatchFailed, steps, true)
+		out := ensureFailedJobOwnerStep("failed", &dispatchFailed, nil, steps, true)
 		if len(out) != 3 || out[0].Slug != "dispatch" || out[0].State != "failed" || out[0].Reason == nil || *out[0].Reason != "dispatch_failed" {
 			t.Fatalf("dispatch owner steps=%#v", out)
 		}
@@ -1308,7 +1322,7 @@ func TestEnsureFailedJobOwnerStepShapes(t *testing.T) {
 	t.Run("dispatch reason but completion present is a verdict, not a demotion", func(t *testing.T) {
 		// neverRan=false: the steps ran, so we must not demote them even though
 		// the reason looks dispatch-shaped.
-		out := ensureFailedJobOwnerStep("failed", &dispatchFailed, greenSteps(), false)
+		out := ensureFailedJobOwnerStep("failed", &dispatchFailed, nil, greenSteps(), false)
 		if out[len(out)-1].Slug != "verdict" {
 			t.Fatalf("expected verdict owner when steps ran: %#v", out)
 		}
@@ -1325,7 +1339,7 @@ func TestEnsureFailedJobOwnerStepShapes(t *testing.T) {
 			{Slug: "judge-evidence-case-01", State: "failed", Reason: &exitNonzero, ExitCode: &exitCode},
 			{Slug: "aggregate-verification", State: "not_started"},
 		}
-		out := ensureFailedJobOwnerStep("failed", &verificationFailed, steps, false)
+		out := ensureFailedJobOwnerStep("failed", &verificationFailed, nil, steps, false)
 		if len(out) != 3 {
 			t.Fatalf("already-owned job must not be double-synthesized: %#v", out)
 		}
@@ -1335,7 +1349,7 @@ func TestEnsureFailedJobOwnerStepShapes(t *testing.T) {
 	})
 
 	t.Run("aborted job is also covered", func(t *testing.T) {
-		out := ensureFailedJobOwnerStep("aborted", &verificationFailed, greenSteps(), false)
+		out := ensureFailedJobOwnerStep("aborted", &verificationFailed, nil, greenSteps(), false)
 		if out[len(out)-1].State != "failed" {
 			t.Fatalf("aborted job should own a failed step: %#v", out)
 		}
@@ -1343,7 +1357,7 @@ func TestEnsureFailedJobOwnerStepShapes(t *testing.T) {
 
 	t.Run("non-terminal job is never given a synthetic failure", func(t *testing.T) {
 		for _, state := range []string{"succeeded", "active", "skipped", "not_started"} {
-			out := ensureFailedJobOwnerStep(state, &verificationFailed, greenSteps(), false)
+			out := ensureFailedJobOwnerStep(state, &verificationFailed, nil, greenSteps(), false)
 			if len(out) != 5 {
 				t.Fatalf("state %q should be untouched: %#v", state, out)
 			}
@@ -1439,11 +1453,13 @@ func TestRunCycleGraphProjectionOwnsVerifierVerdictFailure(t *testing.T) {
 				CompletedAt:        &now,
 				Conclusion:         stringPtr("failure"),
 				VerificationStatus: &verificationFailed,
+				SummaryMarkdown:    stringPtr("The Booming Conch tooltip shows only the stock game tooltip; the 'additional cards drawn: 2' stat row is absent."),
 				JobCompletions: []RunAttemptJobCompletion{{
-					JobID:              "verify",
-					Conclusion:         "failure",
-					VerificationStatus: &verificationFailed,
-					CompletedAt:        &now,
+					JobID:               "verify",
+					Conclusion:          "failure",
+					VerificationStatus:  &verificationFailed,
+					VerificationReasons: []string{"verifier reported status=abort reason=claimed_result_not_observed"},
+					CompletedAt:         &now,
 				}},
 			}},
 		}},
@@ -1480,10 +1496,26 @@ func TestRunCycleGraphProjectionOwnsVerifierVerdictFailure(t *testing.T) {
 			if step.Reason == nil || *step.Reason != "verification_failed" {
 				t.Fatalf("verdict owner step must carry the reason: %#v", step)
 			}
+			// The verdict step must also carry the deciding verifier reason as
+			// its message — the projection layer is the source of truth, so a
+			// downstream consumer (dashboard step pane, MCP step view) never
+			// sees a bare enum next to an empty event stream.
+			wantMsg := "verifier reported status=abort reason=claimed_result_not_observed"
+			if step.Message == nil || *step.Message != wantMsg {
+				t.Fatalf("verdict owner step must carry the verifier reason as message, got %#v", step)
+			}
 		}
 	}
 	if verdictSteps != 1 {
 		t.Fatalf("expected exactly one synthetic verdict owner step, got %d in %#v", verdictSteps, job.Steps)
+	}
+
+	// The deciding attempt's summary prose must survive into the projection —
+	// it is dropped pre-fix, which is why no frontend-only change could surface
+	// the rich "why" on the verdict view.
+	attempt := testingPhase.Attempts[len(testingPhase.Attempts)-1]
+	if attempt.SummaryMarkdown == nil || !strings.Contains(*attempt.SummaryMarkdown, "additional cards drawn: 2") {
+		t.Fatalf("projection attempt must carry summary_markdown, got %#v", attempt.SummaryMarkdown)
 	}
 }
 
