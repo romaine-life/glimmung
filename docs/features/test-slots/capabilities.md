@@ -68,7 +68,10 @@ Intent:
 `deploy_image_to_test_slot` resolves a verified pushed ref to the CI-built
 image, dispatches the slot deploy, records durable job history, and polls the
 neutral job-status route until terminal. The slot runs the same image that PR
-CI proved and main will promote. Dispatch also refreshes a short active lease
+CI proved and main will promote. Resolution is a direct registry lookup of the
+commit-addressed `sha-<commit>` alias that `docker-build-check` publishes (a
+pointer at the content-fingerprinted manifest) — the verified commit SHA is the
+key, so there is no GitHub Actions run/PR/attempt reconstruction. Dispatch also refreshes a short active lease
 to the configured hot-swap minimum remaining TTL before slow ref/image
 resolution and Kubernetes deploy work begin, so active validation does not race
 the original checkout deadline.
@@ -88,12 +91,43 @@ Contract impact:
   `GET /v1/test-slots/jobs/{project}/{job}`.
 - A deploy against an expired or cleanup-started lease fails instead of
   resurrecting the slot.
+- The CI image is keyed by commit SHA, not CI-run identity. `docker-build-check`
+  publishes a `sha-<commit>` alias of the fingerprinted manifest; the resolver
+  looks that up directly. When the alias is absent it reads the commit's run to
+  report build readiness: in-progress → retryable `409`; failed, succeeded-
+  without-alias, or no-run → `422`. There is no `ci-pr`/`ci-ref` lookup tag and
+  no dispatch-run probe.
 - Build-stream project metadata and kind selection are retired and rejected on
   project registration.
 
 Evidence:
+- `internal/server/test_slot_deploy_image_resolver_test.go` —
+  `TestResolvesCommitShaImage` (registry-only resolution, no GitHub call),
+  `TestResolvePendingWhenAliasAbsentAndBuildRunning`,
+  `TestResolveFailedBuildWhenAliasAbsent`,
+  `TestResolveSucceededButNoAliasWhenAbsent`, `TestResolveNoBuildWhenAliasAbsent`,
+  `TestResolveSurfacesNonNotFoundValidationError`.
 - `internal/server/test_slot_deploy_image_api_test.go` —
-  `TestDeployImageToTestSlotExtendsShortLeaseToHotSwapMinimum` and
-  `TestDeployImageToTestSlotDoesNotShortenSufficientLease`.
+  `TestDeployImageToTestSlotExtendsShortLeaseToHotSwapMinimum`,
+  `TestDeployImageToTestSlotDoesNotShortenSufficientLease`, and
+  `TestDeployImageToTestSlotReturns409WhileCIImagePending`.
 - `internal/server/test_lease_defaults_api_test.go` —
   hot-swap minimum TTL route coverage for global and project settings.
+- `.github/workflows/docker-build-check.yaml` ("Tag app image by commit") and
+  `.github/workflows/build.yaml` (dead lookup step removed) — the producer side
+  of the commit-addressed alias.
+
+History:
+- 2026-06-20: a test slot requested in the ~90s between PR open and the PR's
+  `docker-build-check` run finishing failed with a misleading `422 … image tag
+  …:ci-ref-<hash>-run-<id>-attempt-1 not found in registry`. Resolution had
+  reconstructed a run-scoped lookup tag from GitHub Actions metadata; the
+  primary `status=success&head_sha` lookup was empty during the build, so it fell
+  into a `workflow_dispatch` probe that paired *this commit's* ref-hash with
+  *every recent run's* id — combinations a PR commit (only ever `ci-pr-<n>`
+  tagged) never published. The fix re-keys the lookup by commit SHA: CI publishes
+  a `sha-<commit>` alias, the resolver looks it up directly, and GitHub is read
+  only to explain a missing alias. This deleted the entire run/PR/attempt
+  reconstruction (`ci-pr`/`ci-ref` tags, PR-number resolution, ref-hash, dispatch
+  fallback) and the bug class it carried, including the earlier 2026-06-18
+  empty-`pull_requests` regression.

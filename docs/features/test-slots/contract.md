@@ -71,9 +71,13 @@ running, cleaning, and available explicit.
   The lease stays alive through the human review gate so the reviewer can
   poke at the live build, and the final cleanup phase tears it down after
   approve, reject, or abort releases the gate.
-- Image deploy resolves the verified `git_ref`, deploys the CI-built image into
-  the selected leased slot, records history on every outcome, and extends short
-  leases to the configured minimum remaining TTL.
+- Image deploy resolves the verified `git_ref` to its commit SHA, looks up the
+  commit-addressed `sha-<commit>` image alias that `docker-build-check` publishes
+  (a pointer at the content-fingerprinted manifest), deploys it into the selected
+  leased slot, records history on every outcome, and extends short leases to the
+  configured minimum remaining TTL. Resolution is a direct registry lookup by the
+  verified commit SHA — there is no GitHub Actions run/PR/attempt reconstruction
+  and no `ci-pr`/`ci-ref` lookup tag.
 - A slot process (the binary running inside any `k8s/issue/` release, hot or
   warm) starts the HTTP server, applies database migrations a hot-swap may
   need to land, and serves request-driven code paths. It does not start the
@@ -125,6 +129,14 @@ running, cleaning, and available explicit.
   metadata or history.
 - Slot-local Playwright absence is treated as unsupported cluster capability,
   not as permission to fall back to an unrelated browser host.
+- Image-deploy resolution distinguishes a CI image that is *not built yet* from
+  one that *cannot exist*. The `sha-<commit>` alias is looked up directly; if it
+  is absent, the commit's `docker-build-check` run is read to explain why. A
+  queued/in-progress build returns `409` with a retryable "image not ready"
+  message so the caller's settle-wait re-polls; a failed build, a build that
+  succeeded without publishing the alias, or a commit no build targets returns
+  `422`. The resolver never fabricates a run-scoped tag for a commit whose build
+  did not publish it (the 2026-06-20 deploy-image race).
 
 ## Observability
 

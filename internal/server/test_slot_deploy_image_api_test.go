@@ -132,7 +132,7 @@ func TestDeployImageToTestSlotHappyPath(t *testing.T) {
 		}
 		return "abc123def456", nil
 	}
-	resolveImage := stubTestSlotImageResolver("romainecr.azurecr.io/tank-operator:ci-pr-77-run-12345-attempt-2")
+	resolveImage := stubTestSlotImageResolver("romainecr.azurecr.io/tank-operator:sha-abc123def456")
 	handler := http.HandlerFunc(deployImageToTestSlot(store, nil, nil, performer, resolveRef, resolveImage))
 	body := `{"project":"tank-operator","slot_name":"tank-operator-slot-1","git_ref":"feat/x"}`
 	rec := httptest.NewRecorder()
@@ -148,14 +148,14 @@ func TestDeployImageToTestSlotHappyPath(t *testing.T) {
 	if resp["sha"] != "abc123def456" {
 		t.Fatalf("resp.sha = %v, want abc123def456", resp["sha"])
 	}
-	if resp["image"] != "romainecr.azurecr.io/tank-operator:ci-pr-77-run-12345-attempt-2" {
+	if resp["image"] != "romainecr.azurecr.io/tank-operator:sha-abc123def456" {
 		t.Fatalf("resp.image = %v, want CI lookup image", resp["image"])
 	}
-	if resp["image_tag"] != "ci-pr-77-run-12345-attempt-2" {
-		t.Fatalf("resp.image_tag = %v, want ci-pr-77-run-12345-attempt-2", resp["image_tag"])
+	if resp["image_tag"] != "sha-abc123def456" {
+		t.Fatalf("resp.image_tag = %v, want sha-abc123def456", resp["image_tag"])
 	}
-	if resp["image_override"] != "ci-pr-77-run-12345-attempt-2" {
-		t.Fatalf("resp.image_override = %v, want ci-pr-77-run-12345-attempt-2", resp["image_override"])
+	if resp["image_override"] != "sha-abc123def456" {
+		t.Fatalf("resp.image_override = %v, want sha-abc123def456", resp["image_override"])
 	}
 	if resp["status"] != "running" {
 		t.Fatalf("resp.status = %v, want running", resp["status"])
@@ -169,8 +169,8 @@ func TestDeployImageToTestSlotHappyPath(t *testing.T) {
 	}
 	select {
 	case c := <-calls:
-		if c.ref != "abc123def456" || c.override != "ci-pr-77-run-12345-attempt-2" || c.key != "image.tag" {
-			t.Fatalf("performer call = %+v, want {abc123def456 ci-pr-77-run-12345-attempt-2 image.tag}", c)
+		if c.ref != "abc123def456" || c.override != "sha-abc123def456" || c.key != "image.tag" {
+			t.Fatalf("performer call = %+v, want {abc123def456 sha-abc123def456 image.tag}", c)
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("performer was not invoked")
@@ -186,7 +186,7 @@ func TestDeployImageToTestSlotExtendsShortLeaseToHotSwapMinimum(t *testing.T) {
 	store.fakeReadStore.projects[0].Metadata[testLeaseProjectHotSwapMinTTLSecondsKey] = 3600
 	performer := func(context.Context, Lease, Project, string, string, string) error { return nil }
 	resolveRef := func(context.Context, string, string, string) (string, error) { return "abc123def456", nil }
-	resolveImage := stubTestSlotImageResolver("romainecr.azurecr.io/tank-operator:ci-pr-77-run-12345-attempt-2")
+	resolveImage := stubTestSlotImageResolver("romainecr.azurecr.io/tank-operator:sha-abc123def456")
 	handler := http.HandlerFunc(deployImageToTestSlot(store, nil, nil, performer, resolveRef, resolveImage))
 
 	rec := httptest.NewRecorder()
@@ -215,7 +215,7 @@ func TestDeployImageToTestSlotDoesNotShortenSufficientLease(t *testing.T) {
 	store.leases[0].TTLSeconds = 7200
 	performer := func(context.Context, Lease, Project, string, string, string) error { return nil }
 	resolveRef := func(context.Context, string, string, string) (string, error) { return "abc123def456", nil }
-	resolveImage := stubTestSlotImageResolver("romainecr.azurecr.io/tank-operator:ci-pr-77-run-12345-attempt-2")
+	resolveImage := stubTestSlotImageResolver("romainecr.azurecr.io/tank-operator:sha-abc123def456")
 	handler := http.HandlerFunc(deployImageToTestSlot(store, nil, nil, performer, resolveRef, resolveImage))
 
 	rec := httptest.NewRecorder()
@@ -258,7 +258,7 @@ func TestDeployImageToTestSlotRejectsCleanupStartedLease(t *testing.T) {
 		calls <- struct{}{}
 		return "abc123def456", nil
 	}
-	resolveImage := stubTestSlotImageResolver("romainecr.azurecr.io/tank-operator:ci-pr-77-run-12345-attempt-2")
+	resolveImage := stubTestSlotImageResolver("romainecr.azurecr.io/tank-operator:sha-abc123def456")
 	handler := http.HandlerFunc(deployImageToTestSlot(store, nil, nil, performer, resolveRef, resolveImage))
 
 	rec := httptest.NewRecorder()
@@ -287,7 +287,7 @@ func TestDeployImageToTestSlotUsesFullRefForNonTagImageValueKey(t *testing.T) {
 		return nil
 	}
 	resolveRef := func(context.Context, string, string, string) (string, error) { return "abc123def456", nil }
-	resolveImage := stubTestSlotImageResolver("romainecr.azurecr.io/tank-operator:ci-pr-77-run-12345-attempt-2")
+	resolveImage := stubTestSlotImageResolver("romainecr.azurecr.io/tank-operator:sha-abc123def456")
 	handler := http.HandlerFunc(deployImageToTestSlot(store, nil, nil, performer, resolveRef, resolveImage))
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, authedDeployRequest(t, `{"project":"tank-operator","slot_name":"tank-operator-slot-1","git_ref":"feat/x"}`))
@@ -296,7 +296,7 @@ func TestDeployImageToTestSlotUsesFullRefForNonTagImageValueKey(t *testing.T) {
 	}
 	select {
 	case got := <-calls:
-		want := "romainecr.azurecr.io/tank-operator:ci-pr-77-run-12345-attempt-2"
+		want := "romainecr.azurecr.io/tank-operator:sha-abc123def456"
 		if got != want {
 			t.Fatalf("override = %q, want %q", got, want)
 		}
@@ -373,6 +373,30 @@ func TestDeployImageToTestSlotRequiresHelmConfig(t *testing.T) {
 	}
 }
 
+// TestDeployImageToTestSlotReturns409WhileCIImagePending: a still-building CI
+// image is retryable, so the endpoint answers 409 (not the terminal 422) with
+// the resolver's actionable message and must not dispatch the deploy performer.
+func TestDeployImageToTestSlotReturns409WhileCIImagePending(t *testing.T) {
+	store := newDeployImageStore(t)
+	performer := func(context.Context, Lease, Project, string, string, string) error {
+		t.Fatal("performer must not run while the CI image is still building")
+		return nil
+	}
+	resolveRef := func(context.Context, string, string, string) (string, error) { return "racysha", nil }
+	resolveImage := failingTestSlotImageResolver(&testSlotCIImagePendingError{
+		SHA: "racysha", Workflow: "docker-build-check.yaml", RunID: 42, Status: "in_progress",
+	})
+	handler := http.HandlerFunc(deployImageToTestSlot(store, nil, nil, performer, resolveRef, resolveImage))
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, authedDeployRequest(t, `{"project":"tank-operator","slot_name":"tank-operator-slot-1","git_ref":"feat/x"}`))
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409; body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "not ready yet") || !strings.Contains(rec.Body.String(), "retry") {
+		t.Fatalf("body=%s, want actionable pending message", rec.Body.String())
+	}
+}
+
 func TestDeployImageToTestSlotRequiresResolvedValidatedFingerprintImage(t *testing.T) {
 	store := newDeployImageStore(t)
 	calls := make(chan struct{}, 1)
@@ -381,14 +405,14 @@ func TestDeployImageToTestSlotRequiresResolvedValidatedFingerprintImage(t *testi
 		return nil
 	}
 	resolveRef := func(context.Context, string, string, string) (string, error) { return "unmappedsha", nil }
-	resolveImage := failingTestSlotImageResolver(fmt.Errorf("no successful app-image workflow run with a CI lookup tag for commit unmappedsha"))
+	resolveImage := failingTestSlotImageResolver(fmt.Errorf("no CI image for commit unmappedsha in workflow docker-build-check.yaml: no build targets this commit (tag sha-unmappedsha absent)"))
 	handler := http.HandlerFunc(deployImageToTestSlot(store, nil, nil, performer, resolveRef, resolveImage))
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, authedDeployRequest(t, `{"project":"tank-operator","slot_name":"tank-operator-slot-1","git_ref":"feat/x"}`))
 	if rec.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("status = %d, want 422; body=%s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "no successful app-image workflow run with a CI lookup tag") {
+	if !strings.Contains(rec.Body.String(), "no CI image for commit unmappedsha") {
 		t.Fatalf("body=%s, want resolver failure", rec.Body.String())
 	}
 	select {
