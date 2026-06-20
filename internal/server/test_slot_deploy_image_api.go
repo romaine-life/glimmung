@@ -198,6 +198,16 @@ func deployImageToTestSlot(store ReadStore, preparer TestSlotPreparer, minter Ru
 		} else {
 			resolvedImage, err = resolveImage(r.Context(), project, slug, sha, repoToken)
 			if err != nil {
+				// A docker-build-check run for this commit that is still in flight is
+				// retryable — the CI image lands when the run finishes — so surface it
+				// as 409 with an actionable message instead of the terminal 422 used
+				// for a commit that cannot be resolved to an image at all. The caller's
+				// settle-wait re-polls on 409 rather than failing the provision.
+				var pending *testSlotCIImagePendingError
+				if errors.As(err, &pending) {
+					writeProblem(w, http.StatusConflict, "resolve commit sha to CI image: "+err.Error())
+					return
+				}
 				writeProblem(w, http.StatusUnprocessableEntity, "resolve commit sha to CI image: "+err.Error())
 				return
 			}

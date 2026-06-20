@@ -149,7 +149,12 @@ jobs:
             type=registry,ref=${{ matrix.cache-ref }},mode=max
             type=gha,mode=max,scope=${{ matrix.name }}
 
-      - name: Create app CI lookup tag
+      - name: Tag app image by commit
+        # App image identity stays the content fingerprint tag. This
+        # commit-addressed alias points at the same ACR manifest so Glimmung's
+        # deploy-image resolver looks the image up by the verified commit SHA
+        # directly — no GitHub Actions run reconstruction. Runs whether this run
+        # built the image or reused an existing fingerprint match.
         if: matrix.name == 'app' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
         shell: bash
         env:
@@ -157,30 +162,25 @@ jobs:
           IMAGE_REPO: ${{ matrix.image-repo }}
           FINGERPRINT_TAG: ${{ steps.fingerprint.outputs.proof_tag }}
           SOURCE_SHA: ${{ steps.source.outputs.sha }}
-          EVENT_NAME: ${{ github.event_name }}
-          PR_NUMBER: ${{ github.event.pull_request.number || '' }}
-          RUN_ID: ${{ github.run_id }}
-          RUN_ATTEMPT: ${{ github.run_attempt }}
         run: |
           set -euo pipefail
-          if [ "${EVENT_NAME}" = "pull_request" ] && [ -n "${PR_NUMBER}" ]; then
-            lookup_tag="ci-pr-${PR_NUMBER}-run-${RUN_ID}-attempt-${RUN_ATTEMPT}"
-          else
-            ref_hash="$(printf '%s' "${SOURCE_SHA}" | sha256sum | cut -c1-12)"
-            lookup_tag="ci-ref-${ref_hash}-run-${RUN_ID}-attempt-${RUN_ATTEMPT}"
+          if [[ -z "${SOURCE_SHA}" ]]; then
+            echo "::error::SOURCE_SHA is required for the commit image alias."
+            exit 1
           fi
+          commit_tag="sha-${SOURCE_SHA}"
           az acr import --name romainecr \
             --source "${REGISTRY}/${IMAGE_REPO}:${FINGERPRINT_TAG}" \
-            --image "${IMAGE_REPO}:${lookup_tag}" --force
+            --image "${IMAGE_REPO}:${commit_tag}" --force
           if ! az acr repository show-tags \
               --name romainecr \
               --repository "${IMAGE_REPO}" \
-              --query "[?@=='${lookup_tag}'] | [0]" \
-              --output tsv | grep -qx "${lookup_tag}"; then
-            echo "::error::CI lookup tag ${REGISTRY}/${IMAGE_REPO}:${lookup_tag} was not found after import."
+              --query "[?@=='${commit_tag}'] | [0]" \
+              --output tsv | grep -qx "${commit_tag}"; then
+            echo "::error::commit image alias ${REGISTRY}/${IMAGE_REPO}:${commit_tag} was not found after import."
             exit 1
           fi
-          echo "Created app CI lookup image ${REGISTRY}/${IMAGE_REPO}:${lookup_tag} -> ${FINGERPRINT_TAG}"
+          echo "Tagged ${REGISTRY}/${IMAGE_REPO}:${commit_tag} -> ${FINGERPRINT_TAG}"
 
       - name: Build image without pushing
         if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository

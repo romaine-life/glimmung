@@ -115,29 +115,6 @@ jobs:
           cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE }}-build-cache:app
           cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE }}-build-cache:app,mode=max
 
-      - name: Create app CI lookup tag
-        shell: bash
-        env:
-          SOURCE_SHA: ${{ steps.source.outputs.sha }}
-          RUN_ID: ${{ github.run_id }}
-          RUN_ATTEMPT: ${{ github.run_attempt }}
-        run: |
-          set -euo pipefail
-          ref_hash="$(printf '%s' "${SOURCE_SHA}" | sha256sum | cut -c1-12)"
-          lookup_tag="ci-ref-${ref_hash}-run-${RUN_ID}-attempt-${RUN_ATTEMPT}"
-          az acr import --name romainecr \
-            --source "${REGISTRY}/${IMAGE}:${FINGERPRINT_TAG}" \
-            --image "${IMAGE}:${lookup_tag}" --force
-          if ! az acr repository show-tags \
-              --name romainecr \
-              --repository "${IMAGE}" \
-              --query "[?@=='${lookup_tag}'] | [0]" \
-              --output tsv | grep -qx "${lookup_tag}"; then
-            echo "::error::CI lookup tag ${REGISTRY}/${IMAGE}:${lookup_tag} was not found after import."
-            exit 1
-          fi
-          echo "Created app CI lookup image ${REGISTRY}/${IMAGE}:${lookup_tag} -> ${FINGERPRINT_TAG}"
-
       - name: Bump chart image tag
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: |
