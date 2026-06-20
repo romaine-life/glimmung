@@ -21,6 +21,14 @@ type DeployImageToTestSlotRequest struct {
 	SlotIndex *int    `json:"slot_index,omitempty"`
 	SlotName  *string `json:"slot_name,omitempty"`
 	GitRef    string  `json:"git_ref"`
+	// ImageSource selects what image the slot runs. "" / "ci" (default) resolves
+	// the CI-built proof image for the commit — the PR-deploy path. "chart"
+	// deploys the chart at git_ref with NO image override: the chart's own pinned
+	// image stands. Use "chart" for default-branch/main deploys, where no
+	// per-commit CI proof image exists (docker-build-check is PR-only) but the
+	// chart already pins the production image — so the slot runs exactly what
+	// prod ships.
+	ImageSource string `json:"image_source,omitempty"`
 }
 
 // deployImagePerformer is the function seam the test harness stubs. Production
@@ -178,12 +186,23 @@ func deployImageToTestSlot(store ReadStore, preparer TestSlotPreparer, minter Ru
 			writeProblem(w, http.StatusUnprocessableEntity, "resolve git_ref to commit sha: "+err.Error())
 			return
 		}
-		resolvedImage, err := resolveImage(r.Context(), project, slug, sha, repoToken)
-		if err != nil {
-			writeProblem(w, http.StatusUnprocessableEntity, "resolve commit sha to CI image: "+err.Error())
-			return
+		// Select the image to run. "chart" deploys the chart at the ref with NO
+		// override — its pinned image stands (the default-branch path, where no
+		// per-commit CI proof image exists but the chart already pins production).
+		// Otherwise resolve the CI-built image for the commit (the PR-deploy path).
+		var resolvedImage ResolvedTestSlotImage
+		image := ""
+		if strings.EqualFold(strings.TrimSpace(req.ImageSource), "chart") {
+			imageValueKey = ""
+			resolvedImage = ResolvedTestSlotImage{Source: "chart_default"}
+		} else {
+			resolvedImage, err = resolveImage(r.Context(), project, slug, sha, repoToken)
+			if err != nil {
+				writeProblem(w, http.StatusUnprocessableEntity, "resolve commit sha to CI image: "+err.Error())
+				return
+			}
+			image = resolvedImage.Image
 		}
-		image := resolvedImage.Image
 		imageOverrideValue := testSlotDeployImageOverrideValue(resolvedImage, imageValueKey)
 		// Pollable handle: both history entries carry it as the job_name, so the
 		// slot job status route serves the deploy's running to terminal transition.

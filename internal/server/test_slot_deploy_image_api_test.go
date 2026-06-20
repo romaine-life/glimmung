@@ -71,6 +71,48 @@ func failingTestSlotImageResolver(err error) testSlotImageResolver {
 	}
 }
 
+// TestDeployImageToTestSlotChartSource pins the default-branch path: image_source
+// "chart" deploys the chart at the ref with NO CI-image override (the chart's
+// pinned production image stands), so it must NOT resolve a CI image — main has
+// none (docker-build-check is PR-only). The performer is invoked with an empty
+// override and empty image value key.
+func TestDeployImageToTestSlotChartSource(t *testing.T) {
+	store := newDeployImageStore(t)
+	type performerCall struct{ ref, override, key string }
+	calls := make(chan performerCall, 1)
+	performer := func(_ context.Context, _ Lease, _ Project, verifiedRef, imageOverrideValue, imageValueKey string) error {
+		calls <- performerCall{verifiedRef, imageOverrideValue, imageValueKey}
+		return nil
+	}
+	resolveRef := func(_ context.Context, _, ref, _ string) (string, error) {
+		if ref != "main" {
+			return "", fmt.Errorf("unexpected ref=%s", ref)
+		}
+		return "mainsha", nil
+	}
+	// Must NOT be called for image_source=chart; fail loudly if it is.
+	resolveImage := failingTestSlotImageResolver(fmt.Errorf("resolveImage must not be called for image_source=chart"))
+	handler := http.HandlerFunc(deployImageToTestSlot(store, nil, nil, performer, resolveRef, resolveImage))
+	body := `{"project":"tank-operator","slot_name":"tank-operator-slot-1","git_ref":"main","image_source":"chart"}`
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, authedDeployRequest(t, body))
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	select {
+	case c := <-calls:
+		if c.ref != "mainsha" {
+			t.Fatalf("performer ref = %q, want mainsha (chart rendered at the ref)", c.ref)
+		}
+		if c.override != "" || c.key != "" {
+			t.Fatalf("chart source must deploy with NO override; got override=%q key=%q", c.override, c.key)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("performer was not invoked")
+	}
+}
+
 // TestDeployImageToTestSlotHappyPath pins the dispatch contract: lease resolved
 // by slot_name, ref resolved to a commit SHA, that SHA resolved to a validated
 // CI lookup image, the deploy performer invoked with the resolved SHA as chart

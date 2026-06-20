@@ -38,8 +38,12 @@ func (l *KubernetesRunLauncher) DeployImageToSlot(ctx context.Context, lease Lea
 		return fmt.Errorf("verified git ref is required")
 	}
 	image = strings.TrimSpace(image)
-	if image == "" {
-		return fmt.Errorf("resolved image is required")
+	imageValueKey = strings.TrimSpace(imageValueKey)
+	// Empty imageValueKey means "no override": deploy the chart at verifiedRef
+	// as-is, its pinned image stands. An image is only required when we are
+	// actually overriding a chart value (the CI-image / PR-deploy path).
+	if imageValueKey != "" && image == "" {
+		return fmt.Errorf("resolved image is required when an image value key is set")
 	}
 	config, ok := testSlotHelmConfig(project)
 	if !ok {
