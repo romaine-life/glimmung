@@ -125,6 +125,15 @@ running, cleaning, and available explicit.
   metadata or history.
 - Slot-local Playwright absence is treated as unsupported cluster capability,
   not as permission to fall back to an unrelated browser host.
+- Image-deploy resolution distinguishes a CI image that is *not built yet* from
+  one that *cannot exist*. While the commit's `docker-build-check` run is queued
+  or in progress, deploy-image returns `409` with a retryable "image not ready"
+  message so the caller's settle-wait re-polls; a build that completed
+  unsuccessfully, or a commit no build targets, returns `422`. The resolver never
+  fabricates a run-scoped `ci-ref` tag for a commit whose build did not push it,
+  so a test slot requested in the seconds between PR open and the PR build's
+  lookup-tag step no longer fails with a misleading registry miss (the
+  2026-06-20 deploy-image race).
 
 ## Observability
 

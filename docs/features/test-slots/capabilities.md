@@ -88,12 +88,37 @@ Contract impact:
   `GET /v1/test-slots/jobs/{project}/{job}`.
 - A deploy against an expired or cleanup-started lease fails instead of
   resurrecting the slot.
+- SHA→image resolution reports build readiness, not just success or failure. A
+  commit whose `docker-build-check` run is still queued or in progress resolves
+  to a retryable `409` ("CI image … is not ready yet … retry once the build
+  completes"); a failed build, or a commit no build targets, resolves to `422`.
+  The resolver only falls back to the `workflow_dispatch` ci-ref probe when no
+  run targets the commit by head_sha, and never surfaces that probe's expected
+  registry misses as the resolution error.
 - Build-stream project metadata and kind selection are retired and rejected on
   project registration.
 
 Evidence:
 - `internal/server/test_slot_deploy_image_api_test.go` —
-  `TestDeployImageToTestSlotExtendsShortLeaseToHotSwapMinimum` and
-  `TestDeployImageToTestSlotDoesNotShortenSufficientLease`.
+  `TestDeployImageToTestSlotExtendsShortLeaseToHotSwapMinimum`,
+  `TestDeployImageToTestSlotDoesNotShortenSufficientLease`, and
+  `TestDeployImageToTestSlotReturns409WhileCIImagePending`.
+- `internal/server/test_slot_deploy_image_resolver_test.go` —
+  `TestGitHubActionsTestSlotImageResolverReturnsPendingWhileBuildRunning`,
+  `…ReportsFailedBuild`, `…NoBuildIsClearNotRegistryMiss`, and
+  `…PrefersSuccessfulRerunOverFailedAttempt`.
 - `internal/server/test_lease_defaults_api_test.go` —
   hot-swap minimum TTL route coverage for global and project settings.
+
+History:
+- 2026-06-20: a test slot requested in the ~90s between PR open and the PR's
+  `docker-build-check` run finishing failed with `422 … image tag
+  romainecr.azurecr.io/<repo>:ci-ref-<hash>-run-<id>-attempt-1 not found in
+  registry`. The resolver's primary lookup filtered to `status=success` on the
+  commit's head_sha, returned empty while the build was still running, and fell
+  into the `workflow_dispatch` recovery probe — which pairs *this commit's*
+  ref-hash with *every recent run's* id. PR commits only ever carry `ci-pr-<n>`
+  tags, so every fabricated `ci-ref` tag 404'd and the last miss was surfaced as
+  the failure. The fix classifies the commit's runs (success / in-progress /
+  failed) before the probe and returns a typed, retryable pending error, so the
+  race is reported as "not ready, retry" rather than a missing image.

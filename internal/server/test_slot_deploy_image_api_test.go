@@ -373,6 +373,30 @@ func TestDeployImageToTestSlotRequiresHelmConfig(t *testing.T) {
 	}
 }
 
+// TestDeployImageToTestSlotReturns409WhileCIImagePending: a still-building CI
+// image is retryable, so the endpoint answers 409 (not the terminal 422) with
+// the resolver's actionable message and must not dispatch the deploy performer.
+func TestDeployImageToTestSlotReturns409WhileCIImagePending(t *testing.T) {
+	store := newDeployImageStore(t)
+	performer := func(context.Context, Lease, Project, string, string, string) error {
+		t.Fatal("performer must not run while the CI image is still building")
+		return nil
+	}
+	resolveRef := func(context.Context, string, string, string) (string, error) { return "racysha", nil }
+	resolveImage := failingTestSlotImageResolver(&testSlotCIImagePendingError{
+		SHA: "racysha", Workflow: "docker-build-check.yaml", RunID: 42, Status: "in_progress",
+	})
+	handler := http.HandlerFunc(deployImageToTestSlot(store, nil, nil, performer, resolveRef, resolveImage))
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, authedDeployRequest(t, `{"project":"tank-operator","slot_name":"tank-operator-slot-1","git_ref":"feat/x"}`))
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409; body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "not ready yet") || !strings.Contains(rec.Body.String(), "retry") {
+		t.Fatalf("body=%s, want actionable pending message", rec.Body.String())
+	}
+}
+
 func TestDeployImageToTestSlotRequiresResolvedValidatedFingerprintImage(t *testing.T) {
 	store := newDeployImageStore(t)
 	calls := make(chan struct{}, 1)

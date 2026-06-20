@@ -81,12 +81,16 @@ func resolveTestSlotImageFromGitHubActions(ctx context.Context, httpClient *http
 		return ResolvedTestSlotImage{}, fmt.Errorf("github repo slug is required")
 	}
 	settings := testSlotCIImageConfig(project)
-	runs, err := listSuccessfulWorkflowRuns(ctx, httpClient, slug, settings.Workflow, sha, token)
+
+	// PR builds (ci-pr-<n> tag) and push builds (ci-ref-<hash> tag) both run with
+	// head_sha == the commit. Fetch them at every status so the resolver can tell
+	// a published image from a build that is still running or has already failed,
+	// instead of reading "no successful run yet" as "no image will ever exist".
+	commitRuns, err := listWorkflowRunsForCommit(ctx, httpClient, slug, settings.Workflow, sha, token)
 	if err != nil {
 		return ResolvedTestSlotImage{}, err
 	}
-	if len(runs) > 0 {
-		run := runs[0]
+	if run, ok := firstWorkflowRun(commitRuns, workflowRunSucceeded); ok {
 		prNumber, err := prNumberForWorkflowRun(ctx, httpClient, slug, run, token)
 		if err != nil {
 			return ResolvedTestSlotImage{}, err
@@ -101,36 +105,114 @@ func resolveTestSlotImageFromGitHubActions(ctx context.Context, httpClient *http
 		return resolved, nil
 	}
 
-	// workflow_dispatch can build an arbitrary input ref after the run has
-	// started, so GitHub's workflow_run.head_sha may be the dispatch branch
-	// rather than the resolved image source SHA. In that case scan recent
-	// successful non-PR runs and find the run-scoped lookup tag whose ref hash
-	// was derived from the resolved source SHA.
+	// A run targets this commit but has not published an image. Surface the real
+	// state: an in-progress build is retryable (the lookup tag lands when the run
+	// reaches its "Create CI lookup tag" step), while a failed build is terminal.
+	// Either is clearer — and correct — than probing the registry for a tag this
+	// commit's build never pushed (the 2026-06-20 deploy-image race).
+	if run, ok := firstWorkflowRun(commitRuns, workflowRunInProgress); ok {
+		return ResolvedTestSlotImage{}, &testSlotCIImagePendingError{
+			SHA:      sha,
+			Workflow: settings.Workflow,
+			RunID:    run.ID,
+			Status:   strings.TrimSpace(run.Status),
+		}
+	}
+	if run, ok := firstWorkflowRun(commitRuns, workflowRunFailed); ok {
+		conclusion := strings.TrimSpace(run.Conclusion)
+		if conclusion == "" {
+			conclusion = "unsuccessfully"
+		}
+		return ResolvedTestSlotImage{}, fmt.Errorf("%s run %d for commit %s concluded %s; no CI image was published — fix CI and redeploy", settings.Workflow, run.ID, sha, conclusion)
+	}
+
+	// No run targets this commit by head_sha. A workflow_dispatch can build an
+	// arbitrary git_ref whose head_sha is the dispatch branch rather than the
+	// source SHA, so scan recent successful non-PR runs for the run-scoped ci-ref
+	// tag derived from THIS sha. Only the run that actually built this sha pushed
+	// that exact tag, so a registry miss here means "not this run" and is skipped
+	// rather than surfaced as the resolution failure.
 	recent, err := listRecentSuccessfulWorkflowRuns(ctx, httpClient, slug, settings.Workflow, token)
 	if err != nil {
 		return ResolvedTestSlotImage{}, err
 	}
-	var lastValidationErr error
 	for _, run := range recent {
 		if run.Event == "pull_request" {
 			continue
 		}
-		// Recent-runs fallback only considers non-PR runs (PR runs are skipped
-		// above), so they always use the ci-ref hash tag; no PR number applies.
 		resolved, err := resolvedTestSlotImageForWorkflowRun(settings, run, sha, 0)
 		if err != nil {
 			continue
 		}
 		if err := validator.ValidateTestSlotImage(ctx, resolved); err != nil {
-			lastValidationErr = err
 			continue
 		}
 		return resolved, nil
 	}
-	if lastValidationErr != nil {
-		return ResolvedTestSlotImage{}, fmt.Errorf("no validated CI lookup image for commit %s in workflow %s: %w", sha, settings.Workflow, lastValidationErr)
+	return ResolvedTestSlotImage{}, fmt.Errorf("no CI image for commit %s in workflow %s: no successful or in-progress build targets this commit, and no workflow_dispatch build published a matching ci-ref tag", sha, settings.Workflow)
+}
+
+// testSlotCIImagePendingError signals that a docker-build-check run targets the
+// commit but has not published its CI image yet (the run is queued or in
+// progress). It is retryable: the lookup tag lands when the run reaches its
+// "Create CI lookup tag" step, so deployImageToTestSlot maps it to 409 with an
+// actionable message rather than the registry-miss 422 a fabricated dispatch tag
+// used to produce. errors.As lets the caller branch on it without string-matching.
+type testSlotCIImagePendingError struct {
+	SHA      string
+	Workflow string
+	RunID    int64
+	Status   string
+}
+
+func (e *testSlotCIImagePendingError) Error() string {
+	run := ""
+	if e.RunID > 0 {
+		run = fmt.Sprintf(" run %d", e.RunID)
 	}
-	return ResolvedTestSlotImage{}, fmt.Errorf("no successful app-image workflow run with a CI lookup tag for commit %s in workflow %s", sha, settings.Workflow)
+	status := strings.TrimSpace(e.Status)
+	if status == "" {
+		status = "in progress"
+	}
+	return fmt.Sprintf("CI image for commit %s is not ready yet: %s%s is %s; retry once the build completes", e.SHA, e.Workflow, run, status)
+}
+
+// workflowRunSucceeded reports a completed run that published its image. The
+// empty-status branch keeps fixtures that set only conclusion working.
+func workflowRunSucceeded(run githubWorkflowRun) bool {
+	if !strings.EqualFold(run.Conclusion, "success") {
+		return false
+	}
+	return run.Status == "" || strings.EqualFold(run.Status, "completed")
+}
+
+// workflowRunInProgress reports a run that targets the commit but has not
+// finished, so its CI image is not published yet — the retryable race a test
+// slot hits when requested in the seconds between PR open and the PR build's
+// lookup-tag step. Any non-terminal status (queued, in_progress, requested,
+// waiting, pending) counts.
+func workflowRunInProgress(run githubWorkflowRun) bool {
+	switch strings.ToLower(strings.TrimSpace(run.Status)) {
+	case "", "completed":
+		return false
+	default:
+		return true
+	}
+}
+
+// workflowRunFailed reports a completed run that did not publish an image
+// (failure, cancelled, timed_out, ...). Terminal: re-polling will not help.
+func workflowRunFailed(run githubWorkflowRun) bool {
+	return strings.EqualFold(run.Status, "completed") && !strings.EqualFold(run.Conclusion, "success")
+}
+
+func firstWorkflowRun(runs []githubWorkflowRun, match func(githubWorkflowRun) bool) (githubWorkflowRun, bool) {
+	for _, run := range runs {
+		if match(run) {
+			return run, true
+		}
+	}
+	return githubWorkflowRun{}, false
 }
 
 func testSlotCIImageConfig(project Project) testSlotCIImageSettings {
@@ -183,22 +265,39 @@ func testSlotDeployMetadata(project Project) (map[string]any, bool) {
 	return nil, false
 }
 
-func listSuccessfulWorkflowRuns(ctx context.Context, httpClient *http.Client, slug, workflow, sha, token string) ([]githubWorkflowRun, error) {
+// listWorkflowRunsForCommit returns every docker-build-check run whose head_sha
+// is the commit, at any status, so the resolver can distinguish a published
+// image (successful run) from a build that is still running (retryable) or one
+// that failed (terminal). PR builds and push builds run with head_sha == the
+// commit; a workflow_dispatch of an arbitrary git_ref does not, and is recovered
+// by the recent-runs probe.
+func listWorkflowRunsForCommit(ctx context.Context, httpClient *http.Client, slug, workflow, sha, token string) ([]githubWorkflowRun, error) {
 	values := url.Values{}
-	values.Set("status", "success")
 	values.Set("per_page", "20")
 	values.Set("head_sha", sha)
-	return listWorkflowRuns(ctx, httpClient, slug, workflow, token, values)
+	return fetchWorkflowRuns(ctx, httpClient, slug, workflow, token, values)
 }
 
 func listRecentSuccessfulWorkflowRuns(ctx context.Context, httpClient *http.Client, slug, workflow, token string) ([]githubWorkflowRun, error) {
 	values := url.Values{}
 	values.Set("status", "success")
 	values.Set("per_page", "50")
-	return listWorkflowRuns(ctx, httpClient, slug, workflow, token, values)
+	runs, err := fetchWorkflowRuns(ctx, httpClient, slug, workflow, token, values)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]githubWorkflowRun, 0, len(runs))
+	for _, run := range runs {
+		if workflowRunSucceeded(run) {
+			out = append(out, run)
+		}
+	}
+	return out, nil
 }
 
-func listWorkflowRuns(ctx context.Context, httpClient *http.Client, slug, workflow, token string, query url.Values) ([]githubWorkflowRun, error) {
+// fetchWorkflowRuns returns the raw workflow_runs page for the query with no
+// status filtering — callers classify by status/conclusion themselves.
+func fetchWorkflowRuns(ctx context.Context, httpClient *http.Client, slug, workflow, token string, query url.Values) ([]githubWorkflowRun, error) {
 	var payload struct {
 		WorkflowRuns []githubWorkflowRun `json:"workflow_runs"`
 	}
@@ -209,19 +308,7 @@ func listWorkflowRuns(ctx context.Context, httpClient *http.Client, slug, workfl
 	if err := githubGetJSON(ctx, httpClient, apiURL, token, &payload); err != nil {
 		return nil, err
 	}
-	var out []githubWorkflowRun
-	for _, run := range payload.WorkflowRuns {
-		if run.Status == "completed" && run.Conclusion == "success" {
-			out = append(out, run)
-			continue
-		}
-		// GitHub's status=success filter already limits conclusions on the
-		// REST side; keep this tolerant for test fixtures and API drift.
-		if run.Conclusion == "" && run.Status == "" {
-			out = append(out, run)
-		}
-	}
-	return out, nil
+	return payload.WorkflowRuns, nil
 }
 
 func resolvedTestSlotImageForWorkflowRun(settings testSlotCIImageSettings, run githubWorkflowRun, sha string, prNumber int) (ResolvedTestSlotImage, error) {

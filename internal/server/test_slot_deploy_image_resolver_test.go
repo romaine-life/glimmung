@@ -221,3 +221,139 @@ func TestCILookupTagForWorkflowRunRejectsMissingRunID(t *testing.T) {
 		t.Fatalf("err=%v, want missing run id", err)
 	}
 }
+
+func deployImageResolverProject() Project {
+	return Project{
+		Name: "tank-operator",
+		Metadata: map[string]any{
+			"test_slot_deploy": map[string]any{
+				"ci_image": map[string]any{
+					"repository": "romainecr.azurecr.io/tank-operator",
+				},
+			},
+		},
+	}
+}
+
+// TestGitHubActionsTestSlotImageResolverReturnsPendingWhileBuildRunning pins the
+// 2026-06-20 race: a test slot requested while the PR's docker-build-check run is
+// still in_progress must yield a typed, retryable pending error — NOT a probe of
+// the registry for a fabricated ci-ref tag the PR build never pushes.
+func TestGitHubActionsTestSlotImageResolverReturnsPendingWhileBuildRunning(t *testing.T) {
+	restore := githubAPIBase
+	defer func() { githubAPIBase = restore }()
+
+	requests := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if got := r.URL.Query().Get("head_sha"); got != "racysha" {
+			t.Fatalf("head_sha=%q, want racysha", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"workflow_runs":[{"id":42,"run_attempt":1,"event":"pull_request","status":"in_progress","head_sha":"racysha","pull_requests":[{"number":81}]}]}`)
+	}))
+	defer srv.Close()
+	githubAPIBase = srv.URL
+
+	validator := &recordingImageValidator{}
+	_, err := githubActionsTestSlotImageResolver(srv.Client(), validator)(context.Background(), deployImageResolverProject(), "romaine-life/tank-operator", "racysha", "gh-token")
+	var pending *testSlotCIImagePendingError
+	if !errors.As(err, &pending) {
+		t.Fatalf("err=%v, want *testSlotCIImagePendingError", err)
+	}
+	if pending.RunID != 42 || pending.Status != "in_progress" {
+		t.Fatalf("pending=%#v, want run 42 in_progress", pending)
+	}
+	if !strings.Contains(err.Error(), "not ready yet") || !strings.Contains(err.Error(), "retry") {
+		t.Fatalf("message=%q, want actionable pending text", err.Error())
+	}
+	if strings.Contains(err.Error(), "not found in registry") {
+		t.Fatalf("pending must not surface a registry miss: %q", err.Error())
+	}
+	if len(validator.seen) != 0 {
+		t.Fatalf("must not probe ACR for an in-progress build; saw %#v", validator.seen)
+	}
+	if requests != 1 {
+		t.Fatalf("requests=%d, want a single head_sha lookup (no dispatch fallback)", requests)
+	}
+}
+
+// TestGitHubActionsTestSlotImageResolverReportsFailedBuild: a completed-but-failed
+// docker-build-check run for the commit is terminal and names the run, not a
+// retryable pending state and not a registry miss.
+func TestGitHubActionsTestSlotImageResolverReportsFailedBuild(t *testing.T) {
+	restore := githubAPIBase
+	defer func() { githubAPIBase = restore }()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"workflow_runs":[{"id":7,"run_attempt":1,"event":"pull_request","status":"completed","conclusion":"failure","head_sha":"badsha","pull_requests":[{"number":81}]}]}`)
+	}))
+	defer srv.Close()
+	githubAPIBase = srv.URL
+
+	validator := &recordingImageValidator{}
+	_, err := githubActionsTestSlotImageResolver(srv.Client(), validator)(context.Background(), deployImageResolverProject(), "romaine-life/tank-operator", "badsha", "gh-token")
+	var pending *testSlotCIImagePendingError
+	if errors.As(err, &pending) {
+		t.Fatalf("failed build must not be reported as pending: %v", err)
+	}
+	if err == nil || !strings.Contains(err.Error(), "concluded failure") || !strings.Contains(err.Error(), "no CI image was published") {
+		t.Fatalf("err=%v, want terminal failed-build message naming the run", err)
+	}
+	if len(validator.seen) != 0 {
+		t.Fatalf("must not probe ACR for a failed build; saw %#v", validator.seen)
+	}
+}
+
+// TestGitHubActionsTestSlotImageResolverNoBuildIsClearNotRegistryMiss: when no
+// run targets the commit and the dispatch probe finds nothing, the error must be
+// a clear "no CI image for commit" — never the fabricated "tag ... not found in
+// registry" the old recent-runs fallback surfaced for PR commits.
+func TestGitHubActionsTestSlotImageResolverNoBuildIsClearNotRegistryMiss(t *testing.T) {
+	restore := githubAPIBase
+	defer func() { githubAPIBase = restore }()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"workflow_runs":[]}`)
+	}))
+	defer srv.Close()
+	githubAPIBase = srv.URL
+
+	validator := &recordingImageValidator{}
+	_, err := githubActionsTestSlotImageResolver(srv.Client(), validator)(context.Background(), deployImageResolverProject(), "romaine-life/tank-operator", "ghostsha", "gh-token")
+	if err == nil || !strings.Contains(err.Error(), "no CI image for commit ghostsha") {
+		t.Fatalf("err=%v, want clear no-build message", err)
+	}
+	if strings.Contains(err.Error(), "not found in registry") {
+		t.Fatalf("message must not surface a fabricated registry miss: %q", err.Error())
+	}
+	if len(validator.seen) != 0 {
+		t.Fatalf("nothing to validate when no run targets the commit; saw %#v", validator.seen)
+	}
+}
+
+// TestGitHubActionsTestSlotImageResolverPrefersSuccessfulRerunOverFailedAttempt:
+// GitHub returns runs newest-first; a green re-run must win over an earlier
+// failed attempt for the same commit.
+func TestGitHubActionsTestSlotImageResolverPrefersSuccessfulRerunOverFailedAttempt(t *testing.T) {
+	restore := githubAPIBase
+	defer func() { githubAPIBase = restore }()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"workflow_runs":[{"id":200,"run_attempt":2,"event":"pull_request","status":"completed","conclusion":"success","head_sha":"mixedsha","pull_requests":[{"number":81}]},{"id":199,"run_attempt":1,"event":"pull_request","status":"completed","conclusion":"failure","head_sha":"mixedsha","pull_requests":[{"number":81}]}]}`)
+	}))
+	defer srv.Close()
+	githubAPIBase = srv.URL
+
+	validator := &recordingImageValidator{}
+	resolved, err := githubActionsTestSlotImageResolver(srv.Client(), validator)(context.Background(), deployImageResolverProject(), "romaine-life/tank-operator", "mixedsha", "gh-token")
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if resolved.Tag != "ci-pr-81-run-200-attempt-2" {
+		t.Fatalf("tag=%q, want green re-run ci-pr-81-run-200-attempt-2", resolved.Tag)
+	}
+}
