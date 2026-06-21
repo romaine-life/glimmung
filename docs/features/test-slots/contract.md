@@ -20,7 +20,6 @@ running, cleaning, and available explicit.
 - Postgres `leases` owns active capacity claims and lease TTL.
 - Kubernetes owns actual preliminary and lease-scoped resources.
 - `docs/test-slot-lifecycle.md` owns slot terms and lifecycle behavior.
-- `docs/test-slot-hot-swap.md` owns hot-swap metadata shape and apply behavior.
 - `Settings.ControlPlaneLoopsEnabled` (env `CONTROL_PLANE_LOOPS_ENABLED`,
   enforced in `cmd/glimmung-go/main.go`) owns the boundary between processes
   that join the control plane and processes that only serve HTTP handlers.
