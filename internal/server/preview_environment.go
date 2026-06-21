@@ -152,12 +152,18 @@ func (e PreviewEnvironment) RecordObserved(overrideActive bool, observedBuild st
 	} else {
 		e.ObservedBuildID = ""
 	}
+	// A disabled env records the observation (ObservedAt/ObservedBuildID) but its
+	// State is never derived off `disabled` from a read-back — only an enabled
+	// env's state follows the observed/pushed relationship. The verifier already
+	// skips disabled envs; this keeps RecordObserved self-defending against a
+	// future caller that folds a read-back on a disabled env.
+	if !e.Enabled {
+		return e
+	}
 	switch {
 	case strings.TrimSpace(e.LiveBuildID) == "":
 		// No push recorded yet: the edge is fresh-passthrough to the backend.
-		if e.Enabled {
-			e.State = PreviewStateReady
-		}
+		e.State = PreviewStateReady
 		e.Detail = ""
 	case overrideActive && observedBuild == e.LiveBuildID:
 		e.State = PreviewStateLive
@@ -182,10 +188,16 @@ func (e PreviewEnvironment) MarkProvisioning() PreviewEnvironment {
 }
 
 // MarkReady marks the env provisioned and serving the stable backend (no
-// override yet). Resets any stale push state on a fresh provision.
+// override yet). If a push receipt raced in during the (multi-minute) provision,
+// it keeps `pushed` so the verifier still reads that build back rather than
+// regressing the claim to `ready`.
 func (e PreviewEnvironment) MarkReady() PreviewEnvironment {
-	e.State = PreviewStateReady
 	e.Detail = ""
+	if e.Enabled && strings.TrimSpace(e.LiveBuildID) != "" {
+		e.State = PreviewStatePushed
+		return e
+	}
+	e.State = PreviewStateReady
 	return e
 }
 
