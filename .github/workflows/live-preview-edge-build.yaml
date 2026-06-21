@@ -1,12 +1,3 @@
-# PENDING RELOCATION (hub action): this file must live at
-#   .github/workflows/live-preview-edge-build.yaml
-# It could not be pushed there from the Tank session — the egress-wall git
-# token lacks GitHub App 'workflows' permission. The hub (full git authority)
-# should: git mv docs/pending-workflows/live-preview-edge-build.yaml \
-#                 .github/workflows/live-preview-edge-build.yaml
-# and delete this header. See PR #881 / Stage 4a. Without it, the edge image
-# is NOT rebuilt/bumped on main and the lockstep tag will go stale over time.
-#
 name: build live-preview-edge
 
 # Builds and publishes the generic live-preview-edge image to ACR on main, and

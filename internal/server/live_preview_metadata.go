@@ -14,10 +14,11 @@ import (
 //   - the faithful image-deploy lane's `test_slot_helm` / `test_slot_deploy`
 //     keys, which the validation slot path owns and which this never touches.
 //
-// Shape: live_preview { enabled: bool, backend_prefixes: []string }. Glimmung
-// reads it to know an app supports preview and which request path prefixes the
-// edge reverse-proxies to the app backend (everything else is served
-// override-first / fresh-passthrough by the edge).
+// Shape: live_preview { enabled: bool, backend_prefixes: []string, backend_port: int }.
+// Glimmung reads it to know an app supports preview, which request path prefixes
+// the edge reverse-proxies to the app backend (everything else is served
+// override-first / fresh-passthrough by the edge), and the in-pod backend port
+// the edge's upstream points at.
 const LivePreviewMetadataKey = "live_preview"
 
 // livePreviewSettings is the parsed `live_preview` project metadata.
