@@ -60,6 +60,88 @@ History:
   ServiceAccount. The fix made the env var real rather than expanding slot
   RBAC.
 
+## live-preview-edge
+
+Status: in progress (Stage 1 of the live frontend preview feature)
+
+Intent:
+The live-preview edge is the generic data plane of the **live frontend preview**
+feature: a standalone reverse-proxy + override receiver
+(`cmd/live-preview-edge`) that an app's slot chart runs in front of its stable
+backend inside a preview test environment. A developer pushes their freshly-built
+frontend `dist/` to the edge; the edge serves it override-first over the stable
+backend on the preview env's URL, so UI iterates in seconds instead of waiting
+for a full CI image build+deploy. Fresh previews (before the first push) and all
+configured backend prefixes proxy straight through to the stable backend.
+
+This is the **live-preview lane** — scratch, for *seeing* — and is never a
+validation input. It is a separate lane from the faithful image-deploy lane
+(`deploy-image-to-slot`, which runs the exact CI image) and shares no vocabulary
+with the retired hot-swap path. Building it is inactive-until-wired: no app chart
+in this stage activates it, so no current slot/deploy behavior changes.
+
+Affected contracts:
+- Test Slots (primary — the preview env is a leased slot shape)
+- Observability And Evidence (push outcomes, served-build, serve/proxy counters)
+- Auth And API Surface (service-principal push auth + owner-subject scoping)
+
+Contract impact:
+- The edge owns a reserved control surface, never proxied: `PUT/DELETE
+  /__live-preview/push` and `GET /__live-preview/status`, plus ops routes
+  `/__live-preview/{healthz,readyz,metrics}`. App backend prefixes and frontend
+  paths can never collide with it.
+- Served-build read-back contract: `GET /__live-preview/status` reports
+  `override_active`, the LIVE `build` id (the build of the bundle `current`
+  resolves to, not the last push attempt), `release`, and `pushed_at`. The
+  next-stage observed-read-back verifier depends on this to confirm the edge
+  serves exactly the build that was pushed. The build id is supplied on push via
+  the `X-Live-Preview-Build` header and persisted in a release marker that
+  travels with the atomic flip.
+- Push/DELETE require an auth.romaine.life service-principal JWT whose verified
+  `sub` equals the configured authorized subject (the lease owner's IdP-signed
+  subject) — "a pod may only write its own preview". `status` requires a valid
+  token of any accepted role but is not owner-scoped.
+- The receiver core (extract guards, atomic `current` symlink flip,
+  prune-to-N-releases) is ported from tank-operator's static-override receiver;
+  tank-operator's serving/toggle/SSE/daemon surface is not ported (it is the
+  retired in-app path).
+- Single serving pod is a hard invariant: the Helm partial's
+  `live-preview-edge.replicas` returns 1 when enabled and fails the render on
+  `replicas > 1` (v1 #1419: a per-pod emptyDir override behind multiple replicas
+  load-balances reads and flickers the co-watched frontend).
+
+Evidence:
+- `internal/livepreview/release_test.go` — extract guards (missing index,
+  path-escape, abs path, symlink/hardlink/device, entry cap, uncompressed bomb,
+  bad gzip), atomic flip/replace, failed-push-keeps-previous, prune, status
+  read-back, served-path resolution.
+- `internal/livepreview/edge_test.go` — routing precedence, override serve + SPA
+  fallback, fresh-preview passthrough, backend-prefix proxy, push/status/delete
+  lifecycle with build flip, the push auth model (no-token/user/wrong-subject/
+  owner), status auth posture, and bad pushes (missing build header, missing
+  index, non-gzip, oversize, unauthorized) not changing the served bundle.
+- `internal/metrics/metrics_test.go` — `glimmung_live_preview_edge_*` families
+  wired and the served-build info gauge held at one active series.
+- `k8s/live-preview-edge/` (library partial) + `k8s/live-preview-edge-harness/`
+  rendered with `helm template`: edge fronts the app when enabled, inert when
+  disabled, render fails on `replicas > 1`.
+- `live-preview-edge/Dockerfile` (validated locally with the exact CGO-off
+  build). The CI wiring — a `live-preview-edge` matrix entry in
+  `docker-build-check.yaml` and a `check-deleted-test-slot-hot-swap` guard job in
+  `tests.yaml` — is staged in `docs/features/test-slots/live-preview-ci.patch`
+  for the integrator to apply: a restricted-git session's GitHub App has no
+  `workflows` permission, so the spoke cannot push `.github/workflows/` edits.
+- `docs/features/test-slots/live-preview.md` — the feature design + the staged
+  plan to the complete architecture.
+
+History:
+- Stage 1 (this entry) builds the generic edge component only. The provisioning
+  of a preview test env (stable backend + edge on a wildcard URL), the
+  observed-read-back verifier, the in-pod push tool, and the cross-repo chart
+  consumption mechanism are later stages named in
+  `docs/features/test-slots/live-preview.md`. The complete feature replaces
+  tank-operator's retired in-app static-override path.
+
 ## deploy-image-to-slot
 
 Status: shipped

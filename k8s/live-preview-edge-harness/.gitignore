@@ -1,0 +1,5 @@
+# Helm dependency build artifacts. The library is a file:// dependency, so
+# `helm dependency build` (or `update`) vendors it here offline before
+# `helm template`. Not committed.
+charts/
+Chart.lock

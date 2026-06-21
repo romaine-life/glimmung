@@ -1,0 +1,39 @@
+diff --git a/.github/workflows/docker-build-check.yaml b/.github/workflows/docker-build-check.yaml
+index 96081af..62035b5 100644
+--- a/.github/workflows/docker-build-check.yaml
++++ b/.github/workflows/docker-build-check.yaml
+@@ -48,6 +48,12 @@ jobs:
+             cache-ref: romainecr.azurecr.io/glimmung-runner-build-cache:runner
+             image-repo: glimmung-runner
+             fingerprint-paths: runner/Dockerfile go.mod go.sum cmd internal
++          - name: live-preview-edge
++            file: live-preview-edge/Dockerfile
++            context: .
++            cache-ref: romainecr.azurecr.io/glimmung-live-preview-edge-build-cache:live-preview-edge
++            image-repo: glimmung-live-preview-edge
++            fingerprint-paths: live-preview-edge/Dockerfile go.mod go.sum cmd internal
+           - name: api-proxy
+             file: api-proxy/Dockerfile
+             context: api-proxy
+diff --git a/.github/workflows/tests.yaml b/.github/workflows/tests.yaml
+index 517a50b..c853d23 100644
+--- a/.github/workflows/tests.yaml
++++ b/.github/workflows/tests.yaml
+@@ -92,6 +92,17 @@ jobs:
+       - name: Guard against retired legacy embedded-slot-array surface + PR #525 race-fix revert
+         run: node scripts/check-slot-cleanup-migration.mjs
+ 
++  check-deleted-test-slot-hot-swap:
++    name: Deleted test-slot hot-swap surface
++    runs-on: ubuntu-latest
++    steps:
++      - uses: actions/checkout@v4
++      - uses: actions/setup-node@v4
++        with:
++          node-version: "20"
++      - name: Guard against retired hot-swap surface (live-preview replaces it)
++        run: node scripts/check-deleted-test-slot-hot-swap.mjs
++
+   check-chart-image-tag-sync:
+     name: Chart image.tag lockstep contract
+     runs-on: ubuntu-latest

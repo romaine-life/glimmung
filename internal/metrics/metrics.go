@@ -686,6 +686,107 @@ func RecordRunReconcilerCaught(kind string) {
 	runReconcilerCaughtTotal.WithLabelValues(safeLabel(kind)).Inc()
 }
 
+// --- Live-preview edge -------------------------------------------------------
+//
+// The live-preview edge (cmd/live-preview-edge) is the standalone data plane
+// that serves a developer's freshly-pushed frontend bundle override-first in
+// front of a stable app backend — the live-preview lane in
+// docs/features/test-slots/contract.md, distinct from the faithful image-deploy
+// lane. These families let an operator see push outcomes, what the edge is
+// serving, and the exact build it is live on without reading pod logs.
+//
+// Cardinality is bounded by construction. `outcome` and `disposition` are
+// closed enums. The build id (a per-push identifier — e.g. a content hash or
+// git SHA) is NOT a free-floating label: it would churn a new series on every
+// push. livePreviewEdgeServedBuild is an info gauge held at exactly one active
+// series — Reset() drops the prior series before Set() — so the live build is
+// visible in Prometheus while the label space stays at one. The per-push
+// history lives in the /__live-preview/status read-back and structured logs,
+// per the observability contract's "no run-specific labels" rule.
+
+// LivePreview edge push-outcome enum. The closed set the edge reports for a
+// PUT/DELETE against /__live-preview/push.
+const (
+	LivePreviewPushOutcomeOK           = "ok"
+	LivePreviewPushOutcomeTooLarge     = "too_large"
+	LivePreviewPushOutcomeBadArchive   = "bad_archive"
+	LivePreviewPushOutcomeUnauthorized = "unauthorized"
+	LivePreviewPushOutcomeReverted     = "reverted"
+	LivePreviewPushOutcomeError        = "error"
+)
+
+// LivePreview edge serve-disposition enum. How the data plane resolved a
+// non-control request: served a file from the active override, SPA-fell-back to
+// the override's index.html, reverse-proxied a configured backend prefix, or
+// passed a fresh (no-override) frontend request through to the backend.
+const (
+	LivePreviewServeOverrideFile     = "override_file"
+	LivePreviewServeOverrideSPA      = "override_spa"
+	LivePreviewServeBackendProxy     = "backend_proxy"
+	LivePreviewServeFreshPassthrough = "fresh_passthrough"
+)
+
+var (
+	livePreviewEdgePushTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "glimmung_live_preview_edge_push_total",
+			Help: "Live-preview edge push/delete outcomes, labelled by bounded outcome (ok, too_large, bad_archive, unauthorized, reverted, error).",
+		},
+		[]string{"outcome"},
+	)
+	livePreviewEdgeServeTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "glimmung_live_preview_edge_serve_total",
+			Help: "Live-preview edge data-plane requests, labelled by serve disposition (override_file, override_spa, backend_proxy, fresh_passthrough).",
+		},
+		[]string{"disposition"},
+	)
+	livePreviewEdgeProxyErrorsTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "glimmung_live_preview_edge_proxy_errors_total",
+			Help: "Live-preview edge upstream reverse-proxy failures, labelled by serve disposition that attempted the proxy (backend_proxy, fresh_passthrough).",
+		},
+		[]string{"disposition"},
+	)
+	livePreviewEdgeServedBuild = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "glimmung_live_preview_edge_served_build_info",
+			Help: "Info gauge set to 1 for the build id the edge currently serves as an active override. Held at one active series (Reset before Set) and cleared on revert, so the build label never churns unbounded.",
+		},
+		[]string{"build"},
+	)
+)
+
+// RecordLivePreviewEdgePush counts one push/delete outcome. outcome is one of
+// the LivePreviewPushOutcome* constants.
+func RecordLivePreviewEdgePush(outcome string) {
+	livePreviewEdgePushTotal.WithLabelValues(safeLabel(outcome)).Inc()
+}
+
+// RecordLivePreviewEdgeServe counts one data-plane request by disposition (one
+// of the LivePreviewServe* constants).
+func RecordLivePreviewEdgeServe(disposition string) {
+	livePreviewEdgeServeTotal.WithLabelValues(safeLabel(disposition)).Inc()
+}
+
+// RecordLivePreviewEdgeProxyError counts one failed upstream proxy attempt,
+// labelled by the disposition that attempted it.
+func RecordLivePreviewEdgeProxyError(disposition string) {
+	livePreviewEdgeProxyErrorsTotal.WithLabelValues(safeLabel(disposition)).Inc()
+}
+
+// SetLivePreviewEdgeServedBuild marks `build` as the single live override build.
+// Reset() drops any prior series so exactly one (build) series is exported; pass
+// "" — the revert / no-override case — to clear all series and report that the
+// edge serves no override. Call after a successful flip, after a revert, and
+// once at startup from the current live status so the gauge survives restarts.
+func SetLivePreviewEdgeServedBuild(build string) {
+	livePreviewEdgeServedBuild.Reset()
+	if build != "" {
+		livePreviewEdgeServedBuild.WithLabelValues(build).Set(1)
+	}
+}
+
 func init() {
 	registry.MustRegister(
 		collectors.NewGoCollector(),
@@ -717,6 +818,10 @@ func init() {
 		runWatchEventsTotal,
 		runWatchDisconnectedSeconds,
 		runReconcilerCaughtTotal,
+		livePreviewEdgePushTotal,
+		livePreviewEdgeServeTotal,
+		livePreviewEdgeProxyErrorsTotal,
+		livePreviewEdgeServedBuild,
 	)
 }
 

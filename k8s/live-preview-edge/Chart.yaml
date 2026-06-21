@@ -1,0 +1,10 @@
+apiVersion: v2
+name: live-preview-edge
+description: >-
+  Reusable Glimmung library chart. Named templates an app's slot chart includes
+  to run the live-preview edge (an override-first reverse proxy) in front of its
+  own backend inside a preview test environment. Inert unless the consumer's
+  livePreview.enabled value is set, so including the partial changes nothing
+  until Glimmung activates it on a preview lease.
+type: library
+version: 0.1.0
