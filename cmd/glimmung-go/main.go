@@ -186,6 +186,11 @@ func main() {
 		ServiceAccountTokenPath: settings.AuthRomaineLifeTokenPath,
 	}
 	runLauncher := server.NewKubernetesRunLauncher(settings)
+	// Federate the app's Azure workload identity into a preview's own namespace at
+	// provision (and remove it at deprovision), so a stable backend that
+	// authenticates to Azure at boot can run in a preview the same way it does in a
+	// standby slot. No-op for apps without runner_standby_workload_identity.
+	runLauncher.WorkloadIdentity = workloadIdentities
 	if store != nil && settings.ControlPlaneLoopsEnabled {
 		// One-shot slot-storage cleanup: copy any project's embedded
 		// `metadata.runner_standby_dns.slots[]` array into `slots`, then
@@ -253,6 +258,12 @@ func main() {
 			previewStatusReader = server.NewHTTPPreviewStatusReader(ts, nil)
 		}
 		server.StartPreviewVerifyReconciler(context.Background(), settings, rt, previewStatusReader, log.Printf)
+		// One-shot startup sweep: reclaim preview Azure federated identity
+		// credentials whose preview environment no longer exists (a teardown
+		// missed because a process died mid-deprovision). Mirrors
+		// RecoverInFlightTestSlots — startup, not a polling loop — per the
+		// preliminary-resource orphan model in docs/test-slot-lifecycle.md.
+		go server.ReclaimOrphanedPreviewWorkloadIdentities(context.Background(), rt, workloadIdentities, log.Printf)
 		if ghClient != nil {
 			// One-shot recovery sweep at startup: re-arm per-lease TTL
 			// timers, resume in-flight warming/activating/cleaning work, and
