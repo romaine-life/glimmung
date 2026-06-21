@@ -14,7 +14,11 @@ metadata:
     glimmung.io/pr: {{ .Values.prNumber | quote }}
     {{- end }}
 spec:
-  replicas: 1
+  # Single serving pod. The live-preview-edge.replicas helper returns 1 and
+  # FAILS the render on requested>1 when livePreview is enabled (a per-pod
+  # emptyDir override behind replicas>1 flickers the co-watched frontend, v1
+  # #1419); echoes the requested count otherwise.
+  replicas: {{ include "live-preview-edge.replicas" (dict "spec" .Values.livePreview "requested" 1) }}
   selector:
     matchLabels:
       app.kubernetes.io/instance: {{ include "glimmung-issue.resourceName" . }}
@@ -46,7 +50,12 @@ spec:
             - /app/glimmung-supervisor
           {{- end }}
           ports:
-            - name: http
+            # When a live-preview edge fronts the backend, the edge owns the
+            # "http" served port and the backend's own port is renamed to an
+            # internal name (glimmung-issue.appPortName) to avoid a duplicate
+            # port name in the pod. The container port NUMBER (8000) is
+            # unchanged, so the edge's loopback upstream still targets :8000.
+            - name: {{ include "glimmung-issue.appPortName" . }}
               containerPort: 8000
           env:
             # POSTGRES_HOST and POSTGRES_DATABASE come from the Secret
@@ -73,36 +82,26 @@ spec:
             - name: GLIMMUNG_SUPERVISOR_RESTART_ENABLED
               value: "true"
             {{- end }}
-            {{- if and (eq (include "glimmung-issue.isTestEnv" .) "true") .Values.staticOverride.enabled }}
-            - name: GLIMMUNG_STATIC_OVERRIDE_DIR
-              value: {{ .Values.staticOverride.mountPath | quote }}
-            {{- end }}
           envFrom:
             - configMapRef:
                 name: {{ .Values.configMapName }}
             - secretRef:
                 name: {{ .Values.secretName }}
-          {{- if or (and (eq (include "glimmung-issue.isTestEnv" .) "true") .Values.staticOverride.enabled) (and (eq (include "glimmung-issue.isTestEnv" .) "true") .Values.hotSwapBackend.enabled) }}
+          {{- if and (eq (include "glimmung-issue.isTestEnv" .) "true") .Values.hotSwapBackend.enabled }}
           volumeMounts:
-            {{- if and (eq (include "glimmung-issue.isTestEnv" .) "true") .Values.hotSwapBackend.enabled }}
             - name: hot-backend
               mountPath: {{ .Values.hotSwapBackend.mountPath | quote }}
-            {{- end }}
-            {{- if and (eq (include "glimmung-issue.isTestEnv" .) "true") .Values.staticOverride.enabled }}
-            - name: static-override
-              mountPath: {{ .Values.staticOverride.mountPath | quote }}
-            {{- end }}
           {{- end }}
           readinessProbe:
             httpGet:
               path: /readyz
-              port: http
+              port: {{ include "glimmung-issue.appPortName" . }}
             initialDelaySeconds: 5
             periodSeconds: 10
           livenessProbe:
             httpGet:
               path: /healthz
-              port: http
+              port: {{ include "glimmung-issue.appPortName" . }}
             initialDelaySeconds: 15
             periodSeconds: 30
           resources:
@@ -112,29 +111,19 @@ spec:
             limits:
               cpu: 500m
               memory: 512Mi
-        {{- if and (eq (include "glimmung-issue.isTestEnv" .) "true") .Values.staticOverride.enabled }}
-        - name: {{ .Values.staticOverride.writerContainerName }}
-          image: {{ .Values.staticOverride.writerImage | quote }}
-          imagePullPolicy: {{ .Values.staticOverride.writerImagePullPolicy }}
-          command:
-            - sh
-            - -c
-            - |
-              mkdir -p {{ .Values.staticOverride.mountPath | quote }}
-              while true; do sleep 3600; done
-          volumeMounts:
-            - name: static-override
-              mountPath: {{ .Values.staticOverride.mountPath | quote }}
-        {{- end }}
-      {{- if or (and (eq (include "glimmung-issue.isTestEnv" .) "true") .Values.staticOverride.enabled) (and (eq (include "glimmung-issue.isTestEnv" .) "true") .Values.hotSwapBackend.enabled) }}
+        {{- /*
+        The live-preview edge, in front of the backend. Self-gates on
+        livePreview.enabled (off by default → renders nothing), so this changes
+        nothing on a normal/validation install. When enabled it becomes the
+        pod's served port and reverse-proxies the backend on :8000.
+        */ -}}
+        {{- include "live-preview-edge.container" .Values.livePreview | nindent 8 }}
+      {{- if or (and (eq (include "glimmung-issue.isTestEnv" .) "true") .Values.hotSwapBackend.enabled) .Values.livePreview.enabled }}
       volumes:
         {{- if and (eq (include "glimmung-issue.isTestEnv" .) "true") .Values.hotSwapBackend.enabled }}
         - name: hot-backend
           emptyDir: {}
         {{- end }}
-        {{- if and (eq (include "glimmung-issue.isTestEnv" .) "true") .Values.staticOverride.enabled }}
-        - name: static-override
-          emptyDir: {}
-        {{- end }}
+        {{- include "live-preview-edge.volume" .Values.livePreview | nindent 8 }}
       {{- end }}
 {{- end }}

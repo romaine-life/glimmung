@@ -173,6 +173,64 @@ chess-tactics → glimmung → ambience.
    (the dangling `docs/test-slot-hot-swap.md` reference in
    `docs/features/test-slots/contract.md`). Gated on Stage 4 green per app.
 
+## Stage 2a landed contracts (preview-lane backend)
+
+The Stage 2 backend (durable model, provision, verifier, control API, metadata,
+metrics) is built. The dashboard UI (Stage 2b) and the sender (Stage 3) consume
+these contracts:
+
+- **Durable model — `preview_environment`** (Postgres `preview_environments`,
+  PK `(project, name)`). It is the SOURCE OF TRUTH; state is never inferred from
+  process memory or a session's claim. Fields: `project`, `name` (the preview env
+  / helm release / DNS label), `lease_ref`, `session_id`, `authorized_subject`,
+  `enabled`, `state`, `url`, `upstream_url`, `backend_prefixes`, `image_tag`,
+  `edge_image`, the CLAIMED `live_build_id` / `pushed_at`, the OBSERVED
+  `observed_build_id` / `observed_at`, `detail`, timestamps. States:
+  `provisioning → ready → pushed → live`, with `stale` (pushed ≠ observed),
+  `disabled`, `error`. Store CRUD is CAS-guarded on `updated_at`.
+- **Observed-not-claimed verifier.** A control-plane reconciler reads each
+  pending env's edge `GET /__live-preview/status` as a service principal
+  (projected SA token → `POST {auth}/api/auth/exchange/k8s`) and folds it in: a
+  push is marked `live` ONLY when `override_active && served build == pushed
+  build`; a pushed build the edge is not serving is the durable, counted `stale`
+  state. Metrics on transition (no per-poll double-count). Cost: only envs with
+  an unconfirmed push are read back; a push receipt wakes the loop, so steady
+  state is ~one read-back per push. Self-gates on `ControlPlaneLoopsEnabled`
+  (slot processes never run it).
+- **Control/status API** (admin-or-service auth): `POST /v1/previews` (provision
+  → 202 + durable `provisioning` row, control-plane only), `GET /v1/previews`,
+  `GET|DELETE /v1/previews/{project}/{name}`,
+  `POST /v1/previews/{project}/{name}/push-receipt` (records the CLAIM + wakes
+  the verifier), `.../enable`, `.../disable`. Preview state is also carried in
+  the `GET /v1/events` SSE snapshot (`preview_environments`), so a watcher
+  resyncs from the durable cursor on reconnect.
+- **Provision / typing.** A preview lease is durably typed `preview`
+  (`LeaseKindPreview`) and structurally NOT a validation target: it never carries
+  `runner_k8s` / `test_slot_checkout`, is never acquired through the runner-slot
+  checkout path, and is excluded from `testEnvironmentsFromSnapshot`. The
+  provision reuses the slot Helm install machinery with a PREVIEW config — the
+  app's own `test_slot_helm` install settings (chart path, installer image) plus
+  layered `livePreview.*` `--set` values — rendered hot. The backend image is the
+  chart's pinned main-lockstep default (stable); only the pushed frontend is
+  scratch (NOT CI-gated). `k8s/issue` is the first/dogfood consumer of the
+  `live-preview-edge` partial; its dormant in-backend static-override serving was
+  removed (the edge owns serving).
+- **Per-app `live_preview` metadata** `{enabled: bool, backend_prefixes:
+  []string}`, validated at `register_project`. Glimmung dogfoods it (register
+  payload below).
+- **Metrics** (`internal/metrics`): `glimmung_live_preview_provisioned_total`,
+  `..._push_received_total`, `..._observed_confirmed_total`,
+  `..._stale_detected_total`.
+
+**Glimmung dogfood registration** (apply at rollout, after the chart with the
+edge partial deploys):
+
+```json
+{ "name": "glimmung", "github_repo": "romaine-life/glimmung",
+  "metadata": { "live_preview": { "enabled": true,
+    "backend_prefixes": ["/v1", "/healthz", "/readyz", "/metrics", "/og"] } } }
+```
+
 ## Definition of done
 
 All five stages. **Stage 5 deletion is required** — no parallel path survives.

@@ -68,6 +68,10 @@ type Store struct {
 	// pgSlotInspections owns the durable ledger for free
 	// (lease-scoped) inspections uploaded through POST /v1/inspections.
 	pgSlotInspections *pgstore.SlotInspectionsStore
+
+	// pgPreviewEnvironments owns the live-preview lane's durable source of
+	// truth (the preview_environments table).
+	pgPreviewEnvironments *pgstore.PreviewEnvironmentsStore
 }
 
 // SetPGLocks injects the Postgres-backed lock store. Called once at
@@ -145,6 +149,11 @@ func (s *Store) SetPGLeases(leases *pgstore.LeasesStore) {
 // SetPGSlotInspections injects the Postgres-backed slot_inspections store.
 func (s *Store) SetPGSlotInspections(slotInspections *pgstore.SlotInspectionsStore) {
 	s.pgSlotInspections = slotInspections
+}
+
+// SetPGPreviewEnvironments injects the Postgres-backed live-preview store.
+func (s *Store) SetPGPreviewEnvironments(previewEnvironments *pgstore.PreviewEnvironmentsStore) {
+	s.pgPreviewEnvironments = previewEnvironments
 }
 
 // InsertSlotInspection records a free (lease-scoped) inspection.

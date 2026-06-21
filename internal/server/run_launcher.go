@@ -2401,6 +2401,12 @@ func testSlotInstallJobManifest(settings Settings, config testSlotHelmSettings, 
 		"fi\n"
 	installScript := "set -eu\n" +
 		"cd /workspace\n" +
+		// Vendor any Helm library/subchart dependencies before render/install.
+		// glimmung's slot chart (k8s/issue) depends on the file:// live-preview-edge
+		// library partial; `helm dependency build` reads the committed Chart.lock
+		// and copies it into charts/. It is a clean no-op (exit 0) for charts with
+		// no dependencies, so the validation path's behavior is unchanged.
+		"helm dependency build " + shellQuote(config.ChartPath) + "\n" +
 		"if ! helm status " + shellQuote(releaseName) + " --namespace " + shellQuote(slotName) + " >/dev/null 2>&1; then\n" +
 		"  " + helmTemplateCommand(config, releaseName, slotName, substitutions, renderMode) + " | " + stripClusterScopedCommand() + " | kubectl delete --ignore-not-found=true -f -\n" +
 		"fi\n" +

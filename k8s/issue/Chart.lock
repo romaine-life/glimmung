@@ -1,0 +1,6 @@
+dependencies:
+- name: live-preview-edge
+  repository: file://../live-preview-edge
+  version: 0.1.0
+digest: sha256:547fc40e57ba4965cf3503bb8fa2ce3f28c53fff12b5a9fdc0f59ef2c9239d7d
+generated: "2026-06-21T10:00:09.852794906Z"

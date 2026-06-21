@@ -787,6 +787,72 @@ func SetLivePreviewEdgeServedBuild(build string) {
 	}
 }
 
+// --- Live-preview lane (Glimmung control plane) ------------------------------
+//
+// These count the Glimmung-side preview-lane lifecycle: provisioning a preview
+// env, recording a session's push receipt, the observed read-back confirming
+// the edge serves the pushed build, and stale detection (pushed a build the
+// edge is NOT serving). They are distinct from the glimmung_live_preview_edge_*
+// families above, which the edge data plane emits per request.
+//
+// Cardinality is bounded by construction: `outcome` is a closed enum and there
+// is NO per-preview or per-build label (a preview-env name or build id would
+// churn a new series on every provision/push). The per-env history lives in the
+// durable preview_environment row and structured logs, per the observability
+// contract's no-run-specific-labels rule. observed-confirmed and stale-detected
+// are the load-bearing "observed, not claimed" counters: a push is only ever
+// counted live (observed-confirmed) once the edge is read back serving it.
+const (
+	LivePreviewProvisionOutcomeOK    = "ok"
+	LivePreviewProvisionOutcomeError = "error"
+)
+
+var (
+	livePreviewProvisionedTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "glimmung_live_preview_provisioned_total",
+			Help: "Preview-lane provision attempts, labelled by bounded outcome (ok, error).",
+		},
+		[]string{"outcome"},
+	)
+	livePreviewPushReceivedTotal = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Name: "glimmung_live_preview_push_received_total",
+			Help: "Push receipts recorded against a preview env via the control API (a session reporting it pushed a build to the edge). A receipt is a claim, not yet observed-live.",
+		},
+	)
+	livePreviewObservedConfirmedTotal = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Name: "glimmung_live_preview_observed_confirmed_total",
+			Help: "Observed read-backs that confirmed the edge is serving exactly the pushed build (override_active && served build == pushed build). This is the only counter that marks a push live.",
+		},
+	)
+	livePreviewStaleDetectedTotal = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Name: "glimmung_live_preview_stale_detected_total",
+			Help: "Observed read-backs where a build was pushed but the edge is NOT serving it (pushed build != served build, or override inactive) — the durable stale state.",
+		},
+	)
+)
+
+// RecordLivePreviewProvisioned counts one preview-lane provision attempt.
+// outcome is one of the LivePreviewProvisionOutcome* constants.
+func RecordLivePreviewProvisioned(outcome string) {
+	livePreviewProvisionedTotal.WithLabelValues(safeLabel(outcome)).Inc()
+}
+
+// RecordLivePreviewPushReceived counts one push receipt recorded via the
+// control API.
+func RecordLivePreviewPushReceived() { livePreviewPushReceivedTotal.Inc() }
+
+// RecordLivePreviewObservedConfirmed counts one read-back that confirmed the
+// edge serves exactly the pushed build — the only event that marks a push live.
+func RecordLivePreviewObservedConfirmed() { livePreviewObservedConfirmedTotal.Inc() }
+
+// RecordLivePreviewStaleDetected counts one read-back that found a pushed build
+// the edge is not serving — the durable stale state.
+func RecordLivePreviewStaleDetected() { livePreviewStaleDetectedTotal.Inc() }
+
 func init() {
 	registry.MustRegister(
 		collectors.NewGoCollector(),
@@ -822,6 +888,10 @@ func init() {
 		livePreviewEdgeServeTotal,
 		livePreviewEdgeProxyErrorsTotal,
 		livePreviewEdgeServedBuild,
+		livePreviewProvisionedTotal,
+		livePreviewPushReceivedTotal,
+		livePreviewObservedConfirmedTotal,
+		livePreviewStaleDetectedTotal,
 	)
 }
 
