@@ -44,6 +44,7 @@ const APP_ROUTES = {
   projectNeedsAttention: "/projects/:project/needs-attention",
   projectRuns: "/projects/:project/runs",
   reviews: "/reviews",
+  previews: "/previews",
 } as const;
 
 type IssueRunSelectionParams = {
@@ -116,6 +117,7 @@ const breadcrumbRoutes: BreadcrumbRouteObject[] = [
         ],
       },
       { path: "needs-attention", handle: { crumb: () => ({ label: "Needs attention" }) } },
+      { path: "previews", handle: { crumb: () => ({ label: "Previews", to: APP_ROUTES.previews }) } },
       {
         path: "projects",
         handle: { crumb: () => ({ label: "Projects", to: APP_ROUTES.projects }) },

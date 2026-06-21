@@ -438,6 +438,16 @@ const DESIGN_SYSTEM_ITEMS: PortfolioItem[] = [
             <span className="pill drain">aborted</span>
             <span className="pill info">default</span>
           </Row>
+          <span className="matrix-key">preview lane</span>
+          <Row>
+            <span className="pill free">ready</span>
+            <span className="pill free">live</span>
+            <span className="pill busy">pushed</span>
+            <span className="pill drain">stale</span>
+            <span className="pill drain">error</span>
+            <span className="pill info">provisioning</span>
+            <span className="pill info">disabled</span>
+          </Row>
           <span className="matrix-key">atoms</span>
           <Row>
             <span className="live-dot" aria-label="live" />
@@ -445,6 +455,13 @@ const DESIGN_SYSTEM_ITEMS: PortfolioItem[] = [
             <span className="count-pill">12</span>
             <span className="dim">count-pill · neutral, no rail</span>
           </Row>
+        </div>
+        <div className="trust-banner" role="status" style={{ marginTop: 14 }}>
+          <b>trust gap</b>
+          <span className="fs-sm">
+            pushed build <span className="mono">build-22dd0fe</span> is not observed live. the edge is serving build-9911aa0.
+            <span className="dim"> the live-preview lane surfaces "stale" (pushed but not observed-serving) distinctly — observed beats claimed.</span>
+          </span>
         </div>
       </Specimen>
     ),
