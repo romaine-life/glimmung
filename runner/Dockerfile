@@ -52,7 +52,6 @@ RUN apt-retry update \
         ca-certificates \
         curl \
         git \
-        golang-go \
         gnupg \
         jq \
         openssh-client \
@@ -62,6 +61,15 @@ RUN apt-retry update \
         sudo \
         unzip \
     && rm -rf /var/lib/apt/lists/*
+
+# Go toolchain for building the consumer run-harnesses (e.g. spirelens
+# cmd/glimmung-spirelens) from the run's checkout at step time. The jammy
+# apt `golang-go` is 1.18, too old for the consumers' go.mod (>=1.25); install
+# current Go from the official tarball so `go build` of the harness works.
+RUN curl -fsSL https://go.dev/dl/go1.26.2.linux-amd64.tar.gz -o /tmp/go.tgz \
+    && tar -C /usr/local -xzf /tmp/go.tgz \
+    && rm /tmp/go.tgz
+ENV PATH="/usr/local/go/bin:${PATH}"
 
 RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-retry update \
