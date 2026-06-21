@@ -3,7 +3,9 @@ package server
 import (
 	"context"
 	"fmt"
+	"log"
 	"strings"
+	"time"
 )
 
 // defaultPreviewBackendPort is the in-pod backend port the edge reverse-proxies
@@ -183,23 +185,63 @@ func (l *KubernetesRunLauncher) ProvisionPreview(ctx context.Context, env Previe
 	if err := l.ensureTestSlotPreliminaryAccess(ctx, lease, project, name); err != nil {
 		return err
 	}
+	// A preview backend that authenticates to Azure via workload identity (Postgres,
+	// App Config, ...) needs a federated identity credential for THIS preview
+	// namespace's service account before it boots — the standby pool's pre-created
+	// credentials only cover the fixed standby slots, not ad-hoc preview namespaces.
+	// Without it the backend gets AADSTS700213 / read-store-not-ready, never becomes
+	// ready, and the HOT install times out. No-op for apps without
+	// runner_standby_workload_identity. Cleaned up in DeprovisionPreview and on the
+	// error paths below so a failed provision never leaks a credential.
+	if l.WorkloadIdentity != nil {
+		if err := l.WorkloadIdentity.EnsurePreviewWorkloadIdentity(ctx, project, name); err != nil {
+			l.cleanupPreviewWorkloadIdentity(project, name)
+			return fmt.Errorf("preview workload identity federation: %w", err)
+		}
+	}
 	// WARM first: render the route/cert/listener for the preview's wildcard host
 	// (renderWarm-gated in the slot chart). Without this phase a hot-only install
 	// renders no HTTPRoute and the preview URL is unreachable.
 	if err := l.runTestSlotHelmReconcile(ctx, lease, project, minter, config, testSlotRenderModeWarm); err != nil {
+		l.cleanupPreviewWorkloadIdentity(project, name)
 		return err
 	}
 	// HOT second: render the workload + Service with the vendored edge in front
 	// of the stable backend. Mirrors ActivateTestSlotRuntime's warm→hot.
-	return l.runTestSlotHelmReconcile(ctx, lease, project, minter, config, testSlotRenderModeHot)
+	if err := l.runTestSlotHelmReconcile(ctx, lease, project, minter, config, testSlotRenderModeHot); err != nil {
+		l.cleanupPreviewWorkloadIdentity(project, name)
+		return err
+	}
+	return nil
+}
+
+// cleanupPreviewWorkloadIdentity best-effort deletes a preview's Azure federated
+// identity credential on a DETACHED context (the provision context may already be
+// cancelled or timed out), so a failed or torn-down preview does not leak a
+// credential against the app identity. No-op when WI federation is not wired.
+func (l *KubernetesRunLauncher) cleanupPreviewWorkloadIdentity(project Project, previewName string) {
+	if l.WorkloadIdentity == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	if err := l.WorkloadIdentity.RemovePreviewWorkloadIdentity(ctx, project, previewName); err != nil {
+		log.Printf("preview workload identity cleanup failed project=%s name=%s err=%v",
+			firstNonEmpty(project.Name, project.ID), previewName, err)
+	}
 }
 
 // DeprovisionPreview tears down the preview env's runtime (installer Job, the
 // preview namespace, and any slot-scoped access), reusing the validation slot
 // teardown against the preview-typed lease.
 func (l *KubernetesRunLauncher) DeprovisionPreview(ctx context.Context, env PreviewEnvironment, project Project) error {
-	if strings.TrimSpace(env.Name) == "" {
+	name := strings.TrimSpace(env.Name)
+	if name == "" {
 		return nil
 	}
+	// Remove the preview's federated identity credential alongside the runtime so
+	// the app identity does not accumulate stale preview credentials (Azure caps
+	// federated credentials per identity). Best-effort; logged, never blocks teardown.
+	l.cleanupPreviewWorkloadIdentity(project, name)
 	return l.DeprovisionTestSlot(ctx, previewLeaseFromEnv(env), project)
 }

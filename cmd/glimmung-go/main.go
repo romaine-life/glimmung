@@ -186,6 +186,11 @@ func main() {
 		ServiceAccountTokenPath: settings.AuthRomaineLifeTokenPath,
 	}
 	runLauncher := server.NewKubernetesRunLauncher(settings)
+	// Federate the app's Azure workload identity into a preview's own namespace at
+	// provision (and remove it at deprovision), so a stable backend that
+	// authenticates to Azure at boot can run in a preview the same way it does in a
+	// standby slot. No-op for apps without runner_standby_workload_identity.
+	runLauncher.WorkloadIdentity = workloadIdentities
 	if store != nil && settings.ControlPlaneLoopsEnabled {
 		// One-shot slot-storage cleanup: copy any project's embedded
 		// `metadata.runner_standby_dns.slots[]` array into `slots`, then

@@ -180,9 +180,23 @@ type RunLaunchedJob struct {
 	K8sJobName string
 }
 
+// PreviewWorkloadIdentityReconciler federates an app's Azure workload identity to
+// a PREVIEW environment's namespace, so a stable backend that authenticates to
+// Azure at boot (Postgres, App Config, ...) can run in a preview the same way it
+// does in a standby slot. Implemented by RunnerWorkloadIdentityService; nil-safe
+// in the launcher, so apps without runner_standby_workload_identity skip it.
+type PreviewWorkloadIdentityReconciler interface {
+	EnsurePreviewWorkloadIdentity(ctx context.Context, project Project, previewName string) error
+	RemovePreviewWorkloadIdentity(ctx context.Context, project Project, previewName string) error
+}
+
 type KubernetesRunLauncher struct {
 	Settings   Settings
 	HTTPClient *http.Client
+	// WorkloadIdentity federates the app's Azure identity to a preview namespace
+	// at provision and removes it at deprovision. Nil disables preview WI
+	// federation (apps without runner_standby_workload_identity need none).
+	WorkloadIdentity PreviewWorkloadIdentityReconciler
 }
 
 type providerAPIProxyRuntime struct {

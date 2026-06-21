@@ -491,3 +491,114 @@ func issuerFromServiceAccountToken(path string) string {
 	}
 	return strings.TrimSpace(claims.Issuer)
 }
+
+// previewWorkloadIdentitySubstitutions binds a preview environment's name to the
+// {namespace}/{slot_name} placeholders the project's credential templates use. A
+// preview's namespace IS its name (see preview_provision.go), so both resolve to
+// previewName; {slot_index} has no preview analogue (the in-scope app templates
+// use only {slot_name}/{namespace}).
+func previewWorkloadIdentitySubstitutions(cfg runnerWorkloadIdentityConfig, previewName string) map[string]string {
+	return map[string]string{
+		"project":    cfg.SlotPrefix,
+		"slot_index": "preview",
+		"slot_name":  previewName,
+		"namespace":  previewName,
+	}
+}
+
+// previewWorkloadIdentityCredentials are the federated identity credentials a
+// preview environment needs — one per project credential template, templated for
+// the preview's own namespace. It mirrors desiredWorkloadIdentityCredentials but
+// for a single ad-hoc preview namespace instead of the fixed standby pool, so an
+// app whose stable backend authenticates to Azure via workload identity can boot
+// in a preview: without a matching federated credential the backend gets
+// AADSTS700213 and never becomes ready.
+func previewWorkloadIdentityCredentials(cfg runnerWorkloadIdentityConfig, previewName string) []FederatedIdentityCredential {
+	subs := previewWorkloadIdentitySubstitutions(cfg, previewName)
+	creds := make([]FederatedIdentityCredential, 0, len(cfg.Credentials))
+	for _, template := range cfg.Credentials {
+		creds = append(creds, FederatedIdentityCredential{
+			FederatedIdentityCredentialRef: FederatedIdentityCredentialRef{
+				SubscriptionID: cfg.SubscriptionID,
+				ResourceGroup:  cfg.ResourceGroup,
+				IdentityName:   template.IdentityName,
+				CredentialName: formatSubstitutions(template.CredentialName, subs),
+			},
+			Issuer:    cfg.Issuer,
+			Subject:   formatSubstitutions(template.Subject, subs),
+			Audiences: append([]string{}, template.Audiences...),
+		})
+	}
+	return creds
+}
+
+// previewWorkloadIdentityConfig resolves a project's workload-identity config for
+// preview federation, applying the same issuer fallback the standby reconcile
+// uses (project metadata, else the service issuer, else the projected SA token's
+// issuer). ok=false means the project opts out (no runner_standby_workload_identity).
+// Issuer is only required for upsert (delete addresses the credential by ref).
+func (s RunnerWorkloadIdentityService) previewWorkloadIdentityConfig(project Project, requireIssuer bool) (runnerWorkloadIdentityConfig, bool, error) {
+	cfg, ok, err := runnerWorkloadIdentityConfigFromProject(project)
+	if !ok || err != nil {
+		return cfg, ok, err
+	}
+	cfg.Issuer = firstNonEmpty(cfg.Issuer, strings.TrimSpace(s.Issuer), issuerFromServiceAccountToken(s.ServiceAccountTokenPath))
+	if requireIssuer && cfg.Issuer == "" {
+		return cfg, true, errors.New("runner workload identity requires issuer or RUNNER_WORKLOAD_IDENTITY_ISSUER")
+	}
+	return cfg, true, nil
+}
+
+// EnsurePreviewWorkloadIdentity upserts the federated identity credential(s) a
+// preview environment's backend needs to assume the app's Azure identity from its
+// own namespace. No-op for projects without runner_standby_workload_identity.
+// Idempotent (Azure upsert), so it is safe to call on every (re)provision. Azure
+// caps federated identity credentials per managed identity; a live preview
+// consumes one slot per credential template until it is deprovisioned.
+func (s RunnerWorkloadIdentityService) EnsurePreviewWorkloadIdentity(ctx context.Context, project Project, previewName string) error {
+	previewName = strings.TrimSpace(previewName)
+	if previewName == "" {
+		return errors.New("preview name is required for workload identity federation")
+	}
+	cfg, ok, err := s.previewWorkloadIdentityConfig(project, true)
+	if !ok {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if s.Client == nil {
+		return errors.New("runner workload identity client not configured")
+	}
+	for _, cred := range previewWorkloadIdentityCredentials(cfg, previewName) {
+		if err := s.Client.UpsertFederatedIdentityCredential(ctx, cred); err != nil {
+			return fmt.Errorf("upsert preview federated identity credential %s/%s: %w", cred.IdentityName, cred.CredentialName, err)
+		}
+	}
+	return nil
+}
+
+// RemovePreviewWorkloadIdentity deletes the preview's federated identity
+// credential(s) so a torn-down or failed preview never leaks a credential against
+// the app identity. No-op for projects without runner_standby_workload_identity;
+// best-effort across multiple credentials (returns the first delete error).
+func (s RunnerWorkloadIdentityService) RemovePreviewWorkloadIdentity(ctx context.Context, project Project, previewName string) error {
+	previewName = strings.TrimSpace(previewName)
+	if previewName == "" {
+		return nil
+	}
+	cfg, ok, err := s.previewWorkloadIdentityConfig(project, false)
+	if !ok || err != nil {
+		return err
+	}
+	if s.Client == nil {
+		return errors.New("runner workload identity client not configured")
+	}
+	var firstErr error
+	for _, cred := range previewWorkloadIdentityCredentials(cfg, previewName) {
+		if derr := s.Client.DeleteFederatedIdentityCredential(ctx, cred.FederatedIdentityCredentialRef); derr != nil && firstErr == nil {
+			firstErr = fmt.Errorf("delete preview federated identity credential %s/%s: %w", cred.IdentityName, cred.CredentialName, derr)
+		}
+	}
+	return firstErr
+}
