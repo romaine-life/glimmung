@@ -54,3 +54,39 @@
   post-deploy check: a re-registration attempting `max_attempts: 3` against
   the pinned `ambience.default` verify lane is held at 1 with a
   `pin_enforced` ledger entry.
+
+## run-harness-sdk
+
+- **Status:** active
+- **Intent:** A workflow step body must be physically unable to emit an untyped
+  error, skip the verification verdict, or mislabel a harness crash as a model
+  failure. Observed failure class this exists to prevent: a `throw` in a
+  hand-rolled `scripts/glimmung-native/lib.sh` step body becomes `exit 1` with
+  the real reason stranded in stderr, and a harness crash before the model ran
+  is terminal-attributed against the model at $0 cost — filling
+  `suspected_cause` wrong. Each consumer app forked ~600 lines of near-identical
+  shell that could not carry the contract.
+- **Mechanism:** the public `harness/...` Go SDK holds the run contract as types
+  — `harness/step` (Handler/Registry/Main spine, fail-closed typed `Context`,
+  honest exit contract, `LayeredError{harness|host|model}`), `harness/agent`
+  (the only origin of a model-layer error; line-unbuffered usage streaming so
+  `agentcost` prices it), `harness/verification` (typed finalizable +
+  deterministic gate), `harness/evidence` (boundary-exact matchers + TRX),
+  `harness/remotehost` (typed venue). The shared `{layer,code,message}` wire
+  shape lives in `internal/domain/steperr`. Additively, the runner reads an
+  optional typed `error` block from `GLIMMUNG_COMPLETION_FILE` on step failure
+  and the store promotes it into the producer-phase terminal cause; completions
+  without the block are byte-for-byte unchanged.
+- **Affected contracts:** Workflow Execution (step-producer surface, step-body
+  failure projection), Observability And Evidence (typed terminal cause for a
+  producer step crash; verification.json finalizable shape).
+- **Evidence:** `harness/step` dispatch/abort/fail-closed/layer-translation +
+  emitter-parity tests; `harness/agent` `$0`-bug streaming guard;
+  `harness/verification` finalizer-shape + gate tests; `harness/evidence` ported
+  Pester cases; `harness/remotehost` mint/arg/host-layer tests; the no-drift
+  contract test `TestSDKEmissionsRoundTripThroughRunnerParsers`; the runner
+  attribution tests (`TestRunnerPromotesTypedStepErrorOnFailure`,
+  `TestRunnerFailureWithoutBlockIsUnchanged`); the store cause-promotion tests
+  (`TestTerminalObservationPromotesTypedStepError`,
+  `TestTerminalObservationWithoutStepErrorIsUnchanged`); and the migration guard
+  `TestSDKIsTheOnlySanctionedStepProducerSurface`.

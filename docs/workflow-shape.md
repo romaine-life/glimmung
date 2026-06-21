@@ -544,13 +544,19 @@ with these names pre-filled.
 
 ## Remote-host execution
 
-Phase shell scripts that need to drive a host outside the Glimmung cluster
+Phase step bodies that need to drive a host outside the Glimmung cluster
 (e.g. a desktop-game mod whose verify loop requires the warm game install)
-shell out to the host over SSH, with credentials minted per-run by two
+reach the host over SSH, with credentials minted per-run by two
 callback-token-gated endpoints on Glimmung. The phase shape stays
-`k8s_job`; only what the script does inside the pod changes. See
+`k8s_job`; only what the step body does inside the pod changes. See
 [`remote-host-execution.md`](remote-host-execution.md) for the endpoint
 contracts, threat model, and orchestrator-side flow.
+
+The sanctioned producer for a step body — including the remote-host venue — is
+the typed run-harness SDK (`harness/remotehost` for this case), not a
+hand-rolled shell library. A step body's `run:` may still be arbitrary shell the
+runner executes as `bash -c`, but the SDK is the producer contract: see
+[`run-harness-sdk.md`](run-harness-sdk.md).
 
 ## Dispatch inputs
 

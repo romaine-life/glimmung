@@ -19,6 +19,7 @@ import (
 	"github.com/romaine-life/glimmung/internal/domain/budget"
 	"github.com/romaine-life/glimmung/internal/domain/decision"
 	"github.com/romaine-life/glimmung/internal/domain/publicids"
+	"github.com/romaine-life/glimmung/internal/domain/steperr"
 	"github.com/romaine-life/glimmung/internal/metrics"
 	"github.com/romaine-life/glimmung/internal/server"
 	pgstore "github.com/romaine-life/glimmung/internal/store/pg"
@@ -2032,6 +2033,11 @@ type runnerJobCompletionDoc struct {
 	// "DeadlineExceeded" to "deadline_exceeded"). Empty means the
 	// store derives the reason from Conclusion as before.
 	TerminalReason string `json:"terminal_reason,omitempty"`
+	// Error is the optional typed step-error block carried from a producer
+	// step body's GLIMMUNG_COMPLETION_FILE on a non-success completion. When
+	// present it is promoted into the terminal observation cause so the real
+	// {layer, code, message} reaches the operator instead of "exit_nonzero".
+	Error *steperr.Block `json:"error,omitempty"`
 }
 
 type runnerEventDoc struct {
@@ -2719,6 +2725,7 @@ func runAttemptJobCompletionFromDoc(doc runnerJobCompletionDoc) server.RunAttemp
 		CostUSD:             doc.CostUSD,
 		AgentUsage:          sliceOrEmpty(doc.AgentUsage),
 		PhaseOutputs:        mapStringOrEmpty(doc.PhaseOutputs),
+		StepError:           normalizedStepError(doc.Error),
 	}
 }
 
@@ -6730,6 +6737,17 @@ func terminalJobFailureCause(attempt *attemptDoc, completion runnerJobCompletion
 	if reason == "" && failure != nil && strings.TrimSpace(failure.SuspectedCause) != "" {
 		reason = strings.TrimSpace(failure.SuspectedCause)
 	}
+	// A typed step-error block from an SDK-driven producer body promotes its
+	// real message as the cause when no verification verdict supplied one — the
+	// core of the producer-step half of the no-generic-terminal contract: a
+	// `throw` becomes "exit 1" otherwise, stranding the reason in stderr.
+	if reason == "" && completion.Error != nil && completion.Error.Valid() {
+		block := completion.Error.Normalize()
+		reason = block.Message
+		if detail == "" {
+			detail = stepErrorDetailLine(block)
+		}
+	}
 	if reason == "" {
 		if excerpt := summaryMarkdownExcerpt(completion.SummaryMarkdown); excerpt != "" {
 			reason = excerpt
@@ -6764,6 +6782,17 @@ func attemptVerificationFailure(attempt *attemptDoc) *verificationFailureDoc {
 		return nil
 	}
 	return attempt.Verification.Failure
+}
+
+// stepErrorDetailLine renders a typed step-error block as a compact terminal
+// observation detail line (layer + code), folded into the message so the
+// operator sees which layer owned the failure.
+func stepErrorDetailLine(block steperr.Block) string {
+	parts := []string{"layer: " + block.Layer}
+	if code := strings.TrimSpace(block.Code); code != "" {
+		parts = append(parts, "code: "+code)
+	}
+	return strings.Join(parts, "; ")
 }
 
 // verificationFailureDetailLine renders the structured failure block as a
@@ -7388,7 +7417,19 @@ func runnerJobCompletionDocFromPayload(jobID string, p server.CompletionPayload,
 		AgentUsage:          sliceOrEmpty(p.AgentUsage),
 		PhaseOutputs:        stringMapOrEmpty(p.PhaseOutputs),
 		TerminalReason:      server.NormalizeJobTerminalReason(p.TerminalReason),
+		Error:               normalizedStepError(p.StepError),
 	}
+}
+
+// normalizedStepError returns a normalized copy of a well-formed step-error
+// block, or nil. A malformed block (no known layer or empty message) is
+// dropped so it can never become an attributed-but-hollow terminal cause.
+func normalizedStepError(block *steperr.Block) *steperr.Block {
+	if block == nil || !block.Valid() {
+		return nil
+	}
+	normalized := block.Normalize()
+	return &normalized
 }
 
 func runnerJobExecutionStateAndReason(completion runnerJobCompletionDoc, verificationControlsExecution bool) (string, string) {

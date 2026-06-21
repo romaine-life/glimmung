@@ -25,6 +25,7 @@ import (
 	"github.com/romaine-life/glimmung/internal/domain/agentruntime"
 	"github.com/romaine-life/glimmung/internal/domain/decision"
 	"github.com/romaine-life/glimmung/internal/domain/innerjob"
+	"github.com/romaine-life/glimmung/internal/domain/steperr"
 )
 
 const (
@@ -142,6 +143,12 @@ type completedRequest struct {
 	ScreenshotsMarkdown *string            `json:"screenshots_markdown,omitempty"`
 	SummaryMarkdown     *string            `json:"summary_markdown,omitempty"`
 	Outputs             map[string]string  `json:"outputs"`
+	// Error is the optional typed step-error block a producer step body wrote
+	// to GLIMMUNG_COMPLETION_FILE. It rides a terminal job failure so the real
+	// {layer, code, message} reaches the run report and terminal observation
+	// instead of a content-free "exited with code N". Completions without a
+	// block leave this nil and behave exactly as before.
+	Error *steperr.Block `json:"error,omitempty"`
 }
 
 type agentUsage struct {
@@ -178,6 +185,9 @@ type completionMetadata struct {
 	Evidence            []evidenceArtifact `json:"evidence"`
 	ScreenshotsMarkdown string             `json:"screenshots_markdown"`
 	SummaryMarkdown     string             `json:"summary_markdown"`
+	// Error is the optional typed step-error block (steperr wire shape) a
+	// failing step body emitted. Only promoted on a step failure path.
+	Error *steperr.Block `json:"error"`
 }
 
 type evidenceArtifact struct {
@@ -711,7 +721,20 @@ func (r *runner) runStep(ctx context.Context, step stepSpec) error {
 	}
 	if execErr != nil {
 		msg := fmt.Sprintf("step %s exited with code %d", slug, exitCode)
-		_ = r.postEvent(ctx, "step_failed", &slug, msg, &exitCode, stepEventMetadata(step))
+		metadata := stepEventMetadata(step)
+		// Promote a typed step-error block, when the step body wrote one, onto
+		// the step_failed event so the hot stream and terminal observation
+		// carry the real {layer, code, message} instead of a generic exit code.
+		// A step with no block keeps the byte-for-byte historical behavior.
+		if block := stepErrorBlock(r.completion.Error); block != nil {
+			metadata["error_layer"] = block.Layer
+			if block.Code != "" {
+				metadata["error_code"] = block.Code
+			}
+			metadata["error_message"] = block.Message
+			msg = fmt.Sprintf("step %s failed [%s]: %s", slug, block.Layer, block.Message)
+		}
+		_ = r.postEvent(ctx, "step_failed", &slug, msg, &exitCode, metadata)
 		return fmt.Errorf("%s: %w", msg, execErr)
 	}
 	if outputErr != nil {
@@ -982,7 +1005,7 @@ func agentStepBaseEnv(base []string) []string {
 		"GLIMMUNG_GITHUB_AGENT_TOKEN_URL":       true,
 		"GLIMMUNG_GITHUB_PUSH_POLICY_TOKEN":     true,
 		"GLIMMUNG_GITHUB_PUSH_POLICY_TOKEN_URL": true,
-		"GLIMMUNG_PR_REVIEW_URL":            true,
+		"GLIMMUNG_PR_REVIEW_URL":                true,
 		"GLIMMUNG_PR_MERGE_URL":                 true,
 		"GLIMMUNG_SSH_CERT_URL":                 true,
 		"GLIMMUNG_TAILSCALE_AUTHKEY_URL":        true,
@@ -1517,6 +1540,14 @@ func (r *runner) complete(ctx context.Context, conclusion, summary string) error
 	} else if strings.TrimSpace(summary) != "" {
 		req.SummaryMarkdown = &summary
 	}
+	// A non-success completion carries the typed step-error block when the step
+	// body emitted one, so the server threads it into the terminal cause and
+	// run report. Success completions never carry it.
+	if conclusion != "success" {
+		if block := stepErrorBlock(r.completion.Error); block != nil {
+			req.Error = block
+		}
+	}
 	return r.postJSON(ctx, r.cfg.CompletedURL, req, nil)
 }
 
@@ -1688,6 +1719,13 @@ func (r *runner) collectCompletionMetadata(path string, step stepSpec) error {
 	}
 	if strings.TrimSpace(metadata.SummaryMarkdown) != "" {
 		r.completion.SummaryMarkdown = metadata.SummaryMarkdown
+	}
+	if metadata.Error != nil {
+		// Capture the typed step-error block. It is only consumed on a step
+		// failure path (runStep / complete); a successful step that wrote one
+		// is harmless and ignored downstream.
+		block := metadata.Error.Normalize()
+		r.completion.Error = &block
 	}
 	return nil
 }
@@ -2156,6 +2194,21 @@ func scrubToken(err error, token string) error {
 		return err
 	}
 	return errors.New(strings.ReplaceAll(err.Error(), token, "<redacted>"))
+}
+
+// stepErrorBlock returns a normalized copy of the typed step-error block when
+// it is well-formed (a known layer and a non-empty message), and nil
+// otherwise. A malformed block is dropped so a producer can never launder a
+// content-free failure as an attributed one.
+func stepErrorBlock(block *steperr.Block) *steperr.Block {
+	if block == nil {
+		return nil
+	}
+	if !block.Valid() {
+		return nil
+	}
+	normalized := block.Normalize()
+	return &normalized
 }
 
 func firstNonEmpty(values ...string) string {

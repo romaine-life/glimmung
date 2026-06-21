@@ -14,9 +14,14 @@ script which acquires per-run, ephemeral credentials and shells out over SSH
 to the remote host. The remote host has no Glimmung-controlled daemon
 listening for it.
 
-This document describes the server-side primitives glimmung exposes so
-project-owned `scripts/glimmung-runner/*.sh` can stand up that connection
-safely.
+This document describes the server-side primitives glimmung exposes so a step
+body can stand up that connection safely. The sanctioned client for those
+primitives is the typed `harness/remotehost` package
+(`MintAndConnect` / `Conn.RunSelf` / `ScpPull` / `ScpPushTree` /
+`SyncCheckout`), not a hand-rolled `lib.sh` fork — see
+[`run-harness-sdk.md`](run-harness-sdk.md). A host-unreachable or venue-setup
+failure surfaces as a typed `host`-layer step error, structurally distinct from
+a model failure.
 
 ## Threat model
 

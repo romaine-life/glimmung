@@ -25,6 +25,12 @@ The detailed cleanup inventory lives in
 - `.github/agent/prompt.md` is the default in-repo agent contract and must keep
   the app validation gate on Go plus the Vite dashboard.
 - `docs/workflow-shape.md` owns the workflow model and runner job conventions.
+- `docs/run-harness-sdk.md` owns the public `harness/...` run-harness SDK — the
+  typed step-producer surface (Handler/Registry/Main, agent invoke, verification
+  finalizable, evidence matchers, remote-host venue) that replaces the
+  hand-rolled `lib.sh` fork. It is public (not under `internal/`) so consumer
+  apps import it; the typed step-error wire shape it shares with the runner lives
+  in `internal/domain/steperr`.
 - `docs/test-slot-lifecycle.md` owns the runner test-slot terms, lifecycle
   states, and warm-versus-hot resource boundary.
 - `docs/features/README.md` owns the review-facing contract index for
