@@ -40,6 +40,18 @@ const (
 // shape is exactly what internal/server/evidence_gate.go's
 // verificationFinalizeRunScript reads (status / abort_reason / reasons /
 // evidence_results / evidence_refs / evidence / notes / failure).
+//
+// The finalizer reads its known fields and PRESERVES every other top-level key.
+// A consumer with a richer domain verdict (spirelens carries unit_tests /
+// live_mcp_validation / screenshot_validation rows, ambience will carry its own)
+// puts those extra keys in Extra: they round-trip through the SDK writer
+// verbatim and feed the recycle context and human review intact, while the
+// finalizer's known fields stay typed and validated here. This is what lets a
+// consumer carry domain fields through the SDK writer WITHOUT forking it.
+//
+// A key owned by a typed field above (status, reasons, …) may not appear in
+// Extra — Marshal rejects the collision so the typed field always wins and the
+// document can never carry two conflicting copies of a finalizer-read key.
 type Verification struct {
 	Status          string           `json:"status"`
 	Reasons         []string         `json:"reasons,omitempty"`
@@ -49,6 +61,72 @@ type Verification struct {
 	EvidenceRefs    []string         `json:"evidence_refs,omitempty"`
 	Evidence        []EvidenceRef    `json:"evidence,omitempty"`
 	EvidenceResults []EvidenceResult `json:"evidence_results,omitempty"`
+
+	// Extra carries producer-domain top-level fields the finalizer preserves but
+	// does not interpret. It is never emitted under a reserved key (see above).
+	Extra map[string]json.RawMessage `json:"-"`
+}
+
+// reservedKeys are the top-level JSON keys owned by Verification's typed fields.
+// Extra must not shadow any of them.
+var reservedKeys = map[string]struct{}{
+	"status":           {},
+	"reasons":          {},
+	"failure":          {},
+	"abort_reason":     {},
+	"notes":            {},
+	"evidence_refs":    {},
+	"evidence":         {},
+	"evidence_results": {},
+}
+
+// MarshalJSON emits the typed known fields, then merges in Extra's
+// producer-domain keys. A collision between Extra and a typed field is an error
+// (the typed field is authoritative), so a producer cannot smuggle a second
+// copy of a finalizer-read key past validation.
+func (v Verification) MarshalJSON() ([]byte, error) {
+	type known Verification // known has no MarshalJSON method, so no recursion.
+	base, err := json.Marshal(known(v))
+	if err != nil {
+		return nil, err
+	}
+	if len(v.Extra) == 0 {
+		return base, nil
+	}
+	var merged map[string]json.RawMessage
+	if err := json.Unmarshal(base, &merged); err != nil {
+		return nil, err
+	}
+	for key, raw := range v.Extra {
+		if _, reserved := reservedKeys[key]; reserved {
+			return nil, fmt.Errorf("verification extra field %q collides with a typed field; set it on the typed field instead", key)
+		}
+		merged[key] = raw
+	}
+	return json.Marshal(merged)
+}
+
+// UnmarshalJSON decodes the typed known fields and captures every other
+// top-level key into Extra, so a rich consumer document round-trips through the
+// SDK without losing its domain fields.
+func (v *Verification) UnmarshalJSON(data []byte) error {
+	type known Verification
+	var k known
+	if err := json.Unmarshal(data, &k); err != nil {
+		return err
+	}
+	*v = Verification(k)
+	var all map[string]json.RawMessage
+	if err := json.Unmarshal(data, &all); err != nil {
+		return err
+	}
+	for key := range reservedKeys {
+		delete(all, key)
+	}
+	if len(all) > 0 {
+		v.Extra = all
+	}
+	return nil
 }
 
 // Failure is the structured why of a non-pass verdict. Its JSON tags match
