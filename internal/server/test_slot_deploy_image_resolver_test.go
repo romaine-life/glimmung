@@ -106,10 +106,13 @@ func TestResolvesCommitShaImageLowercasesSHA(t *testing.T) {
 	}
 }
 
-// TestResolvePendingWhenAliasAbsentAndBuildRunning pins the race: the alias is
-// absent while the PR build is still in_progress, so resolution yields a typed,
-// retryable pending error — not a bare registry miss.
-func TestResolvePendingWhenAliasAbsentAndBuildRunning(t *testing.T) {
+// TestResolveInProgressBuildWhenAliasAbsent pins the window: the alias is absent
+// while the PR build is still in_progress, so resolution yields a terminal,
+// diagnostic error naming the in-progress run — not a bare registry miss, and no
+// longer a typed retryable "pending" signal. The provisioning gate now waits on
+// the durable ci_image_available row (written by the ACR push webhook), so
+// glimmung does not special-case an in-flight build into a retryable 409.
+func TestResolveInProgressBuildWhenAliasAbsent(t *testing.T) {
 	restore := githubAPIBase
 	defer func() { githubAPIBase = restore }()
 	srv := githubRunsServer(t, resolverSHA, `{"workflow_runs":[{"id":42,"event":"pull_request","status":"in_progress","head_sha":"`+resolverSHA+`","pull_requests":[{"number":81}]}]}`)
@@ -118,18 +121,14 @@ func TestResolvePendingWhenAliasAbsentAndBuildRunning(t *testing.T) {
 
 	validator := &recordingImageValidator{err: errTestSlotCIImageNotFound}
 	_, err := githubActionsTestSlotImageResolver(srv.Client(), validator)(context.Background(), deployImageResolverProject(), "romaine-life/tank-operator", resolverSHA, "gh-token")
-	var pending *testSlotCIImagePendingError
-	if !errors.As(err, &pending) {
-		t.Fatalf("err=%v, want *testSlotCIImagePendingError", err)
+	if err == nil {
+		t.Fatal("want a diagnostic error for an in-progress build with no alias")
 	}
-	if pending.RunID != 42 || pending.Status != "in_progress" {
-		t.Fatalf("pending=%#v, want run 42 in_progress", pending)
-	}
-	if !strings.Contains(err.Error(), "not ready yet") || !strings.Contains(err.Error(), "retry") {
-		t.Fatalf("message=%q, want actionable pending text", err.Error())
+	if !strings.Contains(err.Error(), "run 42") || !strings.Contains(err.Error(), "in_progress") || !strings.Contains(err.Error(), "image published yet") {
+		t.Fatalf("message=%q, want in-progress diagnostic naming the run", err.Error())
 	}
 	if strings.Contains(err.Error(), "not found in registry") {
-		t.Fatalf("pending must not surface the raw registry miss: %q", err.Error())
+		t.Fatalf("diagnostic must not surface the raw registry miss: %q", err.Error())
 	}
 	if len(validator.seen) != 1 || validator.seen[0].Tag != "sha-"+resolverSHA {
 		t.Fatalf("validator saw %#v, want one sha- lookup before diagnosing", validator.seen)
@@ -147,10 +146,6 @@ func TestResolveFailedBuildWhenAliasAbsent(t *testing.T) {
 
 	validator := &recordingImageValidator{err: errTestSlotCIImageNotFound}
 	_, err := githubActionsTestSlotImageResolver(srv.Client(), validator)(context.Background(), deployImageResolverProject(), "romaine-life/tank-operator", resolverSHA, "gh-token")
-	var pending *testSlotCIImagePendingError
-	if errors.As(err, &pending) {
-		t.Fatalf("failed build must not be reported as pending: %v", err)
-	}
 	if err == nil || !strings.Contains(err.Error(), "concluded failure") || !strings.Contains(err.Error(), "no CI image was published") {
 		t.Fatalf("err=%v, want terminal failed-build message naming the run", err)
 	}
