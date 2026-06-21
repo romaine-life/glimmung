@@ -126,11 +126,10 @@ Evidence:
   rendered with `helm template`: edge fronts the app when enabled, inert when
   disabled, render fails on `replicas > 1`.
 - `live-preview-edge/Dockerfile` (validated locally with the exact CGO-off
-  build). The CI wiring — a `live-preview-edge` matrix entry in
+  build) plus the CI wiring: a `live-preview-edge` matrix entry in
   `docker-build-check.yaml` and a `check-deleted-test-slot-hot-swap` guard job in
-  `tests.yaml` — is staged in `docs/features/test-slots/live-preview-ci.patch`
-  for the integrator to apply: a restricted-git session's GitHub App has no
-  `workflows` permission, so the spoke cannot push `.github/workflows/` edits.
+  `tests.yaml` (the retired-hot-swap guard previously ran in no workflow, so
+  wiring it in is what makes it a real gate).
 - `docs/features/test-slots/live-preview.md` — the feature design + the staged
   plan to the complete architecture.
 

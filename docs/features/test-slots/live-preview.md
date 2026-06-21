@@ -178,12 +178,11 @@ the co-watched frontend).
 ## Image and CI
 
 `live-preview-edge/Dockerfile` is a minimal single-binary image built from this
-Go module. The image-build CI wiring (a `live-preview-edge` matrix entry in
-`.github/workflows/docker-build-check.yaml`) and a CI guard job that runs
-`scripts/check-deleted-test-slot-hot-swap.mjs` (`.github/workflows/tests.yaml`)
-are staged in `live-preview-ci.patch` (`git apply` from the repo root) for the
-integrator to land: a restricted-git session's GitHub App lacks the `workflows`
-permission, so the spoke cannot push `.github/workflows/` edits directly.
+Go module. The image-build CI wiring is a `live-preview-edge` matrix entry in
+`.github/workflows/docker-build-check.yaml`, and a CI guard job runs
+`scripts/check-deleted-test-slot-hot-swap.mjs` (`.github/workflows/tests.yaml`) —
+the retired-hot-swap guard previously ran in no workflow, so wiring it in is what
+makes it a real gate.
 
 ## Staging to the complete feature
 
