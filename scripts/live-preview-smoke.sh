@@ -36,7 +36,7 @@
 #   live-preview-smoke.sh --all            # run every in-scope app sequentially
 #
 #   --project P --name N   the app + preview env name to smoke
-#   --all                  smoke kill-me, chess-tactics, ambience, glimmung
+#   --all                  smoke kill-me, chess-tactics, ambience, glimmung, tank-operator
 #   --no-provision         reuse an existing ready preview (skip POST /v1/previews)
 #   --keep                 skip the final deprovision (leave the preview up)
 #   --glimmung-url URL     Glimmung base (default $GLIMMUNG_INTERNAL_URL or in-cluster)
@@ -58,9 +58,19 @@ DO_DEPROVISION=true
 PROJECT=""; NAME=""; ALL=false
 
 # In-scope apps for --all (live-preview-plan.md Stage 4c). NAME is a DNS-1035
-# label derived from the project; tank-operator is excluded (retired v1 path
-# until Stage 5).
-ALL_APPS=( "kill-me:smoke-killme" "chess-tactics:smoke-chess" "ambience:smoke-ambience" "glimmung:smoke-glimmung" )
+# label derived from the project. tank-operator was onboarded to the v2 lane in
+# Stage 5 (it is now a normal preview consumer, no longer the retired v1 path),
+# so it is covered here alongside the rest.
+ALL_APPS=( "kill-me:smoke-killme" "chess-tactics:smoke-chess" "ambience:smoke-ambience" "glimmung:smoke-glimmung" "tank-operator:smoke-tankop" )
+
+# Backend-proxy probe path override, per app. The backend-proxy property asserts
+# a backend prefix stays backend-proxied (not served from the override) while an
+# override is active. By default the probe uses the project's FIRST
+# live_preview.backend_prefix, which is a health endpoint for the other apps
+# (kill-me/chess /health, glimmung/ambience /healthz). Override when the first
+# prefix is not a clean health probe: tank-operator's first prefix is /api, which
+# its SPA catch-all answers, so probe /healthz for a deterministic backend 200.
+declare -A BACKEND_PROBE_PATHS=( ["tank-operator"]="/healthz" )
 
 log()  { printf '[smoke] %s\n' "$*" >&2; }
 while [ $# -gt 0 ]; do
@@ -152,11 +162,12 @@ smoke_one() {
     log "  [$project] reusing existing preview $url"
   fi
 
-  # resolve the app's own first backend prefix (per live_preview metadata) for
-  # the backend-proxy probe — it differs per app (kill-me/chess /health, glimmung
-  # /healthz, ambience /healthz). Hardcoding one path mis-tests the others.
+  # resolve the app's backend-proxy probe path: a per-app BACKEND_PROBE_PATHS
+  # override if set (tank-operator -> /healthz), else the app's own first
+  # live_preview.backend_prefix (kill-me/chess /health, glimmung/ambience
+  # /healthz). Hardcoding one path for all would mis-test the others.
   T="$(tok)"; local rowx; rowx="$(curl -fsS -H "Authorization: Bearer $T" "$GLIMMUNG_URL/v1/previews/$project/$name" 2>/dev/null || true)"
-  local bprefix; bprefix="$(printf '%s' "$rowx" | jq -r '.backend_prefixes[0] // "/healthz"')"
+  local bprefix; bprefix="${BACKEND_PROBE_PATHS[$project]:-$(printf '%s' "$rowx" | jq -r '.backend_prefixes[0] // "/healthz"')}"
 
   # ---- wait for the edge to be EXTERNALLY reachable -------------------------
   # provision->ready means Helm + workload are up, but the preview's public DNS
