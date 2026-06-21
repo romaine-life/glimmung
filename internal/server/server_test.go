@@ -157,18 +157,21 @@ func TestStaticServingFallsBackToIndexForSPARoutes(t *testing.T) {
 	}
 }
 
-func TestStaticOverrideWins(t *testing.T) {
+// TestBackendServesBaseOnly pins the post-migration behavior: the backend has
+// no in-backend override layer. The v1 static-override receiver
+// (GLIMMUNG_STATIC_OVERRIDE_DIR + a writer container) was removed when the
+// generic live-preview-edge took over override serving (the edge fronts the
+// backend and owns the override). The backend serves only its own baked assets.
+func TestBackendServesBaseOnly(t *testing.T) {
 	base := t.TempDir()
-	override := t.TempDir()
 	writeFile(t, filepath.Join(base, "index.html"), "base")
-	writeFile(t, filepath.Join(override, "index.html"), "override")
 
-	handler := New(Settings{StaticDir: base, StaticOverrideDir: override})
+	handler := New(Settings{StaticDir: base})
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
 
-	if rec.Code != http.StatusOK || rec.Body.String() != "override" {
-		t.Fatalf("override response status=%d body=%q", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusOK || rec.Body.String() != "base" {
+		t.Fatalf("base response status=%d body=%q", rec.Code, rec.Body.String())
 	}
 }
 

@@ -38,12 +38,32 @@ serviceAccountClientId: "3644b9f0-2eb0-42dd-92a4-696f9a3ca090"
 configMapName: glimmung-config
 secretName: glimmung-secrets
 
-staticOverride:
-  enabled: true
-  mountPath: /var/run/glimmung-static-override
-  writerContainerName: static-writer
-  writerImage: alpine:3.20
-  writerImagePullPolicy: IfNotPresent
+# Live-preview lane (docs/live-preview-plan.md). OFF by default: a normal or
+# validation (hot/warm) install renders no edge, so this changes nothing until
+# Glimmung sets livePreview.enabled=true on a preview lease. When enabled, the
+# live-preview-edge library partial runs the generic edge in front of glimmung's
+# backend (glimmung is the first/dogfood consumer): the edge becomes the served
+# port, the backend listens internally, and the edge serves the pushed frontend
+# override-first / fresh-passthrough. The provision op fills image/upstream/
+# authorizedSubject/backendPrefixes via --set. The single-serving-pod invariant
+# (replicas=1) is enforced by the live-preview-edge.replicas helper.
+livePreview:
+  enabled: false
+  image:
+    repository: romainecr.azurecr.io/glimmung-live-preview-edge
+    tag: ""
+    pullPolicy: IfNotPresent
+  port: 8080
+  servedPortName: http
+  upstream:
+    # The glimmung backend listens internally on :8000; the edge fronts it.
+    url: "http://127.0.0.1:8000"
+  backendPrefixes: []
+  authorizedSubject: ""
+  override:
+    volumeName: live-preview-override
+    mountPath: /var/run/glimmung-live-preview
+  resources: {}
 
 hotSwapBackend:
   enabled: true

@@ -4,3 +4,13 @@ description: Per-issue agent-CI validation env — Deployment + Service + HTTPRo
 type: application
 version: 0.1.0
 appVersion: "0.1.0"
+dependencies:
+  # The generic live-preview edge (docs/live-preview-plan.md). A library chart
+  # of named templates, off by default (livePreview.enabled=false) so it renders
+  # nothing on a normal/validation install. Glimmung is the first consumer
+  # (dogfood): a preview lease sets livePreview.enabled=true to run the edge in
+  # front of glimmung's own backend. file:// — same repo, vendored at install
+  # time by `helm dependency build` (charts/ is a build artifact, gitignored).
+  - name: live-preview-edge
+    version: 0.1.0
+    repository: "file://../live-preview-edge"

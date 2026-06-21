@@ -772,6 +772,26 @@ var schemaMigrations = []string{
 	)`,
 	`CREATE INDEX IF NOT EXISTS workflow_control_events_by_workflow
 		ON workflow_control_events (project, name, id DESC)`,
+
+	// ------------------------------------------------------------------
+	// preview_environments — the durable SOURCE OF TRUTH for the live-preview
+	// lane (docs/live-preview-plan.md). One row per (project, preview env
+	// name). The validation/image-deploy lane keeps its own slots/leases rows
+	// and is never represented here. payload jsonb holds the full
+	// PreviewEnvironment doc (enabled, state, url, authorized_subject, the
+	// CLAIMED live_build_id/pushed_at and the OBSERVED observed_build_id/
+	// observed_at read back from the edge). updated_at is the CAS version.
+	// ------------------------------------------------------------------
+	`CREATE TABLE IF NOT EXISTS preview_environments (
+		project           text NOT NULL,
+		name              text NOT NULL,
+		payload           jsonb NOT NULL DEFAULT '{}'::jsonb,
+		created_at        timestamptz NOT NULL DEFAULT now(),
+		updated_at        timestamptz NOT NULL DEFAULT now(),
+		PRIMARY KEY (project, name)
+	)`,
+	`CREATE INDEX IF NOT EXISTS preview_environments_by_project
+		ON preview_environments (project, updated_at DESC)`,
 }
 
 // cronJobs are scheduled after the table migrations succeed. Each

@@ -1,0 +1,4 @@
+# Vendored at install time by `helm dependency build` (the live-preview-edge
+# library is a file:// dependency in the same repo). Chart.lock IS committed so
+# the build is deterministic and offline; the charts/ output is a build artifact.
+charts/

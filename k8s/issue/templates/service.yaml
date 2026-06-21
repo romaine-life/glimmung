@@ -16,5 +16,8 @@ spec:
   ports:
     - name: http
       port: 80
-      targetPort: http
+      # Served port: the live-preview edge when livePreview is enabled (it fronts
+      # the backend), the backend's own port otherwise. The helper keeps normal /
+      # validation renders targeting "http" unchanged.
+      targetPort: {{ include "live-preview-edge.servedPortName" (dict "spec" .Values.livePreview "appPortName" (include "glimmung-issue.appPortName" .)) }}
 {{- end }}

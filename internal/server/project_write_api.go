@@ -61,6 +61,10 @@ func registerProject(store ReadStore, managedOrigins ManagedOriginReconciler) ht
 			writeProblem(w, http.StatusUnprocessableEntity, err.Error())
 			return
 		}
+		if err := validateLivePreviewMetadata(req.Metadata); err != nil {
+			writeProblem(w, http.StatusUnprocessableEntity, err.Error())
+			return
+		}
 		if _, _, err := agentruntime.ConfigFromMetadata(req.Metadata); err != nil {
 			writeProblem(w, http.StatusUnprocessableEntity, err.Error())
 			return

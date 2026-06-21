@@ -35,6 +35,11 @@ type StateSnapshot struct {
 	AgentRuntime            agentruntime.Config     `json:"agent_runtime"`
 	Projects                []Project               `json:"projects"`
 	Workflows               []Workflow              `json:"workflows"`
+	// PreviewEnvironments is the live-preview lane's durable state. The SSE
+	// stream carries it so a watcher (the dashboard, a later slice) resyncs the
+	// observed build / stale state from the durable cursor on reconnect rather
+	// than trusting any in-flight optimism.
+	PreviewEnvironments []PreviewEnvironment `json:"preview_environments"`
 	// InflightLocks summarizes whether any issue-scoped or pr-scoped
 	// lock is currently held. The SPA's "needs attention" nav uses
 	// this as a derived state on top of the SSE snapshot; before this
@@ -311,7 +316,25 @@ func computeStateSnapshot(
 		AgentRuntime:            agentRuntimeConfigForSettings(settings),
 		Projects:                sliceOrEmpty(projects),
 		Workflows:               sliceOrEmpty(workflows),
+		PreviewEnvironments:     previewEnvironmentsForSnapshot(ctx, store),
 	}
+}
+
+// previewEnvironmentsForSnapshot reads the durable live-preview state for the
+// SSE snapshot. Empty (never nil) when the store doesn't support preview envs,
+// so the field is always a JSON array.
+func previewEnvironmentsForSnapshot(ctx context.Context, store ReadStore) []PreviewEnvironment {
+	lister, ok := store.(interface {
+		ListPreviewEnvironments(ctx context.Context) ([]PreviewEnvironment, error)
+	})
+	if !ok || lister == nil {
+		return []PreviewEnvironment{}
+	}
+	envs, err := lister.ListPreviewEnvironments(ctx)
+	if err != nil || envs == nil {
+		return []PreviewEnvironment{}
+	}
+	return envs
 }
 
 func testSlotAdmissionsFromEnvironments(envs []TestEnvironmentPublic, waiting []TestSlotRequestPublic) []TestSlotAdmission {

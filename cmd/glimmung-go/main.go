@@ -155,6 +155,9 @@ func main() {
 		pgSlotInspections := pgstore.NewSlotInspectionsStore(pgPool)
 		store.SetPGSlotInspections(pgSlotInspections)
 
+		pgPreviewEnvironments := pgstore.NewPreviewEnvironmentsStore(pgPool)
+		store.SetPGPreviewEnvironments(pgPreviewEnvironments)
+
 		rt = &runtimeStore{Store: store, LocksStore: pgLocks}
 	} else {
 		log.Printf("runtime store disabled: store wrapper and postgres pool both required (store=%v pgPool=%v)", store != nil, pgPool != nil)
@@ -239,6 +242,17 @@ func main() {
 		server.StartRunQueueReconciler(context.Background(), rt, runLauncher, log.Printf)
 		server.StartRunDispatchTimeoutReconciler(context.Background(), settings, rt, runLauncher, log.Printf)
 		server.StartRunnerJobWatcher(context.Background(), settings, rt, runLauncher, log.Printf)
+		// Live-preview observed read-back verifier. Reads each pending preview
+		// edge's /__live-preview/status as a service principal (SA-token →
+		// auth.romaine.life exchange) and confirms it serves the pushed build,
+		// else marks it stale. Self-gates on ControlPlaneLoopsEnabled so slot
+		// processes never run it; disabled cleanly when auth.romaine.life is
+		// unconfigured.
+		var previewStatusReader server.PreviewStatusReader
+		if ts := server.NewRomaineServiceTokenSource(settings.AuthRomaineLifeBaseURL, settings.AuthRomaineLifeTokenPath, nil); ts != nil {
+			previewStatusReader = server.NewHTTPPreviewStatusReader(ts, nil)
+		}
+		server.StartPreviewVerifyReconciler(context.Background(), settings, rt, previewStatusReader, log.Printf)
 		if ghClient != nil {
 			// One-shot recovery sweep at startup: re-arm per-lease TTL
 			// timers, resume in-flight warming/activating/cleaning work, and

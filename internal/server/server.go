@@ -47,7 +47,6 @@ type Settings struct {
 	// link should target. Grafana resolves a name to a UID; both work.
 	GrafanaLokiDatasource         string
 	StaticDir                     string
-	StaticOverrideDir             string
 	ArtifactsStorageAccount       string
 	ArtifactsContainer            string
 	RunnerNamespace               string
@@ -69,6 +68,16 @@ type Settings struct {
 	RunnerDispatchTimeoutSeconds  int
 	AgentRuntimeConfigJSON        string
 	RunnerWorkloadIdentityIssuer  string
+	// LivePreviewEdgeImageRepository / LivePreviewEdgeImageTag identify the
+	// generic live-preview-edge image the preview-lane provision puts in front
+	// of an app backend (docs/live-preview-plan.md). The provision sets the
+	// consumer chart's livePreview.image.{repository,tag} from these so a
+	// preview lease runs the edge as its served port. The backend image itself
+	// is the chart's own pinned default (main's fingerprinted CI image kept in
+	// lockstep with prod) — the preview backend is stable, only the pushed
+	// frontend is scratch.
+	LivePreviewEdgeImageRepository string
+	LivePreviewEdgeImageTag        string
 	// AuthRomaineLifeBaseURL is the base URL of the auth.romaine.life
 	// admin API used by ManagedOriginService. Empty disables the
 	// reconciler; only useful for local dev / smoke runs.
@@ -143,7 +152,6 @@ func SettingsFromEnv() Settings {
 		GrafanaBaseURL:        envOrDefault("GRAFANA_BASE_URL", defaultGrafanaBaseURL),
 		GrafanaLokiDatasource: envOrDefault("GRAFANA_LOKI_DATASOURCE", defaultGrafanaLokiDatasource),
 		StaticDir:             os.Getenv("GLIMMUNG_STATIC_DIR"),
-		StaticOverrideDir:     os.Getenv("GLIMMUNG_STATIC_OVERRIDE_DIR"),
 		ArtifactsStorageAccount: envOrDefault(
 			"ARTIFACTS_STORAGE_ACCOUNT",
 			"romaineglimmungartifacts",
@@ -176,6 +184,14 @@ func SettingsFromEnv() Settings {
 		RunnerEntrypoint: envOrDefault(
 			"RUNNER_ENTRYPOINT",
 			"/app/glimmung-runner",
+		),
+		LivePreviewEdgeImageRepository: envOrDefault(
+			"LIVE_PREVIEW_EDGE_IMAGE_REPOSITORY",
+			"romainecr.azurecr.io/glimmung-live-preview-edge",
+		),
+		LivePreviewEdgeImageTag: envOrDefault(
+			"LIVE_PREVIEW_EDGE_IMAGE_TAG",
+			"edge",
 		),
 		ProviderAPIProxyNamespace: envOrDefault(
 			"PROVIDER_API_PROXY_NAMESPACE",
@@ -306,6 +322,10 @@ func newHandlerWithReconcilers(settings Settings, store ReadStore, authResolver 
 	if p, ok := runLauncher.(TestSlotPreparer); ok {
 		testSlotPreparer = p
 	}
+	var previewProvisioner PreviewProvisioner
+	if p, ok := runLauncher.(PreviewProvisioner); ok {
+		previewProvisioner = p
+	}
 	// Remote-host execution primitives (docs/remote-host-execution.md).
 	// Both endpoints fail closed (503) if their upstream wiring is empty.
 	// auth.romaine.life is the sole SSH CA issuer: glimmung holds no CA
@@ -399,6 +419,17 @@ func newHandlerWithReconcilers(settings Settings, store ReadStore, authResolver 
 		"POST /v1/projects/{project}/test-environments/{slot_name}/repair",
 		requireAdmin(adminAuthenticator, http.HandlerFunc(repairProjectTestEnvironment(store, testSlotPreparer, runnerTokenMinter))),
 	)
+	// Live-preview lane control + status (docs/live-preview-plan.md). Session-
+	// initiated (admin or service role): provision a preview, record a push
+	// receipt, toggle, read durable status. The durable preview_environment row
+	// owns state; these mutate it and wake the verifier / SSE snapshot.
+	mux.Handle("GET /v1/previews", requireAdmin(adminAuthenticator, http.HandlerFunc(listPreviewEnvironmentsHandler(store))))
+	mux.Handle("POST /v1/previews", requireAdmin(adminAuthenticator, http.HandlerFunc(provisionPreviewEnvironment(settings, store, previewProvisioner, runnerTokenMinter))))
+	mux.Handle("GET /v1/previews/{project}/{name}", requireAdmin(adminAuthenticator, http.HandlerFunc(getPreviewEnvironment(store))))
+	mux.Handle("DELETE /v1/previews/{project}/{name}", requireAdmin(adminAuthenticator, http.HandlerFunc(deletePreviewEnvironment(settings, store, previewProvisioner))))
+	mux.Handle("POST /v1/previews/{project}/{name}/push-receipt", requireAdmin(adminAuthenticator, http.HandlerFunc(recordPreviewPushReceipt(store))))
+	mux.Handle("POST /v1/previews/{project}/{name}/enable", requireAdmin(adminAuthenticator, http.HandlerFunc(setPreviewEnabled(store, true))))
+	mux.Handle("POST /v1/previews/{project}/{name}/disable", requireAdmin(adminAuthenticator, http.HandlerFunc(setPreviewEnabled(store, false))))
 	mux.HandleFunc("GET /v1/workflows", listWorkflows(store))
 	mux.Handle("POST /v1/workflows", requireAdmin(adminAuthenticator, http.HandlerFunc(registerWorkflow(store))))
 	mux.Handle("PATCH /v1/workflows/{project}/{name}", requireAdmin(adminAuthenticator, http.HandlerFunc(patchWorkflow(store))))
@@ -589,25 +620,26 @@ func writeJSON(w http.ResponseWriter, status int, value any) {
 	_ = json.NewEncoder(w).Encode(value)
 }
 
+// roots is the base static-serving root for the dashboard SPA. The in-backend
+// override-first layer (the v1 static-override receiver: GLIMMUNG_STATIC_OVERRIDE_DIR
+// + a writer container) was removed when the generic live-preview-edge took over
+// override serving — the edge fronts the backend and owns the override, so the
+// backend just serves its own baked assets. Two override mechanisms are one too
+// many (docs/live-preview-plan.md, Stage 0 glimmung note).
 type roots struct {
-	override string
-	base     string
+	base string
 }
 
 func staticRoots(settings Settings) roots {
-	return roots{override: settings.StaticOverrideDir, base: settings.StaticDir}
+	return roots{base: settings.StaticDir}
 }
 
 func (r roots) enabled() bool {
-	for _, root := range []string{r.override, r.base} {
-		if root == "" {
-			continue
-		}
-		if info, err := os.Stat(root); err == nil && info.IsDir() {
-			return true
-		}
+	if r.base == "" {
+		return false
 	}
-	return false
+	info, err := os.Stat(r.base)
+	return err == nil && info.IsDir()
 }
 
 func serveAsset(settings Settings) http.HandlerFunc {
@@ -641,16 +673,10 @@ func serveSPA(settings Settings) http.HandlerFunc {
 }
 
 func staticFile(r roots, parts ...string) (string, bool) {
-	for _, root := range []string{r.override, r.base} {
-		if root == "" {
-			continue
-		}
-		found, ok := staticFileInRoot(root, parts...)
-		if ok {
-			return found, true
-		}
+	if r.base == "" {
+		return "", false
 	}
-	return "", false
+	return staticFileInRoot(r.base, parts...)
 }
 
 func staticFileInRoot(root string, parts ...string) (string, bool) {
