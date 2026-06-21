@@ -6,6 +6,25 @@ image:
   tag: "app-1a0d9d3426c35f2e04944f648358ad52158193ebd15efb334b1b8994d076a188"
   pullPolicy: IfNotPresent
 
+# Live-preview lane edge image (docs/live-preview-plan.md, Stage 4a). The prod
+# glimmung control plane runs NO edge itself; it RECORDS the edge image here and
+# passes it to the preview provision (deployment.yaml -> LIVE_PREVIEW_EDGE_IMAGE_*
+# env -> Settings) so a preview lease runs this exact, fingerprint-pinned edge in
+# front of an app backend. Kept in lockstep with k8s/issue/values.yaml's
+# livePreview.image.tag by the live-preview-edge build workflow (it rebuilds the
+# image and bumps the fingerprint on every push to main) and the
+# scripts/check-chart-image-tag-sync.mjs guard — so the provision defaults to a
+# stable, built tag, never a floating `:edge` that may not exist (Stage 2a: a
+# missing edge image must be a provision ERROR, not a silent ImagePull failure).
+livePreview:
+  image:
+    repository: romainecr.azurecr.io/glimmung-live-preview-edge
+    # Fingerprint-pinned; the live-preview-edge build workflow rewrites this line
+    # AND k8s/issue/values.yaml on every push to main. Quote so YAML treats the
+    # tag as a string.
+    tag: "live-preview-edge-PLACEHOLDER_FINGERPRINT"
+    pullPolicy: IfNotPresent
+
 namespace: glimmung
 serviceAccount: infra-shared
 # Dedicated Glimmung app identity from tofu/identity.tf's

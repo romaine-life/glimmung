@@ -117,8 +117,12 @@ func provisionPreviewEnvironment(settings Settings, store ReadStore, provisioner
 			Enabled:           true,
 			State:             PreviewStateProvisioning,
 			URL:               strings.TrimSpace(*urlPtr),
-			UpstreamURL:       defaultPreviewUpstreamURL,
-			BackendPrefixes:   cfg.BackendPrefixes,
+			// The edge upstream points at THIS app's own backend port (from its
+			// live_preview.backend_port metadata), not a hardcoded :8000 — apps
+			// listen on different ports (glimmung :8000, kill-me :3000, ambience
+			// :8080). Unset falls back to defaultPreviewBackendPort.
+			UpstreamURL:     previewUpstreamURL(cfg.BackendPort),
+			BackendPrefixes: cfg.BackendPrefixes,
 			EdgeImage:         strings.TrimSpace(settings.LivePreviewEdgeImageRepository) + ":" + strings.TrimSpace(settings.LivePreviewEdgeImageTag),
 		}
 		created, err := controlStore.CreatePreviewEnvironment(r.Context(), env)

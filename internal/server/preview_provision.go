@@ -6,12 +6,30 @@ import (
 	"strings"
 )
 
+// defaultPreviewBackendPort is the in-pod backend port the edge reverse-proxies
+// to when an app's live_preview metadata does not set backend_port. It is
+// glimmung's own backend port (k8s/issue deployment.yaml :8000) — the historical
+// default — so an app that forgets to set backend_port still resolves to a
+// concrete loopback port rather than silently breaking. Onboarding apps set
+// their own (kill-me/chess-tactics :3000, ambience :8080).
+const defaultPreviewBackendPort = 8000
+
 // defaultPreviewUpstreamURL is the in-pod app backend base URL the edge
-// reverse-proxies to. The app backend listens internally (the edge is the
-// pod's served port), so the upstream is loopback to the backend's container
-// port. Glimmung's backend listens on :8000 (k8s/issue deployment.yaml); other
-// apps wire their own port when they onboard.
+// reverse-proxies to when no per-app backend_port is set. The app backend
+// listens internally (the edge is the pod's served port), so the upstream is
+// loopback to the backend's container port.
 const defaultPreviewUpstreamURL = "http://127.0.0.1:8000"
+
+// previewUpstreamURL builds the edge's loopback upstream base URL for an app
+// backend listening on backendPort. A non-positive port falls back to
+// defaultPreviewBackendPort, so the result is always a concrete loopback URL the
+// edge's LIVE_PREVIEW_EDGE_UPSTREAM / livePreview.upstream.url can use.
+func previewUpstreamURL(backendPort int) string {
+	if backendPort <= 0 {
+		backendPort = defaultPreviewBackendPort
+	}
+	return fmt.Sprintf("http://127.0.0.1:%d", backendPort)
+}
 
 // PreviewProvisioner deploys (and tears down) a preview environment: the stable
 // app backend with the live-preview-edge in front of it, on the preview env's
@@ -79,6 +97,12 @@ func previewHelmSettings(project Project, env PreviewEnvironment, edgeRepo, edge
 		merged[k] = v
 	}
 	base.Values = merged
+	// The app chart includes the live-preview-edge partial; for an app whose chart
+	// lives in ANOTHER repo (no in-repo file:// dependency), the install Job vendors
+	// the partial from Glimmung's published ConfigMap. Glimmung's own slot chart
+	// (k8s/issue) already vendors it via file://, so the install-time vendor step
+	// no-ops there (it only runs when charts/live-preview-edge is absent).
+	base.VendorLivePreviewEdge = true
 	return base, nil
 }
 

@@ -76,6 +76,13 @@ type Settings struct {
 	// is the chart's own pinned default (main's fingerprinted CI image kept in
 	// lockstep with prod) — the preview backend is stable, only the pushed
 	// frontend is scratch.
+	//
+	// The prod deployment sources these from k8s/values.yaml's livePreview.image
+	// (LIVE_PREVIEW_EDGE_IMAGE_{REPOSITORY,TAG}), where the tag is a stable
+	// fingerprint the live-preview-edge build workflow rebuilds and bumps on main
+	// — NOT a floating `:edge`. An empty tag is a hard provision error
+	// (previewHelmSettings), so a missing edge image surfaces as an explicit
+	// provision failure, never a silent ImagePull (Stage 2a contract).
 	LivePreviewEdgeImageRepository string
 	LivePreviewEdgeImageTag        string
 	// AuthRomaineLifeBaseURL is the base URL of the auth.romaine.life
@@ -189,10 +196,13 @@ func SettingsFromEnv() Settings {
 			"LIVE_PREVIEW_EDGE_IMAGE_REPOSITORY",
 			"romainecr.azurecr.io/glimmung-live-preview-edge",
 		),
-		LivePreviewEdgeImageTag: envOrDefault(
-			"LIVE_PREVIEW_EDGE_IMAGE_TAG",
-			"edge",
-		),
+		// No floating default tag. The prod deployment supplies the
+		// fingerprint-pinned tag from k8s/values.yaml's livePreview.image.tag
+		// (kept in lockstep with k8s/issue/values.yaml by the live-preview-edge
+		// build workflow). An empty tag makes the preview provision fail loudly
+		// (previewHelmSettings requires repo+tag) rather than deploy a floating
+		// `:edge` that may not exist — Stage 2a's observable-failure contract.
+		LivePreviewEdgeImageTag: os.Getenv("LIVE_PREVIEW_EDGE_IMAGE_TAG"),
 		ProviderAPIProxyNamespace: envOrDefault(
 			"PROVIDER_API_PROXY_NAMESPACE",
 			"glimmung-runs",

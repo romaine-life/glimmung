@@ -1,0 +1,35 @@
+{{- /*
+Publishes Glimmung's live-preview-edge library partial as a ConfigMap so a
+preview install Job can VENDOR it into an app chart that includes the partial but
+lives in ANOTHER repo. This is the Stage 4a cross-repo consumption mechanism
+(docs/live-preview-plan.md): the registry (romainecr) is ACR Basic SKU — no
+anonymous Helm OCI pull and no scoped tokens — and the slot-install Job pod has no
+Azure workload identity, so an `oci://` Helm dependency cannot be authenticated
+from the install Job. Glimmung makes the partial available IN-CLUSTER instead; the
+app chart still `include`s it (guarded on livePreview.enabled).
+
+It lives in the runner namespace (where install Jobs run), is maintained by ArgoCD
+in lockstep with this glimmung deploy, and carries the partial's files read from
+the sibling chart directory via .Files: Chart.yaml + values.yaml at the root, and
+each template under a `tpl.<name>` key (ConfigMap keys cannot contain `/`). The
+install Job's vendor step (internal/server livePreviewEdgeVendorScript) rebuilds
+the chart/templates/ layout from these keys. The name is a fixed contract shared
+with livePreviewEdgeChartConfigMapName in internal/server/run_launcher.go.
+*/ -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: glimmung-live-preview-edge-chart
+  namespace: {{ .Values.runner.namespace }}
+  labels:
+    app.kubernetes.io/name: glimmung
+    app.kubernetes.io/component: live-preview-edge-partial
+data:
+  Chart.yaml: |-
+{{ .Files.Get "live-preview-edge/Chart.yaml" | indent 4 }}
+  values.yaml: |-
+{{ .Files.Get "live-preview-edge/values.yaml" | indent 4 }}
+{{- range $path, $_ := .Files.Glob "live-preview-edge/templates/*" }}
+  tpl.{{ base $path }}: |-
+{{ $.Files.Get $path | indent 4 }}
+{{- end }}

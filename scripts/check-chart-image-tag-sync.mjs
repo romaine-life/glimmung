@@ -51,25 +51,87 @@ function extractImageTag(text, filePath) {
   throw new Error(`${filePath}: could not find image.tag at expected two-space indent under image:`);
 }
 
+// Extract livePreview.image.tag — the live-preview-edge image tag, pinned at
+// four-space indent under the top-level `livePreview:` block's `  image:`
+// sub-block. Same drift risk, same fix: the live-preview-edge build workflow
+// bumps it in BOTH chart values files on main, and this guard fails CI if they
+// disagree, so the preview provision never points at a floating, maybe-missing
+// edge tag. See docs/live-preview-plan.md Stage 4a.
+function extractLivePreviewEdgeTag(text, filePath) {
+  const lines = text.split(/\r?\n/);
+  let inLivePreview = false;
+  let inImage = false;
+  for (const line of lines) {
+    if (/^livePreview:\s*$/.test(line)) {
+      inLivePreview = true;
+      inImage = false;
+      continue;
+    }
+    // livePreview block ends at the next non-indented, non-comment, non-empty line.
+    if (inLivePreview && line.length > 0 && !line.startsWith(" ") && !line.startsWith("#")) {
+      inLivePreview = false;
+      inImage = false;
+    }
+    if (!inLivePreview) continue;
+    if (/^  image:\s*$/.test(line)) {
+      inImage = true;
+      continue;
+    }
+    if (!inImage) continue;
+    const m = /^    tag:\s*"?([^"\s#]+)"?\s*(#.*)?$/.exec(line);
+    if (m) return m[1];
+    // A new two-space key (not a deeper line, not a comment) closes the image block.
+    if (/^  \S/.test(line) && !/^ {4}/.test(line) && !/^\s*#/.test(line)) {
+      inImage = false;
+    }
+  }
+  throw new Error(
+    `${filePath}: could not find livePreview.image.tag at four-space indent under "livePreview:" then "  image:"`,
+  );
+}
+
 const results = await Promise.all(
   files.map(async (rel) => {
     const abs = path.join(repoRoot, rel);
     const text = await fs.readFile(abs, "utf8");
-    return { file: rel, tag: extractImageTag(text, rel) };
+    return {
+      file: rel,
+      tag: extractImageTag(text, rel),
+      edgeTag: extractLivePreviewEdgeTag(text, rel),
+    };
   })
 );
 
-const tags = new Set(results.map((r) => r.tag));
-if (tags.size !== 1) {
-  const detail = results.map((r) => `  ${r.file}: ${r.tag}`).join("\n");
-  console.error(
-    "image.tag drift between chart values files:\n" +
-      detail +
-      "\n\nThe build workflow bumps both files atomically on every push.\n" +
-      "If you edited one by hand, edit the other to match (or rerun the\n" +
-      "build workflow). See .github/workflows/build.yaml.",
-  );
-  process.exit(1);
+// Each lockstep-pinned image tag must be identical across both chart values
+// files. `field` names the value; `pick` selects it from a parsed result;
+// `workflow` is the build workflow that keeps it in sync.
+const checks = [
+  { field: "image.tag", pick: (r) => r.tag, workflow: ".github/workflows/build.yaml" },
+  {
+    field: "livePreview.image.tag",
+    pick: (r) => r.edgeTag,
+    workflow: ".github/workflows/live-preview-edge-build.yaml",
+  },
+];
+
+let failed = false;
+for (const check of checks) {
+  const tags = new Set(results.map(check.pick));
+  if (tags.size !== 1) {
+    const detail = results.map((r) => `  ${r.file}: ${check.pick(r)}`).join("\n");
+    console.error(
+      `${check.field} drift between chart values files:\n` +
+        detail +
+        "\n\nThe build workflow bumps both files atomically on every push.\n" +
+        "If you edited one by hand, edit the other to match (or rerun the\n" +
+        `build workflow. See ${check.workflow}.\n`,
+    );
+    failed = true;
+    continue;
+  }
+  console.log(`${check.field} consistent across ${files.length} files: ${[...tags][0]}`);
 }
 
-console.log(`image.tag consistent across ${files.length} files: ${[...tags][0]}`);
+if (failed) {
+  process.exit(1);
+}
