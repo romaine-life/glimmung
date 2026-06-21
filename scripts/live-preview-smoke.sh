@@ -63,13 +63,15 @@ PROJECT=""; NAME=""; ALL=false
 # so it is covered here alongside the rest.
 ALL_APPS=( "kill-me:smoke-killme" "chess-tactics:smoke-chess" "ambience:smoke-ambience" "glimmung:smoke-glimmung" "tank-operator:smoke-tankop" )
 
-# Backend-proxy probe path override, per app. The backend-proxy property asserts
-# a backend prefix stays backend-proxied (not served from the override) while an
-# override is active. By default the probe uses the project's FIRST
-# live_preview.backend_prefix, which is a health endpoint for the other apps
-# (kill-me/chess /health, glimmung/ambience /healthz). Override when the first
-# prefix is not a clean health probe: tank-operator's first prefix is /api, which
-# its SPA catch-all answers, so probe /healthz for a deterministic backend 200.
+# Backend-proxy probe path override, per app. The backend-proxy property only
+# needs ANY backend-proxied prefix to come back NON-override (proving the edge
+# proxies it to the backend rather than serving the pushed bundle), so by default
+# the probe uses the project's FIRST live_preview.backend_prefix — whatever it is
+# (the 4c gate observed /api for kill-me + chess, /snap for ambience, /v1 for
+# glimmung; none are health paths, and that's fine). The tank-operator override
+# to /healthz is purely a cleaner, deterministic backend health 200 than its own
+# first prefix (bare /api, which is backend-proxied and passes, but is a less
+# obvious probe). Override only when a clearer probe is wanted.
 declare -A BACKEND_PROBE_PATHS=( ["tank-operator"]="/healthz" )
 
 log()  { printf '[smoke] %s\n' "$*" >&2; }
@@ -164,8 +166,8 @@ smoke_one() {
 
   # resolve the app's backend-proxy probe path: a per-app BACKEND_PROBE_PATHS
   # override if set (tank-operator -> /healthz), else the app's own first
-  # live_preview.backend_prefix (kill-me/chess /health, glimmung/ambience
-  # /healthz). Hardcoding one path for all would mis-test the others.
+  # live_preview.backend_prefix — whatever it is (observed: /api kill-me+chess,
+  # /snap ambience, /v1 glimmung). Any backend-proxied prefix proves the point.
   T="$(tok)"; local rowx; rowx="$(curl -fsS -H "Authorization: Bearer $T" "$GLIMMUNG_URL/v1/previews/$project/$name" 2>/dev/null || true)"
   local bprefix; bprefix="${BACKEND_PROBE_PATHS[$project]:-$(printf '%s' "$rowx" | jq -r '.backend_prefixes[0] // "/healthz"')}"
 
