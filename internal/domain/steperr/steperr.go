@@ -65,12 +65,15 @@ func ValidLayer(layer string) bool {
 	}
 }
 
-// Valid reports whether the block is well-formed: a known layer and a
-// non-empty message. The runner only promotes a valid block into the terminal
-// observation; an invalid one is ignored so a malformed producer can never
-// launder a content-free failure as if it were attributed.
+// Valid reports whether the block carries a non-empty message — the one thing
+// that cannot be synthesized. The layer is not part of validity because
+// Normalize always coerces an empty or unknown layer to LayerHarness (an
+// untyped crash is the harness failing to attribute itself). The runner only
+// promotes a valid block into the terminal observation; a block with no
+// message is ignored so a producer can never launder a content-free failure as
+// if it were attributed.
 func (b *Block) Valid() bool {
-	return b != nil && ValidLayer(b.Layer) && strings.TrimSpace(b.Message) != ""
+	return b != nil && strings.TrimSpace(b.Message) != ""
 }
 
 // Normalize returns a copy with the layer coerced into the closed enum and the

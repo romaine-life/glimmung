@@ -30,7 +30,12 @@ but the v1 runtime contract should already be owned by Glimmung end to end.
 - Do not make repo YAML the workflow source of truth.
 - Do not require projects to add repo-owned workflow files.
 - Do not restore GitHub Actions, GitLab CI, or Azure DevOps as the executor.
-- Do not make each repo maintain its own runner callback shell library.
+- Do not make each repo maintain its own runner callback shell library. The
+  typed run-harness SDK (`harness/...`, see
+  [`run-harness-sdk.md`](run-harness-sdk.md)) is the shared, sanctioned
+  step-producer surface that replaces the per-repo `lib.sh` fork; a reintroduced
+  `native_emit_*` shell producer is a migration regression
+  (`TestSDKIsTheOnlySanctionedStepProducerSurface`).
 - Do not use git as the runtime workflow database.
 - Do not reintroduce retired callback routes such as `/run/failed`.
 

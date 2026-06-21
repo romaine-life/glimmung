@@ -15,6 +15,7 @@ import (
 	"github.com/romaine-life/glimmung/internal/domain/decision"
 	"github.com/romaine-life/glimmung/internal/domain/phaserefs"
 	"github.com/romaine-life/glimmung/internal/domain/publicids"
+	"github.com/romaine-life/glimmung/internal/domain/steperr"
 	"github.com/romaine-life/glimmung/internal/domain/whenexpr"
 	"github.com/romaine-life/glimmung/internal/metrics"
 )
@@ -49,6 +50,13 @@ type CompletionPayload struct {
 	ScreenshotsMarkdown *string
 	PhaseOutputs        map[string]string
 	AttemptIndex        *int
+
+	// StepError is the optional typed step-error block carried from a
+	// producer step body's GLIMMUNG_COMPLETION_FILE on a non-success
+	// completion. It is persisted on the failing job completion and promoted
+	// into the terminal observation cause; nil leaves attribution exactly as
+	// it was before the SDK existed.
+	StepError *steperr.Block
 
 	// TerminalReason is an optional closed-enum reason the caller has
 	// already derived (e.g. the reconciler maps k8s Failed condition
@@ -242,6 +250,11 @@ type RunnerCompletedRequest struct {
 	ScreenshotsMarkdown *string            `json:"screenshots_markdown"`
 	SummaryMarkdown     *string            `json:"summary_markdown"`
 	Outputs             map[string]string  `json:"outputs"`
+	// Error is the optional typed step-error block a producer step body emitted
+	// on a non-success completion (steperr wire shape). It threads the real
+	// {layer, code, message} into the terminal cause and run report. A
+	// completion without it behaves byte-for-byte as before.
+	Error *steperr.Block `json:"error,omitempty"`
 }
 
 // runnerCompletedByCallbackToken handles POST /v1/run-callbacks/{callback_token}/run/completed.
@@ -351,6 +364,10 @@ func completionPayloadFromNative(req RunnerCompletedRequest) CompletionPayload {
 	extractVerification(req.Verification, &p)
 	p.Evidence = append(p.Evidence, req.Evidence...)
 	p.EvidenceRefs = appendMissingStrings(p.EvidenceRefs, EvidenceRefsFromArtifacts(req.Evidence)...)
+	if req.Error != nil && req.Error.Valid() {
+		normalized := req.Error.Normalize()
+		p.StepError = &normalized
+	}
 	return p
 }
 

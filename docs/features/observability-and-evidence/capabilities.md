@@ -181,3 +181,32 @@ Evidence:
   `internal/server/inspection_sweep_test.go::TestSweepLeaseInspectionsLeavesRunScopedRows`
   pins the retention boundary: lease cleanup deletes lease-scoped rows
   and blobs while run-scoped rows persist.
+
+## typed-step-error-attribution
+
+- **Status:** active
+- **Intent:** A non-verification producer step crash must surface its real
+  reason, not a content-free "exited with code N". Before this, a producer step
+  body's `throw`/host failure terminal-attributed as the generic step exit
+  reason (`exit_nonzero`), so the operator-facing terminal observation lost the
+  actual cause — the producer-step half of the no-generic-terminal contract that
+  #846/#756 established for verifier/gate/dispatch failures.
+- **Mechanism:** the run-harness SDK writes a typed `error{layer,code,message}`
+  block (shape `internal/domain/steperr.Block`) to `GLIMMUNG_COMPLETION_FILE` on
+  a step failure. The runner rides it on the `step_failed` event metadata
+  (`error_layer`/`error_code`/`error_message`) and the `/completed` request; the
+  completion API threads it onto the failing job completion; the store's
+  `terminalJobFailureCause` promotes the typed message as
+  `RunTerminalObservation.Reason` (with the layer folded into the message) when
+  no verification verdict supplied a cause. A malformed block (no message) is
+  dropped so a producer can never launder a hollow attribution. Completions
+  without a block behave byte-for-byte as before, so the existing terminal
+  attribution, metric, and alert invariants are unchanged.
+- **Affected contracts:** Observability And Evidence (terminal-cause
+  attribution, run report), Workflow Execution (step-body failure projection).
+- **Evidence:** `TestTerminalObservationPromotesTypedStepError`,
+  `TestTerminalObservationWithoutStepErrorIsUnchanged`,
+  `TestMalformedStepErrorIsDropped`, `TestRunnerPromotesTypedStepErrorOnFailure`,
+  `TestRunnerFailureWithoutBlockIsUnchanged`,
+  `TestCompletionPayloadThreadsTypedStepError`,
+  `TestCompletionPayloadDropsMalformedStepError`.

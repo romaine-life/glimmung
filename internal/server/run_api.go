@@ -10,6 +10,7 @@ import (
 
 	"github.com/romaine-life/glimmung/internal/domain/agentruntime"
 	"github.com/romaine-life/glimmung/internal/domain/publicids"
+	"github.com/romaine-life/glimmung/internal/domain/steperr"
 )
 
 type RunStore interface {
@@ -124,6 +125,10 @@ type RunAttemptJobCompletion struct {
 	CostUSD             float64              `json:"cost_usd"`
 	AgentUsage          []AgentUsage         `json:"agent_usage,omitempty"`
 	PhaseOutputs        map[string]string    `json:"phase_outputs"`
+	// StepError is the typed step-error block a producer step body emitted on a
+	// non-success completion (steperr wire shape). It surfaces the real
+	// {layer, code, message} on the run report alongside the terminal cause.
+	StepError *steperr.Block `json:"step_error,omitempty"`
 }
 
 type AgentUsage struct {

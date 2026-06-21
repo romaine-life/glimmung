@@ -15,6 +15,7 @@ import (
 	"github.com/romaine-life/glimmung/internal/auth"
 	"github.com/romaine-life/glimmung/internal/domain/budget"
 	"github.com/romaine-life/glimmung/internal/domain/decision"
+	"github.com/romaine-life/glimmung/internal/domain/steperr"
 )
 
 type fakeCompletionStore struct {
@@ -977,6 +978,40 @@ func TestCompletionPayloadFromRunnerExtractsEvidenceRefs(t *testing.T) {
 	}
 	if len(payload.EvidenceRefs) != 1 || payload.EvidenceRefs[0] != "screenshots/default.png" {
 		t.Fatalf("evidence_refs=%#v", payload.EvidenceRefs)
+	}
+}
+
+func TestCompletionPayloadThreadsTypedStepError(t *testing.T) {
+	id := "prepare-host"
+	req := RunnerCompletedRequest{
+		JobID:      &id,
+		Conclusion: "failure",
+		Error: &steperr.Block{
+			Layer:   steperr.LayerHost,
+			Code:    "host_unreachable",
+			Message: "warm host asleep",
+		},
+	}
+	payload := completionPayloadFromNative(req)
+	if payload.StepError == nil {
+		t.Fatal("a typed step-error block must thread into the payload")
+	}
+	if payload.StepError.Layer != steperr.LayerHost || payload.StepError.Message != "warm host asleep" {
+		t.Fatalf("step error = %+v", payload.StepError)
+	}
+}
+
+func TestCompletionPayloadDropsMalformedStepError(t *testing.T) {
+	id := "prepare-host"
+	// No message => malformed => must be dropped, never threaded as a hollow
+	// attribution.
+	req := RunnerCompletedRequest{
+		JobID:      &id,
+		Conclusion: "failure",
+		Error:      &steperr.Block{Layer: steperr.LayerHost},
+	}
+	if payload := completionPayloadFromNative(req); payload.StepError != nil {
+		t.Fatalf("malformed step error must be dropped, got %+v", payload.StepError)
 	}
 }
 
