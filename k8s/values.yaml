@@ -3,7 +3,7 @@ image:
   # Fingerprint-pinned. The build workflow rewrites this line on every push to
   # main via a `[skip ci]` follow-up commit. Quote the value so YAML always
   # treats image tags as strings.
-  tag: "app-975dd17fd97e54de9216d7922f3f0e0ad241af606e36218321c87f728e99b089"
+  tag: "app-ab5f5f8ede67cb88979711a114b40b6b298eda1e23e8beac7f0b5bfe19138eca"
   pullPolicy: IfNotPresent
 
 # Live-preview lane edge image (docs/live-preview-plan.md, Stage 4a). The prod
