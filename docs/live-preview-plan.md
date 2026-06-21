@@ -210,9 +210,14 @@ these contracts:
   checkout path, and is excluded from `testEnvironmentsFromSnapshot`. The
   provision reuses the slot Helm install machinery with a PREVIEW config — the
   app's own `test_slot_helm` install settings (chart path, installer image) plus
-  layered `livePreview.*` `--set` values — rendered hot. The backend image is the
-  chart's pinned main-lockstep default (stable); only the pushed frontend is
-  scratch (NOT CI-gated). `k8s/issue` is the first/dogfood consumer of the
+  layered `livePreview.*` `--set` values — reconciled in the SAME warm→hot
+  sequence the faithful validation activation uses: WARM renders the
+  renderWarm-gated route (HTTPRoute + testenv prereqs) for the preview's wildcard
+  host, then HOT renders the workload (Deployment + Service) with the vendored
+  edge in front of the backend. A hot-only render materializes the workload but
+  no HTTPRoute, so the preview URL is unreachable — the warm pass is what makes it
+  routable. The backend image is the chart's pinned main-lockstep default
+  (stable); only the pushed frontend is scratch (NOT CI-gated). `k8s/issue` is the first/dogfood consumer of the
   `live-preview-edge` partial; its dormant in-backend static-override serving was
   removed (the edge owns serving).
 - **Per-app `live_preview` metadata** `{enabled: bool, backend_prefixes:

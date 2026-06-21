@@ -123,6 +123,15 @@ jobs:
       - name: Guard provider proxy TLS leaf hot reload
         run: bash scripts/check-provider-api-proxy-envoy-sds.sh
 
+  check-preview-route-render:
+    name: Preview route render contract
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+      - name: Guard the preview provision renders the route (warm) + workload+edge (hot)
+        run: bash scripts/check-preview-route-render.sh
+
   check-removed-og-svg:
     name: Removed OG SVG renderer surface
     runs-on: ubuntu-latest
