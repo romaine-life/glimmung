@@ -135,12 +135,11 @@ func diagnoseMissingCommitImage(ctx context.Context, httpClient *http.Client, sl
 		return fmt.Errorf("no CI image for commit %s (tag %s absent); could not read %s run status: %w", sha, tag, settings.Workflow, err)
 	}
 	if run, ok := firstWorkflowRun(runs, workflowRunInProgress); ok {
-		return &testSlotCIImagePendingError{
-			SHA:      sha,
-			Workflow: settings.Workflow,
-			RunID:    run.ID,
-			Status:   strings.TrimSpace(run.Status),
+		status := strings.TrimSpace(run.Status)
+		if status == "" {
+			status = "in progress"
 		}
+		return fmt.Errorf("%s run %d for commit %s is %s; no %s image published yet", settings.Workflow, run.ID, sha, status, tag)
 	}
 	if run, ok := firstWorkflowRun(runs, workflowRunSucceeded); ok {
 		return fmt.Errorf("%s run %d for commit %s succeeded but published no %s tag; re-run the build to publish the CI image", settings.Workflow, run.ID, sha, tag)
@@ -153,30 +152,6 @@ func diagnoseMissingCommitImage(ctx context.Context, httpClient *http.Client, sl
 		return fmt.Errorf("%s run %d for commit %s concluded %s; no CI image was published — fix CI and redeploy", settings.Workflow, run.ID, sha, conclusion)
 	}
 	return fmt.Errorf("no CI image for commit %s in workflow %s: no build targets this commit (tag %s absent)", sha, settings.Workflow, tag)
-}
-
-// testSlotCIImagePendingError signals that a docker-build-check run targets the
-// commit but has not published its CI image yet (the run is queued or in
-// progress). It is retryable: the alias lands when the run completes, so
-// deployImageToTestSlot maps it to 409 with an actionable message rather than a
-// terminal 422. errors.As lets the caller branch on it without string-matching.
-type testSlotCIImagePendingError struct {
-	SHA      string
-	Workflow string
-	RunID    int64
-	Status   string
-}
-
-func (e *testSlotCIImagePendingError) Error() string {
-	run := ""
-	if e.RunID > 0 {
-		run = fmt.Sprintf(" run %d", e.RunID)
-	}
-	status := strings.TrimSpace(e.Status)
-	if status == "" {
-		status = "in progress"
-	}
-	return fmt.Sprintf("CI image for commit %s is not ready yet: %s%s is %s; retry once the build completes", e.SHA, e.Workflow, run, status)
 }
 
 // workflowRunSucceeded reports a completed run that published its image. The

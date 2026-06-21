@@ -373,27 +373,27 @@ func TestDeployImageToTestSlotRequiresHelmConfig(t *testing.T) {
 	}
 }
 
-// TestDeployImageToTestSlotReturns409WhileCIImagePending: a still-building CI
-// image is retryable, so the endpoint answers 409 (not the terminal 422) with
-// the resolver's actionable message and must not dispatch the deploy performer.
-func TestDeployImageToTestSlotReturns409WhileCIImagePending(t *testing.T) {
+// TestDeployImageToTestSlotReturns422WhenImageAbsent: a commit with no published
+// CI image — here an in-progress build — is terminal at the deploy endpoint (422,
+// not a special retryable status) and must not dispatch the deploy performer. The
+// provisioning gate gates on the durable ci_image_available row, so glimmung no
+// longer distinguishes a still-building "pending" image from an absent one.
+func TestDeployImageToTestSlotReturns422WhenImageAbsent(t *testing.T) {
 	store := newDeployImageStore(t)
 	performer := func(context.Context, Lease, Project, string, string, string) error {
-		t.Fatal("performer must not run while the CI image is still building")
+		t.Fatal("performer must not run when the CI image is absent")
 		return nil
 	}
 	resolveRef := func(context.Context, string, string, string) (string, error) { return "racysha", nil }
-	resolveImage := failingTestSlotImageResolver(&testSlotCIImagePendingError{
-		SHA: "racysha", Workflow: "docker-build-check.yaml", RunID: 42, Status: "in_progress",
-	})
+	resolveImage := failingTestSlotImageResolver(fmt.Errorf("docker-build-check.yaml run 42 for commit racysha is in_progress; no sha-racysha image published yet"))
 	handler := http.HandlerFunc(deployImageToTestSlot(store, nil, nil, performer, resolveRef, resolveImage))
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, authedDeployRequest(t, `{"project":"tank-operator","slot_name":"tank-operator-slot-1","git_ref":"feat/x"}`))
-	if rec.Code != http.StatusConflict {
-		t.Fatalf("status = %d, want 409; body=%s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422; body=%s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "not ready yet") || !strings.Contains(rec.Body.String(), "retry") {
-		t.Fatalf("body=%s, want actionable pending message", rec.Body.String())
+	if !strings.Contains(rec.Body.String(), "image published yet") {
+		t.Fatalf("body=%s, want the resolver's absent-image diagnostic", rec.Body.String())
 	}
 }
 
