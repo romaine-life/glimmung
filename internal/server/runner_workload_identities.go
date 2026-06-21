@@ -12,7 +12,17 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/romaine-life/glimmung/internal/metrics"
 )
+
+// maxFederatedIdentityCredentialsPerIdentity bounds how many federated identity
+// credentials a single Azure user-assigned managed identity may carry — Azure's
+// documented limit. The standby pool already consumes some; each live preview
+// consumes one more per credential template. The provision refuses (with a
+// surfaced durable error) rather than letting Azure reject an over-cap upsert
+// with an opaque 400, so a capacity ceiling is an explicit, observable failure.
+const maxFederatedIdentityCredentialsPerIdentity = 20
 
 const (
 	RunnerWorkloadIdentityStatusOK      = "ok"
@@ -570,12 +580,43 @@ func (s RunnerWorkloadIdentityService) EnsurePreviewWorkloadIdentity(ctx context
 	if s.Client == nil {
 		return errors.New("runner workload identity client not configured")
 	}
-	for _, cred := range previewWorkloadIdentityCredentials(cfg, previewName) {
-		if err := s.Client.UpsertFederatedIdentityCredential(ctx, cred); err != nil {
-			return fmt.Errorf("upsert preview federated identity credential %s/%s: %w", cred.IdentityName, cred.CredentialName, err)
+	creds := previewWorkloadIdentityCredentials(cfg, previewName)
+	// Bound the Azure per-identity cap deliberately, BEFORE any upsert, so the
+	// failure is atomic (no partial federation) and surfaced as a clear durable
+	// provision error rather than an opaque Azure 400 on the over-cap upsert.
+	for _, cred := range creds {
+		current, lerr := s.Client.ListFederatedIdentityCredentials(ctx, cred.FederatedIdentityCredentialRef)
+		if lerr != nil {
+			metrics.RecordLivePreviewWorkloadIdentity(metrics.LivePreviewWorkloadIdentityEnsure, metrics.LivePreviewWorkloadIdentityError)
+			return fmt.Errorf("list federated identity credentials for %s: %w", cred.IdentityName, lerr)
+		}
+		// An already-present credential (re-provision) consumes no new slot.
+		if !containsCredentialName(current, cred.CredentialName) && len(current) >= maxFederatedIdentityCredentialsPerIdentity {
+			metrics.RecordLivePreviewWorkloadIdentity(metrics.LivePreviewWorkloadIdentityEnsure, metrics.LivePreviewWorkloadIdentityCapExceeded)
+			return fmt.Errorf("preview would exceed the %d federated identity credential cap on identity %q (%d in use); deprovision an existing preview for this app or reduce its standby pool",
+				maxFederatedIdentityCredentialsPerIdentity, cred.IdentityName, len(current))
 		}
 	}
+	for _, cred := range creds {
+		if uerr := s.Client.UpsertFederatedIdentityCredential(ctx, cred); uerr != nil {
+			metrics.RecordLivePreviewWorkloadIdentity(metrics.LivePreviewWorkloadIdentityEnsure, metrics.LivePreviewWorkloadIdentityError)
+			return fmt.Errorf("upsert preview federated identity credential %s/%s: %w", cred.IdentityName, cred.CredentialName, uerr)
+		}
+	}
+	metrics.RecordLivePreviewWorkloadIdentity(metrics.LivePreviewWorkloadIdentityEnsure, metrics.LivePreviewWorkloadIdentityOK)
 	return nil
+}
+
+// containsCredentialName reports whether a credential with the given name is
+// already present in the list (an idempotent re-provision must not be counted
+// against the cap as if it were a new credential).
+func containsCredentialName(creds []FederatedIdentityCredential, name string) bool {
+	for _, cred := range creds {
+		if cred.CredentialName == name {
+			return true
+		}
+	}
+	return false
 }
 
 // RemovePreviewWorkloadIdentity deletes the preview's federated identity
@@ -600,5 +641,152 @@ func (s RunnerWorkloadIdentityService) RemovePreviewWorkloadIdentity(ctx context
 			firstErr = fmt.Errorf("delete preview federated identity credential %s/%s: %w", cred.IdentityName, cred.CredentialName, derr)
 		}
 	}
+	if firstErr != nil {
+		// A failed delete is a potential credential leak — count it as an error so
+		// it is visible (the orphan sweep is the self-heal backstop).
+		metrics.RecordLivePreviewWorkloadIdentity(metrics.LivePreviewWorkloadIdentityRemove, metrics.LivePreviewWorkloadIdentityError)
+	} else {
+		metrics.RecordLivePreviewWorkloadIdentity(metrics.LivePreviewWorkloadIdentityRemove, metrics.LivePreviewWorkloadIdentityOK)
+	}
 	return firstErr
+}
+
+// previewNamespaceFromSubject extracts the Kubernetes namespace from an AKS
+// workload-identity subject of the form "system:serviceaccount:<namespace>:<sa>"
+// (a preview's namespace IS its name). Returns "" for any other subject shape, so
+// non-AKS subjects are never treated as preview credentials.
+func previewNamespaceFromSubject(subject string) string {
+	parts := strings.Split(strings.TrimSpace(subject), ":")
+	if len(parts) != 4 || parts[0] != "system" || parts[1] != "serviceaccount" {
+		return ""
+	}
+	return parts[2]
+}
+
+// credentialMatchesPreview reports whether cred is EXACTLY one of the credentials
+// Glimmung would mint for a preview named previewName under this project's
+// templates (matched on identity, credential name, and subject). It is the
+// ownership proof the orphan sweep requires before deleting anything: a credential
+// Glimmung did not mint will not match and is never touched.
+func credentialMatchesPreview(cred FederatedIdentityCredential, cfg runnerWorkloadIdentityConfig, previewName string) bool {
+	for _, want := range previewWorkloadIdentityCredentials(cfg, previewName) {
+		if want.IdentityName == cred.IdentityName &&
+			want.CredentialName == cred.CredentialName &&
+			want.Subject == cred.Subject {
+			return true
+		}
+	}
+	return false
+}
+
+// reclaimOrphanedPreviewCredentials deletes this project's preview federated
+// identity credentials whose preview environment no longer exists (liveNames is
+// the set of live preview env names). It never touches standby-pool credentials
+// (owned by the standby reconcile) or credentials Glimmung did not mint. Returns
+// the number reclaimed.
+func (s RunnerWorkloadIdentityService) reclaimOrphanedPreviewCredentials(ctx context.Context, project Project, liveNames map[string]bool) (int, error) {
+	cfg, ok, err := s.previewWorkloadIdentityConfig(project, false)
+	if !ok || err != nil {
+		return 0, err
+	}
+	if s.Client == nil {
+		return 0, errors.New("runner workload identity client not configured")
+	}
+	reclaimed := 0
+	var firstErr error
+	seenIdentity := map[string]bool{}
+	for _, template := range cfg.Credentials {
+		if seenIdentity[template.IdentityName] {
+			continue
+		}
+		seenIdentity[template.IdentityName] = true
+		current, lerr := s.Client.ListFederatedIdentityCredentials(ctx, FederatedIdentityCredentialRef{
+			SubscriptionID: cfg.SubscriptionID,
+			ResourceGroup:  cfg.ResourceGroup,
+			IdentityName:   template.IdentityName,
+		})
+		if lerr != nil {
+			if firstErr == nil {
+				firstErr = fmt.Errorf("list federated identity credentials for %s: %w", template.IdentityName, lerr)
+			}
+			continue
+		}
+		for _, cred := range current {
+			// Standby-pool credentials belong to the standby reconcile — never ours.
+			if _, isStandby := managedWorkloadIdentityCredentialSlotName(cred, cfg); isStandby {
+				continue
+			}
+			previewName := previewNamespaceFromSubject(cred.Subject)
+			if previewName == "" || !credentialMatchesPreview(cred, cfg, previewName) {
+				continue // not a Glimmung-minted preview credential — leave it alone
+			}
+			if liveNames[previewName] {
+				continue // a live preview owns it — desired
+			}
+			if derr := s.Client.DeleteFederatedIdentityCredential(ctx, cred.FederatedIdentityCredentialRef); derr != nil {
+				if firstErr == nil {
+					firstErr = fmt.Errorf("delete orphaned preview credential %s/%s: %w", cred.IdentityName, cred.CredentialName, derr)
+				}
+				continue
+			}
+			metrics.RecordLivePreviewWorkloadIdentityOrphanReclaimed()
+			reclaimed++
+		}
+	}
+	return reclaimed, firstErr
+}
+
+// ReclaimOrphanedPreviewWorkloadIdentities is the one-shot startup sweep that
+// reclaims preview federated identity credentials whose preview environment no
+// longer exists — the self-heal for a teardown missed because a process died
+// mid-deprovision. It mirrors RecoverInFlightTestSlots (startup, not a polling
+// loop; idempotent deletes) and the lifecycle's orphan-cleanup model
+// (docs/test-slot-lifecycle.md): a federated credential is a per-environment
+// preliminary resource, and a missed teardown converges on the next boot. It is
+// control-plane-only (the caller gates on ControlPlaneLoopsEnabled) and a no-op
+// when workload-identity federation is unconfigured.
+func ReclaimOrphanedPreviewWorkloadIdentities(ctx context.Context, store ReadStore, wi RunnerWorkloadIdentityService, logf func(string, ...any)) {
+	if wi.Client == nil {
+		return
+	}
+	previewStore, ok := store.(PreviewControlStore)
+	if !ok || previewStore == nil {
+		return
+	}
+	projects, err := store.ListProjects(ctx)
+	if err != nil {
+		if logf != nil {
+			logf("preview workload identity orphan sweep: list projects failed: %v", err)
+		}
+		return
+	}
+	previews, err := previewStore.ListPreviewEnvironments(ctx)
+	if err != nil {
+		if logf != nil {
+			logf("preview workload identity orphan sweep: list preview environments failed: %v", err)
+		}
+		return
+	}
+	liveByProject := map[string]map[string]bool{}
+	for _, env := range previews {
+		if liveByProject[env.Project] == nil {
+			liveByProject[env.Project] = map[string]bool{}
+		}
+		liveByProject[env.Project][env.Name] = true
+	}
+	total := 0
+	for _, project := range projects {
+		key := firstNonEmpty(project.Name, project.ID)
+		reclaimed, rerr := wi.reclaimOrphanedPreviewCredentials(ctx, project, liveByProject[key])
+		total += reclaimed
+		if rerr != nil && logf != nil {
+			logf("preview workload identity orphan sweep: project=%s err=%v", key, rerr)
+		}
+		if reclaimed > 0 && logf != nil {
+			logf("preview workload identity orphan sweep: project=%s reclaimed=%d orphaned credential(s)", key, reclaimed)
+		}
+	}
+	if total > 0 && logf != nil {
+		logf("preview workload identity orphan sweep: reclaimed %d orphaned preview credential(s) total", total)
+	}
 }

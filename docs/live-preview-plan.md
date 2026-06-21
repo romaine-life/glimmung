@@ -328,6 +328,55 @@ Stage 4a makes the live-preview lane provisionable for ANY onboarded app (Stage
   projected `auth.romaine.life` SA token to its slot pod (Stage 0 audit). No
   cross-repo Helm registry, no committed copy of the partial.
 
+## Stage 4c landed contracts (cross-app cutover gate + preview workload identity)
+
+Stage 4c is the cutover gate: an automated, retained smoke that proves the lane
+end to end per app, plus the per-preview workload-identity federation the first
+real end-to-end exercise proved was missing.
+
+- **Retained cross-app smoke.** `scripts/live-preview-smoke.sh` provisions a REAL
+  preview per onboarded app and proves five properties observed from outside
+  (fresh-passthrough, observed-serve incl. durable `state=live` /
+  `observed_build_id`, replace-not-install, clear-revert, negative-path) with a
+  unique per-run sentinel so a stale serve cannot false-pass, then deprovisions
+  clean. It speaks the Stage 3 sender contracts and runs from any
+  `auth.romaine.life`-token-bearing context. The gate is GREEN for an app only
+  when all five are observed green. See `docs/live-preview-smoke.md`.
+
+- **Per-preview Azure workload-identity federation.** A preview backend that
+  authenticates to Azure at boot via workload identity (kill-me → App Config,
+  glimmung → Postgres) needs a federated identity credential for its OWN preview
+  namespace's service account — the standby pool only pre-creates credentials for
+  the fixed standby slots (`<prefix>-<n>`), not ad-hoc preview namespaces. A
+  federated credential is a **per-environment preliminary resource**
+  (`docs/test-slot-lifecycle.md`): the preview provision UPSERTs it (idempotent,
+  reusing the existing `FederatedIdentityCredentialClient` + the project's
+  credential templates with `{namespace}`/`{slot_name}` = the preview name) before
+  the HOT render, and DELETEs it at deprovision AND on every provision error path
+  (best-effort, detached context) so a failed or torn-down preview never leaks a
+  credential. No-op for apps without `runner_standby_workload_identity`.
+
+- **Scaling story (the cost/bound contract).** Azure caps federated identity
+  credentials per managed identity (`maxFederatedIdentityCredentialsPerIdentity`,
+  20). The standby pool consumes some; each live preview consumes one more per
+  credential template. A provision that would exceed the cap is refused with a
+  **surfaced durable error** (`preview_environment.state=error` + a reason naming
+  the identity and the in-use count), never a silent failure or an opaque Azure
+  400 — so the ceiling is operationally visible. The operational lever is the
+  per-app concurrent-preview count (deprovision a preview, or reduce the standby
+  pool, to free a slot). Metrics: `glimmung_live_preview_workload_identity_total{
+  operation,outcome}` (ensure/remove × ok/error/cap_exceeded) and
+  `glimmung_live_preview_workload_identity_orphans_reclaimed_total`.
+
+- **Self-healing orphan reclaim.** A one-shot startup sweep
+  (`ReclaimOrphanedPreviewWorkloadIdentities`, control-plane-only, mirroring
+  `RecoverInFlightTestSlots` — startup, not a polling loop) reclaims preview
+  federated credentials whose preview environment no longer exists (a teardown
+  missed because a process died mid-deprovision). It only touches credentials
+  Glimmung itself would mint for a preview (matched on identity + name + subject)
+  and never standby-pool credentials, so a missed teardown converges on the next
+  boot instead of leaking against the Azure cap.
+
 ## Definition of done
 
 All five stages. **Stage 5 deletion is required** — no parallel path survives.

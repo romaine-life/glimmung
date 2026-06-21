@@ -258,6 +258,12 @@ func main() {
 			previewStatusReader = server.NewHTTPPreviewStatusReader(ts, nil)
 		}
 		server.StartPreviewVerifyReconciler(context.Background(), settings, rt, previewStatusReader, log.Printf)
+		// One-shot startup sweep: reclaim preview Azure federated identity
+		// credentials whose preview environment no longer exists (a teardown
+		// missed because a process died mid-deprovision). Mirrors
+		// RecoverInFlightTestSlots — startup, not a polling loop — per the
+		// preliminary-resource orphan model in docs/test-slot-lifecycle.md.
+		go server.ReclaimOrphanedPreviewWorkloadIdentities(context.Background(), rt, workloadIdentities, log.Printf)
 		if ghClient != nil {
 			// One-shot recovery sweep at startup: re-arm per-lease TTL
 			// timers, resume in-flight warming/activating/cleaning work, and

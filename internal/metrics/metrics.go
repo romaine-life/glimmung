@@ -853,6 +853,49 @@ func RecordLivePreviewObservedConfirmed() { livePreviewObservedConfirmedTotal.In
 // the edge is not serving — the durable stale state.
 func RecordLivePreviewStaleDetected() { livePreviewStaleDetectedTotal.Inc() }
 
+// Preview workload-identity federation (the per-preview Azure federated identity
+// credential that lets a stable backend authenticating to Azure at boot run in a
+// preview namespace). A preview credential is a per-environment preliminary
+// resource (docs/test-slot-lifecycle.md): minted at provision, removed at
+// deprovision, and reclaimed by the startup sweep if a teardown was missed.
+const (
+	LivePreviewWorkloadIdentityEnsure = "ensure"
+	LivePreviewWorkloadIdentityRemove = "remove"
+
+	LivePreviewWorkloadIdentityOK          = "ok"
+	LivePreviewWorkloadIdentityError       = "error"
+	LivePreviewWorkloadIdentityCapExceeded = "cap_exceeded"
+)
+
+var (
+	livePreviewWorkloadIdentityTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "glimmung_live_preview_workload_identity_total",
+			Help: "Preview workload-identity federation operations, labelled by operation (ensure, remove) and bounded outcome (ok, error, cap_exceeded). cap_exceeded means a provision was refused because it would exceed the Azure per-identity federated-credential cap.",
+		},
+		[]string{"operation", "outcome"},
+	)
+	livePreviewWorkloadIdentityOrphansReclaimedTotal = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Name: "glimmung_live_preview_workload_identity_orphans_reclaimed_total",
+			Help: "Orphaned preview federated identity credentials reclaimed by the startup sweep — a credential whose preview environment no longer exists, i.e. a missed teardown self-healing. A persistently rising counter means deprovision teardown is leaking and should be investigated.",
+		},
+	)
+)
+
+// RecordLivePreviewWorkloadIdentity counts one preview workload-identity
+// federation operation. operation is one of the LivePreviewWorkloadIdentity{Ensure,
+// Remove} constants; outcome is one of LivePreviewWorkloadIdentity{OK,Error,CapExceeded}.
+func RecordLivePreviewWorkloadIdentity(operation, outcome string) {
+	livePreviewWorkloadIdentityTotal.WithLabelValues(safeLabel(operation), safeLabel(outcome)).Inc()
+}
+
+// RecordLivePreviewWorkloadIdentityOrphanReclaimed counts one orphaned preview
+// federated identity credential reclaimed by the startup sweep.
+func RecordLivePreviewWorkloadIdentityOrphanReclaimed() {
+	livePreviewWorkloadIdentityOrphansReclaimedTotal.Inc()
+}
+
 func init() {
 	registry.MustRegister(
 		collectors.NewGoCollector(),
@@ -892,6 +935,8 @@ func init() {
 		livePreviewPushReceivedTotal,
 		livePreviewObservedConfirmedTotal,
 		livePreviewStaleDetectedTotal,
+		livePreviewWorkloadIdentityTotal,
+		livePreviewWorkloadIdentityOrphansReclaimedTotal,
 	)
 }
 

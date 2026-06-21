@@ -3,7 +3,9 @@ package server
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 )
@@ -482,5 +484,99 @@ func TestReconcileRunnerWorkloadIdentitiesPreservesPreviewCredential(t *testing.
 		if d.CredentialName == "aks-smoke-killme" {
 			t.Fatalf("standby reconcile deleted the preview credential: %+v", d)
 		}
+	}
+}
+
+func TestEnsurePreviewWorkloadIdentityRefusesWhenCapExceeded(t *testing.T) {
+	// Fill the identity to the Azure cap with unrelated credentials.
+	existing := make([]FederatedIdentityCredential, maxFederatedIdentityCredentialsPerIdentity)
+	for i := range existing {
+		existing[i] = FederatedIdentityCredential{FederatedIdentityCredentialRef: FederatedIdentityCredentialRef{
+			SubscriptionID: "sub-123", ResourceGroup: "infra", IdentityName: "kill-me-identity",
+			CredentialName: fmt.Sprintf("existing-%d", i),
+		}}
+	}
+	client := &fakeFederatedIdentityCredentialClient{
+		current: map[string][]FederatedIdentityCredential{"kill-me-identity": existing},
+	}
+	service := RunnerWorkloadIdentityService{Client: client, Issuer: "https://issuer.example/"}
+
+	err := service.EnsurePreviewWorkloadIdentity(context.Background(), killMePreviewProject(), "smoke-killme")
+	if err == nil {
+		t.Fatal("expected a cap-exceeded error")
+	}
+	if !strings.Contains(err.Error(), "cap") {
+		t.Fatalf("error should explain the cap, got: %v", err)
+	}
+	if len(client.upserts) != 0 {
+		t.Fatalf("must not upsert any credential when over cap, got %d", len(client.upserts))
+	}
+}
+
+func TestEnsurePreviewWorkloadIdentityAllowsReprovisionAtCap(t *testing.T) {
+	// At the cap, but the preview's OWN credential already exists: a re-provision
+	// consumes no new slot and must be allowed (idempotent upsert).
+	existing := make([]FederatedIdentityCredential, 0, maxFederatedIdentityCredentialsPerIdentity)
+	for i := 0; i < maxFederatedIdentityCredentialsPerIdentity-1; i++ {
+		existing = append(existing, FederatedIdentityCredential{FederatedIdentityCredentialRef: FederatedIdentityCredentialRef{
+			IdentityName: "kill-me-identity", CredentialName: fmt.Sprintf("existing-%d", i),
+		}})
+	}
+	existing = append(existing, FederatedIdentityCredential{
+		FederatedIdentityCredentialRef: FederatedIdentityCredentialRef{
+			SubscriptionID: "sub-123", ResourceGroup: "infra", IdentityName: "kill-me-identity",
+			CredentialName: "aks-smoke-killme",
+		},
+		Subject: "system:serviceaccount:smoke-killme:infra-shared",
+	})
+	client := &fakeFederatedIdentityCredentialClient{
+		current: map[string][]FederatedIdentityCredential{"kill-me-identity": existing},
+	}
+	service := RunnerWorkloadIdentityService{Client: client, Issuer: "https://issuer.example/"}
+
+	if err := service.EnsurePreviewWorkloadIdentity(context.Background(), killMePreviewProject(), "smoke-killme"); err != nil {
+		t.Fatalf("re-provision at cap (own credential present) must be allowed: %v", err)
+	}
+	if len(client.upserts) != 1 {
+		t.Fatalf("expected 1 idempotent upsert, got %d", len(client.upserts))
+	}
+}
+
+func TestReclaimOrphanedPreviewCredentials(t *testing.T) {
+	mk := func(name, ns string) FederatedIdentityCredential {
+		return FederatedIdentityCredential{
+			FederatedIdentityCredentialRef: FederatedIdentityCredentialRef{
+				SubscriptionID: "sub-123", ResourceGroup: "infra", IdentityName: "kill-me-identity",
+				CredentialName: name,
+			},
+			Subject:   "system:serviceaccount:" + ns + ":infra-shared",
+			Issuer:    "https://issuer.example/",
+			Audiences: []string{defaultWorkloadIdentityAudience},
+		}
+	}
+	standby := mk("aks-kill-me-slot-1", "kill-me-slot-1")     // standby-owned — must be left alone
+	live := mk("aks-smoke-live", "smoke-live")                 // a live preview — desired
+	orphan := mk("aks-smoke-orphan", "smoke-orphan")           // no live row — reclaim
+	foreign := FederatedIdentityCredential{                    // not Glimmung-minted — must be left alone
+		FederatedIdentityCredentialRef: FederatedIdentityCredentialRef{
+			SubscriptionID: "sub-123", ResourceGroup: "infra", IdentityName: "kill-me-identity",
+			CredentialName: "some-other-credential",
+		},
+		Subject: "system:serviceaccount:smoke-orphan:some-other-sa",
+	}
+	client := &fakeFederatedIdentityCredentialClient{
+		current: map[string][]FederatedIdentityCredential{"kill-me-identity": {standby, live, orphan, foreign}},
+	}
+	service := RunnerWorkloadIdentityService{Client: client, Issuer: "https://issuer.example/"}
+
+	reclaimed, err := service.reclaimOrphanedPreviewCredentials(context.Background(), killMePreviewProject(), map[string]bool{"smoke-live": true})
+	if err != nil {
+		t.Fatalf("reclaim: %v", err)
+	}
+	if reclaimed != 1 {
+		t.Fatalf("reclaimed=%d, want 1 (only the orphan)", reclaimed)
+	}
+	if len(client.deletes) != 1 || client.deletes[0].CredentialName != "aks-smoke-orphan" {
+		t.Fatalf("deletes=%+v, want only aks-smoke-orphan (standby, live, and foreign preserved)", client.deletes)
 	}
 }

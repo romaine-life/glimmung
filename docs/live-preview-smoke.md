@@ -134,17 +134,26 @@ exists for the preview namespace's service-account subject.
   `preview_provision.go`) holds no `FederatedIdentityCredentialClient` and does
   no per-preview federation. chess-tactics and ambience have no
   `runner_standby_workload_identity` and are unaffected.
-- **Recommended fix (glimmung-contained; needs control-plane deploy to verify)**:
-  inject the workload-identity client/service into the preview provision; when a
-  project has `runner_standby_workload_identity` enabled, **upsert** a federated
-  credential for the preview namespace subject (templated from the project's
-  `credentials`, substituting `{namespace}`/`{slot_name}` = preview name) BEFORE
-  the HOT render in `ProvisionPreview`, and **delete** it in `DeprovisionPreview`.
-  Mind Azure's per-identity federated-credential cap; the teardown must run on
-  every terminal path. Cannot be observed-verified from a session pod or a
-  Glimmung test slot (the provision is control-plane-only and slots run with
-  `ControlPlaneLoopsEnabled=false`); it must deploy to the control plane and be
-  re-proven by this smoke.
+- **Fix (landed on this branch; pending control-plane deploy to observe-verify)**:
+  per-preview Azure workload-identity federation, built to the lifecycle bar (a
+  federated credential is a per-environment preliminary resource,
+  `docs/test-slot-lifecycle.md`). `ProvisionPreview` upserts a federated credential
+  for the preview namespace subject (reusing the existing
+  `FederatedIdentityCredentialClient` + the project's credential templates with
+  `{namespace}`/`{slot_name}` = preview name) before the HOT render;
+  `DeprovisionPreview` and every provision error path delete it (best-effort,
+  detached context) so a failed/torn-down preview never leaks. The Azure
+  per-identity federated-credential cap is bounded with a **surfaced** error
+  (durable `state=error` naming the identity + in-use count, never a silent
+  failure); metrics `glimmung_live_preview_workload_identity_total{operation,
+  outcome}` + `..._orphans_reclaimed_total`; and a one-shot startup sweep
+  (`ReclaimOrphanedPreviewWorkloadIdentities`, mirroring `RecoverInFlightTestSlots`)
+  self-heals a missed teardown. Unit-tested (templating, upsert/teardown lifecycle,
+  cap-exceeded, orphan reclaim, standby-credential preservation). It **cannot** be
+  observed-verified from a session pod or a Glimmung test slot (the provision is
+  control-plane-only; slots run `ControlPlaneLoopsEnabled=false`) — it must deploy
+  to the control plane and be re-proven by re-running this smoke for kill-me +
+  glimmung. See `docs/live-preview-plan.md` "Stage 4c landed contracts".
 
 ### Blocker 2 — ambience cannot provision a preview (no wildcard base; native edge tier)
 
