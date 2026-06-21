@@ -14,7 +14,7 @@ image:
   # The chart's deployment template fails if the resolved tag is empty,
   # so an unsynced bump or a misconfigured override still fails loudly.
   # Quote so YAML always treats image tags as strings.
-  tag: "app-1a0d9d3426c35f2e04944f648358ad52158193ebd15efb334b1b8994d076a188"
+  tag: "app-a7c75a1c27dd57f408060a4fac38f02f4d478c6ce84c6702681a9361861799a3"
   pullPolicy: IfNotPresent
 
 # Public hostname for the validation env. Set per-install to
