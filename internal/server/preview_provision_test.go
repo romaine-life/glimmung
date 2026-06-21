@@ -1,7 +1,10 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
+	"io"
+	"net/http"
 	"strings"
 	"testing"
 )
@@ -215,5 +218,169 @@ func TestValidationInstallManifestHasNoEdgeVendoring(t *testing.T) {
 	// It still runs the normal dependency build (no-op for charts with no deps).
 	if !strings.Contains(script, "helm dependency build") {
 		t.Fatalf("validation install manifest missing helm dependency build")
+	}
+}
+
+// previewRouteTestProject mirrors a real preview-capable project: it carries the
+// preview wildcard base (runner_standby_dns.record_base) AND the slot chart's
+// hostname={host} value, so the install host substitution resolves the
+// renderWarm-gated HTTPRoute to the preview's own URL. previewTestProject above
+// omits these (it only exercises the edge value-layering), so the route tests use
+// this fuller fixture.
+func previewRouteTestProject() Project {
+	return Project{
+		Name:       "glimmung",
+		GitHubRepo: "romaine-life/glimmung",
+		Metadata: map[string]any{
+			"test_slot_helm": map[string]any{
+				"enabled":    true,
+				"chart_path": "k8s/issue",
+				// The slot chart's HTTPRoute hostname comes from the install host
+				// substitution; a real project carries hostname={host}.
+				"values": map[string]any{"hostname": "{host}"},
+			},
+			"live_preview": map[string]any{
+				"enabled":          true,
+				"backend_prefixes": []any{"/api", "/healthz"},
+			},
+			// env.URL and the install {host} both derive from
+			// testSlotURL(project, name) → https://<name>.<record_base>/.
+			"runner_standby_dns": map[string]any{"record_base": "glimmung.dev.romaine.life"},
+		},
+	}
+}
+
+// previewRouteTestEnv derives URL exactly as the preview API does
+// (testSlotURL(project, name)), so the env's public URL and the install-time
+// {host} substitution are guaranteed to be the same host — the invariant the
+// route tests assert.
+func previewRouteTestEnv() PreviewEnvironment {
+	project := previewRouteTestProject()
+	name := "preview-glimmung-s1"
+	url := ""
+	if u := testSlotURL(project, &name); u != nil {
+		url = *u
+	}
+	return PreviewEnvironment{
+		Project:           "glimmung",
+		Name:              name,
+		AuthorizedSubject: "svc:preview:owner",
+		BackendPrefixes:   []string{"/api", "/healthz"},
+		UpstreamURL:       defaultPreviewUpstreamURL,
+		URL:               url,
+	}
+}
+
+// TestProvisionPreviewReconcilesWarmThenHotHelm pins the route-reachability fix:
+// ProvisionPreview reconciles the slot chart in the SAME warm→hot sequence the
+// faithful validation activation uses. The WARM pass is renderWarm-gated and is
+// the only phase that materializes the HTTPRoute for the preview's wildcard host;
+// a hot-only install (the prior bug) rendered the workload + Service but no route,
+// leaving the preview URL unreachable. The test asserts BOTH render-mode-keyed
+// installer jobs run and that warm is waited for before hot.
+func TestProvisionPreviewReconcilesWarmThenHotHelm(t *testing.T) {
+	tokenPath := tempTokenFile(t)
+	var paths []string
+	launcher := &KubernetesRunLauncher{
+		Settings: Settings{
+			K8sAPIHost:                     "https://kube.test",
+			K8sSATokenPath:                 tokenPath,
+			RunnerNamespace:                "glimmung-runs",
+			RunnerServiceAccount:           "glimmung-runner",
+			RunnerNamespaceRole:            "cluster-admin",
+			RunnerJobTTLSeconds:            3600,
+			LivePreviewEdgeImageRepository: "acr.io/edge",
+			LivePreviewEdgeImageTag:        "edge-v1",
+		},
+		HTTPClient: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			paths = append(paths, req.Method+" "+req.URL.Path)
+			body := `{}`
+			if req.Method == http.MethodGet && strings.Contains(req.URL.Path, "/jobs/glim-slot-apply-") {
+				body = `{"status":{"conditions":[{"type":"Complete","status":"True"}]}}`
+			}
+			return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}, nil
+		})},
+	}
+	project := previewRouteTestProject()
+	env := previewRouteTestEnv()
+
+	if err := launcher.ProvisionPreview(context.Background(), env, project, fakeRunnerGitHubTokenMinter{token: "ghs_test"}); err != nil {
+		t.Fatalf("ProvisionPreview: %v", err)
+	}
+
+	warmIdx, hotIdx := -1, -1
+	for i, p := range paths {
+		if !strings.HasPrefix(p, "GET ") {
+			continue
+		}
+		if warmIdx == -1 && strings.Contains(p, "/jobs/glim-slot-apply-warm-") {
+			warmIdx = i
+		}
+		if hotIdx == -1 && strings.Contains(p, "/jobs/glim-slot-apply-hot-") {
+			hotIdx = i
+		}
+	}
+	if warmIdx == -1 {
+		t.Fatalf("ProvisionPreview must wait for the WARM installer job (renders the HTTPRoute), paths=%#v", paths)
+	}
+	if hotIdx == -1 {
+		t.Fatalf("ProvisionPreview must wait for the HOT installer job (renders the workload + edge), paths=%#v", paths)
+	}
+	if warmIdx >= hotIdx {
+		t.Fatalf("ProvisionPreview must reconcile WARM before HOT (warm idx %d, hot idx %d), paths=%#v", warmIdx, hotIdx, paths)
+	}
+}
+
+// TestPreviewWarmInstallCommandCarriesRouteHost proves the WARM preview install
+// command carries renderMode=warm and the chart hostname resolved to the
+// PREVIEW's own host (env.URL with scheme/slash stripped), so the renderWarm-
+// gated HTTPRoute materializes for the preview wildcard URL. The HOT command
+// carries renderMode=hot. Both are built from the real install-job machinery
+// (testSlotInstallJobManifest) fed the preview config + substitutions, so a
+// regression in the value wiring is caught.
+func TestPreviewWarmInstallCommandCarriesRouteHost(t *testing.T) {
+	project := previewRouteTestProject()
+	env := previewRouteTestEnv()
+	cfg, err := previewHelmSettings(project, env, "acr.io/edge", "edge-v1")
+	if err != nil {
+		t.Fatalf("settings: %v", err)
+	}
+	lease := previewLeaseFromEnv(env)
+	subs := testSlotSubstitutions(lease, project, env.Name, env.Name+"-sessions")
+
+	host := strings.TrimPrefix(strings.TrimSuffix(env.URL, "/"), "https://")
+	if host == "" {
+		t.Fatalf("preview env URL is empty; fixture must derive it from testSlotURL")
+	}
+	if subs["host"] != host {
+		t.Fatalf("preview install host substitution = %q, want %q (the preview env URL host)", subs["host"], host)
+	}
+
+	settings := Settings{RunnerNamespace: "glimmung-runs", RunnerServiceAccount: "glimmung-runner"}
+	warmBlob, _ := json.Marshal(testSlotInstallJobManifest(settings, cfg, lease, project, subs, testSlotRenderModeWarm))
+	hotBlob, _ := json.Marshal(testSlotInstallJobManifest(settings, cfg, lease, project, subs, testSlotRenderModeHot))
+	warm, hot := string(warmBlob), string(hotBlob)
+
+	for _, want := range []string{"renderMode=warm", "hostname=" + host} {
+		if !strings.Contains(warm, want) {
+			t.Fatalf("warm preview install command missing %q (route would not render for the preview host): %s", want, warm)
+		}
+	}
+	if strings.Contains(warm, "renderMode=hot") {
+		t.Fatalf("warm command must not also set renderMode=hot")
+	}
+	if !strings.Contains(hot, "renderMode=hot") {
+		t.Fatalf("hot preview install command missing renderMode=hot")
+	}
+	// Both phases carry the same edge config + cross-repo vendor wiring: the edge
+	// renders in hot; warm is inert for livePreview but must not strip the config
+	// (the two phases install from the same vendored chart).
+	for _, want := range []string{"livePreview.enabled=true", "charts/live-preview-edge"} {
+		if !strings.Contains(warm, want) {
+			t.Fatalf("warm preview phase missing %q (warm vendor wiring must match hot)", want)
+		}
+		if !strings.Contains(hot, want) {
+			t.Fatalf("hot preview phase missing %q", want)
+		}
 	}
 }

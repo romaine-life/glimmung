@@ -139,11 +139,28 @@ func strPtrOrNil(s string) *string {
 }
 
 // ProvisionPreview deploys the preview env via the shared Helm install path with
-// the preview config + the preview-typed lease, rendered in hot mode (so the
-// chart materializes the Deployment + Service + HTTPRoute). The
-// live-preview-edge partial self-gates on livePreview.enabled, which the preview
-// values turn on, so the edge becomes the served port in front of the stable
-// backend. The validation reconcile path is unchanged.
+// the preview config + the preview-typed lease, reconciling the SAME warm→hot
+// sequence the faithful validation activation uses (run_launcher.go
+// ActivateTestSlotRuntime, ~warm then ~hot). The two phases render disjoint,
+// complementary slices of the slot chart, gated by renderMode in every app slot
+// chart (including glimmung's own k8s/issue):
+//
+//   - WARM renders the route/cert/listener for the preview's wildcard host —
+//     the HTTPRoute + testenv prerequisites are renderWarm-gated, so this is the
+//     ONLY phase that materializes the route. Its hostname is the preview env's
+//     own URL (testSlotSubstitutions derives {host} from the preview lease's
+//     slot name, which is env.Name → env.URL).
+//   - HOT renders the workload (Deployment + Service) with the vendored
+//     live-preview-edge in front of the stable backend. The edge partial
+//     self-gates on livePreview.enabled, which the preview values turn on, so
+//     the edge becomes the served port and its override emptyDir lands in the
+//     pod.
+//
+// A single hot-only install (the prior behavior) materialized the Deployment +
+// Service but NO HTTPRoute, so the preview URL was unreachable. The warm phase
+// is what makes the URL routable. The faithful validation reconcile path is
+// untouched; this mirrors its sequencing for the preview-typed (Kind=preview)
+// lease, which remains structurally not a validation target.
 func (l *KubernetesRunLauncher) ProvisionPreview(ctx context.Context, env PreviewEnvironment, project Project, minter RunnerGitHubTokenMinter) error {
 	name := strings.TrimSpace(env.Name)
 	if name == "" {
@@ -166,6 +183,14 @@ func (l *KubernetesRunLauncher) ProvisionPreview(ctx context.Context, env Previe
 	if err := l.ensureTestSlotPreliminaryAccess(ctx, lease, project, name); err != nil {
 		return err
 	}
+	// WARM first: render the route/cert/listener for the preview's wildcard host
+	// (renderWarm-gated in the slot chart). Without this phase a hot-only install
+	// renders no HTTPRoute and the preview URL is unreachable.
+	if err := l.runTestSlotHelmReconcile(ctx, lease, project, minter, config, testSlotRenderModeWarm); err != nil {
+		return err
+	}
+	// HOT second: render the workload + Service with the vendored edge in front
+	// of the stable backend. Mirrors ActivateTestSlotRuntime's warm→hot.
 	return l.runTestSlotHelmReconcile(ctx, lease, project, minter, config, testSlotRenderModeHot)
 }
 
