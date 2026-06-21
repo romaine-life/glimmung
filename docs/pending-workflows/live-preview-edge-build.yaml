@@ -1,0 +1,179 @@
+# PENDING RELOCATION (hub action): this file must live at
+#   .github/workflows/live-preview-edge-build.yaml
+# It could not be pushed there from the Tank session — the egress-wall git
+# token lacks GitHub App 'workflows' permission. The hub (full git authority)
+# should: git mv docs/pending-workflows/live-preview-edge-build.yaml \
+#                 .github/workflows/live-preview-edge-build.yaml
+# and delete this header. See PR #881 / Stage 4a. Without it, the edge image
+# is NOT rebuilt/bumped on main and the lockstep tag will go stale over time.
+#
+name: build live-preview-edge
+
+# Builds and publishes the generic live-preview-edge image to ACR on main, and
+# bumps its fingerprint tag in BOTH chart values files in lockstep (the prod
+# chart records it for the preview provision; the per-issue chart renders it).
+# This is the main-side publish for docs/live-preview-plan.md Stage 4a: PR CI
+# (docker-build-check.yaml) only builds the edge image as a throwaway proof;
+# this workflow is what makes the lockstep-pinned tag actually exist in ACR so
+# the preview provision never points at a floating, maybe-missing `:edge`.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'cmd/live-preview-edge/**'
+      - 'live-preview-edge/Dockerfile'
+      - 'go.mod'
+      - 'go.sum'
+      - 'internal/**'
+      - 'cmd/**'
+      - '.github/workflows/live-preview-edge-build.yaml'
+  workflow_dispatch:
+    inputs:
+      git_ref:
+        description: "Git ref or commit SHA to build. Leave blank to build the dispatch revision."
+        required: false
+        type: string
+
+permissions:
+  id-token: write
+  contents: write
+
+concurrency:
+  group: live-preview-edge-build
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    environment: ${{ github.ref == 'refs/heads/main' && 'prod' || 'dev' }}
+    env:
+      REGISTRY: romainecr.azurecr.io
+      IMAGE: glimmung-live-preview-edge
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Resolve requested ref
+        env:
+          INPUT_REF: ${{ inputs.git_ref }}
+        run: |
+          set -euo pipefail
+
+          git fetch --force --tags origin '+refs/heads/*:refs/remotes/origin/*'
+
+          target_ref="${INPUT_REF:-$GITHUB_SHA}"
+          if full_sha="$(git rev-parse --verify "${target_ref}^{commit}" 2>/dev/null)"; then
+            :
+          elif git show-ref --verify --quiet "refs/remotes/origin/${target_ref}"; then
+            full_sha="$(git rev-parse "refs/remotes/origin/${target_ref}^{commit}")"
+          elif git show-ref --verify --quiet "refs/tags/${target_ref}"; then
+            full_sha="$(git rev-parse "refs/tags/${target_ref}^{commit}")"
+          else
+            echo "::error::Unable to resolve git_ref '${target_ref}' to a commit."
+            exit 1
+          fi
+
+          git checkout --detach "$full_sha"
+          echo "Resolved ${target_ref} -> ${full_sha}"
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.ARM_CLIENT_ID }}
+          tenant-id: ${{ vars.ARM_TENANT_ID }}
+          subscription-id: ${{ vars.ARM_SUBSCRIPTION_ID }}
+
+      - name: ACR login
+        run: az acr login --name romainecr
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Compute image fingerprint
+        id: fingerprint
+        shell: bash
+        run: |
+          set -euo pipefail
+          # MUST match docker-build-check.yaml's live-preview-edge matrix entry so
+          # the proof image built on a PR and the lockstep image built here share
+          # one fingerprint (no rebuild on merge when the inputs are unchanged).
+          output="$(scripts/image-fingerprint.sh \
+            --image live-preview-edge \
+            --dockerfile live-preview-edge/Dockerfile \
+            --context . \
+            --paths 'live-preview-edge/Dockerfile go.mod go.sum cmd internal')"
+          printf '%s\n' "${output}"
+          alias_tag="$(printf '%s\n' "${output}" | awk -F= '$1 == "proof_tag" { print $2 }')"
+          echo "fingerprint=$(printf '%s\n' "${output}" | awk -F= '$1 == "fingerprint" { print $2 }')" >> "${GITHUB_OUTPUT}"
+          echo "proof_tag=${alias_tag}" >> "${GITHUB_OUTPUT}"
+          echo "ALIAS_TAG=${alias_tag}" >> "$GITHUB_ENV"
+
+      - name: Check existing image
+        id: image
+        shell: bash
+        run: |
+          set -euo pipefail
+          if az acr repository show-tags \
+              --name romainecr \
+              --repository "${IMAGE}" \
+              --query "[?@=='${ALIAS_TAG}'] | [0]" \
+              --output tsv | grep -qx "${ALIAS_TAG}"; then
+            echo "exists=true" >>"${GITHUB_OUTPUT}"
+            echo "Found reusable image ${REGISTRY}/${IMAGE}:${ALIAS_TAG}"
+          else
+            echo "exists=false" >>"${GITHUB_OUTPUT}"
+            echo "No reusable image found for live-preview-edge fingerprint ${{ steps.fingerprint.outputs.fingerprint }}"
+          fi
+
+      - name: Build and push image
+        if: steps.image.outputs.exists != 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: live-preview-edge/Dockerfile
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE }}:${{ env.ALIAS_TAG }}
+          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE }}-build-cache:live-preview-edge
+          cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE }}-build-cache:live-preview-edge,mode=max
+
+      - name: Bump chart edge image tag
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          tag="${ALIAS_TAG}"
+          # Bump the fingerprint-pinned livePreview.image.tag in BOTH the prod
+          # chart and the per-issue chart so the preview provision (which reads the
+          # prod value via the deployment env) and the chart-render default stay in
+          # lockstep — the scripts/check-chart-image-tag-sync.mjs guard fails CI on
+          # drift. Range-scoped seds so the 4-space `tag:` matched is the one under
+          # each file's `livePreview: image:` (NOT providerApiProxy.image.tag).
+          # Quote the value so YAML always treats the tag as a string.
+          bump() {
+            sed -i -E "/^livePreview:/,/^namespace:/ s|^(    tag: ).*$|\1\"${tag}\"|" k8s/values.yaml
+            sed -i -E "/^livePreview:/,/^hotSwapBackend:/ s|^(    tag: ).*$|\1\"${tag}\"|" k8s/issue/values.yaml
+          }
+          bump
+          files=(k8s/values.yaml k8s/issue/values.yaml)
+          if git diff --quiet "${files[@]}"; then
+            echo "no tag change"
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "${files[@]}"
+          git commit -m "chart: bump live-preview-edge image to fingerprint ${tag} [skip ci]"
+          # Concurrent builds race on these same lines. On rebase conflict the
+          # latest tag wins — re-apply our sed against the post-rebase tree.
+          for i in 1 2 3; do
+            if git push origin HEAD:main; then exit 0; fi
+            git fetch origin main
+            if ! git rebase origin/main; then
+              git checkout --theirs "${files[@]}"
+              bump
+              git add "${files[@]}"
+              git rebase --continue || git rebase --skip
+            fi
+          done
+          git push origin HEAD:main
