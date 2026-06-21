@@ -75,8 +75,21 @@ finalizer's `artifacts/verification.json`.
 - `Verification` is the typed `artifacts/verification.json` document in the exact
   shape `evidence_gate.go`'s finalizer reads (`status` / `reasons` / `failure` /
   `abort_reason` / `evidence_refs` / `evidence` / `evidence_results` / `notes`).
-- `WriteFinalizable(workingDir, v)` validates and lands
-  `${GLIMMUNG_WORKING_DIR}/artifacts/{verification.json,screenshots,evidence}`.
+- `Verification.Extra` (`map[string]json.RawMessage`) is the producer-domain
+  passthrough. The finalizer reads its known fields and **preserves every other
+  top-level key**, so a consumer with a richer verdict (spirelens carries
+  `unit_tests` / `live_mcp_validation` / `screenshot_validation` rows; ambience
+  its own) carries those keys through the SDK writer verbatim — feeding the
+  recycle context and human review intact — **without forking the writer**. The
+  custom marshaller emits the typed known fields, then merges `Extra`; an `Extra`
+  key that shadows a typed field (a reserved finalizer key like `status`) is a
+  marshal error, so the typed field is always authoritative and the document can
+  never carry two conflicting copies of a finalizer-read key. `Unmarshal` is the
+  inverse: known keys decode typed and validated, everything else lands in
+  `Extra`.
+- `WriteFinalizable(workingDir, v)` validates the typed known fields and lands
+  `${GLIMMUNG_WORKING_DIR}/artifacts/{verification.json,screenshots,evidence}`
+  (the validation gate runs regardless of `Extra`).
 - `Gate(workingDir, check)` runs a deterministic check before the agent: on a
   non-pass verdict it writes the verdict and returns `proceed=false`, so a
   deterministic failure never spends model tokens. The verdict is still finalized
@@ -100,8 +113,50 @@ finalizer's `artifacts/verification.json`.
   `GLIMMUNG_TAILSCALE_AUTHKEY_URL` with `X-Glimmung-Attempt-Token`; userspace
   `tailscaled`; `tailscale nc` ssh ProxyCommand), `Conn.RunSelf(ctx, subcmd,
   args...)` (ssh-run the same binary's host face, replacing the pwsh-over-ssh
-  here-doc), and `ScpPull` / `ScpPushTree` / `SyncCheckout`.
+  here-doc), and `ScpPull` / `ScpPullTree` / `ScpPush` / `ScpPushTree` /
+  `SyncCheckout`.
 - Host-unreachable / venue-setup failure → `Layer: host`.
+
+- **`RunSelf` streams the remote process's stdout/stderr line-unbuffered.** When
+  the agent runs ON the remote host (the laptop venue), its `usage` lines are
+  emitted host-locally by `harness/agent.Invoke`; `RunSelf` forwards each
+  newline-terminated line to the pod step's stdout as a single write the instant
+  it arrives (and stderr likewise), so the runner's
+  `internal/domain/agentcost.FromJSONLogLine` prices each one across the ssh hop.
+  This is the honesty guarantee restored end to end — a swallowed or buffered
+  remote stdout would defeat the $0-cost misattribution guard at the hop. ssh
+  propagates the remote exit status, so a non-zero remote exit is surfaced as a
+  host-layer error (the honest exit-code contract is preserved). `Config.Stdout`
+  / `Config.Stderr` default to `os.Stdout` / `os.Stderr`; set them only to
+  capture the stream in tests.
+
+- **`MintAndConnect` is step-idempotent within a pod.** A prepare phase runs
+  several steps in one pod, each a fresh process sharing the working dir, so a
+  per-step call converges on the existing venue instead of rebuilding it: the
+  ed25519 keypair is generated once and reused while on disk, `tailscaled` is
+  started (and the node brought up, with a fresh authkey) only when no daemon is
+  already serving the pod's socket (`BackendState == "Running"`), and only the
+  short-TTL ssh certificate is re-minted every call. Re-keygen would invalidate
+  the live cert; a second `tailscaled` on the same socket would conflict.
+
+- **`ScpPush` (single file) / `ScpPullTree` (recursive)** complete the matrix
+  alongside `ScpPull` (single file) / `ScpPushTree` (recursive): a consumer can
+  stage one file without a one-file directory wrapper and pull a directory of
+  evidence without packing it into an archive host-side.
+
+### `harness/runcallbacks`
+
+- `Config.MintGitHubToken(ctx)` mints the per-attempt GitHub token from the run
+  callback Glimmung bakes onto the pod (`GLIMMUNG_GITHUB_TOKEN_URL`,
+  authenticated with the `X-Glimmung-Attempt-Token` header; `FromContext` reads
+  both from a `step.Context`). It is the venue-independent companion to
+  `remotehost`'s ssh-cert / tailscale-authkey mints — an in-cluster consumer
+  needs the token without importing the remote-host venue, so it lives in its own
+  package. The callback is the only sanctioned source of the token; a runner Job
+  never mounts the real provider OAuth secret. Layering is honest: a missing wire
+  (URL / attempt token) or a malformed response is `Layer: harness`; an
+  unreachable or error-status callback is `Layer: host`. `HTTPClient` is
+  injectable for testing.
 
 ## Shared wire type
 
