@@ -60,7 +60,11 @@ func provisionPreviewEnvironment(settings Settings, store ReadStore, provisioner
 		// control-plane mutation. A slot process (ControlPlaneLoopsEnabled=false)
 		// must never run it (Test Slots contract); it has no provisioner wired.
 		if !settings.ControlPlaneLoopsEnabled || provisioner == nil {
-			writeProblem(w, http.StatusServiceUnavailable, "preview provisioning runs on the glimmung control plane")
+			// Operational 503 (a slot process can't provision — provisioning is a
+			// control-plane mutation), so surface it via writeUnavailable: it logs
+			// + increments glimmung_unavailable_total{route,reason}, per the
+			// deliberate-503 contract (scripts/check-503-observability.mjs).
+			writeUnavailable(w, r, "preview provisioning runs on the glimmung control plane", "preview_control_plane_only")
 			return
 		}
 
