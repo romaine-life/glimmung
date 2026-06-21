@@ -48,6 +48,12 @@ jobs:
             cache-ref: romainecr.azurecr.io/glimmung-runner-build-cache:runner
             image-repo: glimmung-runner
             fingerprint-paths: runner/Dockerfile go.mod go.sum cmd internal
+          - name: live-preview-edge
+            file: live-preview-edge/Dockerfile
+            context: .
+            cache-ref: romainecr.azurecr.io/glimmung-live-preview-edge-build-cache:live-preview-edge
+            image-repo: glimmung-live-preview-edge
+            fingerprint-paths: live-preview-edge/Dockerfile go.mod go.sum cmd internal
           - name: api-proxy
             file: api-proxy/Dockerfile
             context: api-proxy

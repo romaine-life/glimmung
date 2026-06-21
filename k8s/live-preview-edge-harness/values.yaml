@@ -1,0 +1,31 @@
+# A stand-in "app slot chart" with live preview ENABLED, so `helm template`
+# renders the edge in front of the demo backend. Render with
+# `--set livePreview.enabled=false` to confirm the inert (no-edge) state.
+
+replicas: 1
+
+# The demo app backend image (any app). It listens internally; the edge fronts it.
+appImage: registry.example/demo-app:latest
+appInternalPort: 8000
+appInternalPortName: app-internal
+
+hostname: demo-preview.example.romaine.life
+
+livePreview:
+  enabled: true
+  image:
+    repository: romainecr.azurecr.io/glimmung-live-preview-edge
+    tag: "edge-proof"
+    pullPolicy: IfNotPresent
+  port: 8080
+  servedPortName: http
+  upstream:
+    url: "http://127.0.0.1:8000"
+  backendPrefixes:
+    - /api
+    - /healthz
+  authorizedSubject: "svc:preview:demo-owner"
+  override:
+    volumeName: live-preview-override
+    mountPath: /var/run/glimmung-live-preview
+  resources: {}

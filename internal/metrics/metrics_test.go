@@ -28,6 +28,10 @@ var expectedMetrics = []string{
 	"glimmung_pg_query_duration_seconds",
 	"glimmung_unavailable_total",
 	"glimmung_run_terminal_total",
+	"glimmung_live_preview_edge_push_total",
+	"glimmung_live_preview_edge_serve_total",
+	"glimmung_live_preview_edge_proxy_errors_total",
+	"glimmung_live_preview_edge_served_build_info",
 }
 
 func TestHandlerServesAllRegisteredMetrics(t *testing.T) {
@@ -46,6 +50,10 @@ func TestHandlerServesAllRegisteredMetrics(t *testing.T) {
 	RecordUnavailable("POST /v1/test-slots/checkout", "no_prepared_test_slot")
 	RecordRunTerminal("malformed_terminal", "aborted")
 	RecordRunTerminal("none", "passed")
+	RecordLivePreviewEdgePush(LivePreviewPushOutcomeOK)
+	RecordLivePreviewEdgeServe(LivePreviewServeOverrideFile)
+	RecordLivePreviewEdgeProxyError(LivePreviewServeBackendProxy)
+	SetLivePreviewEdgeServedBuild("probe-build")
 	// HTTP layer needs a request through the middleware.
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /probe-coverage", func(w http.ResponseWriter, _ *http.Request) {
@@ -114,6 +122,51 @@ func TestRecordPostgresQueryWiresEveryFamily(t *testing.T) {
 	}
 	if testutil.CollectAndCount(postgresQueryDurationSeconds) == 0 {
 		t.Error("query_duration_seconds histogram has no samples")
+	}
+}
+
+// The live-preview edge push and serve counters carry only bounded enum
+// labels; this pins each Record helper to its family.
+func TestLivePreviewEdgeCountersWire(t *testing.T) {
+	pushBefore := testutil.ToFloat64(livePreviewEdgePushTotal.WithLabelValues(LivePreviewPushOutcomeTooLarge))
+	RecordLivePreviewEdgePush(LivePreviewPushOutcomeTooLarge)
+	if got := testutil.ToFloat64(livePreviewEdgePushTotal.WithLabelValues(LivePreviewPushOutcomeTooLarge)) - pushBefore; got != 1 {
+		t.Errorf("push_total{too_large} delta = %v, want 1", got)
+	}
+
+	serveBefore := testutil.ToFloat64(livePreviewEdgeServeTotal.WithLabelValues(LivePreviewServeFreshPassthrough))
+	RecordLivePreviewEdgeServe(LivePreviewServeFreshPassthrough)
+	if got := testutil.ToFloat64(livePreviewEdgeServeTotal.WithLabelValues(LivePreviewServeFreshPassthrough)) - serveBefore; got != 1 {
+		t.Errorf("serve_total{fresh_passthrough} delta = %v, want 1", got)
+	}
+
+	proxyBefore := testutil.ToFloat64(livePreviewEdgeProxyErrorsTotal.WithLabelValues(LivePreviewServeBackendProxy))
+	RecordLivePreviewEdgeProxyError(LivePreviewServeBackendProxy)
+	if got := testutil.ToFloat64(livePreviewEdgeProxyErrorsTotal.WithLabelValues(LivePreviewServeBackendProxy)) - proxyBefore; got != 1 {
+		t.Errorf("proxy_errors_total{backend_proxy} delta = %v, want 1", got)
+	}
+}
+
+// SetLivePreviewEdgeServedBuild is an info gauge held at exactly one active
+// series so the per-push build id never churns the label space unbounded. A new
+// build replaces the prior series; an empty build (revert) clears it.
+func TestLivePreviewEdgeServedBuildSingleSeries(t *testing.T) {
+	SetLivePreviewEdgeServedBuild("build-1")
+	if got := testutil.ToFloat64(livePreviewEdgeServedBuild.WithLabelValues("build-1")); got != 1 {
+		t.Errorf("served_build_info{build-1} = %v, want 1", got)
+	}
+
+	SetLivePreviewEdgeServedBuild("build-2")
+	if got := testutil.CollectAndCount(livePreviewEdgeServedBuild); got != 1 {
+		t.Errorf("active series after flip = %d, want 1 (reset-then-set)", got)
+	}
+	if got := testutil.ToFloat64(livePreviewEdgeServedBuild.WithLabelValues("build-2")); got != 1 {
+		t.Errorf("served_build_info{build-2} = %v, want 1", got)
+	}
+
+	SetLivePreviewEdgeServedBuild("")
+	if got := testutil.CollectAndCount(livePreviewEdgeServedBuild); got != 0 {
+		t.Errorf("active series after revert = %d, want 0", got)
 	}
 }
 

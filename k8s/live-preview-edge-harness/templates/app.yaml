@@ -1,0 +1,71 @@
+{{- /*
+A stand-in app slot chart. The app backend container always renders; the edge
+container/volume render only when livePreview.enabled. The Service targets the
+edge port when enabled and the app port otherwise, so the edge becomes the
+served port / HTTPRoute target without the app backend changing its own listen
+port (it just stops being the directly-served one).
+*/ -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}
+  labels:
+    app.kubernetes.io/name: {{ .Chart.Name }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+spec:
+  replicas: {{ include "live-preview-edge.replicas" (dict "spec" .Values.livePreview "requested" .Values.replicas) }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/instance: {{ .Release.Name }}
+    spec:
+      containers:
+        - name: app
+          image: {{ .Values.appImage | quote }}
+          ports:
+            - name: {{ .Values.appInternalPortName }}
+              containerPort: {{ .Values.appInternalPort }}
+        {{- include "live-preview-edge.container" .Values.livePreview | nindent 8 }}
+      {{- if .Values.livePreview.enabled }}
+      volumes:
+        {{- include "live-preview-edge.volume" .Values.livePreview | nindent 8 }}
+      {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}
+  labels:
+    app.kubernetes.io/instance: {{ .Release.Name }}
+spec:
+  selector:
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  ports:
+    - name: http
+      port: 80
+      # Served port: the edge when live preview is enabled, the app otherwise.
+      targetPort: {{ include "live-preview-edge.servedPortName" (dict "spec" .Values.livePreview "appPortName" .Values.appInternalPortName) }}
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ .Release.Name }}
+  labels:
+    app.kubernetes.io/instance: {{ .Release.Name }}
+spec:
+  hostnames:
+    - {{ .Values.hostname }}
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - group: ""
+          kind: Service
+          name: {{ .Release.Name }}
+          port: 80
+          weight: 1

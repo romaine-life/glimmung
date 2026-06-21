@@ -1,0 +1,13 @@
+apiVersion: v2
+name: live-preview-edge-harness
+description: >-
+  Render harness that proves the live-preview-edge library partial composes into
+  an app slot chart. Not deployed — it stands in for "an app's slot chart" so
+  `helm template` can exercise the partial's container/volume/replicas/served-port
+  templates in both the enabled (preview) and disabled (inert) states.
+type: application
+version: 0.1.0
+dependencies:
+  - name: live-preview-edge
+    version: 0.1.0
+    repository: "file://../live-preview-edge"

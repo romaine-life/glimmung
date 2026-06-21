@@ -1,0 +1,51 @@
+# Reference shape for the live-preview spec the consumer chart passes to these
+# named templates. A library chart's values are NOT merged into the consumer, so
+# this file is documentation: copy this block into your slot chart's values
+# under `livePreview` (or any key you pass to the templates) and let Glimmung
+# override `enabled`, `image.tag`, and `authorizedSubject` per preview lease.
+#
+# Every template self-gates on `enabled`: when false they render nothing, so the
+# partial is inactive-until-wired.
+
+livePreview:
+  # Activation gate. Glimmung sets this true on a preview lease; default false so
+  # the edge is inert in every other render.
+  enabled: false
+
+  # The edge image built by .github/workflows/docker-build-check.yaml.
+  image:
+    repository: romainecr.azurecr.io/glimmung-live-preview-edge
+    # Required when enabled — fingerprint or sha-<commit> tag.
+    tag: ""
+    pullPolicy: IfNotPresent
+
+  # The port the edge listens on and serves. The pod's Service/HTTPRoute target
+  # this when enabled (see live-preview-edge.servedPortName).
+  port: 8080
+  servedPortName: http
+
+  upstream:
+    # The app's OWN backend, which the edge reverse-proxies to. In the single
+    # serving pod model the backend container listens internally and the edge
+    # reaches it on localhost.
+    url: "http://127.0.0.1:8000"
+
+  # Request path prefixes always proxied to the backend (the stable API stays
+  # reachable through the edge regardless of override state).
+  backendPrefixes:
+    - /api
+    - /healthz
+
+  # The auth.romaine.life JWT subject permitted to push/delete an override — the
+  # verified, IdP-signed per-owner subject of the session/lease that owns this
+  # preview env. Required when enabled. Matched exactly: a pod may only write its
+  # own preview.
+  authorizedSubject: ""
+
+  # The per-pod emptyDir the edge writes/serves overrides from.
+  override:
+    volumeName: live-preview-override
+    mountPath: /var/run/glimmung-live-preview
+
+  # Optional container resources; sensible small defaults are applied when omitted.
+  resources: {}
