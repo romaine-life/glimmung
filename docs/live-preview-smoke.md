@@ -58,7 +58,7 @@ sender (`tank-operator` `k8s/session-config/live-preview-push.sh`):
 ```
 # one app:
 scripts/live-preview-smoke.sh --project chess-tactics --name smoke-chess
-# every in-scope app (kill-me, chess-tactics, ambience, glimmung):
+# every in-scope app (kill-me, chess-tactics, ambience, glimmung, tank-operator):
 scripts/live-preview-smoke.sh --all
 # reuse an already-ready preview / leave it up for inspection:
 scripts/live-preview-smoke.sh --project glimmung --name smoke-glimmung --no-provision --keep
