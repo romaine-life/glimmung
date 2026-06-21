@@ -58,7 +58,7 @@ livePreview:
     # the provision also --sets it from the control plane's Settings (sourced from
     # k8s/values.yaml via the deployment), and the two agree by lockstep. Quote so
     # YAML treats the tag as a string.
-    tag: "live-preview-edge-e8e4800e02b723831b110ad176350fa5576e4c69cf0732cb5b274e1518b93aec"
+    tag: "live-preview-edge-982e16444a46079f302fb61e19379a7a4462f5cf59fcc708075739492be1ff5f"
     pullPolicy: IfNotPresent
   port: 8080
   servedPortName: http

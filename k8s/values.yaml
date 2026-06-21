@@ -22,7 +22,7 @@ livePreview:
     # Fingerprint-pinned; the live-preview-edge build workflow rewrites this line
     # AND k8s/issue/values.yaml on every push to main. Quote so YAML treats the
     # tag as a string.
-    tag: "live-preview-edge-e8e4800e02b723831b110ad176350fa5576e4c69cf0732cb5b274e1518b93aec"
+    tag: "live-preview-edge-982e16444a46079f302fb61e19379a7a4462f5cf59fcc708075739492be1ff5f"
     pullPolicy: IfNotPresent
 
 namespace: glimmung
