@@ -4056,7 +4056,20 @@ h2 .inline-action,
 .app .fs-sm { font-size: var(--t-sm); } .app .fs-xs { font-size: var(--t-xs); } .app .fs-md { font-size: var(--t-md); } .app .fs-lg { font-size: var(--t-lg); }
 .app .nowrap { white-space: nowrap; }
 .app .accent { color: var(--accent); }
+.app .accent-bad { color: var(--bad-fg); }
+.app .strike { text-decoration: line-through; }
 .app .w-full { width: 100%; }
+
+/* live-preview lane: the "stale" trust gap (pushed but not observed live) is
+   surfaced distinctly — reuses the bad-state tokens, never a bespoke color. */
+.app .trust-gap { display: inline-flex; gap: 6px; align-items: baseline; }
+.app .trust-banner {
+  display: flex; flex-direction: column; gap: 4px;
+  margin-bottom: 14px; padding: 10px 12px;
+  background: var(--bad-bg); border: 1px solid var(--bad-line); border-radius: var(--radius-sm);
+  font-size: var(--t-sm);
+}
+.app .trust-banner b { color: var(--bad-fg); text-transform: lowercase; letter-spacing: 0.04em; }
 .app .kpi-foot.col { flex-direction: column; align-items: stretch; gap: 6px; }
 .app .grid-kv { display: grid; grid-template-columns: auto 1fr; gap: 9px 14px; }
 .app .grid-2col { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }

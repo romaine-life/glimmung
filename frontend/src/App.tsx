@@ -23,6 +23,7 @@ import { Reviews } from "./views/Reviews";
 import { Workflows } from "./views/Workflows";
 import { Leases } from "./views/Leases";
 import { TestSlots } from "./views/TestSlots";
+import { Previews } from "./views/Previews";
 import { Admin } from "./views/Admin";
 import {
   agentRuntimeConfigFromMetadata,
@@ -110,6 +111,44 @@ type TestEnvironment = {
   playwright_ws_endpoint?: string | null;
   lease: Lease | null;
   waiting_requests: TestSlotRequest[];
+};
+
+// PreviewEnvironment mirrors the Stage 2a durable `preview_environment` record
+// (internal/server/preview_environment.go) — the SOURCE OF TRUTH for the
+// live-preview lane. The dashboard renders OBSERVED state, never the session's
+// optimistic claim: `live` only when the edge was read back serving exactly the
+// pushed build; `stale` = pushed but the edge is NOT serving it (the trust gap).
+type PreviewState =
+  | "provisioning"
+  | "ready"
+  | "pushed"
+  | "live"
+  | "stale"
+  | "disabled"
+  | "error";
+
+type PreviewEnvironment = {
+  project: string;
+  name: string;
+  lease_ref: string;
+  session_id: string;
+  authorized_subject: string;
+  enabled: boolean;
+  state: PreviewState;
+  url: string;
+  upstream_url: string;
+  backend_prefixes: string[] | null;
+  image_tag: string;
+  edge_image: string;
+  // CLAIMED: what a session said it pushed.
+  live_build_id: string;
+  pushed_at: string | null;
+  // OBSERVED: what the edge was actually read back serving — the truth.
+  observed_build_id: string;
+  observed_at: string | null;
+  detail: string;
+  created_at: string;
+  updated_at: string;
 };
 
 type TestSlotAdmission = {
@@ -307,6 +346,11 @@ type RunTerminalObservation = {
 type Snapshot = {
   active_leases: Lease[];
   test_environments?: TestEnvironment[];
+  // preview_environments is the live-preview lane's durable state, carried in
+  // the same SSE snapshot so a watcher resyncs from the durable cursor on
+  // reconnect (no polling). Optional: an older server during a rolling deploy
+  // may omit it; treat as empty.
+  preview_environments?: PreviewEnvironment[];
   test_slot_admissions?: TestSlotAdmission[];
   waiting_test_slot_requests?: TestSlotRequest[];
   test_lease_defaults?: TestLeaseDefaults;
@@ -370,6 +414,8 @@ export type {
   TestSlotRequest,
   TestSlotReturnHistoryEntry,
   TestEnvironment,
+  PreviewEnvironment,
+  PreviewState,
   Project,
   Workflow,
   PhaseSpec,
@@ -408,6 +454,7 @@ export function App() {
           {/* Capacity */}
           <Route path="leases" element={<Leases />} />
           <Route path="test-slots" element={<TestSlots />} />
+          <Route path="previews" element={<Previews />} />
           {/* System */}
           <Route path="admin" element={<Admin />} />
 

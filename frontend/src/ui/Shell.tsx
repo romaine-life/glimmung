@@ -25,6 +25,7 @@ const NAV: NavGroup[] = [
   { group: "Capacity", items: [
     { key: "leases", label: "Leases", icon: "lease", to: "/leases" },
     { key: "slots", label: "Test slots", icon: "flask", to: "/test-slots" },
+    { key: "previews", label: "Previews", icon: "ext", to: "/previews" },
   ]},
   { group: "System", items: [
     { key: "admin", label: "Admin", icon: "settings", to: "/admin" },
@@ -35,6 +36,7 @@ const NAV: NavGroup[] = [
 export type ShellSnapshot = {
   active_leases?: unknown[];
   test_environments?: unknown[];
+  preview_environments?: { state?: string }[];
   waiting_test_slot_requests?: unknown[];
   inflight_locks?: { issues?: boolean; prs?: boolean };
 } | null;
@@ -101,11 +103,17 @@ export function Shell({
   const leaseCount = snap?.active_leases?.length ?? 0;
   const slotCount = snap?.test_environments?.length ?? 0;
   const waiting = snap?.waiting_test_slot_requests?.length ?? 0;
+  const previews = snap?.preview_environments ?? [];
+  const previewCount = previews.length;
+  // The "stale" trust gap (pushed but not observed live) is the one preview
+  // state an operator must notice — surface it as a nav alert.
+  const previewStale = previews.some((p) => p?.state === "stale");
   const attentionAlert = Boolean(snap?.inflight_locks?.issues || snap?.inflight_locks?.prs);
   const counts: Record<string, { count?: number; alert?: boolean }> = {
     attention: { alert: attentionAlert },
     leases: { count: leaseCount || undefined },
     slots: { count: slotCount || undefined, alert: waiting > 0 },
+    previews: { count: previewCount || undefined, alert: previewStale },
   };
 
   return (

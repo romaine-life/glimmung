@@ -171,6 +171,31 @@ export function slotStateTone(state: string): Tone {
   }
 }
 
+// Preview-lane state -> pill tone. The design system allows ONLY the pill set
+// {free, busy, drain, info} (= tones ok/warn/bad/info); a preview state never
+// maps to `neutral` or `vio`. Semantics:
+//   ready / live  -> free (green): healthy, serving (live = observed-confirmed)
+//   provisioning  -> info (blue):  deploying, informational
+//   pushed        -> busy (amber): in flight — claimed, awaiting observation
+//   stale / error -> drain (red):  the trust gap / failure, surfaced distinctly
+//   disabled      -> info (blue):  intentionally off
+export function previewStateTone(state: string): "ok" | "warn" | "bad" | "info" {
+  switch (state) {
+    case "ready":
+    case "live":
+      return "ok";
+    case "pushed":
+      return "warn";
+    case "stale":
+    case "error":
+      return "bad";
+    case "provisioning":
+    case "disabled":
+    default:
+      return "info";
+  }
+}
+
 export type Attention = { label: string; detail: string | null; tone: Tone };
 
 // Faithful port of IssuesView.attentionReason, mapped to the new pill tones.
