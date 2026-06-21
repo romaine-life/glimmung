@@ -370,7 +370,7 @@ func TestEnsurePreviewWorkloadIdentityUpsertsForPreviewNamespace(t *testing.T) {
 			SubscriptionID: "sub-123",
 			ResourceGroup:  "infra",
 			IdentityName:   "kill-me-identity",
-			CredentialName: "aks-smoke-killme",
+			CredentialName: "preview-aks-smoke-killme",
 		},
 		Issuer:    "https://issuer.example/",
 		Subject:   "system:serviceaccount:smoke-killme:infra-shared",
@@ -393,7 +393,7 @@ func TestEnsurePreviewWorkloadIdentityUsesMetadataIssuer(t *testing.T) {
 		t.Fatalf("upserts = %d, want 1", len(client.upserts))
 	}
 	got := client.upserts[0]
-	if got.CredentialName != "smoke-glimmung-infra-shared" ||
+	if got.CredentialName != "preview-smoke-glimmung-infra-shared" ||
 		got.Subject != "system:serviceaccount:smoke-glimmung:infra-shared" ||
 		got.IdentityName != "glimmung-identity" ||
 		got.Issuer != "https://westus2.oic.prod-aks.azure.com/abc/def/" {
@@ -436,7 +436,7 @@ func TestRemovePreviewWorkloadIdentityDeletes(t *testing.T) {
 		SubscriptionID: "sub-123",
 		ResourceGroup:  "infra",
 		IdentityName:   "kill-me-identity",
-		CredentialName: "aks-smoke-killme",
+		CredentialName: "preview-aks-smoke-killme",
 	}
 	if len(client.deletes) != 1 || client.deletes[0] != want {
 		t.Fatalf("deletes = %+v, want [%+v]", client.deletes, want)
@@ -466,7 +466,7 @@ func TestReconcileRunnerWorkloadIdentitiesPreservesPreviewCredential(t *testing.
 			SubscriptionID: "sub-123",
 			ResourceGroup:  "infra",
 			IdentityName:   "kill-me-identity",
-			CredentialName: "aks-smoke-killme",
+			CredentialName: "preview-aks-smoke-killme",
 		},
 		Issuer:    "https://issuer.example/",
 		Subject:   "system:serviceaccount:smoke-killme:infra-shared",
@@ -481,7 +481,7 @@ func TestReconcileRunnerWorkloadIdentitiesPreservesPreviewCredential(t *testing.
 		t.Fatalf("reconcile: %v", err)
 	}
 	for _, d := range client.deletes {
-		if d.CredentialName == "aks-smoke-killme" {
+		if d.CredentialName == "preview-aks-smoke-killme" {
 			t.Fatalf("standby reconcile deleted the preview credential: %+v", d)
 		}
 	}
@@ -525,7 +525,7 @@ func TestEnsurePreviewWorkloadIdentityAllowsReprovisionAtCap(t *testing.T) {
 	existing = append(existing, FederatedIdentityCredential{
 		FederatedIdentityCredentialRef: FederatedIdentityCredentialRef{
 			SubscriptionID: "sub-123", ResourceGroup: "infra", IdentityName: "kill-me-identity",
-			CredentialName: "aks-smoke-killme",
+			CredentialName: "preview-aks-smoke-killme",
 		},
 		Subject: "system:serviceaccount:smoke-killme:infra-shared",
 	})
@@ -554,10 +554,10 @@ func TestReclaimOrphanedPreviewCredentials(t *testing.T) {
 			Audiences: []string{defaultWorkloadIdentityAudience},
 		}
 	}
-	standby := mk("aks-kill-me-slot-1", "kill-me-slot-1")     // standby-owned — must be left alone
-	live := mk("aks-smoke-live", "smoke-live")                 // a live preview — desired
-	orphan := mk("aks-smoke-orphan", "smoke-orphan")           // no live row — reclaim
-	foreign := FederatedIdentityCredential{                    // not Glimmung-minted — must be left alone
+	standby := mk("aks-kill-me-slot-1", "kill-me-slot-1")         // standby-owned — must be left alone
+	live := mk("preview-aks-smoke-live", "smoke-live")           // a live preview — desired
+	orphan := mk("preview-aks-smoke-orphan", "smoke-orphan")     // no live row — reclaim
+	foreign := FederatedIdentityCredential{                      // not Glimmung-minted — must be left alone
 		FederatedIdentityCredentialRef: FederatedIdentityCredentialRef{
 			SubscriptionID: "sub-123", ResourceGroup: "infra", IdentityName: "kill-me-identity",
 			CredentialName: "some-other-credential",
@@ -576,7 +576,93 @@ func TestReclaimOrphanedPreviewCredentials(t *testing.T) {
 	if reclaimed != 1 {
 		t.Fatalf("reclaimed=%d, want 1 (only the orphan)", reclaimed)
 	}
-	if len(client.deletes) != 1 || client.deletes[0].CredentialName != "aks-smoke-orphan" {
-		t.Fatalf("deletes=%+v, want only aks-smoke-orphan (standby, live, and foreign preserved)", client.deletes)
+	if len(client.deletes) != 1 || client.deletes[0].CredentialName != "preview-aks-smoke-orphan" {
+		t.Fatalf("deletes=%+v, want only preview-aks-smoke-orphan (standby, live, and foreign preserved)", client.deletes)
+	}
+}
+
+// TestReclaimOrphanedPreviewCredentialsReclaimsTrailingNumericName is the
+// regression for FINDING A: a preview named like a standby slot shape ("pr-7",
+// "session-42" — sanitizePreviewName readily produces these from session ids) must
+// still be reclaimable. The preview- credential-name prefix keeps it disjoint from
+// standby detection, so the orphan sweep does not mis-skip it as standby-owned and
+// leak it against the Azure cap.
+func TestReclaimOrphanedPreviewCredentialsReclaimsTrailingNumericName(t *testing.T) {
+	mk := func(name, ns string) FederatedIdentityCredential {
+		return FederatedIdentityCredential{
+			FederatedIdentityCredentialRef: FederatedIdentityCredentialRef{
+				SubscriptionID: "sub-123", ResourceGroup: "infra", IdentityName: "kill-me-identity",
+				CredentialName: name,
+			},
+			Subject:   "system:serviceaccount:" + ns + ":infra-shared",
+			Issuer:    "https://issuer.example/",
+			Audiences: []string{defaultWorkloadIdentityAudience},
+		}
+	}
+	standby := mk("aks-kill-me-slot-1", "kill-me-slot-1") // standby — must be left alone
+	orphan := mk("preview-aks-pr-7", "pr-7")              // trailing-numeric preview name, no live row
+	client := &fakeFederatedIdentityCredentialClient{
+		current: map[string][]FederatedIdentityCredential{"kill-me-identity": {standby, orphan}},
+	}
+	service := RunnerWorkloadIdentityService{Client: client, Issuer: "https://issuer.example/"}
+
+	reclaimed, err := service.reclaimOrphanedPreviewCredentials(context.Background(), killMePreviewProject(), map[string]bool{})
+	if err != nil {
+		t.Fatalf("reclaim: %v", err)
+	}
+	if reclaimed != 1 {
+		t.Fatalf("reclaimed=%d, want 1 (the trailing-numeric orphan must be reclaimed)", reclaimed)
+	}
+	if len(client.deletes) != 1 || client.deletes[0].CredentialName != "preview-aks-pr-7" {
+		t.Fatalf("deletes=%+v, want only preview-aks-pr-7 (standby preserved)", client.deletes)
+	}
+}
+
+// twoTemplateSameIdentityProject has two credential templates on ONE managed
+// identity (the contract supports "one slot per credential template").
+func twoTemplateSameIdentityProject() Project {
+	return Project{
+		ID:   "two-tmpl",
+		Name: "two-tmpl",
+		Metadata: map[string]any{
+			"runner_standby_dns": map[string]any{"slot_prefix": "two-tmpl-slot", "count": float64(1)},
+			"runner_standby_workload_identity": map[string]any{
+				"enabled":        true,
+				"resource_group": "infra",
+				"subscription":   "sub-123",
+				"credentials": []any{
+					map[string]any{"credential_name": "a-{slot_name}", "identity_name": "shared-identity", "subject": "system:serviceaccount:{namespace}:sa-a"},
+					map[string]any{"credential_name": "b-{slot_name}", "identity_name": "shared-identity", "subject": "system:serviceaccount:{namespace}:sa-b"},
+				},
+			},
+		},
+	}
+}
+
+// TestEnsurePreviewWorkloadIdentityCapCountsAllTemplatesOnSameIdentity is the
+// regression for FINDING C: the cap check must count EVERY new credential this
+// provision adds to one identity, not each template against the same stale list.
+func TestEnsurePreviewWorkloadIdentityCapCountsAllTemplatesOnSameIdentity(t *testing.T) {
+	existing := make([]FederatedIdentityCredential, maxFederatedIdentityCredentialsPerIdentity-1) // 19 in use
+	for i := range existing {
+		existing[i] = FederatedIdentityCredential{FederatedIdentityCredentialRef: FederatedIdentityCredentialRef{
+			IdentityName: "shared-identity", CredentialName: fmt.Sprintf("x-%d", i),
+		}}
+	}
+	client := &fakeFederatedIdentityCredentialClient{
+		current: map[string][]FederatedIdentityCredential{"shared-identity": existing},
+	}
+	service := RunnerWorkloadIdentityService{Client: client, Issuer: "https://issuer.example/"}
+
+	// 19 in use + 2 new credentials (both templates land on shared-identity) = 21 > 20.
+	err := service.EnsurePreviewWorkloadIdentity(context.Background(), twoTemplateSameIdentityProject(), "p1")
+	if err == nil {
+		t.Fatal("expected a cap-exceeded error: 19 in use + 2 new on one identity exceeds 20")
+	}
+	if !strings.Contains(err.Error(), "cap") {
+		t.Fatalf("error should explain the cap, got: %v", err)
+	}
+	if len(client.upserts) != 0 {
+		t.Fatalf("must not upsert any credential when the provision as a whole exceeds the cap, got %d", len(client.upserts))
 	}
 }

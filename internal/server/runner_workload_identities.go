@@ -516,13 +516,27 @@ func previewWorkloadIdentitySubstitutions(cfg runnerWorkloadIdentityConfig, prev
 	}
 }
 
+// previewWorkloadIdentityCredentialNamePrefix marks every preview federated
+// identity credential name so preview and standby credentials are DISJOINT BY
+// CONSTRUCTION. A standby credential name is the project's bare template result
+// (e.g. "aks-{slot_name}"); a preview's is the same result with this prefix. The
+// standby-detection (managedWorkloadIdentityCredentialSlotName) requires both the
+// name AND subject to match a standby slot, so the prefix on the name guarantees
+// it can never classify a preview credential as standby — even when the preview
+// name ends in "-<digits>" (e.g. "pr-7", "session-42", which sanitizePreviewName
+// readily produces). That is what keeps the orphan sweep's self-heal effective
+// for the most natural preview names.
+const previewWorkloadIdentityCredentialNamePrefix = "preview-"
+
 // previewWorkloadIdentityCredentials are the federated identity credentials a
 // preview environment needs — one per project credential template, templated for
 // the preview's own namespace. It mirrors desiredWorkloadIdentityCredentials but
 // for a single ad-hoc preview namespace instead of the fixed standby pool, so an
 // app whose stable backend authenticates to Azure via workload identity can boot
 // in a preview: without a matching federated credential the backend gets
-// AADSTS700213 and never becomes ready.
+// AADSTS700213 and never becomes ready. The subject is the project's exact
+// template result (so the federation matches the pod's SA token); only the
+// credential NAME carries the preview marker.
 func previewWorkloadIdentityCredentials(cfg runnerWorkloadIdentityConfig, previewName string) []FederatedIdentityCredential {
 	subs := previewWorkloadIdentitySubstitutions(cfg, previewName)
 	creds := make([]FederatedIdentityCredential, 0, len(cfg.Credentials))
@@ -532,7 +546,7 @@ func previewWorkloadIdentityCredentials(cfg runnerWorkloadIdentityConfig, previe
 				SubscriptionID: cfg.SubscriptionID,
 				ResourceGroup:  cfg.ResourceGroup,
 				IdentityName:   template.IdentityName,
-				CredentialName: formatSubstitutions(template.CredentialName, subs),
+				CredentialName: previewWorkloadIdentityCredentialNamePrefix + formatSubstitutions(template.CredentialName, subs),
 			},
 			Issuer:    cfg.Issuer,
 			Subject:   formatSubstitutions(template.Subject, subs),
@@ -583,18 +597,35 @@ func (s RunnerWorkloadIdentityService) EnsurePreviewWorkloadIdentity(ctx context
 	creds := previewWorkloadIdentityCredentials(cfg, previewName)
 	// Bound the Azure per-identity cap deliberately, BEFORE any upsert, so the
 	// failure is atomic (no partial federation) and surfaced as a clear durable
-	// provision error rather than an opaque Azure 400 on the over-cap upsert.
+	// provision error rather than an opaque Azure 400 on the over-cap upsert. The
+	// check is per IDENTITY and counts EVERY new credential THIS provision adds to
+	// that identity — a multi-template app adds more than one, so N credentials can
+	// never slip past N independent len<cap checks against the same stale list.
+	desiredByIdentity := map[string][]FederatedIdentityCredential{}
 	for _, cred := range creds {
-		current, lerr := s.Client.ListFederatedIdentityCredentials(ctx, cred.FederatedIdentityCredentialRef)
+		desiredByIdentity[cred.IdentityName] = append(desiredByIdentity[cred.IdentityName], cred)
+	}
+	for identity, wanted := range desiredByIdentity {
+		current, lerr := s.Client.ListFederatedIdentityCredentials(ctx, FederatedIdentityCredentialRef{
+			SubscriptionID: cfg.SubscriptionID,
+			ResourceGroup:  cfg.ResourceGroup,
+			IdentityName:   identity,
+		})
 		if lerr != nil {
 			metrics.RecordLivePreviewWorkloadIdentity(metrics.LivePreviewWorkloadIdentityEnsure, metrics.LivePreviewWorkloadIdentityError)
-			return fmt.Errorf("list federated identity credentials for %s: %w", cred.IdentityName, lerr)
+			return fmt.Errorf("list federated identity credentials for %s: %w", identity, lerr)
 		}
-		// An already-present credential (re-provision) consumes no new slot.
-		if !containsCredentialName(current, cred.CredentialName) && len(current) >= maxFederatedIdentityCredentialsPerIdentity {
+		newCount := 0
+		for _, cred := range wanted {
+			// An already-present credential (re-provision) consumes no new slot.
+			if !containsCredentialName(current, cred.CredentialName) {
+				newCount++
+			}
+		}
+		if len(current)+newCount > maxFederatedIdentityCredentialsPerIdentity {
 			metrics.RecordLivePreviewWorkloadIdentity(metrics.LivePreviewWorkloadIdentityEnsure, metrics.LivePreviewWorkloadIdentityCapExceeded)
-			return fmt.Errorf("preview would exceed the %d federated identity credential cap on identity %q (%d in use); deprovision an existing preview for this app or reduce its standby pool",
-				maxFederatedIdentityCredentialsPerIdentity, cred.IdentityName, len(current))
+			return fmt.Errorf("preview would exceed the %d federated identity credential cap on identity %q (%d in use, +%d new); deprovision an existing preview for this app or reduce its standby pool",
+				maxFederatedIdentityCredentialsPerIdentity, identity, len(current), newCount)
 		}
 	}
 	for _, cred := range creds {
