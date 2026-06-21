@@ -51,7 +51,14 @@ livePreview:
   enabled: false
   image:
     repository: romainecr.azurecr.io/glimmung-live-preview-edge
-    tag: ""
+    # Fingerprint-pinned, kept in lockstep with k8s/values.yaml's
+    # livePreview.image.tag by the live-preview-edge build workflow (rewrites BOTH
+    # files on every push to main) and the scripts/check-chart-image-tag-sync.mjs
+    # guard. This is the chart-render default / backstop for a preview install;
+    # the provision also --sets it from the control plane's Settings (sourced from
+    # k8s/values.yaml via the deployment), and the two agree by lockstep. Quote so
+    # YAML treats the tag as a string.
+    tag: "live-preview-edge-e8e4800e02b723831b110ad176350fa5576e4c69cf0732cb5b274e1518b93aec"
     pullPolicy: IfNotPresent
   port: 8080
   servedPortName: http

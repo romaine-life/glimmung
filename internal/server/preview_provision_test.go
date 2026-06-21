@@ -33,6 +33,21 @@ func previewTestEnv() PreviewEnvironment {
 	}
 }
 
+func TestPreviewUpstreamURLFromBackendPort(t *testing.T) {
+	cases := map[int]string{
+		8000: "http://127.0.0.1:8000",
+		3000: "http://127.0.0.1:3000",
+		8080: "http://127.0.0.1:8080",
+		0:    defaultPreviewUpstreamURL, // unset → default backend port
+		-1:   defaultPreviewUpstreamURL, // invalid → default backend port
+	}
+	for port, want := range cases {
+		if got := previewUpstreamURL(port); got != want {
+			t.Fatalf("previewUpstreamURL(%d) = %q, want %q", port, got, want)
+		}
+	}
+}
+
 func TestPreviewHelmValuesCarryEdgeConfig(t *testing.T) {
 	values := previewHelmValues(previewTestEnv(), "acr.io/edge", "edge-v1")
 	want := map[string]string{
@@ -137,5 +152,68 @@ func TestPreviewInstallManifestCarriesEdgeSetFlags(t *testing.T) {
 		if !strings.Contains(script, want) {
 			t.Fatalf("install manifest missing %q", want)
 		}
+	}
+}
+
+// TestPreviewInstallManifestVendorsEdgePartial proves a PREVIEW install Job
+// carries the cross-repo vendoring: the ConfigMap mount + the vendor step that
+// copies Glimmung's live-preview-edge partial into the app chart's charts/ when
+// the chart does not already supply it (ACR Basic SKU blocks an oci:// pull).
+func TestPreviewInstallManifestVendorsEdgePartial(t *testing.T) {
+	project := previewTestProject()
+	env := previewTestEnv()
+	cfg, err := previewHelmSettings(project, env, "acr.io/edge", "edge-v1")
+	if err != nil {
+		t.Fatalf("settings: %v", err)
+	}
+	if !cfg.VendorLivePreviewEdge {
+		t.Fatalf("previewHelmSettings must set VendorLivePreviewEdge for a preview install")
+	}
+	lease := previewLeaseFromEnv(env)
+	settings := Settings{RunnerNamespace: "glimmung-runs", RunnerServiceAccount: "glimmung-runner"}
+	subs := testSlotSubstitutions(lease, project, env.Name, env.Name+"-sessions")
+	manifest := testSlotInstallJobManifest(settings, cfg, lease, project, subs, testSlotRenderModeHot)
+	blob, _ := json.Marshal(manifest)
+	script := string(blob)
+	for _, want := range []string{
+		// The vendor step is gated on the chart not already supplying the partial.
+		"charts/live-preview-edge",
+		// Sourced from the mounted ConfigMap Glimmung publishes.
+		livePreviewEdgeChartConfigMapName,
+		livePreviewEdgeChartMountPath,
+		// Templates are rebuilt from tpl.* keys.
+		"tpl.",
+	} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("preview install manifest missing vendor marker %q", want)
+		}
+	}
+	// The ConfigMap volume is mounted optional so a missing partial fails in the
+	// script with a clear message rather than wedging the pod on a mount error.
+	if !strings.Contains(script, "\"optional\":true") {
+		t.Fatalf("live-preview-edge ConfigMap volume must be optional: %s", script)
+	}
+}
+
+// TestValidationInstallManifestHasNoEdgeVendoring pins that the faithful
+// validation path is UNTOUCHED: a non-preview install (VendorLivePreviewEdge
+// false) carries no vendor step and no ConfigMap mount.
+func TestValidationInstallManifestHasNoEdgeVendoring(t *testing.T) {
+	lease := Lease{Kind: "runner", Project: "glimmung", Metadata: map[string]any{"runner_slot_name": "glimmung-slot-1"}}
+	project := Project{Name: "glimmung", GitHubRepo: "romaine-life/glimmung"}
+	cfg := testSlotHelmSettings{ChartPath: "k8s/issue", InstallerImage: "alpine/k8s:1.30.0"}
+	settings := Settings{RunnerNamespace: "glimmung-runs", RunnerServiceAccount: "glimmung-runner"}
+	subs := testSlotSubstitutions(lease, project, "glimmung-slot-1", "glimmung-slot-1-sessions")
+	manifest := testSlotInstallJobManifest(settings, cfg, lease, project, subs, testSlotRenderModeHot)
+	blob, _ := json.Marshal(manifest)
+	script := string(blob)
+	for _, banned := range []string{livePreviewEdgeChartConfigMapName, livePreviewEdgeChartMountPath, "charts/live-preview-edge"} {
+		if strings.Contains(script, banned) {
+			t.Fatalf("validation install manifest must NOT carry edge vendoring, found %q", banned)
+		}
+	}
+	// It still runs the normal dependency build (no-op for charts with no deps).
+	if !strings.Contains(script, "helm dependency build") {
+		t.Fatalf("validation install manifest missing helm dependency build")
 	}
 }

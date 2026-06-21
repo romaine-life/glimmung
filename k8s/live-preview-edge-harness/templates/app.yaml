@@ -1,9 +1,16 @@
 {{- /*
-A stand-in app slot chart. The app backend container always renders; the edge
-container/volume render only when livePreview.enabled. The Service targets the
-edge port when enabled and the app port otherwise, so the edge becomes the
-served port / HTTPRoute target without the app backend changing its own listen
-port (it just stops being the directly-served one).
+A stand-in app slot chart, written in the SAME shape Stage 4a onboards real app
+charts in other repos (docs/live-preview-plan.md "Stage 4a landed contracts"):
+every live-preview-edge.* reference is GUARDED on livePreview.enabled, so the
+chart renders standalone WITHOUT the library partial when live preview is off
+(app CI / prod / validation) and only needs it when enabled (a preview lease,
+where Glimmung vendors the partial). The app backend container always renders and
+keeps its own listen port; the edge becomes the served Service / HTTPRoute target
+only when enabled.
+
+(The harness declares the partial as an in-repo file:// dependency so it renders
+in this repo; a real app chart in another repo declares NO dependency and gets
+the partial vendored by Glimmung at preview-provision time.)
 */ -}}
 apiVersion: apps/v1
 kind: Deployment
@@ -13,7 +20,7 @@ metadata:
     app.kubernetes.io/name: {{ .Chart.Name }}
     app.kubernetes.io/instance: {{ .Release.Name }}
 spec:
-  replicas: {{ include "live-preview-edge.replicas" (dict "spec" .Values.livePreview "requested" .Values.replicas) }}
+  replicas: {{ if .Values.livePreview.enabled }}{{ include "live-preview-edge.replicas" (dict "spec" .Values.livePreview "requested" .Values.replicas) }}{{ else }}{{ .Values.replicas }}{{ end }}
   selector:
     matchLabels:
       app.kubernetes.io/instance: {{ .Release.Name }}
@@ -28,7 +35,9 @@ spec:
           ports:
             - name: {{ .Values.appInternalPortName }}
               containerPort: {{ .Values.appInternalPort }}
+        {{- if .Values.livePreview.enabled }}
         {{- include "live-preview-edge.container" .Values.livePreview | nindent 8 }}
+        {{- end }}
       {{- if .Values.livePreview.enabled }}
       volumes:
         {{- include "live-preview-edge.volume" .Values.livePreview | nindent 8 }}
@@ -47,7 +56,7 @@ spec:
     - name: http
       port: 80
       # Served port: the edge when live preview is enabled, the app otherwise.
-      targetPort: {{ include "live-preview-edge.servedPortName" (dict "spec" .Values.livePreview "appPortName" .Values.appInternalPortName) }}
+      targetPort: {{ if .Values.livePreview.enabled }}{{ include "live-preview-edge.servedPortName" (dict "spec" .Values.livePreview "appPortName" .Values.appInternalPortName) }}{{ else }}{{ .Values.appInternalPortName }}{{ end }}
 ---
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute

@@ -3,8 +3,11 @@ live-preview-edge — reusable named templates for running Glimmung's live-previ
 edge in front of an app backend inside a preview test environment.
 
 An app's slot chart includes these to compose the edge into ITS own Deployment /
-Service / HTTPRoute. The cross-repo consumption/vendoring mechanism is settled in
-a later stage; this chart owns the partial and its render contract.
+Service / HTTPRoute. Cross-repo consumption (Stage 4a): Glimmung publishes this
+chart as a ConfigMap and vendors it into the app chart's charts/ at preview-
+provision time (NOT an oci:// dependency — ACR is Basic SKU). App charts include
+the templates guarded on livePreview.enabled and declare no Helm dependency. See
+docs/live-preview-plan.md "Stage 4a landed contracts" and the chart README.
 
 Activation: every template self-gates on the spec's `.enabled`. Include them
 UNCONDITIONALLY — when livePreview.enabled is false they render nothing, so

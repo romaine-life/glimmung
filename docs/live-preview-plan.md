@@ -65,7 +65,7 @@ Use **`live_preview` / `static_override`** vocabulary only.
    load-balances reads 50/50 and the co-watched frontend flickers.)
 
 Per-app Glimmung config is a **new `live_preview` metadata key**
-(`enabled`, `backend_prefixes`) — never `test_slot_hot_swap.*`.
+(`enabled`, `backend_prefixes`, `backend_port`) — never `test_slot_hot_swap.*`.
 
 ## The generic `live-preview-edge`
 
@@ -216,7 +216,12 @@ these contracts:
   `live-preview-edge` partial; its dormant in-backend static-override serving was
   removed (the edge owns serving).
 - **Per-app `live_preview` metadata** `{enabled: bool, backend_prefixes:
-  []string}`, validated at `register_project`. Glimmung dogfoods it (register
+  []string, backend_port: int}`, validated at `register_project`. `backend_port`
+  is the in-pod port the app's OWN backend listens on (glimmung :8000, kill-me /
+  chess-tactics :3000, ambience :8080); the provision sets the edge `UPSTREAM` /
+  `livePreview.upstream.url` from it (loopback `http://127.0.0.1:<backend_port>`)
+  so the edge fronts THIS app's backend rather than a hardcoded :8000. Unset
+  falls back to `defaultPreviewBackendPort` (8000). Glimmung dogfoods it (register
   payload below).
 - **Metrics** (`internal/metrics`): `glimmung_live_preview_provisioned_total`,
   `..._push_received_total`, `..._observed_confirmed_total`,
@@ -228,8 +233,95 @@ edge partial deploys):
 ```json
 { "name": "glimmung", "github_repo": "romaine-life/glimmung",
   "metadata": { "live_preview": { "enabled": true,
-    "backend_prefixes": ["/v1", "/healthz", "/readyz", "/metrics", "/og"] } } }
+    "backend_prefixes": ["/v1", "/healthz", "/readyz", "/metrics", "/og"],
+    "backend_port": 8000 } } }
 ```
+
+## Stage 4a landed contracts (per-app provisionable foundation)
+
+Stage 4a makes the live-preview lane provisionable for ANY onboarded app (Stage
+2a only worked for glimmung's own dogfood). Stage 4b (per-app onboarding) and 4c
+(cross-app smoke) build on these.
+
+- **Edge image lockstep.** The generic `glimmung-live-preview-edge` image now has
+  a stable, fingerprint-pinned tag in BOTH chart values files
+  (`k8s/values.yaml` and `k8s/issue/values.yaml`, key `livePreview.image.tag`),
+  bumped on every push to main by `.github/workflows/live-preview-edge-build.yaml`
+  (which rebuilds + pushes the image to ACR, reusing the same fingerprint
+  `docker-build-check.yaml` proves on PRs) and held in lockstep by
+  `scripts/check-chart-image-tag-sync.mjs`. The prod deployment passes the prod
+  value to the control plane as `LIVE_PREVIEW_EDGE_IMAGE_{REPOSITORY,TAG}` →
+  `Settings.LivePreviewEdgeImage{Repository,Tag}`, and the provision `--set`s it +
+  records it in the durable `edge_image`. There is **no floating `:edge`
+  default**: an empty tag is a hard provision error (`previewHelmSettings`), so a
+  missing edge image surfaces as an explicit provision failure, never a silent
+  ImagePull.
+
+- **Per-app backend port.** `live_preview.backend_port` (see the 2a metadata
+  contract, now `{enabled, backend_prefixes, backend_port}`) drives the edge
+  upstream so the edge fronts THIS app's backend port, not a hardcoded :8000.
+
+- **Cross-repo partial consumption — Glimmung vendors via a ConfigMap.** An app
+  chart in another repo cannot `file://` glimmung's `k8s/live-preview-edge`
+  library partial, and an `oci://` Helm dependency from ACR is **not viable**: the
+  registry (`romainecr`) is ACR **Basic SKU** — no anonymous pull, no scoped
+  tokens — and the slot-install Job pod carries no Azure workload identity, so it
+  cannot authenticate a Helm registry pull. Instead **Glimmung publishes the
+  partial as a cluster ConfigMap** (`glimmung-live-preview-edge-chart` in the
+  runner namespace, rendered from the sibling chart dir via `.Files` in
+  `k8s/templates/live-preview-edge-chart-configmap.yaml`, ArgoCD-maintained in
+  lockstep with glimmung main). A **preview** install Job mounts it and vendors
+  the partial into the app chart's `charts/live-preview-edge/` **only if the chart
+  did not already supply it** (`internal/server` `livePreviewEdgeVendorScript`).
+  Glimmung's own `k8s/issue` keeps its in-repo `file://` dependency, so the vendor
+  step no-ops for it; the faithful validation path is byte-for-byte unchanged
+  (the vendor step is emitted only for preview installs).
+
+  **App-chart onboarding snippet (4b copies this into each app's slot chart).**
+  The app chart `include`s the partial but **declares NO Helm dependency** for it;
+  every reference is guarded on `livePreview.enabled` so the chart renders
+  standalone (app CI / prod / validation, where livePreview is off) WITHOUT the
+  library, and only needs Glimmung's vendored partial on a preview lease:
+
+  ```yaml
+  # values.yaml — off by default; Glimmung sets these on a preview lease.
+  livePreview:
+    enabled: false
+
+  # Deployment
+  spec:
+    # single serving pod when enabled (helper fails the render on replicas>1);
+    # the app's own replica count otherwise.
+    replicas: {{ if .Values.livePreview.enabled }}{{ include "live-preview-edge.replicas" (dict "spec" .Values.livePreview "requested" .Values.replicas) }}{{ else }}{{ .Values.replicas }}{{ end }}
+    template:
+      spec:
+        containers:
+          - name: app
+            # the app backend listens INTERNALLY (its own port); the edge fronts it
+            ports:
+              - name: app-internal
+                containerPort: 3000   # this app's backend port == live_preview.backend_port
+          {{- if .Values.livePreview.enabled }}
+          {{- include "live-preview-edge.container" .Values.livePreview | nindent 8 }}
+          {{- end }}
+        {{- if .Values.livePreview.enabled }}
+        volumes:
+          {{- include "live-preview-edge.volume" .Values.livePreview | nindent 8 }}
+        {{- end }}
+  ---
+  # Service — the edge becomes the served port when enabled, the app port otherwise
+  spec:
+    ports:
+      - name: http
+        port: 80
+        targetPort: {{ if .Values.livePreview.enabled }}{{ include "live-preview-edge.servedPortName" (dict "spec" .Values.livePreview "appPortName" "app-internal") }}{{ else }}app-internal{{ end }}
+  ```
+
+  Glimmung sets `livePreview.enabled/image.tag/authorizedSubject/upstream.url/
+  backendPrefixes` per preview lease; the app sets its `live_preview` project
+  metadata (`enabled`, `backend_prefixes`, `backend_port`) and adds the P3
+  projected `auth.romaine.life` SA token to its slot pod (Stage 0 audit). No
+  cross-repo Helm registry, no committed copy of the partial.
 
 ## Definition of done
 

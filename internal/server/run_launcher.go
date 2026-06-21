@@ -2189,6 +2189,16 @@ type testSlotHelmSettings struct {
 	SetStringValues     map[string]string
 	ClusterRoleBindings []map[string]any
 	RoleBindings        []map[string]any
+	// VendorLivePreviewEdge makes the install Job vendor Glimmung's
+	// live-preview-edge library partial into the app chart's charts/ from the
+	// cluster ConfigMap Glimmung publishes (k8s/templates/
+	// live-preview-edge-chart-configmap.yaml), IF the chart does not already
+	// supply it. Set only for preview provisions. It lets an app chart in ANOTHER
+	// repo include the partial without a cross-repo Helm dependency — ACR is Basic
+	// SKU, so an oci:// Helm pull from the slot-install Job cannot authenticate.
+	// Glimmung's own slot chart (k8s/issue) vendors the partial via its in-repo
+	// file:// dependency instead, so the vendor step no-ops for it (chart present).
+	VendorLivePreviewEdge bool
 }
 
 const (
@@ -2369,6 +2379,58 @@ func testSlotHelmReleaseName(slotName, renderMode string) string {
 	return dnsLabel(slotName + "-" + hex.EncodeToString(hash[:])[:16])
 }
 
+const (
+	// livePreviewEdgeChartConfigMapName is the ConfigMap Glimmung's prod chart
+	// publishes (k8s/templates/live-preview-edge-chart-configmap.yaml) carrying the
+	// live-preview-edge library partial, in the runner namespace where install Jobs
+	// run. A preview install Job mounts it to vendor the partial into an app chart
+	// that includes the partial but lives in another repo (the cross-repo
+	// consumption mechanism — see livePreviewEdgeVendorScript).
+	livePreviewEdgeChartConfigMapName = "glimmung-live-preview-edge-chart"
+	// livePreviewEdgeChartMountPath is where the install Job mounts that ConfigMap.
+	livePreviewEdgeChartMountPath = "/mnt/live-preview-edge-chart"
+)
+
+// livePreviewEdgeVendorScript returns the shell that vendors Glimmung's
+// live-preview-edge library partial into the app chart's charts/ for a preview
+// install. It runs AFTER `helm dependency build` and only when the chart did not
+// already supply the partial — Glimmung's own k8s/issue vendors it via a file://
+// dependency, so this no-ops there (charts/live-preview-edge already present).
+// Empty for non-preview installs, so the faithful validation path is byte-for-byte
+// unchanged.
+//
+// The cross-repo mechanism is a cluster ConfigMap, NOT an oci:// Helm dependency:
+// the registry (romainecr) is ACR Basic SKU (no anonymous pull, no scoped tokens)
+// and the install Job pod carries no Azure workload identity, so it cannot
+// authenticate a Helm registry pull from ACR. Glimmung publishes the partial as a
+// ConfigMap instead; an app chart includes the partial (guarded on
+// livePreview.enabled) without declaring any cross-repo Helm dependency.
+//
+// The ConfigMap carries Chart.yaml + values.yaml at the root and each template
+// under a `tpl.<name>` key (ConfigMap keys cannot contain `/`); the script
+// rebuilds the chart/templates/ layout. A missing/empty ConfigMap fails loudly
+// rather than rendering a chart with an undefined partial template.
+func livePreviewEdgeVendorScript(config testSlotHelmSettings) string {
+	if !config.VendorLivePreviewEdge {
+		return ""
+	}
+	edgeDir := shellQuote(config.ChartPath) + "/charts/live-preview-edge"
+	src := livePreviewEdgeChartMountPath
+	return "if [ ! -d " + edgeDir + " ]; then\n" +
+		"  if [ ! -f " + src + "/Chart.yaml ]; then\n" +
+		"    echo 'live-preview-edge partial unavailable (ConfigMap " + livePreviewEdgeChartConfigMapName + " not mounted); cannot provision preview' >&2\n" +
+		"    exit 1\n" +
+		"  fi\n" +
+		"  mkdir -p " + edgeDir + "/templates\n" +
+		"  cp " + src + "/Chart.yaml " + edgeDir + "/Chart.yaml\n" +
+		"  cp " + src + "/values.yaml " + edgeDir + "/values.yaml\n" +
+		"  for f in " + src + "/tpl.*; do\n" +
+		"    [ -e \"$f\" ] || continue\n" +
+		"    cp \"$f\" " + edgeDir + "/templates/\"$(basename \"$f\" | sed 's/^tpl\\.//')\"\n" +
+		"  done\n" +
+		"fi\n"
+}
+
 func testSlotInstallJobManifest(settings Settings, config testSlotHelmSettings, lease Lease, project Project, substitutions map[string]string, renderMode string) map[string]any {
 	slotName, _ := stringFromMap(lease.Metadata, "runner_slot_name")
 	renderMode = firstNonEmpty(strings.TrimSpace(renderMode), testSlotRenderModeHot)
@@ -2407,17 +2469,36 @@ func testSlotInstallJobManifest(settings Settings, config testSlotHelmSettings, 
 		// and copies it into charts/. It is a clean no-op (exit 0) for charts with
 		// no dependencies, so the validation path's behavior is unchanged.
 		"helm dependency build " + shellQuote(config.ChartPath) + "\n" +
+		// For a preview install, vendor Glimmung's live-preview-edge partial into
+		// the app chart IF the chart did not already supply it (see the helper).
+		livePreviewEdgeVendorScript(config) +
 		"if ! helm status " + shellQuote(releaseName) + " --namespace " + shellQuote(slotName) + " >/dev/null 2>&1; then\n" +
 		"  " + helmTemplateCommand(config, releaseName, slotName, substitutions, renderMode) + " | " + stripClusterScopedCommand() + " | kubectl delete --ignore-not-found=true -f -\n" +
 		"fi\n" +
 		helmUpgradeInstallCommand(config, releaseName, slotName, substitutions, renderMode) + "\n"
+	volumes := []any{
+		map[string]any{"name": "workspace", "emptyDir": map[string]any{}},
+		map[string]any{"name": "glim-clone", "secret": map[string]any{"secretName": secretName, "defaultMode": 0400}},
+	}
+	installMounts := []any{map[string]any{"name": "workspace", "mountPath": "/workspace"}}
+	if config.VendorLivePreviewEdge {
+		// Mount the partial Glimmung publishes (optional: a missing ConfigMap does
+		// not wedge the pod on a mount error — the vendor script fails with a clear
+		// message instead).
+		volumes = append(volumes, map[string]any{
+			"name":      "live-preview-edge-chart",
+			"configMap": map[string]any{"name": livePreviewEdgeChartConfigMapName, "optional": true},
+		})
+		installMounts = append(installMounts, map[string]any{
+			"name":      "live-preview-edge-chart",
+			"mountPath": livePreviewEdgeChartMountPath,
+			"readOnly":  true,
+		})
+	}
 	podSpec := map[string]any{
 		"serviceAccountName": settings.RunnerServiceAccount,
 		"restartPolicy":      "Never",
-		"volumes": []any{
-			map[string]any{"name": "workspace", "emptyDir": map[string]any{}},
-			map[string]any{"name": "glim-clone", "secret": map[string]any{"secretName": secretName, "defaultMode": 0400}},
-		},
+		"volumes":            volumes,
 		"initContainers": []any{map[string]any{
 			"name":    "clone",
 			"image":   "alpine/git:latest",
@@ -2437,7 +2518,7 @@ func testSlotInstallJobManifest(settings Settings, config testSlotHelmSettings, 
 				map[string]any{"name": "GLIM_HOST", "value": substitutions["host"]},
 				map[string]any{"name": "GLIM_PROJECT", "value": project.Name},
 			},
-			"volumeMounts": []any{map[string]any{"name": "workspace", "mountPath": "/workspace"}},
+			"volumeMounts": installMounts,
 		}},
 	}
 	return map[string]any{

@@ -98,6 +98,16 @@ spec:
               value: {{ .Values.artifacts.storageAccount | quote }}
             - name: ARTIFACTS_CONTAINER
               value: {{ .Values.artifacts.container | quote }}
+            # Live-preview lane edge image (docs/live-preview-plan.md, Stage 4a).
+            # Sourced from the fingerprint-pinned livePreview.image in values.yaml
+            # (kept in lockstep by the live-preview-edge build workflow) so the
+            # preview provision --sets a stable, built edge tag instead of a
+            # floating `:edge`. Empty tag stays a provision ERROR (the provision
+            # requires repo+tag), per the Stage 2a observable-failure design.
+            - name: LIVE_PREVIEW_EDGE_IMAGE_REPOSITORY
+              value: {{ .Values.livePreview.image.repository | quote }}
+            - name: LIVE_PREVIEW_EDGE_IMAGE_TAG
+              value: {{ .Values.livePreview.image.tag | quote }}
 {{ if .Values.k8sSaAuth.enabled }}
             - name: K8S_SA_ALLOWLIST
               value: {{ .Values.k8sSaAuth.allowlist | quote }}

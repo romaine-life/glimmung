@@ -2,6 +2,7 @@ package server
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -13,10 +14,11 @@ import (
 //   - the faithful image-deploy lane's `test_slot_helm` / `test_slot_deploy`
 //     keys, which the validation slot path owns and which this never touches.
 //
-// Shape: live_preview { enabled: bool, backend_prefixes: []string }. Glimmung
-// reads it to know an app supports preview and which request path prefixes the
-// edge reverse-proxies to the app backend (everything else is served
-// override-first / fresh-passthrough by the edge).
+// Shape: live_preview { enabled: bool, backend_prefixes: []string, backend_port: int }.
+// Glimmung reads it to know an app supports preview, which request path prefixes
+// the edge reverse-proxies to the app backend (everything else is served
+// override-first / fresh-passthrough by the edge), and the in-pod backend port
+// the edge's upstream points at.
 const LivePreviewMetadataKey = "live_preview"
 
 // livePreviewSettings is the parsed `live_preview` project metadata.
@@ -27,6 +29,12 @@ type livePreviewSettings struct {
 	// reverse-proxies to the app backend (e.g. /api, /healthz). They feed the
 	// edge's LIVE_PREVIEW_EDGE_BACKEND_PREFIXES at provision time.
 	BackendPrefixes []string
+	// BackendPort is the in-pod port the app's OWN backend listens on, which the
+	// edge reverse-proxies to (glimmung :8000, kill-me/chess-tactics :3000,
+	// ambience :8080). It feeds the edge's LIVE_PREVIEW_EDGE_UPSTREAM at provision
+	// time so the upstream points at THIS app's backend, not a hardcoded port.
+	// Zero means unset; the provision falls back to defaultPreviewBackendPort.
+	BackendPort int
 }
 
 // livePreviewConfig reads a project's `live_preview` metadata (snake_case or
@@ -44,8 +52,20 @@ func livePreviewConfig(project Project) (livePreviewSettings, bool) {
 	settings := livePreviewSettings{
 		Enabled:         boolConfigValue(raw, "enabled"),
 		BackendPrefixes: normalizeLivePreviewBackendPrefixes(stringSliceFromMap(raw, "backend_prefixes", "backendPrefixes")),
+		BackendPort:     firstPositiveInt(nonNegativeIntMapValue(raw, "backend_port"), nonNegativeIntMapValue(raw, "backendPort")),
 	}
 	return settings, settings.Enabled
+}
+
+// firstPositiveInt returns the first value > 0, else 0. Lets backendPort be read
+// under either snake_case or camelCase without a second map lookup chain.
+func firstPositiveInt(values ...int) int {
+	for _, v := range values {
+		if v > 0 {
+			return v
+		}
+	}
+	return 0
 }
 
 // normalizeLivePreviewBackendPrefixes trims, prepends a leading slash, strips
@@ -122,7 +142,48 @@ func validateLivePreviewMetadata(metadata map[string]any) error {
 			return fmt.Errorf("%s.%s must be a list of strings", LivePreviewMetadataKey, key)
 		}
 	}
+	for _, key := range []string{"backend_port", "backendPort"} {
+		val, present := raw[key]
+		if !present {
+			continue
+		}
+		port, ok := portFromAny(val)
+		if !ok {
+			return fmt.Errorf("%s.%s must be an integer port", LivePreviewMetadataKey, key)
+		}
+		if port < 1 || port > 65535 {
+			return fmt.Errorf("%s.%s must be a valid TCP port in [1, 65535]", LivePreviewMetadataKey, key)
+		}
+	}
 	return nil
+}
+
+// portFromAny coerces a metadata scalar (JSON-decoded number/string) to a port
+// int, reporting ok=false for a non-numeric type or a non-integral float so the
+// validator can reject it distinctly from an out-of-range value. jsonb decodes
+// numbers as float64; a register payload may also carry a string. (The package's
+// intFromAny truncates and can't signal "not a number", which validation needs.)
+func portFromAny(v any) (int, bool) {
+	switch n := v.(type) {
+	case int:
+		return n, true
+	case int64:
+		return int(n), true
+	case float64:
+		// Reject non-integral floats (e.g. 80.5) — a port is a whole number.
+		if n != float64(int(n)) {
+			return 0, false
+		}
+		return int(n), true
+	case string:
+		parsed, err := strconv.Atoi(strings.TrimSpace(n))
+		if err != nil {
+			return 0, false
+		}
+		return parsed, true
+	default:
+		return 0, false
+	}
 }
 
 func validateLivePreviewPrefix(key, prefix string) error {

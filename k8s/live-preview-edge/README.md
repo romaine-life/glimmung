@@ -7,10 +7,15 @@ stable app backend by default and serves a developer's freshly-pushed frontend
 bundle once one is pushed, so UI iterates in seconds without a CI image
 build+deploy.
 
-This chart owns the **partial and its render contract**. How an app repo
-(ambience, kill-me, …) vendors or depends on it is settled in a later stage; the
+This chart owns the **partial and its render contract**. An app chart in another
+repo gets the partial at preview-provision time from **Glimmung**, which publishes
+it as a cluster ConfigMap (`glimmung-live-preview-edge-chart`) and vendors it into
+the app chart's `charts/` in the slot-install Job — NOT an `oci://` Helm
+dependency (the registry is ACR Basic SKU: no anonymous pull, no scoped tokens, no
+in-Job auth). See `docs/live-preview-plan.md` "Stage 4a landed contracts" for the
+mechanism and the exact app-chart onboarding snippet. The
 `k8s/live-preview-edge-harness` chart stands in for a consumer to prove the
-partial renders.
+partial renders in-repo.
 
 ## Lane boundary
 
@@ -48,12 +53,16 @@ The spec shape is documented in [`values.yaml`](values.yaml).
 
 ## Consuming it
 
-In the app's slot chart, after declaring this chart as a dependency:
+In an app's slot chart, **declare NO Helm dependency** for this partial (Glimmung
+vendors it at preview-provision time). Instead, `include` the templates **guarded
+on `livePreview.enabled`**, so the chart renders standalone WITHOUT the library
+when live preview is off (app CI / prod / validation) and only needs Glimmung's
+vendored partial on a preview lease:
 
 ```yaml
 # Deployment
 spec:
-  replicas: {{ include "live-preview-edge.replicas" (dict "spec" .Values.livePreview "requested" .Values.replicas) }}
+  replicas: {{ if .Values.livePreview.enabled }}{{ include "live-preview-edge.replicas" (dict "spec" .Values.livePreview "requested" .Values.replicas) }}{{ else }}{{ .Values.replicas }}{{ end }}
   template:
     spec:
       containers:
@@ -61,24 +70,32 @@ spec:
           image: {{ .Values.appImage | quote }}
           ports:
             - name: app-internal      # the backend listens internally
-              containerPort: 8000
+              containerPort: 3000     # this app's backend port == live_preview.backend_port
+        {{- if .Values.livePreview.enabled }}
         {{- include "live-preview-edge.container" .Values.livePreview | nindent 8 }}
+        {{- end }}
       {{- if .Values.livePreview.enabled }}
       volumes:
         {{- include "live-preview-edge.volume" .Values.livePreview | nindent 8 }}
       {{- end }}
 ---
-# Service — the edge becomes the served port when enabled
+# Service — the edge becomes the served port when enabled, the app port otherwise
 spec:
   ports:
     - name: http
       port: 80
-      targetPort: {{ include "live-preview-edge.servedPortName" (dict "spec" .Values.livePreview "appPortName" "app-internal") }}
+      targetPort: {{ if .Values.livePreview.enabled }}{{ include "live-preview-edge.servedPortName" (dict "spec" .Values.livePreview "appPortName" "app-internal") }}{{ else }}app-internal{{ end }}
 ```
 
 The edge's `upstream.url` points at the app backend (localhost in the single-pod
-model). Configured `backendPrefixes` (e.g. `/api`, `/healthz`) always proxy to
-the backend so its API stays reachable through the edge.
+model — Glimmung sets it from `live_preview.backend_port`). Configured
+`backendPrefixes` (e.g. `/api`, `/healthz`) always proxy to the backend so its API
+stays reachable through the edge.
+
+> Glimmung's own dogfood (`k8s/issue`) instead declares the partial as an in-repo
+> `file://` dependency and includes it unconditionally — that path is same-repo and
+> needs no vendoring. New app charts in other repos use the guarded-include pattern
+> above.
 
 ## Proving it renders
 
