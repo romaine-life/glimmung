@@ -39,6 +39,16 @@ const AADTokenScope = "https://ossrdbms-aad.database.windows.net/.default"
 // inside BeforeConnect when pgx recycles the connection.
 const MaxConnLifetime = 50 * time.Minute
 
+// DefaultStatementTimeout is the server-side backstop applied to every pooled
+// connection (via AfterConnect) when Config.StatementTimeout is unset. Any
+// single statement exceeding it is cancelled by Postgres so a pathological
+// query cannot pin a connection indefinitely — the failure mode behind the
+// read-store saturation incident, where slow graph queries rode until the
+// client disconnected. It is deliberately generous relative to healthy query
+// latency; per-request context deadlines own the tight read-path budget, and
+// small-table schema migrations run well under it.
+const DefaultStatementTimeout = 60 * time.Second
+
 // Config describes how to reach the glimmung Postgres Flexible Server.
 // Username is the AAD principal name as it appears in the server's
 // `pg_authid` (for a UAMI, this is the UAMI's name — i.e.
@@ -53,6 +63,10 @@ type Config struct {
 	Username     string
 	Credential   azcore.TokenCredential
 	QueryMetrics SQLMetrics
+	// StatementTimeout bounds any single SQL statement server-side. Zero
+	// selects DefaultStatementTimeout. It is a runaway backstop, not the
+	// per-request budget.
+	StatementTimeout time.Duration
 }
 
 // NewPool builds a pgxpool.Pool wired with AAD authentication. The pool
@@ -104,6 +118,21 @@ func NewPool(ctx context.Context, cfg Config) (*pgxpool.Pool, error) {
 			return fmt.Errorf("pg: acquire AAD token: %w", err)
 		}
 		c.Password = tok.Token
+		return nil
+	}
+
+	// Apply the server-side statement_timeout backstop on every new physical
+	// connection. SET (rather than a startup RuntimeParam) is used because it
+	// is unambiguously accepted by Flexible Server and runs once per pooled
+	// connection, not per query.
+	stmtTimeout := cfg.StatementTimeout
+	if stmtTimeout <= 0 {
+		stmtTimeout = DefaultStatementTimeout
+	}
+	poolConfig.AfterConnect = func(ctx context.Context, conn *pgx.Conn) error {
+		if _, err := conn.Exec(ctx, fmt.Sprintf("SET statement_timeout = %d", stmtTimeout.Milliseconds())); err != nil {
+			return fmt.Errorf("pg: set statement_timeout: %w", err)
+		}
 		return nil
 	}
 

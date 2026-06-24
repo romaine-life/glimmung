@@ -22,6 +22,17 @@ spec:
         azure.workload.identity/use: "true"
     spec:
       serviceAccountName: {{ .Values.serviceAccount }}
+      {{- if .Values.topologySpread.enabled }}
+      # Spread serving replicas across nodes (soft): one node failure/drain must
+      # not take the whole serving tier down. See values.yaml topologySpread.
+      topologySpreadConstraints:
+        - maxSkew: {{ .Values.topologySpread.maxSkew }}
+          topologyKey: {{ .Values.topologySpread.topologyKey }}
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: glimmung
+      {{- end }}
       # 5 minutes covers a typical Helm install (with cert-manager +
       # ExternalSecret reconciliation) so an evicted pod can finish in-flight
       # test-slot work before exit. main.go's signal handler runs HTTP
@@ -136,18 +147,27 @@ spec:
                 name: {{ .Values.config.name }}
             - secretRef:
                 name: {{ .Values.externalSecret.secretName }}
+          # /readyz reads a cached readiness gauge (no per-request DB I/O), so a
+          # brief read-store slowdown degrades individual requests rather than
+          # failing this probe and pulling the pod. timeoutSeconds is explicit
+          # now that the handler is constant-time (kubelet default is 1s).
           readinessProbe:
             httpGet:
               path: /readyz
               port: http
-            initialDelaySeconds: 5
-            periodSeconds: 10
+            initialDelaySeconds: {{ .Values.probes.readiness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.probes.readiness.periodSeconds }}
+            timeoutSeconds: {{ .Values.probes.readiness.timeoutSeconds }}
+            failureThreshold: {{ .Values.probes.readiness.failureThreshold }}
+            successThreshold: {{ .Values.probes.readiness.successThreshold }}
           livenessProbe:
             httpGet:
               path: /healthz
               port: http
-            initialDelaySeconds: 15
-            periodSeconds: 30
+            initialDelaySeconds: {{ .Values.probes.liveness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.probes.liveness.periodSeconds }}
+            timeoutSeconds: {{ .Values.probes.liveness.timeoutSeconds }}
+            failureThreshold: {{ .Values.probes.liveness.failureThreshold }}
           resources:
             requests:
               cpu: 50m

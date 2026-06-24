@@ -249,7 +249,8 @@ func TestScaleProjectTestEnvironmentsPersistsWorkloadIdentityStatus(t *testing.T
 			}},
 		}},
 		nil, // managed-origins reconciler not under test here
-		nil,
+		nil, // run launcher not under test here
+		nil, // readiness reporter not under test here
 	)
 
 	var project Project

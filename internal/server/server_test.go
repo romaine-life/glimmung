@@ -3,7 +3,6 @@ package server
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -49,7 +48,12 @@ func TestReadyzRequiresReadStore(t *testing.T) {
 	}
 }
 
-func TestReadyzChecksReadStore(t *testing.T) {
+// TestReadyzReadyWhenStoreConfigured covers the non-production wiring path: a
+// handler built with a configured store but no StoreHealthMonitor reports ready
+// via static readiness. Production wires a monitor; the probe-error and
+// probe-panic → not-ready semantics live in read_store_health_test.go where the
+// StoreHealthMonitor owns them. /readyz itself does no database I/O.
+func TestReadyzReadyWhenStoreConfigured(t *testing.T) {
 	handler := NewWithStore(Settings{}, readyzStore{})
 	req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
 	rec := httptest.NewRecorder()
@@ -58,37 +62,6 @@ func TestReadyzChecksReadStore(t *testing.T) {
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d, want %d", rec.Code, http.StatusOK)
-	}
-}
-
-func TestReadyzRejectsUnreadableStore(t *testing.T) {
-	handler := NewWithStore(Settings{}, readyzErrorStore{})
-	req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
-	rec := httptest.NewRecorder()
-
-	handler.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusServiceUnavailable {
-		t.Fatalf("status=%d, want %d", rec.Code, http.StatusServiceUnavailable)
-	}
-	var body map[string]string
-	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
-		t.Fatalf("decode body: %v", err)
-	}
-	if body["detail"] != "read store not ready" {
-		t.Fatalf("body=%#v, want read store not ready", body)
-	}
-}
-
-func TestReadyzRecoversStorePanic(t *testing.T) {
-	handler := NewWithStore(Settings{}, readyzPanicStore{})
-	req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
-	rec := httptest.NewRecorder()
-
-	handler.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusServiceUnavailable {
-		t.Fatalf("status=%d, want %d", rec.Code, http.StatusServiceUnavailable)
 	}
 }
 
@@ -230,20 +203,4 @@ func (readyzStore) ListProjects(context.Context) ([]Project, error) {
 
 func (readyzStore) ListWorkflows(context.Context) ([]Workflow, error) {
 	return nil, nil
-}
-
-type readyzErrorStore struct {
-	readyzStore
-}
-
-func (readyzErrorStore) ListProjects(context.Context) ([]Project, error) {
-	return nil, errors.New("projects store not configured")
-}
-
-type readyzPanicStore struct {
-	readyzStore
-}
-
-func (readyzPanicStore) ListProjects(context.Context) ([]Project, error) {
-	panic("typed nil store")
 }

@@ -30,7 +30,46 @@ serviceAccount: infra-shared
 # Dedicated Glimmung app identity from tofu/identity.tf's
 # `glimmung_dedicated_identity_client_id` output.
 serviceAccountClientId: "3644b9f0-2eb0-42dd-92a4-696f9a3ca090"
-replicas: 1
+# The serving tier is stateless; run >=2 so a single pod going NotReady (a
+# readiness blip, a node drain, a rollout) is a rotation, not an outage. Sized
+# at 3 to match the Postgres connection budget documented in tofu/postgres.tf
+# (pgxpool MaxConns=6 x 3 replicas = 18, under glimmung-pg B1ms's ~50
+# max_connections). Control-plane reconcilers run under a single owner gate
+# (CONTROL_PLANE_LOOPS_ENABLED), so extra serving replicas do not multiply
+# background DB load.
+replicas: 3
+
+# Spread serving replicas across nodes so one node drain/failure cannot take the
+# whole serving tier. ScheduleAnyway keeps it soft — a single-node or
+# capacity-constrained cluster still schedules.
+topologySpread:
+  enabled: true
+  maxSkew: 1
+  topologyKey: kubernetes.io/hostname
+
+# PodDisruptionBudget for voluntary disruptions (node drains, AKS upgrades).
+# With replicas >= 2, maxUnavailable=1 keeps the serving tier up through a
+# rolling drain. At replicas=1 it still permits eviction.
+pdb:
+  maxUnavailable: 1
+
+# Probe tuning. /readyz reads a cached readiness gauge (no per-request DB I/O),
+# so a brief read-store slowdown degrades individual requests instead of failing
+# the probe and pulling the pod from rotation. The StoreHealthMonitor owns the
+# hysteresis; these are the outer kubelet layer. timeoutSeconds is set
+# explicitly (the kubelet default is 1s) now that the handler is constant-time.
+probes:
+  readiness:
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    timeoutSeconds: 3
+    failureThreshold: 3
+    successThreshold: 1
+  liveness:
+    initialDelaySeconds: 15
+    periodSeconds: 30
+    timeoutSeconds: 3
+    failureThreshold: 3
 
 runner:
   namespace: glimmung-runs
@@ -295,3 +334,23 @@ observability:
     # Alertmanager severity label used for routing. Unattributed terminal
     # failures page operators, so this defaults to critical.
     severity: critical
+    # Read-store / Postgres saturation alerts (serving-path incident hardening):
+    # the read-path failure mode behind the saturation incident — /readyz
+    # flapping, p95 query latency, query errors, and connection-pool saturation.
+    # The not-ready alert pages (reuses severity above); the early-warning
+    # latency/error/pool alerts warn. Thresholds quoted so PromQL renders them
+    # literally. See docs/serving-path-and-availability.md.
+    readStore:
+      enabled: true
+      # glimmung_read_store_ready has been 0 (read store unhealthy) this long.
+      notReadyFor: 2m
+      # p95 glimmung_pg_query_duration_seconds (seconds) over 5m, sustained for
+      # latencyFor. 0.5s is where the incident tipped readiness over.
+      latencyP95Seconds: "0.5"
+      latencyFor: 10m
+      # glimmung_pg_queries_total{outcome="error"} rate (/s) over 5m, sustained.
+      errorRatePerSecond: "0.2"
+      errorsFor: 5m
+      # acquired/max pgxpool ratio over poolFor.
+      poolSaturationRatio: "0.8"
+      poolFor: 10m
